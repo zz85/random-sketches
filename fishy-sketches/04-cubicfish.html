@@ -1,0 +1,104 @@
+<html>
+    <head>
+    </head>
+	<body>
+		<title>
+			Procedural Simple Drawing of Fishes
+		</title>
+		
+		<script>
+			const canvas = document.createElement('canvas');
+			const width = 600;
+			const height = 400;
+
+			canvas.width = width;
+			canvas.height = height;
+
+			const ctx = canvas.getContext('2d');
+			
+            const MID_SECTION = 200;
+            const THICKNESS = 80;
+            const TAIL_OFFSET = 40;
+            let CONTROL = 200; // 100 - 250
+            const HEAD = 250;
+            let HEAD_CONTROL = 20; // 20 - 40
+			
+			let x, y;
+
+            const debugPoint = p => {
+                ctx.fillStyle = 'red';
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 10, 0, 2 * Math.PI);
+                ctx.fill();
+            };
+
+			function draw() {
+                const points = [
+                    {x: 50, y: MID_SECTION - TAIL_OFFSET * (Math.random()-0.2) },
+                    {x: 220, y: MID_SECTION + THICKNESS},
+                    {x: HEAD, y: MID_SECTION + HEAD_CONTROL},
+                    {x: HEAD, y: MID_SECTION},
+                    {x: HEAD, y: MID_SECTION - HEAD_CONTROL},
+                    {x: CONTROL, y: MID_SECTION - THICKNESS},
+                    {x: 50, y: MID_SECTION + TAIL_OFFSET * (Math.random()-0.2) },
+                ];
+				ctx.fillStyle = '#333';
+				ctx.fillRect(0, 0, width, height);
+
+				ctx.strokeStyle = '#eee';
+				ctx.lineWidth = 2;
+				ctx.beginPath();
+				let {x, y} = points[0];
+				ctx.moveTo(x, y);
+				ctx.bezierCurveTo(
+					points[1].x, points[1].y,
+					points[2].x, points[2].y,
+                    points[3].x, points[3].y
+				);
+
+                ctx.bezierCurveTo(
+					points[4].x, points[4].y,
+					points[5].x, points[5].y,
+                    points[6].x, points[6].y
+				);
+
+                (Math.random() > 0.5) || ctx.closePath();
+				ctx.stroke();
+                
+                ctx.globalAlpha = 0.5
+				points.forEach(debugPoint);
+                ctx.globalAlpha = 1
+
+                // ctx.globalAlpha = 0.2
+			}
+
+			setInterval(draw, 500);
+
+			document.body.appendChild(canvas);
+		</script>
+
+		<comments>
+			Attempt to use bezier curves to archieve that.
+            Seeing where quadratic can bring.
+		</comments>
+
+        <!--
+            Other random ideas.
+            Expose tweakable values, and have an interface to edit them.
+            Eg. REGEX caps values. 
+
+            Draggable bindings are good, but not always necessary?
+
+            Notes.
+            http://www.easy-drawings-and-sketches.com/draw-a-fish.html
+            https://www.youtube.com/watch?v=w2F-ydP_y2U - kids hand draw fishes 
+
+            control = 220, Koi, Dolphin.
+            180 - angel fishes
+
+            by tweaking ctx.globalAlpha = 0.2, and redraw, mulitple sketches!
+
+            Varing stroke lengths a) using multiple strokes b) shaders c) manual bezier drawing d) pixel bleeding
+        -->
+	</body>
+</html>
