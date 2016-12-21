@@ -1,0 +1,187 @@
+<html>
+    <head>
+    </head>
+	<body>
+		<title>
+			Procedural Simple Drawing of Fishes
+		</title>
+		
+		<script>
+
+			const canvas = document.createElement('canvas');
+			const width = 600;
+			const height = 400;
+
+			canvas.width = width;
+			canvas.height = height;
+
+			const ctx = canvas.getContext('2d');
+
+			let x, y;
+
+            const debugPoint = p => {
+                ctx.fillStyle = 'red';
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 10, 0, 2 * Math.PI);
+                ctx.fill();
+            };
+
+            const rand = (x=1) => Math.random() * x;
+            const randRange = (x, y) => (y - x) * rand() + x;
+            const signedRand = (x=1) => (rand(2) - 1) * x;
+            
+            function makeFish() {
+                
+                let HEAD_SIZE = randRange(20, 30); // 20 - 40
+                const THICKNESS = randRange(20, 80); // 20 - 200
+                let VARIENCE = 20;
+                
+                const FISH_LENGTH = 250 - 150;
+                const START_LENGTH = 50 - 150;
+                const TAIL_OFFSET = 40;
+                const MID_SECTION = 0; // y - center of fish
+                let CONTROL = START_LENGTH -50 + randRange(150, 250); // 100 - 250
+
+                const points = [
+                    {x: START_LENGTH + rand(20), y: MID_SECTION - TAIL_OFFSET * (rand()-0.2) },
+                    {x: CONTROL + rand(VARIENCE), y: MID_SECTION + THICKNESS},
+                    {x: FISH_LENGTH, y: MID_SECTION + HEAD_SIZE},
+                    {x: FISH_LENGTH, y: MID_SECTION},
+                    {x: FISH_LENGTH, y: MID_SECTION - HEAD_SIZE},
+                    {x: CONTROL + rand(VARIENCE), y: MID_SECTION - THICKNESS},
+                    {x: START_LENGTH + rand(20), y: MID_SECTION + TAIL_OFFSET * (rand()-0.2) },
+                ];
+
+                return points;
+            }
+
+            class Vector {
+                constructor(x, y) {
+                    this.x = x;
+                    this.y = y;
+                }
+            }
+
+            class Fish {
+                constructor() {
+                    this.count = rand() * 10 | 0;
+                    this.x = randRange(0, 400);
+                    this.y = randRange(0, 500);
+                    this.rev = signedRand() > 0 ? 1 : -1;
+                    this.scale = randRange(0.1, 0.3) * this.rev;
+                    this.points = makeFish();
+                    this.dx = randRange(1, 10) * this.rev;
+                    this.dy = randRange(-1.5, 1.5);
+                }
+
+                draw(ctx) {
+                    // update
+                    this.x += this.dx;
+                    this.y += this.dy;
+
+                    if (this.x <= 0) this.x += width;
+                    this.x %= width;
+                    if (this.y <= 0) this.y += height;
+                    this.y %= height;
+
+                    // draw
+                    ctx.save()
+                    ctx.translate(this.x, this.y);
+                    ctx.scale(this.scale, this.scale);
+                    ctx.rotate(Math.atan(this.dy / this.dx));
+                    this.drawFish(ctx);
+                    ctx.restore();
+                }
+
+                drawHeading(ctx) {
+                    ctx.strokeStyle = '#eee';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(0, -50);
+                    ctx.lineTo(200, 0);
+                    ctx.lineTo(0, 50);
+                    ctx.stroke();
+                }
+
+                drawFish(ctx) {
+                    if (this.count % 3 === 0) {
+                        this.points = makeFish();
+                    }
+
+                    const points = this.points;
+                    this.count++;
+                    
+                    ctx.strokeStyle = '#eee';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(points[0].x, points[0].y);
+                    ctx.bezierCurveTo(
+                        points[1].x, points[1].y,
+                        points[2].x, points[2].y,
+                        points[3].x, points[3].y
+                    );
+
+                    ctx.bezierCurveTo(
+                        points[4].x, points[4].y,
+                        points[5].x, points[5].y,
+                        points[6].x, points[6].y
+                    );
+
+                    // (Math.random() > 0.5) || ctx.closePath();
+                    ctx.stroke();
+                    
+                    // ctx.globalAlpha = 0.2
+                    // points.forEach(debugPoint);
+                    // ctx.globalAlpha = 1
+
+                    // ctx.globalAlpha = 0.2
+                }
+            }
+
+            // let fish = new Fish();
+            let fishes = [...Array(50).keys()].map(v => new Fish());
+
+			function draw() {
+				ctx.fillStyle = '#333';
+				ctx.fillRect(0, 0, width, height);
+
+                // draw fishes
+                fishes.forEach(fish => fish.draw(ctx));
+				
+			}
+
+			setInterval(draw, 100);
+
+			document.body.appendChild(canvas);
+		</script>
+
+		<comments>
+			Attempt to use bezier curves to archieve that.
+            Seeing where cubic can bring.
+		</comments>
+
+        <!--
+            Other random ideas.
+            Expose tweakable values, and have an interface to edit them.
+            Eg. REGEX caps values. 
+
+            Draggable bindings are good, but not always necessary?
+
+            Notes.
+            http://www.easy-drawings-and-sketches.com/draw-a-fish.html
+            https://www.youtube.com/watch?v=w2F-ydP_y2U - kids hand draw fishes 
+
+            control = 220, Koi, Dolphin.
+            180 - angel fishes
+
+            by tweaking ctx.globalAlpha = 0.2, and redraw, mulitple sketches!
+
+            Varing stroke lengths a) using multiple strokes b) shaders c) manual bezier drawing d) pixel bleeding
+
+            Flocking: http://codepen.io/zz85/pen/tLwDm
+            Fluid: http://jsdo.it/zz85/yGek
+
+
+        -->
+	</body>
+</html>
