@@ -1,0 +1,46 @@
+<html>
+    <body>
+        <pre>Simple spreadsheet</pre>
+        <div id="spread" style="position:relative;"></div>
+        <script>
+            var rows = 20;
+            var cols = 20;
+
+            var cell_width = 50;
+            var cell_height = 20;
+
+            var cells = new Map();
+
+            class Cell {
+                constructor(x, y) {
+                    this.x = x;
+                    this.row = String.fromCharCode('A'.charCodeAt(0) + x);
+                    this.col = y;
+                    this.name = this.row + this.col;
+
+                    let dom = document.createElement('input');
+                    dom.type = 'text';
+                    dom.style.position = "absolute";
+                    dom.style.width = `${cell_width}px`;
+                    dom.style.height = `${cell_height}px`;
+                    dom.style.left = `${x * cell_width}px`;
+                    dom.style.top = `${y * cell_height}px`;
+                    dom.id = this.name;
+                    dom.onclick = () => {
+                        console.log(dom.id);
+                    }
+
+                    spread.appendChild(dom);   
+                }
+
+            }
+
+            for (let y = 0; y < rows; y++) {
+                for (let x = 0; x < cols; x++) {
+                    let cell = new Cell(x, y);
+                    cells.set(cell.name, cell);
+                }
+            }
+        </script>
+    </body>
+</html>
