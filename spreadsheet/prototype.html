@@ -4,7 +4,9 @@
 	<pre>Simple spreadsheet</pre>
 	<div><input id="editor" /></div>
 	<div id="spread" style="position:relative; display:block;"></div>
-	<div style="position:absolute; bottom:0px;"><pre id="status_bar"></pre></div>
+	<div style="position:absolute; bottom:0px;">
+		<pre id="status_bar"></pre>
+	</div>
 
 	<script>
 		var rows = 20;
@@ -15,8 +17,10 @@
 
 		var cells = new Map();
 
-		var last_focus;
+		var referencing = null;
 		var editing = null;
+
+		editor.onkeydown = update_field.bind(editor)
 
 		class Cell {
 			constructor(x, y) {
@@ -37,27 +41,34 @@
 					document.getElementById('status_bar').innerHTML = dom.id;
 					console.log(editing);
 
-					if (editing) {
+					if (referencing) {
 						e.preventDefault();
-						editing.dom.focus();
-						editing.dom.value += ' ' + this.name;
+
+						editor.value += ' ' + this.name;
+						editor.focus();
+
+						referencing = null;
 						return false;
 					}
+
+					editing = this;
+					editor.focus();
+
+					editor.value = dom.value;
 				}
 				dom.onkeydown = (e) => {
 					editing = this;
 
 					console.log(e.code);
-					if (e.code == 'Enter' || e.code == 'Escape') {
-						console.log('enter')
-						editing = null;
-					}
+
 				}
 
 				this.dom = dom;
 
 				spread.appendChild(dom);
 			}
+
+			// todo PARSE formulas = 
 
 		}
 
@@ -67,6 +78,89 @@
 				cells.set(cell.name, cell);
 			}
 		}
+
+		function update_field(e) {
+			if (editing) {
+				console.log(editor.value, e.code);
+				if (editor.value.startsWith('=') || e.code == 'Equal') {
+					referencing = true;
+				}
+
+				if (e.code == 'Enter') {
+					// || e.code == 'Escape') {
+					editing.value = editor.value;
+					editing.dom.value = editor.value;
+
+					editor.value = '';
+					editor.blur();
+
+					console.log('enter')
+					editing = null;
+				}
+			}
+		}
+
+		/* Parsing */
+
+		function isFormula(str) {
+			return str.startsWith('=');
+		}
+
+		var ref_regex = /([A-Z]+)([0-9]+)/;
+		function isRef(str) {
+			return ref_regex.exec(str)
+		}
+
+		function isOperator(str) {
+			return /[\*+-\/]/.exec(str);
+		}
+
+		function parseExpression(str) {
+			var tokens = str.split(/\s+/);
+
+			var expression = [];
+
+			tokens.forEach(token => {
+				if (isFormula(token)) {
+					expression.push(['formula', token]);
+				}
+				else if (isRef(token)) {
+					expression.push(['ref', token]);
+				}
+				else if (isOperator(token)) {
+					expression.push(['operator', token]);
+				}
+				else {
+					expression.push(['value', token]);
+				}
+			});
+
+			return expression;
+		}
+		/**
+		 * Test cases
+		 * isFormula/isValue
+		 * parseFormular * () / 
+		 * dependencyTree
+		 */
+
+		console.assert(isFormula('= A1 + A2'))
+		console.assert(!isFormula('12345'))
+		console.assert(!isFormula('abcdefghs'))
+
+		console.assert(isRef('A1'));
+		console.assert(isRef('AA100'));
+		console.assert(!isRef('1'));
+		console.assert(!isRef('AAA'));
+
+		console.assert(isOperator('+'));
+		console.assert(isOperator('-'));
+		console.assert(isOperator('*'));
+		console.assert(isOperator('/'));
+
+		console.log(parseExpression('= A1 + A2 + 5'));
+
+
 	</script>
 </body>
 
