@@ -159,12 +159,30 @@
 			constructor(value) {
 				this.value = value;
 			}
+
+			type() {
+				return 'val'
+			}
 		}
 		class SumExpr {
 			constructor(left, right, op) {
 				this.left = left;
 				this.right = right;
 				this.op = op;
+			}
+
+			type() {
+				return 'sum'
+			}
+		}
+
+		class EquateExpr {
+			constructor(expr) {
+				this.expr;
+			}
+
+			type() {
+				return 'equal'
 			}
 		}
 
@@ -187,7 +205,73 @@
 				return this.position >= this.expressions.length - 1;
 			}
 
-			run() {
+			nextValExpression() {
+				var expr;
+				while (!this.ended()) {
+					let [t, token] = this.peek();
+					console.log('--', t, token)
+
+					if (t == 'ref') {
+						this.consume();
+						return console.log('not supported yet!');
+					} else if (t == 'value') {
+						this.consume();
+						return new ValExpr(token);
+					}
+					else {
+						this.consume();
+						console.error('unhandled', t, token)
+						return
+					}
+				}
+
+				return expr;
+			}
+
+			// handles * /
+			nextMulExpr() {
+				let expr = this.nextValExpression();
+				while (!this.ended()) {
+					let [t, token] = this.peek();
+
+					if (token == '*' || token == '/') {
+						this.consume();
+						expr = new SumExpr(expr, this.nextValExpression(), token);
+						// expr = new MulExpr(expr, this.nextGenExpression());
+					} else {
+						return expr;
+					}
+				}
+				return expr;
+			}
+
+			// values, +, - expressions
+			nextExpression() {
+				console.log('nextExpression', this.position);
+				let expr = this.nextMulExpr();
+				while (!this.ended()) {
+					let [t, token] = this.peek();
+
+					if (t == 'operator') {
+						let [t, token] = this.peek();
+						if (!expr) {
+							console.error('operator with expression!')
+						}
+						if (!(token == '+' || token == '-')) {
+							// console.log('cant do this')
+							return expr;
+						}
+
+						this.consume();
+
+						expr = new SumExpr(expr, this.nextMulExpr(), token);
+					}
+				}
+				return expr;
+			}
+
+			// parse expression into AST
+			parse() {
 				var expr;
 				while (!this.ended()) {
 					let [t, token] = this.peek();
@@ -195,39 +279,37 @@
 
 					if (t == 'formula') {
 						this.consume();
-					} else if (t == 'ref') {
-						return console.log('not supported yet!');
 					} else {
-						expr = this.nextExpression();
+						return this.nextExpression();
 					}
 				}
 
 				return expr;
 			}
 
-			nextExpression() {
-				console.log('nextExpression', this.position);
-				let expr;
-				while (!this.ended()) {
-					let [t, token] = this.peek();
+			evaluate(expression) {
+				if (expression instanceof ValExpr) {
+					return expression.value;
+				} else if (expression instanceof SumExpr) {
+					const left = this.evaluate(expression.left);
+					const right = this.evaluate(expression.right);
 
-					if (t == 'value') {
-						this.consume();
-						expr = new ValExpr(token);
-					} else if (t == 'operator') {
-						let [t, token] = this.consume();
-						if (!expr) {
-							console.error('operator with expression!')
-						}
-
-						expr = new SumExpr(expr, this.nextExpression(), token);
-					} else {
-						console.error('unhandled', t, token)
+					switch (expression.op) {
+						case '+':
+							return left + right;
+						case '-':
+							return left - right;
+						case '*':
+							return left * right;
+						case '/':
+							return left / right;
+						default:
+							console.error('supported', expression.op)
 					}
 				}
-				return expr;
 			}
 		}
+
 
 		function evaluateExpression(expressions) {
 			var e = new Evaluator(expressions);
@@ -254,13 +336,37 @@
 		console.assert(isOperator('/'));
 
 		var expressions = parseExpression('= A1 + A2 + 5');
-		var expressions = parseExpression('= 1 + 2 + 3 + 4 + 5');
+		var expressions = parseExpression('= 1 + 2 - 3 + 4 + 5');
+		var expressions = parseExpression('= 1 + 2 * 3');
+		var expressions = parseExpression('= 1 + 2 * 3 + 4');
+		// var expressions = parseExpression('= (1 + 2) * 3');
 
 		console.log('expressions', expressions);
 
 		var evaluator = new Evaluator(expressions);
 
-		console.log('evaluator', evaluator.run());
+		console.log('evaluator', evaluator.parse());
+
+
+		console.assert(evaluator.evaluate(new ValExpr(5)) == 5);
+		console.assert(evaluator.evaluate(
+			new SumExpr(new ValExpr(5), new ValExpr(4), '+')
+		) == 9);
+
+		console.assert(evaluator.evaluate(
+			new SumExpr(new ValExpr(5), new ValExpr(4), '-')
+		) == 1);
+
+		console.assert(evaluator.evaluate(
+			new SumExpr(new ValExpr(5), new ValExpr(4), '*')
+		) == 20);
+
+		console.assert(evaluator.evaluate(
+			new SumExpr(new ValExpr(5), new ValExpr(4), '/')
+		) == 1.25);
+
+		// console.log('evaluator', );
+
 
 
 	</script>
