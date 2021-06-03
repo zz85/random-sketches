@@ -78,11 +78,21 @@
 				var content = this.content;
 				if (!isFormula(content)) {
 					this.dom.value = content;
+					return;
 				}
 
-				var expressions = parseExpression(content);
-
 				// otherwise calculate formula
+				var value = '# ERROR';
+				try {
+					var expressions = parseExpression(content);
+					var evaluator = new Evaluator(expressions)
+					var tree = evaluator.parse();
+					value = evaluator.evaluate(tree);
+				} catch (e) {
+					console.error(e)
+				}
+
+				this.dom.value = value;
 			}
 
 			// todo PARSE formulas = 
@@ -157,7 +167,7 @@
 
 		class ValExpr {
 			constructor(value) {
-				this.value = value;
+				this.value = +value;
 			}
 
 			type() {
