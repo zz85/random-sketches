@@ -81,13 +81,10 @@
 					return;
 				}
 
-				this.get_references();
-
 				// otherwise calculate formula
 				const value = this.get_value();
 
 				this.dom.value = value;
-
 			}
 
 			get_references() {
@@ -138,6 +135,13 @@
 				var content = this.content;
 
 				var value = '# ERROR';
+
+				// this can be optimized to be precomputed
+				this.get_references();
+				if (!this.check_deps()) {
+					return value;
+				}
+
 				try {
 					var expressions = parseExpression(content);
 					var evaluator = new Evaluator(expressions)
@@ -196,7 +200,7 @@
 		}
 
 		function parseExpression(str) {
-			var tokens = str.split(/\s+/);
+			var tokens = str.trim().split(/\s+/);
 
 			var expression = [];
 
@@ -211,6 +215,7 @@
 					expression.push(['operator', token]);
 				}
 				else {
+					// TODO match against numbers / characters, validate against empty string
 					expression.push(['value', token]);
 				}
 			});
@@ -364,9 +369,8 @@
 			}
 
 			evaluate(expression) {
-				//  TODO if reference look up
 				if (expression instanceof RefExpr) {
-					return 1;
+					return cells.get(expression.ref).get_value();
 				}
 				else if (expression instanceof ValExpr) {
 					return expression.value;
