@@ -54,7 +54,7 @@
 					editing = this;
 					editor.focus();
 
-					editor.value = dom.value;
+					editor.value = this.content === undefined ? '' : this.content;
 				}
 				dom.onkeydown = (e) => {
 					editing = this;
@@ -81,22 +81,75 @@
 					return;
 				}
 
+				this.get_references();
+
 				// otherwise calculate formula
+				const value = this.get_value();
+
+				this.dom.value = value;
+
+			}
+
+			get_references() {
+				var content = this.content;
+
+				try {
+					var expressions = parseExpression(content);
+					var references = expressions.map(([type, cell]) => {
+						if (type == 'ref') return cell
+					}).filter(e => e).map(name => {
+						return cells.get(name);
+					})
+
+					this.references = references;
+
+					console.log('references', references);
+				} catch (e) {
+					console.error(e)
+				}
+			}
+
+			check_deps(chain) {
+				if (!chain) {
+					chain = new Set();
+				}
+
+				chain.add(this);
+
+				return (this.references || []).every(ref => {
+					if (chain.has(ref)) {
+						return false;
+					}
+
+					return ref.check_deps(new Set(chain))
+				})
+
+				/**
+				 * A -> B -> C
+				 *   -> D -> C
+				 * C -> B(x)
+				 * C -> A(x)
+				 * C -> E (ok)
+				 *
+				 */
+			}
+
+			get_value() {
+				var content = this.content;
+
 				var value = '# ERROR';
 				try {
 					var expressions = parseExpression(content);
 					var evaluator = new Evaluator(expressions)
 					var tree = evaluator.parse();
+					console.log('tree', tree);
 					value = evaluator.evaluate(tree);
 				} catch (e) {
 					console.error(e)
 				}
 
-				this.dom.value = value;
+				return value;
 			}
-
-			// todo PARSE formulas = 
-
 		}
 
 		for (let y = 0; y < rows; y++) {
@@ -174,6 +227,19 @@
 				return 'val'
 			}
 		}
+
+		class RefExpr {
+			constructor(ref) {
+				this.ref = ref;
+			}
+
+			type() {
+				return 'ref'
+			}
+		}
+
+
+
 		class SumExpr {
 			constructor(left, right, op) {
 				this.left = left;
@@ -223,7 +289,7 @@
 
 					if (t == 'ref') {
 						this.consume();
-						return console.log('not supported yet!');
+						return new RefExpr(token);
 					} else if (t == 'value') {
 						this.consume();
 						return new ValExpr(token);
@@ -298,7 +364,11 @@
 			}
 
 			evaluate(expression) {
-				if (expression instanceof ValExpr) {
+				//  TODO if reference look up
+				if (expression instanceof RefExpr) {
+					return 1;
+				}
+				else if (expression instanceof ValExpr) {
 					return expression.value;
 				} else if (expression instanceof SumExpr) {
 					const left = this.evaluate(expression.left);
@@ -320,14 +390,10 @@
 			}
 		}
 
-
-		function evaluateExpression(expressions) {
-			var e = new Evaluator(expressions);
-		}
 		/**
 		 * Test cases
 		 * isFormula/isValue
-		 * parseFormular * () / 
+		 * parseFormular * () /
 		 * dependencyTree
 		 */
 
@@ -354,9 +420,7 @@
 		console.log('expressions', expressions);
 
 		var evaluator = new Evaluator(expressions);
-
 		console.log('evaluator', evaluator.parse());
-
 
 		console.assert(evaluator.evaluate(new ValExpr(5)) == 5);
 		console.assert(evaluator.evaluate(
@@ -376,8 +440,22 @@
 		) == 1.25);
 
 		// console.log('evaluator', );
+		let cellA = new Cell();
+		let cellB = new Cell();
+		let cellC = new Cell();
+		let cellD = new Cell();
 
-
+		console.assert(cellA.check_deps());
+		cellA.references = [cellA];
+		console.assert(!cellA.check_deps());
+		cellA.references = [cellB];
+		console.assert(cellA.check_deps());
+		cellB.references = [cellA];
+		console.assert(!cellA.check_deps(), 'bad dependency check');
+		cellB.references = [cellC];
+		console.assert(cellA.check_deps());
+		cellA.references.push(cellD);
+		console.assert(cellA.check_deps());
 
 	</script>
 </body>
