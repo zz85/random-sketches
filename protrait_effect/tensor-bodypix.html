@@ -1,0 +1,91 @@
+<html>
+  <head>
+    <!-- Load TensorFlow.js -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.2"></script>
+    <!-- Load BodyPix -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/body-pix@2.0"></script>
+ </head>
+
+  <body>
+    <img id='image' src='person2.png' crossorigin='anonymous'/>
+  </body>
+  <!-- Place your code in the script tag below. You can also use an external .js file -->
+  <script>
+      var ctx;
+    const img = document.getElementById('image');
+
+    async function loadAndPredict() {
+      const net = await bodyPix.load(/** optional arguments, see below **/);
+
+//     const net = await bodyPix.load({
+//   architecture: 'ResNet50',
+//   outputStride: 32,
+//   quantBytes: 2
+// });
+// MobileNet (smaller, faster, less accurate)
+// const net = await bodyPix.load({
+//   architecture: 'MobileNetV1',
+//   outputStride: 16,
+//   multiplier: 0.75,
+//   quantBytes: 2
+// });
+
+
+
+
+      /**
+       * One of (see documentation below):
+       *   - net.segmentPerson
+       *   - net.segmentPersonParts
+       *   - net.segmentMultiPerson
+       *   - net.segmentMultiPersonParts
+       * See documentation below for details on each method.
+       */
+    //    https://github.com/tensorflow/tfjs-models/tree/master/body-pix ******
+
+
+
+    //    https://storage.googleapis.com/tfjs-models/demos/body-pix/index.html
+
+
+
+    // https://github.com/tensorflow/tfjs-models/pull/491/files?short_path=3efac7d#diff-3efac7dbe04415b0d32d6a7a0d120e33ae89ff033590f14f904e9c884bfadf4d
+    // https://github.com/spite/FaceMeshFaceGeometry
+
+      
+    while (true) {
+        console.time('moo');
+        const segmentation = await net.segmentPerson(img);
+        console.log(segmentation);
+        console.timeEnd('moo');
+
+
+        // tensor-bodypix.html:59 {height: 1442, width: 1604, data: Uint8Array(2312968), allPoses: Array(4)}
+        // tensor-bodypix.html:60 moo: 207.221923828125 ms
+
+        // 60ms = 16ms
+
+    }
+
+      if (!ctx) {
+          var canvas = document.createElement('canvas');
+          canvas.width = segmentation.width;
+          canvas.height = segmentation.height;
+          document.body.appendChild(canvas);
+          ctx = canvas.getContext('2d');
+
+        //   new Uint8ClampedArray(array.buffer)
+        var d = new Uint8ClampedArray(segmentation.width * segmentation.height * 4);
+
+        for (var i = 0; segmentation.data.length; i++) {
+            d[i] = segmentation.data[i];
+        }
+
+          var iData = new ImageData(d, segmentation.width, segmentation.height);
+        ctx.putImageData(iData, 0, 0);
+
+      }
+    }
+    loadAndPredict();
+  </script>
+</html>

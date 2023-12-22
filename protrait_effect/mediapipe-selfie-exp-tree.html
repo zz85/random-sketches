@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js" crossorigin="anonymous"></script>
+</head>
+
+<body>
+    <style>
+        body { 
+            /* background: #000; */
+        }
+        
+    </style>
+  <div class="container">
+    <video class="input_video"></video>
+    <canvas class="output_canvas"></canvas>
+  </div>
+
+  <script id="vertexShader" type="x-shader/x-vertex">
+
+//https://github.com/tensorflow/tfjs-models/blob/master/body-pix/src/output_rendering_utl.ts#L91
+</script>
+
+
+
+
+  <script type="module">
+ import * as THREE from 'https://unpkg.com/three@0.129.0/build/three.module.js';
+window.THREE =  THREE;
+
+let camera, scene, renderer;
+
+const width = 1280 / 4;
+const height = 720 / 4;
+
+let uniforms;
+
+let tColor = new THREE.CanvasTexture();
+let tDepth = new THREE.CanvasTexture();
+
+
+init();
+animate();
+
+function init() {
+
+    const container = document.getElementById( 'container' );
+
+    camera = new THREE.OrthographicCamera( - 1, 1, 1, - 1, 0, 1 );
+
+    scene = new THREE.Scene();
+
+    const geometry = new THREE.PlaneGeometry( 2, 2 );
+
+    uniforms = {
+        time: { value: 1.0 },
+        'tColor': { value: null },
+		'tDepth': { value: null },
+    };
+
+    const material = new THREE.ShaderMaterial( {
+
+        uniforms: uniforms,
+        vertexShader: /* glsl */`
+
+varying vec2 vUv;
+
+void main() {
+
+    vUv = uv;
+    // gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+    gl_Position = vec4( position, 1.0 );
+
+}`,
+        fragmentShader: //document.getElementById( 'fragmentShader' ).textContent
+        `
+        #include <common>
+
+varying vec2 vUv;
+
+uniform sampler2D tColor;
+uniform sampler2D tDepth;
+
+uniform float maxblur; // max blur amount
+uniform float aperture; // aperture - bigger values for shallower depth of field
+
+uniform float nearClip;
+uniform float farClip;
+
+uniform float focus;
+uniform float aspect;
+
+void main() {
+    vec2 aspectcorrect = vec2( 1.0, aspect );
+    // vec2 aspectcorrect = vec2( 1.0, 1280. / 780. );
+    vec4 col = vec4( 0.0 );
+
+       vec2 coords = vec2(vUv.x, 1.0 - vUv.y);
+
+    float mask = texture2D( tDepth, coords )[0];
+
+    col += texture2D( tColor, coords );
+
+    // only face
+    // col += texture2D( tColor, coords ) * mask;
+
+    // only background
+    // col += texture2D( tColor, coords ) * (1. - mask);
+
+    // brighten face
+    col += texture2D( tColor, coords ) * (1. + mask);
+
+    // brighten background
+    // col += texture2D( tColor, coords ) * (2. - mask);
+
+
+    // vec2 dofblur = vec2 ( clamp( factor * aperture, -maxblur, maxblur ) );
+
+    vec2 dofblur = vec2 (4.5, 4. ) * (1.0 - mask);
+
+    // invisble man
+    // vec2 dofblur = vec2 (.5, .5 ) * (mask);
+
+			vec2 dofblur9 = dofblur * 0.9;
+			vec2 dofblur7 = dofblur * 0.7;
+			vec2 dofblur4 = dofblur * 0.4;
+
+    // BOKEH
+    col += texture2D( tColor, coords + ( vec2(  0.0,   0.4  ) * aspectcorrect ) * dofblur );
+    col += texture2D( tColor, coords + ( vec2(  0.15,  0.37 ) * aspectcorrect ) * dofblur );
+    col += texture2D( tColor, coords + ( vec2(  0.29,  0.29 ) * aspectcorrect ) * dofblur );
+    col += texture2D( tColor, coords + ( vec2( -0.37,  0.15 ) * aspectcorrect ) * dofblur );
+    col += texture2D( tColor, coords + ( vec2(  0.40,  0.0  ) * aspectcorrect ) * dofblur );
+    col += texture2D( tColor, coords + ( vec2(  0.37, -0.15 ) * aspectcorrect ) * dofblur );
+    col += texture2D( tColor, coords + ( vec2(  0.29, -0.29 ) * aspectcorrect ) * dofblur );
+    col += texture2D( tColor, coords + ( vec2( -0.15, -0.37 ) * aspectcorrect ) * dofblur );
+    col += texture2D( tColor, coords + ( vec2(  0.0,  -0.4  ) * aspectcorrect ) * dofblur );
+    col += texture2D( tColor, coords + ( vec2( -0.15,  0.37 ) * aspectcorrect ) * dofblur );
+    col += texture2D( tColor, coords + ( vec2( -0.29,  0.29 ) * aspectcorrect ) * dofblur );
+    col += texture2D( tColor, coords + ( vec2(  0.37,  0.15 ) * aspectcorrect ) * dofblur );
+    col += texture2D( tColor, coords + ( vec2( -0.4,   0.0  ) * aspectcorrect ) * dofblur );
+    col += texture2D( tColor, coords + ( vec2( -0.37, -0.15 ) * aspectcorrect ) * dofblur );
+    col += texture2D( tColor, coords + ( vec2( -0.29, -0.29 ) * aspectcorrect ) * dofblur );
+    col += texture2D( tColor, coords + ( vec2(  0.15, -0.37 ) * aspectcorrect ) * dofblur );
+
+    col += texture2D( tColor, coords + ( vec2(  0.15,  0.37 ) * aspectcorrect ) * dofblur9 );
+    col += texture2D( tColor, coords + ( vec2( -0.37,  0.15 ) * aspectcorrect ) * dofblur9 );
+    col += texture2D( tColor, coords + ( vec2(  0.37, -0.15 ) * aspectcorrect ) * dofblur9 );
+    col += texture2D( tColor, coords + ( vec2( -0.15, -0.37 ) * aspectcorrect ) * dofblur9 );
+    col += texture2D( tColor, coords + ( vec2( -0.15,  0.37 ) * aspectcorrect ) * dofblur9 );
+    col += texture2D( tColor, coords + ( vec2(  0.37,  0.15 ) * aspectcorrect ) * dofblur9 );
+    col += texture2D( tColor, coords + ( vec2( -0.37, -0.15 ) * aspectcorrect ) * dofblur9 );
+    col += texture2D( tColor, coords + ( vec2(  0.15, -0.37 ) * aspectcorrect ) * dofblur9 );
+
+    col += texture2D( tColor, coords + ( vec2(  0.29,  0.29 ) * aspectcorrect ) * dofblur7 );
+    col += texture2D( tColor, coords + ( vec2(  0.40,  0.0  ) * aspectcorrect ) * dofblur7 );
+    col += texture2D( tColor, coords + ( vec2(  0.29, -0.29 ) * aspectcorrect ) * dofblur7 );
+    col += texture2D( tColor, coords + ( vec2(  0.0,  -0.4  ) * aspectcorrect ) * dofblur7 );
+    col += texture2D( tColor, coords + ( vec2( -0.29,  0.29 ) * aspectcorrect ) * dofblur7 );
+    col += texture2D( tColor, coords + ( vec2( -0.4,   0.0  ) * aspectcorrect ) * dofblur7 );
+    col += texture2D( tColor, coords + ( vec2( -0.29, -0.29 ) * aspectcorrect ) * dofblur7 );
+    col += texture2D( tColor, coords + ( vec2(  0.0,   0.4  ) * aspectcorrect ) * dofblur7 );
+
+    col += texture2D( tColor, coords + ( vec2(  0.29,  0.29 ) * aspectcorrect ) * dofblur4 );
+    col += texture2D( tColor, coords + ( vec2(  0.4,   0.0  ) * aspectcorrect ) * dofblur4 );
+    col += texture2D( tColor, coords + ( vec2(  0.29, -0.29 ) * aspectcorrect ) * dofblur4 );
+    col += texture2D( tColor, coords + ( vec2(  0.0,  -0.4  ) * aspectcorrect ) * dofblur4 );
+    col += texture2D( tColor, coords + ( vec2( -0.29,  0.29 ) * aspectcorrect ) * dofblur4 );
+    col += texture2D( tColor, coords + ( vec2( -0.4,   0.0  ) * aspectcorrect ) * dofblur4 );
+    col += texture2D( tColor, coords + ( vec2( -0.29, -0.29 ) * aspectcorrect ) * dofblur4 );
+    col += texture2D( tColor, coords + ( vec2(  0.0,   0.4  ) * aspectcorrect ) * dofblur4 );
+
+    gl_FragColor = col / 41.0;
+    
+    // gl_FragColor = col;
+    gl_FragColor.a = 1.0;
+
+}`,
+
+
+    } );
+
+    const mesh = new THREE.Mesh( geometry, material );
+    scene.add( mesh );
+
+    renderer = new THREE.WebGLRenderer();
+    renderer.setPixelRatio( window.devicePixelRatio );
+    document.body.appendChild( renderer.domElement );
+
+    renderer.setSize( width, height );
+
+
+}
+
+
+//
+
+function animate() {
+
+    requestAnimationFrame( animate );
+
+    uniforms[ 'time' ].value = performance.now() / 1000;
+
+    renderer.render( scene, camera );
+
+}
+
+
+    const videoElement = document.getElementsByClassName('input_video')[0];
+    const canvasElement = document.getElementsByClassName('output_canvas')[0];
+    const canvasCtx = canvasElement.getContext('2d');
+    var i = 0;
+    var last = { i, now: Date.now()};
+
+    setInterval(() => {
+      var diff = i - last.i;
+      var t = Date.now() - last.now;
+
+      console.log((diff / t * 1000).toFixed(2), 'fps')
+
+      last.i = i;
+      last.now = Date.now();
+    }, 1000);
+
+    
+    function onResults(results) {
+      if (i % 400 == 0) console.log(results);
+     i++;
+      canvasCtx.save();
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+      canvasCtx.drawImage(results.segmentationMask, 0, 0,
+                          canvasElement.width, canvasElement.height);
+    
+    // https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D/filter
+
+      // Only overwrite existing pixels.
+      canvasCtx.globalCompositeOperation = 'source-in';
+    //   canvasCtx.fillStyle = '#00FF00';
+    //   canvasCtx.fillStyle = '#FFFFFF';
+    canvasCtx.fillStyle = '#000000';
+      canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
+    
+      // Only overwrite missing pixels.
+      canvasCtx.globalCompositeOperation = 'destination-atop';
+
+      tColor.image = results.image;
+      tColor.needsUpdate = true;
+      uniforms.tColor.value = tColor;
+
+      tDepth.image = results.segmentationMask;
+      tDepth.needsUpdate = true;
+      uniforms.tDepth.value = tDepth;
+
+
+    // uniforms.tColor.value = new THREE.CanvasTexture(results.segmentationMask);
+      window.u =  uniforms;
+
+
+    //   canvasCtx.drawImage(
+    //       results.image, 0, 0, canvasElement.width, canvasElement.height);
+    
+      canvasCtx.restore();
+    }
+    
+    const selfieSegmentation = new SelfieSegmentation({locateFile: (file) => {
+      return `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`;
+    }});
+    selfieSegmentation.setOptions({
+      modelSelection: 1,
+    });
+    selfieSegmentation.onResults(onResults);
+    
+    const webCamera = new Camera(videoElement, {
+      onFrame: async () => {
+        await selfieSegmentation.send({image: videoElement});
+      },
+      width,
+      height
+    });
+    webCamera.start();
+    </script>
+    
+</body>
+</html>
