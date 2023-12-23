@@ -1,0 +1,68 @@
+<html>
+
+<body>
+	<style>
+		body {
+			background: #333;
+			color: #ddd;
+		}
+
+		#overlay {
+			position: absolute;
+			z-index: 10;
+			left: 0;
+			top: 30px;
+		}
+	</style>
+
+<b>Squash Pose Estimation</b>
+
+<button onclick="input.paused ? input.play() : input.pause()">Play / Pause</button>
+<br/>	
+
+	<canvas id="overlay"></canvas>
+
+	<video id="input" controls>
+		<source src="IMG_0167.MOV">
+		<!-- <source src="IMG_0168.MOV"> -->
+		
+	</video>
+
+	  
+<!-- Require the peer dependencies of pose-detection. -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
+
+<!-- You must explicitly require a TF.js backend if you're not using the TF.js union bundle. -->
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
+
+<script src="handstand.js"></script>
+<script src="pose.js"></script>
+
+    
+	<script async>
+        /// https://github.com/tensorflow/tfjs-models/tree/master/pose-detection/src/blazepose_mediapipe
+        // 
+		var width, height, dpr, ctx
+
+		var handstandTracker = new HandstandTracker();
+		var analyzer;
+
+		const promiseVideoLoad = (a) => {
+			input.onloadedmetadata = a;
+		};
+
+		Promise.all([
+			loadModel(),
+			new Promise(promiseVideoLoad)
+		]).then(() => {
+			console.log('Hit run!');
+			analyzer = new Analyzer(input);
+            analyzer.process();
+		});
+	</script>
+</body>
+
+</html>

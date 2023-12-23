@@ -22,9 +22,11 @@ function setupVideoElement() {
 // pipe 
 async function captureWebcamTo(dom, start) {
     const constrains = {
-        //facingMode: 'user' // 'environmnet'
         // https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getUserMedia
-        'video': true,
+        'video': {
+            // facingMode: { exact: "user" },
+            // facingMode: 'environment',
+        },
         'audio': false
         // 'audio': { 'echoCancellation': true },
         // 'video': {

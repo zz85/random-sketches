@@ -11,20 +11,20 @@
 
 <body>
     <style>
-		body {
-			background: #333;
-			color: #ddd;
-		}
+        body {
+            background: #333;
+            color: #ddd;
+        }
 
-		#overlay {
-			position: absolute;
-			z-index: 10;
-			left: 0;
-			top: 30px;
-		}
-	</style>
+        #overlay {
+            position: absolute;
+            z-index: 10;
+            left: 0;
+            top: 30px;
+        }
+    </style>
 
-	<canvas id="overlay"></canvas>
+    <canvas id="overlay"></canvas>
 
     <!-- Require the peer dependencies of pose-detection. -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
@@ -34,10 +34,11 @@
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
 
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
+
     <script src="pose.js"></script>
     <script src="handstand.js"></script>
-
     <script src="webcam.js"></script>
+
     <script async>
         const videoCameras = getConnectedDevices('videoinput');
         console.log('Cameras found:', videoCameras);
