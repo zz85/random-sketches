@@ -22,59 +22,59 @@ async function loadModel() {
     return detector
 }
 
-// processing loop
-async function process() {
-    start = Date.now();
-    const estimationConfig = {enableSmoothing: true};
-    // const poses = await detector.estimatePoses(image, estimationConfig);
-    poses = await detector.estimatePoses(input, estimationConfig);
-
-    took = Date.now() - start;
-
-    var pose = poses[0];
-
-    // show results
-    ctx.fillStyle = '#ddd';
-    ctx.clearRect(0, 0, width, height);
-    if (pose) {
-        var scores = pose.keypoints.map(p => p.score);
-        var min_score = Math.min(...scores);
-        var sum = scores.reduce((accum, s) => accum + s, 0);
-        var avg_score = sum / scores.length;
-    }
-    ctx.fillText(`Found: ${poses.length}, Score: ${pose ? min_score.toFixed(3): ''}/${pose ? avg_score.toFixed(3): ''}`, 40, 240);
-    took = Date.now() - start;
-    ctx.fillText(`Took ${took}ms which is ~ ${(1000 / took).toFixed(2)}fps`, 40, 200);
-
-    if (poses[0]) {
-        let why = didntHandstand(poses[0])
-
-        var lapsed = handstandTracker.update(!why, input.currentTime, poses[0]);
-        if (lapsed) {
-            lastLapsed = lapsed
-        }
-
-        ctx.save();
-        ctx.font = `bold ${why ? 10: 24 }px serif`;
-        ctx.fillStyle = why ? 'red' : 'green';
-        ctx.fillText(why ? why : 'Handstand!', 50, 300);
-
-        if (lastLapsed) {
-            ctx.fillText(lastLapsed.toFixed(2) + 's', 50, 100);
-        }
-
-        ctx.restore();
+class Analyzer {
+    constructor(source) {
+        // source dom (assumes video)
+        this.source = source;
+        init(source)
     }
 
-    // draw pose results
-    poses.forEach(debugPose)
+    // processing loop
+    async process() {
+        const start = Date.now();
+        const estimationConfig = {enableSmoothing: true};
+        window.poses = await detector.estimatePoses(this.source, estimationConfig);
+        const took = Date.now() - start;
 
-    setTimeout(process, 5)
-}
+        var pose = poses[0];
 
-function run() {
-    input.play()
-    process()
+        // show results
+        ctx.fillStyle = '#ddd';
+        ctx.clearRect(0, 0, width, height);
+        if (pose) {
+            var scores = pose.keypoints.map(p => p.score);
+            var min_score = Math.min(...scores);
+            var sum = scores.reduce((accum, s) => accum + s, 0);
+            var avg_score = sum / scores.length;
+        }
+        ctx.fillText(`Found: ${poses.length}, Score: ${pose ? min_score.toFixed(3): ''}/${pose ? avg_score.toFixed(3): ''}`, 40, 240);
+        ctx.fillText(`Took ${took}ms which is ~ ${(1000 / took).toFixed(2)}fps`, 40, 200);
+
+        if (poses[0]) {
+            let why = didntHandstand(poses[0])
+
+            var lapsed = handstandTracker.update(!why, this.source.currentTime, poses[0]);
+            if (lapsed) {
+                lastLapsed = lapsed
+            }
+
+            ctx.save();
+            ctx.font = `bold ${why ? 10: 24 }px serif`;
+            ctx.fillStyle = why ? 'red' : 'green';
+            ctx.fillText(why ? why : 'Handstand!', 50, 300);
+
+            if (lastLapsed) {
+                ctx.fillText(lastLapsed.toFixed(2) + 's', 50, 100);
+            }
+
+            ctx.restore();
+        }
+
+        // draw pose results
+        poses.forEach(debugPose)
+
+        setTimeout(() => this.process(), 5)
+    }
 }
 
 async function init(input) {
@@ -82,7 +82,6 @@ async function init(input) {
     // set up 
     overlay = document.getElementById('overlay');
     dpr = window.devicePixelRatio;
-    // dpr = 1;
     width = input.videoWidth;
     height = input.videoHeight;
     input.width = width
@@ -108,7 +107,7 @@ function drawLine(p1, p2) {
 function debugPose(pose, i) {
     keypoints = pose.keypoints;
     ctx.save();
-    ctx.fillStyle = 'yellow'
+    ctx.fillStyle = 'yellow';
     ctx.fillText(`Pose #${i} `, keypoints[0].x, keypoints[0].y - 50);
     ctx.restore();
 
@@ -149,14 +148,8 @@ function debugPose(pose, i) {
     drawLine(keypoints[a], keypoints[b]);
 })
 
-
-
-
-
     drawLine(keypoints[11], keypoints[12]);
     
-
-
     // keypoints
     /*
 

@@ -73,7 +73,14 @@ function didntHandstand(pose) {
     if (isAboveCheck(keypoints, LEFT_SHOULDER, NOSE) ||
         isAboveCheck(keypoints, RIGHT_SHOULDER, NOSE)
     ) {
-        return "Head needs to be above shoulders"
+        return "Heads needs to be below shoulders"
+    }
+
+    // without this headstand becomes legit
+    if (isAboveCheck(keypoints, LEFT_SHOULDER, LEFT_WRIST) ||
+        isAboveCheck(keypoints, RIGHT_SHOULDER, RIGHT_WRIST)
+    ) {
+        return "Shoulders needs to be above wrists"
     }
 
     // 2. hips above shoulders

@@ -7,6 +7,8 @@
     <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
 </head>
 
+<!-- this test webcam -> mediapipe workflow -->
+
 <body>
     <style>
 		body {
@@ -22,10 +24,7 @@
 		}
 	</style>
 
-	
-
 	<canvas id="overlay"></canvas>
-    <video id="localVideo" autoplay playsinline controls="false" />
 
     <!-- Require the peer dependencies of pose-detection. -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
@@ -38,58 +37,26 @@
     <script src="pose.js"></script>
     <script src="handstand.js"></script>
 
+    <script src="webcam.js"></script>
     <script async>
-        async function getConnectedDevices(type) {
-            const devices = await navigator.mediaDevices.enumerateDevices();
-            return type ? devices.filter(device => device.kind === type) : devices;
-        }
-
         const videoCameras = getConnectedDevices('videoinput');
         console.log('Cameras found:', videoCameras);
 
-        const openMediaDevices = async (constraints) => {
-            return await navigator.mediaDevices.getUserMedia(constraints);
-        }
-
-        let stream;
-
-        async function capture() {
-            try {
-                const constrains = {
-                    //facingMode: 'user' // 'environmnet'
-                    // https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getUserMedia
-                    'video': true,
-                    'audio': false
-                    // 'audio': { 'echoCancellation': true },
-                    // 'video': {
-                    //     'deviceId': cameraId,
-                    //     'width': { 'min': minWidth },
-                    //     'height': { 'min': minHeight }
-                    // }
-                };
-                stream = await openMediaDevices(constrains);
-                console.log('Got MediaStream:', stream);
-                const videoElement = document.querySelector('video#localVideo');
-                videoElement.srcObject = stream;
-                videoElement.onloadedmetadata = () => {
-                    // videoElement.play();
-                    init(videoElement)
-                };
-                input = videoElement
-                
-                
-
-            } catch (error) {
-                console.error('Error accessing media devices.', error);
-            }
-        }
         var handstandTracker = new HandstandTracker();
-        loadModel();
-        capture();
+        var analyzer;
 
+        loadModel().then(() => {
+            if (analyzer) analyzer.process();
+        });
 
-
+        const videoEl = setupVideoElement();
+        captureWebcamTo(videoEl, () => {
+            console.log('ok');
+            analyzer = new Analyzer(videoEl);
+            if (detector) analyzer.process();
+        })
     </script>
+
 </body>
 
 </html>
