@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+    <!-- Just figuring out the webcam situation -->
+<head>
+    <title>handstand</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+</head>
+
+<body>
+    <video id="localVideo" autoplay playsinline controls="false" />
+    
+    <!-- Require the peer dependencies of pose-detection. -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
+
+    <!-- You must explicitly require a TF.js backend if you're not using the TF.js union bundle. -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
+
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
+    <script src="handstand.js"></script>
+
+    <script async>
+        async function getConnectedDevices(type) {
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            return type ? devices.filter(device => device.kind === type) : devices;
+        }
+
+        const videoCameras = getConnectedDevices('videoinput');
+        console.log('Cameras found:', videoCameras);
+
+        const openMediaDevices = async (constraints) => {
+            return await navigator.mediaDevices.getUserMedia(constraints);
+        }
+
+        let stream;
+
+        async function capture() {
+            try {
+                const constrains = {
+                    //facingMode: 'user' // 'environmnet'
+                    // https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getUserMedia
+                    'video': true,
+                    'audio': false
+                    // 'audio': { 'echoCancellation': true },
+                    // 'video': {
+                    //     'deviceId': cameraId,
+                    //     'width': { 'min': minWidth },
+                    //     'height': { 'min': minHeight }
+                    // }
+                };
+                stream = await openMediaDevices(constrains);
+                console.log('Got MediaStream:', stream);
+                const videoElement = document.querySelector('video#localVideo');
+                videoElement.srcObject = stream;
+                videoElement.onloadedmetadata = () => {
+                    videoElement.play();
+                };
+
+            } catch (error) {
+                console.error('Error accessing media devices.', error);
+            }
+        }
+
+        capture();
+
+
+
+    </script>
+</body>
+
+</html>
