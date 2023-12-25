@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<!-- Debug saved keypoints -->
+
+<head>
+    <title>handstand</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+</head>
+
+<body>
+    <script type="importmap">
+        {
+          "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+          }
+        }
+      </script>
+    <script src="pose.js"></script>
+    <script async type="module">
+
+        var width = 800;
+        var height = 600;
+
+        import * as THREE from 'three';
+
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera( 75, width / height, 0.1, 1000 );
+
+        const renderer = new THREE.WebGLRenderer();
+        renderer.setSize( width, height );
+        document.body.appendChild( renderer.domElement );
+
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        
+        const controls = new OrbitControls( camera, renderer.domElement );
+
+        camera.position.set( 0, 0, 2 );
+        camera.lookAt( 0, 0, 0 );
+
+        const material = new THREE.LineBasicMaterial( { color: 0xdedede } );
+        const points = [];
+        BLAZE_POSE_INDICES.forEach(() => {
+            points.push( new THREE.Vector3( 0, 0, 0 ) );
+            points.push( new THREE.Vector3( 0, 0, 0 ) );
+        })
+
+        const geometry = new THREE.BufferGeometry().setFromPoints( points );
+
+        const line = new THREE.LineSegments( geometry, material );
+        window.line = line;
+
+        scene.add( line );
+        let i = 0;
+
+        function render() {
+            i++;
+            i %= j.points.length;
+            // console.log(i)
+
+            var points = j.points[i].keypoints3D;
+            BLAZE_POSE_INDICES.forEach(([from, to], count) => {
+                const startPt = points[from];
+                const endPt = points[to];
+
+                geometry.attributes.position.setXYZ(count * 2 + 0, startPt.x, startPt.y, startPt.z);
+                geometry.attributes.position.setXYZ(count * 2 + 1, endPt.x, endPt.y, endPt.z);
+            })
+
+            geometry.attributes.position.needsUpdate = true;
+            renderer.render( scene, camera );
+
+            setTimeout(render, 30);
+        }
+
+        start()
+        
+
+
+        async function start() {
+            const response = await fetch("handstand.json");
+            const json = await response.json();
+            window.j = json;
+            
+            console.log(json);
+
+            var points = j.points[i].keypoints3D;
+            BLAZE_POSE_INDICES.forEach(([from, to], count) => {
+                const startPt = points[from];
+                const endPt = points[to];
+
+                geometry.attributes.position.setXYZ(count * 2 + 0, startPt.x, startPt.y, startPt.z);
+                geometry.attributes.position.setXYZ(count * 2 + 1, endPt.x, endPt.y, endPt.z);
+            })
+            
+            render();
+        }
+
+    </script>
+</body>
+
+</html>

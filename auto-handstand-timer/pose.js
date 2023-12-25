@@ -119,27 +119,7 @@ function debugPose(pose, i) {
         ctx.stroke();
     });
 
-    [
-        [LEFT_SHOULDER, RIGHT_SHOULDER],
-        [LEFT_HIP, RIGHT_HIP],
-        [RIGHT_SHOULDER, RIGHT_HIP],
-        [RIGHT_HIP, RIGHT_KNEE],
-        [RIGHT_KNEE, RIGHT_ANKLE],
-        [RIGHT_ANKLE, RIGHT_HEEL],
-        [RIGHT_HEEL, RIGHT_FOOT_INDEX],
-        [LEFT_SHOULDER, LEFT_HIP],
-        [LEFT_HIP, LEFT_KNEE],
-        [LEFT_KNEE, LEFT_ANKLE],
-        [LEFT_ANKLE, LEFT_HEEL],
-        [LEFT_HEEL, LEFT_FOOT_INDEX],
-        [LEFT_SHOULDER, LEFT_ELBOW],
-        [LEFT_ELBOW, LEFT_WRIST],
-        [LEFT_WRIST, LEFT_PINKY],
-        [RIGHT_SHOULDER, RIGHT_ELBOW],
-        [RIGHT_ELBOW, RIGHT_WRIST],
-        [RIGHT_WRIST, RIGHT_PINKY],
-        [RIGHT_PINKY, RIGHT_INDEX]
-    ].forEach(([a, b]) => {
+    BLAZE_POSE_INDICES.forEach(([a, b]) => {
         drawLine(keypoints[a], keypoints[b]);
     })
 }
@@ -181,3 +161,26 @@ const LEFT_FOOT_INDEX = 31;
 const RIGHT_FOOT_INDEX = 32;
 const BODY_CENTER = 33;
 const FORE_HEAD = 34;
+
+
+const BLAZE_POSE_INDICES = [
+    [LEFT_SHOULDER, RIGHT_SHOULDER],
+    [LEFT_HIP, RIGHT_HIP],
+    [RIGHT_SHOULDER, RIGHT_HIP],
+    [RIGHT_HIP, RIGHT_KNEE],
+    [RIGHT_KNEE, RIGHT_ANKLE],
+    [RIGHT_ANKLE, RIGHT_HEEL],
+    [RIGHT_HEEL, RIGHT_FOOT_INDEX],
+    [LEFT_SHOULDER, LEFT_HIP],
+    [LEFT_HIP, LEFT_KNEE],
+    [LEFT_KNEE, LEFT_ANKLE],
+    [LEFT_ANKLE, LEFT_HEEL],
+    [LEFT_HEEL, LEFT_FOOT_INDEX],
+    [LEFT_SHOULDER, LEFT_ELBOW],
+    [LEFT_ELBOW, LEFT_WRIST],
+    [LEFT_WRIST, LEFT_PINKY],
+    [RIGHT_SHOULDER, RIGHT_ELBOW],
+    [RIGHT_ELBOW, RIGHT_WRIST],
+    [RIGHT_WRIST, RIGHT_PINKY],
+    [RIGHT_PINKY, RIGHT_INDEX]
+]
