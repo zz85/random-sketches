@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<!-- Debug saved keypoints -->
+
+<head>
+    <title>handstand</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+</head>
+
+<body>
+    <script src="pose.js"></script>
+    <script async>
+        const canvas = document.createElement('canvas');
+        document.body.appendChild(canvas);
+        const ctx = canvas.getContext('2d');
+        canvas.width = 800;
+        canvas.height = 600;
+
+
+        async function start() {
+            const response = await fetch("handstand.json");
+            const json = await response.json();
+            window.j = json;
+            
+            console.log(json);
+
+            animate();
+            
+
+        }
+
+        function animate() {
+            ctx.clearRect(0, 0, 800, 600);
+            ctx.fillText(`frame #${i} `, 20, 20);
+            debugPose(j.points[i])
+            // // fake motion blur
+            // debugPose(j.points[i+1])
+            // debugPose(j.points[i+2])
+            // debugPose(j.points[i+3])
+            // debugPose(j.points[i+4])
+            // debugPose(j.points[i+5])
+            
+            i++;
+            i %= j.points.length;
+
+            setTimeout(animate, 30);
+        }
+
+        let i = 0;
+        start();
+
+        
+
+
+    </script>
+</body>
+
+</html>

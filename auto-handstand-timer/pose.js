@@ -104,26 +104,23 @@ function drawLine(p1, p2) {
 
 // draw landmarks
 function debugPose(pose, i) {
-    keypoints = pose.keypoints;
+    const keypoints = pose.keypoints;
     ctx.save();
     ctx.fillStyle = 'yellow';
     ctx.fillText(`Pose #${i} `, keypoints[0].x, keypoints[0].y - 50);
     ctx.restore();
 
-    ctx.strokeStyle = 'white';
+    // ctx.strokeStyle = 'white';
+    ctx.strokeStyle = 'black';
 
     keypoints.forEach((e, i) => {
         ctx.beginPath();
         ctx.arc(e.x, e.y, 3, 0, Math.PI * 2);
         ctx.stroke();
-        // ctx.fillText(`${i}: ${e.part}`, e.x | 0, e.y | 0);
-    })
+    });
 
-    // left hip -> left knee -> left ankle
-    // drawLine(keypoints[11], keypoints[13]);
-
-    drawLine(keypoints[11], keypoints[12]);
     [
+        [LEFT_SHOULDER, RIGHT_SHOULDER],
         [LEFT_HIP, RIGHT_HIP],
         [RIGHT_SHOULDER, RIGHT_HIP],
         [RIGHT_HIP, RIGHT_KNEE],
@@ -145,29 +142,42 @@ function debugPose(pose, i) {
     ].forEach(([a, b]) => {
         drawLine(keypoints[a], keypoints[b]);
     })
-
-    drawLine(keypoints[11], keypoints[12]);
-
-    // keypoints
-    /*
-
-    Id	Part
-    0	nose
-    1	leftEye
-    2	rightEye
-    3	leftEar
-    4	rightEar
-    5	leftShoulder
-    6	rightShoulder
-    7	leftElbow
-    8	rightElbow
-    9	leftWrist
-    10	rightWrist
-    11	leftHip
-    12	rightHip
-    13	leftKnee
-    14	rightKnee
-    15	leftAnkle
-    16	rightAnkles
-    */
 }
+
+// BlazePose Keypoints: Used in MediaPipe BlazePose
+// https://github.com/tensorflow/tfjs-models/tree/master/pose-detection
+const NOSE = 0;
+const LEFT_EYE_INNER = 1;
+const LEFT_EYE = 2;
+const LEFT_EYE_OUTER = 3;
+const RIGHT_EYE_INNER = 4;
+const RIGHT_EYE = 5;
+const RIGHT_EYE_OUTER = 6;
+const LEFT_EAR = 7;
+const RIGHT_EAR = 8;
+const MOUTH_LEFT = 9;
+const MOUTH_RIGHT = 10;
+const LEFT_SHOULDER = 11;
+const RIGHT_SHOULDER = 12;
+const LEFT_ELBOW = 13;
+const RIGHT_ELBOW = 14;
+const LEFT_WRIST = 15;
+const RIGHT_WRIST = 16;
+const LEFT_PINKY = 17;
+const RIGHT_PINKY = 18;
+const LEFT_INDEX = 19;
+const RIGHT_INDEX = 20;
+const LEFT_THUMB = 21;
+const RIGHT_THUMB = 22;
+const LEFT_HIP = 23;
+const RIGHT_HIP = 24;
+const LEFT_KNEE = 25;
+const RIGHT_KNEE = 26;
+const LEFT_ANKLE = 27;
+const RIGHT_ANKLE = 28;
+const LEFT_HEEL = 29;
+const RIGHT_HEEL = 30;
+const LEFT_FOOT_INDEX = 31;
+const RIGHT_FOOT_INDEX = 32;
+const BODY_CENTER = 33;
+const FORE_HEAD = 34;
