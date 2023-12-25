@@ -9,12 +9,12 @@ async function loadModel() {
         modelType: 'lite', //  'lite', 'full', 'heavy'
         enableSegmentation: false,
         solutionPath: 'https://cdn.jsdelivr.net/npm/@mediapipe/pose'
-                    // or 'base/node_modules/@mediapipe/pose' in npm.
+        // or 'base/node_modules/@mediapipe/pose' in npm.
     };
-    
+
     try {
         detector = await poseDetection.createDetector(model, detectorConfig);
-    } catch(e) {
+    } catch (e) {
         console.error(e)
     }
 
@@ -32,7 +32,7 @@ class Analyzer {
     // processing loop
     async process() {
         const start = Date.now();
-        const estimationConfig = {enableSmoothing: true};
+        const estimationConfig = { enableSmoothing: true };
         window.poses = await detector.estimatePoses(this.source, estimationConfig);
         const took = Date.now() - start;
 
@@ -46,20 +46,16 @@ class Analyzer {
             var min_score = Math.min(...scores);
             var sum = scores.reduce((accum, s) => accum + s, 0);
             var avg_score = sum / scores.length;
-        }
-        ctx.fillText(`Found: ${poses.length}, Score: ${pose ? min_score.toFixed(3): ''}/${pose ? avg_score.toFixed(3): ''}`, 40, 240);
-        ctx.fillText(`Took ${took}ms which is ~ ${(1000 / took).toFixed(2)}fps`, 40, 200);
 
-        if (poses[0]) {
             let why = didntHandstand(poses[0])
 
-            var lapsed = handstandTracker.update(!why, this.source.currentTime, poses[0]);
+            var lapsed = handstandTracker.update(!why && avg_score > 0.75, this.source.currentTime, poses[0]);
             if (lapsed) {
                 lastLapsed = lapsed
             }
 
             ctx.save();
-            ctx.font = `bold ${why ? 10: 24 }px serif`;
+            ctx.font = `bold ${why ? 10 : 24}px serif`;
             ctx.fillStyle = why ? 'red' : 'green';
             ctx.fillText(why ? why : 'Handstand!', 50, 300);
 
@@ -69,6 +65,9 @@ class Analyzer {
 
             ctx.restore();
         }
+
+        ctx.fillText(`Found: ${poses.length}, Score: ${pose ? min_score.toFixed(3) : ''}/${pose ? avg_score.toFixed(3) : ''}`, 40, 240);
+        ctx.fillText(`Took ${took}ms which is ~ ${(1000 / took).toFixed(2)}fps`, 40, 200);
 
         // draw pose results
         poses.forEach(debugPose)
@@ -125,31 +124,30 @@ function debugPose(pose, i) {
 
     drawLine(keypoints[11], keypoints[12]);
     [
-        [23, 24],
-        [12, 24],
-        [24, 26],
-        [26, 28],
-        [28, 30],
-        [30, 32],
-        [11, 23],
-        [23, 25],
-        [25, 27],
-        [27, 29],
-        [29, 31],
-        [11, 13],
-        [13, 15],
-        [15, 17],
-
-        [12, 14],
-        [14, 16],
-        [16, 18],
-        [18, 20],
-].forEach(([a, b]) => {
-    drawLine(keypoints[a], keypoints[b]);
-})
+        [LEFT_HIP, RIGHT_HIP],
+        [RIGHT_SHOULDER, RIGHT_HIP],
+        [RIGHT_HIP, RIGHT_KNEE],
+        [RIGHT_KNEE, RIGHT_ANKLE],
+        [RIGHT_ANKLE, RIGHT_HEEL],
+        [RIGHT_HEEL, RIGHT_FOOT_INDEX],
+        [LEFT_SHOULDER, LEFT_HIP],
+        [LEFT_HIP, LEFT_KNEE],
+        [LEFT_KNEE, LEFT_ANKLE],
+        [LEFT_ANKLE, LEFT_HEEL],
+        [LEFT_HEEL, LEFT_FOOT_INDEX],
+        [LEFT_SHOULDER, LEFT_ELBOW],
+        [LEFT_ELBOW, LEFT_WRIST],
+        [LEFT_WRIST, LEFT_PINKY],
+        [RIGHT_SHOULDER, RIGHT_ELBOW],
+        [RIGHT_ELBOW, RIGHT_WRIST],
+        [RIGHT_WRIST, RIGHT_PINKY],
+        [RIGHT_PINKY, RIGHT_INDEX]
+    ].forEach(([a, b]) => {
+        drawLine(keypoints[a], keypoints[b]);
+    })
 
     drawLine(keypoints[11], keypoints[12]);
-    
+
     // keypoints
     /*
 

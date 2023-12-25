@@ -20,12 +20,12 @@ function setupVideoElement() {
 }
 
 // pipe 
-async function captureWebcamTo(dom, start) {
+async function captureWebcamTo(dom, start, flip) {
     const constrains = {
         // https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getUserMedia
         'video': {
             // facingMode: { exact: "user" },
-            // facingMode: 'environment',
+            facingMode: flip ? 'environment' : 'user'
         },
         'audio': false
         // 'audio': { 'echoCancellation': true },
@@ -49,3 +49,9 @@ async function captureWebcamTo(dom, start) {
         console.error('Error accessing media devices.', error);
     }
 }
+
+function getDevices() {
+    const videoCameras = getConnectedDevices('videoinput');
+    console.log('Cameras found:', videoCameras);
+}
+
