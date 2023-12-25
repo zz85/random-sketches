@@ -26,32 +26,32 @@
         import * as THREE from 'three';
 
         const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera( 75, width / height, 0.1, 1000 );
+        const camera = new THREE.PerspectiveCamera(75, width / height, 0.1, 1000);
 
         const renderer = new THREE.WebGLRenderer();
-        renderer.setSize( width, height );
-        document.body.appendChild( renderer.domElement );
+        renderer.setSize(width, height);
+        document.body.appendChild(renderer.domElement);
 
         import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-        
-        const controls = new OrbitControls( camera, renderer.domElement );
 
-        camera.position.set( 0, 0, 2 );
-        camera.lookAt( 0, 0, 0 );
+        const controls = new OrbitControls(camera, renderer.domElement);
 
-        const material = new THREE.LineBasicMaterial( { color: 0xdedede } );
+        camera.position.set(0, 0, 2);
+        camera.lookAt(0, 0, 0);
+
+        const material = new THREE.LineBasicMaterial({ color: 0xdedede });
         const points = [];
         BLAZE_POSE_INDICES.forEach(() => {
-            points.push( new THREE.Vector3( 0, 0, 0 ) );
-            points.push( new THREE.Vector3( 0, 0, 0 ) );
+            points.push(new THREE.Vector3(0, 0, 0));
+            points.push(new THREE.Vector3(0, 0, 0));
         })
 
-        const geometry = new THREE.BufferGeometry().setFromPoints( points );
+        const geometry = new THREE.BufferGeometry().setFromPoints(points);
 
-        const line = new THREE.LineSegments( geometry, material );
+        const line = new THREE.LineSegments(geometry, material);
         window.line = line;
 
-        scene.add( line );
+        scene.add(line);
         let i = 0;
 
         function render() {
@@ -68,24 +68,39 @@
                 geometry.attributes.position.setXYZ(count * 2 + 1, endPt.x, endPt.y, endPt.z);
             })
 
+            points.forEach((point, pos) => {
+                dummy.position.set(point.x, point.y, point.z);
+                dummy.updateMatrix();
+
+                boxes.setMatrixAt(pos, dummy.matrix);
+            });
+
+            boxes.instanceMatrix.needsUpdate = true;
+            boxes.computeBoundingSphere();
+
             geometry.attributes.position.needsUpdate = true;
-            renderer.render( scene, camera );
+            renderer.render(scene, camera);
 
             setTimeout(render, 30);
         }
 
+        var boxes;
+        const dummy = new THREE.Object3D();
+
         start()
-        
+
 
 
         async function start() {
             const response = await fetch("handstand.json");
             const json = await response.json();
             window.j = json;
-            
+
             console.log(json);
 
             var points = j.points[i].keypoints3D;
+
+
             BLAZE_POSE_INDICES.forEach(([from, to], count) => {
                 const startPt = points[from];
                 const endPt = points[to];
@@ -93,7 +108,18 @@
                 geometry.attributes.position.setXYZ(count * 2 + 0, startPt.x, startPt.y, startPt.z);
                 geometry.attributes.position.setXYZ(count * 2 + 1, endPt.x, endPt.y, endPt.z);
             })
-            
+
+
+            // const material = new THREE.MeshLambertMaterial();
+            const geometryBox = new THREE.BoxGeometry(0.075, 0.075, 0.075);
+            geometryBox.scale(0.25, 0.25, 0.25);
+
+            boxes = new THREE.InstancedMesh(geometryBox, material, points.length);
+            // boxes.instanceMatrix.setUsage( THREE.DynamicDrawUsage );
+            scene.add(boxes);
+
+
+
             render();
         }
 
