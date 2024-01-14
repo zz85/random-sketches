@@ -1,0 +1,56 @@
+<html>
+
+<body>
+    <h1>Mirror in 2D. Lag time: <span id="time"></span></h1>
+
+    <script src="streaming.js"></script>
+    <script>
+        function onPoses(d) {
+            window.pose = d.content;
+        }
+        subscribe(onPoses);
+
+    </script>
+
+<style>
+    /* body {
+        background: #333;
+        color: #ddd;
+    } */
+
+</style>
+
+
+    <script src="pose.js"></script>
+    <script src="webcam.js"></script>
+    <script src="streaming.js"></script>
+
+    <canvas id="overlay"></canvas>
+
+    <script>
+        var analyzer;
+
+        var width = 800;
+        var height = 600;
+
+        overlay.width = width;
+        overlay.height = height;
+        window.ctx = overlay.getContext('2d')
+        
+        function draw() {
+            if (!window.pose) return requestAnimationFrame(draw);
+
+            ctx.clearRect(0, 0, width, height);
+            ctx.fillText('HELLO', 10, 10)
+            debugPose(pose, 1)
+
+            requestAnimationFrame(draw);
+        }
+
+
+        draw();
+
+    </script>
+</body>
+
+</html>
