@@ -114,13 +114,18 @@ const streamer = new Streamer();
 const express = require('express');
 const http2Express = require('http2-express-bridge');
 const http2 = require('http2');
-const { Stream } = require('stream');
+// const bodyParser = require('body-parser')
+
 const app = http2Express(express);
 
 app.use(express.static('public'))
+app.use(express.json());
 
-app.post('/send', (req) => {
-    console.log('POST', req);
+app.post('/collect', (req, res) => {
+    console.log('POST', req.body);
+
+    streamer.broadcast({ time: req.body.time }, 'collect')
+    res.end();
 })
 
 app.get('/streaming', (req, res) => {

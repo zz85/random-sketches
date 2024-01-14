@@ -2,6 +2,7 @@
 
 <body>
     <h1>Lag time: <span id="time"></span></h1>
+    <h2 id="collected"></h2><button onclick="collect()">Probe</button>
     <script>
         const evtSource = new EventSource("/streaming");
 
@@ -25,6 +26,27 @@
             console.log('ping', event, data, lag);
         });
 
+        function collect() {
+            const now = Date.now();
+            const collect_once = (event) => {
+                const data = getData(event);
+                collected.innerText = `Collect RTT: ${Date.now() - data.time}ms`
+                evtSource.removeEventListener('collect', collect_once);
+            }
+
+            evtSource.addEventListener('collect', collect_once);
+
+            fetch('/collect', {
+                method: 'POST',
+                headers: {
+                    // 'Accept': 'application/json',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    time: now
+                })
+            })
+        }
     </script>
 </body>
 
