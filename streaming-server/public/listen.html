@@ -1,0 +1,31 @@
+<html>
+
+<body>
+    <h1>Lag time: <span id="time"></span></h1>
+    <script>
+        const evtSource = new EventSource("/streaming");
+
+        function getData(event) {
+            try {
+                return JSON.parse(event.data)
+            } catch (e) {
+                return {}
+            }
+        }
+
+        evtSource.onmessage = (event) => {
+            const data = getData(event);
+            console.log(`message:`, data);
+        };
+
+        evtSource.addEventListener('ping', function (event) {
+            const data = getData(event);
+            let lag = Date.now() - data.time;
+            time.innerText = `${lag}ms`;
+            console.log('ping', event, data, lag);
+        });
+
+    </script>
+</body>
+
+</html>
