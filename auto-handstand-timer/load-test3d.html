@@ -33,8 +33,6 @@
         renderer.setSize(width, height);
         document.body.appendChild(renderer.domElement);
 
-        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-
         const controls = new OrbitControls(camera, renderer.domElement);
 
         camera.position.set(0, 0, 2);

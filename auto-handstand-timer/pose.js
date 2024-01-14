@@ -110,8 +110,8 @@ function debugPose(pose, i) {
     ctx.fillText(`Pose #${i} `, keypoints[0].x, keypoints[0].y - 50);
     ctx.restore();
 
-    // ctx.strokeStyle = 'white';
-    ctx.strokeStyle = 'black';
+    ctx.strokeStyle = 'white';
+    // ctx.strokeStyle = 'black';
 
     keypoints.forEach((e, i) => {
         ctx.beginPath();
