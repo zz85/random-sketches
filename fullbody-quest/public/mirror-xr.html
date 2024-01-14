@@ -54,15 +54,16 @@
         }
       </script>
 
-
     <script async type="module">
         var analyzer;
 
-        var width = 800;
-        var height = 600;
+        var width = innerWidth;
+        var height = innerHeight;
 
         import * as THREE from 'three';
         import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        import { Reflector } from 'three/addons/objects/Reflector.js';
 
         import { VRButton } from 'three/addons/webxr/VRButton.js';
         import { HTMLMesh } from 'three/addons/interactive/HTMLMesh.js';
@@ -73,13 +74,18 @@
         const camera = new THREE.PerspectiveCamera(75, width / height, 0.00001, 1000);
         camera.position.set(0, 1.6, 1.5);
 
-        const renderer = new THREE.WebGLRenderer();
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.autoClear = false;
         renderer.setPixelRatio(window.devicePixelRatio);
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.xr.enabled = true;
-        document.body.appendChild(VRButton.createButton(renderer));
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1;
         document.body.appendChild(renderer.domElement);
+
+        document.body.appendChild(VRButton.createButton(renderer));
+
 
         // renderer = new THREE.WebGLRenderer({ antialias: true });
 
@@ -130,6 +136,43 @@
 
         scene.add(wrapper);
 
+        //
+
+        const mirrorGeometry = new THREE.PlaneGeometry(2, 2);
+        // scene.add();
+
+
+        const verticalMirror = new Reflector(mirrorGeometry, {
+            clipBias: 0.003,
+            textureWidth: window.innerWidth * window.devicePixelRatio,
+            textureHeight: window.innerHeight * window.devicePixelRatio,
+            color: 0xc1cbcb
+        });
+        verticalMirror.position.y = 1;
+        verticalMirror.position.z = - 1;
+        const mirrorBacking = new THREE.Mesh(mirrorGeometry, new THREE.MeshBasicMaterial({ wireframe: !true, color: 0xdedede}))
+        mirrorBacking.position.z = -0.1;
+        mirrorBacking.scale.multiplyScalar(1.1);
+
+        verticalMirror.add(mirrorBacking)
+        scene.add(verticalMirror);
+
+
+        //
+
+        const lineGeometry = new THREE.BufferGeometry();
+        lineGeometry.setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, - 5)]);
+
+        const controller1 = renderer.xr.getController(0);
+        controller1.add(new THREE.Line(lineGeometry));
+       // scene.add(controller1);
+
+        const controller2 = renderer.xr.getController(1);
+        controller2.add(new THREE.Line(lineGeometry));
+        //scene.add(controller2);
+
+        //
+
         const controllerModelFactory = new XRControllerModelFactory();
 
         const controllerGrip1 = renderer.xr.getControllerGrip(0);
@@ -146,7 +189,7 @@
         let statsMesh = new HTMLMesh(debug);
         statsMesh.position.x = - 0.25;
         statsMesh.position.y = 1.5;
-        statsMesh.position.z = - 0.6;
+        statsMesh.position.z = - 0.9;
         // statsMesh.rotation.y = Math.PI / 4;
         statsMesh.scale.setScalar(2.5);
         group.add(statsMesh);
@@ -178,9 +221,9 @@
 
             geometry.attributes.position.needsUpdate = true;
 
-            wrapper.position.y = 1
+            wrapper.position.y = 0.4
+            wrapper.rotation.y = Math.PI;
             renderer.render(scene, camera);
-
         }
 
         // render();
