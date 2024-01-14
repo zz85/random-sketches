@@ -37,4 +37,8 @@ function subscribe(cb) {
         // console.log('ping', event, data, lag);
         cb(data)
     });
+
+    return () => {
+        evtSource.close();
+    }
 }

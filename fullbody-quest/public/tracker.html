@@ -98,7 +98,7 @@
         scene.add(pose3D);
 
         function render() {
-            setTimeout(render, 30)
+            requestAnimationFrame(render, 30)
             if (!window.poses || !poses[0]) return;
             var pose = poses[0];
             
@@ -147,9 +147,12 @@
                     let poses = await analyzer.process();
 
                     if (poses[0]) {
+                        delete poses[0].keypoints;
                         pusher(poses[0]);
                     }
-                    requestAnimationFrame(run)
+                    
+                    // requestAnimationFrame(run)
+                    setTimeout(run, 1000/ 15)
                 }
 
                 run();

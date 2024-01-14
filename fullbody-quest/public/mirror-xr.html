@@ -1,0 +1,194 @@
+<html>
+
+<body>
+    <div id="debug">
+        <h1>Mirror in 3D. Lag time: <span id="time"></span></h1>
+        <button onclick="toggle()">Toggle</button>
+    </div>
+
+    <script src="streaming.js"></script>
+    <script>
+        function onPoses(d) {
+            window.pose = d.content;
+        }
+
+        let cancel;
+
+        const toggle = () => {
+            if (!cancel) {
+                cancel = subscribe(onPoses);
+            } else {
+                cancel = cancel();
+            }
+        };
+
+        toggle();
+
+    </script>
+    <script src="pose.js"></script>
+    <script src="webcam.js"></script>
+    <script src="streaming.js"></script>
+
+    <style>
+        body {
+            background: #333;
+            color: #ddd;
+        }
+
+        /* #overlay {
+            position: absolute;
+            z-index: 10;
+            left: 0;
+            top: 30px;
+        } */
+    </style>
+
+    <canvas id="overlay"></canvas>
+
+    <script type="importmap">
+        {
+          "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+          }
+        }
+      </script>
+
+
+    <script async type="module">
+        var analyzer;
+
+        var width = 800;
+        var height = 600;
+
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        import { VRButton } from 'three/addons/webxr/VRButton.js';
+        import { HTMLMesh } from 'three/addons/interactive/HTMLMesh.js';
+        import { InteractiveGroup } from 'three/addons/interactive/InteractiveGroup.js';
+        import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
+
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, width / height, 0.00001, 1000);
+        camera.position.set(0, 1.6, 1.5);
+
+        const renderer = new THREE.WebGLRenderer();
+        renderer.autoClear = false;
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.xr.enabled = true;
+        document.body.appendChild(VRButton.createButton(renderer));
+        document.body.appendChild(renderer.domElement);
+
+        // renderer = new THREE.WebGLRenderer({ antialias: true });
+
+        renderer.xr.enabled = true;
+
+        window.addEventListener('resize', onWindowResize);
+
+        function onWindowResize() {
+
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+
+            renderer.setSize(window.innerWidth, window.innerHeight);
+
+        }
+        const controls = new OrbitControls(camera, renderer.domElement);
+        camera.lookAt(0, 0, 0);
+
+        const material = new THREE.LineBasicMaterial({ color: 0xdedede });
+        const points = [];
+        BLAZE_POSE_INDICES.forEach(() => {
+            points.push(new THREE.Vector3(0, 0, 0));
+            points.push(new THREE.Vector3(0, 0, 0));
+        })
+
+        const geometry = new THREE.BufferGeometry().setFromPoints(points);
+
+        const line = new THREE.LineSegments(geometry, material);
+        window.line = line;
+
+        // const material = new THREE.MeshLambertMaterial();
+        const geometryBox = new THREE.BoxGeometry(0.075, 0.075, 0.075);
+        geometryBox.scale(0.25, 0.25, 0.25);
+
+        var boxes;
+        const dummy = new THREE.Object3D();
+
+        boxes = new THREE.InstancedMesh(geometryBox, material, 34);
+        // boxes.instanceMatrix.setUsage( THREE.DynamicDrawUsage );
+
+        const pose3D = new THREE.Object3D();
+        pose3D.add(boxes);
+        pose3D.add(line);
+        pose3D.rotation.x = Math.PI;
+
+        const wrapper = new THREE.Object3D();
+        wrapper.add(pose3D);
+
+        scene.add(wrapper);
+
+        const controllerModelFactory = new XRControllerModelFactory();
+
+        const controllerGrip1 = renderer.xr.getControllerGrip(0);
+        controllerGrip1.add(controllerModelFactory.createControllerModel(controllerGrip1));
+        scene.add(controllerGrip1);
+
+        const controllerGrip2 = renderer.xr.getControllerGrip(1);
+        controllerGrip2.add(controllerModelFactory.createControllerModel(controllerGrip2));
+        scene.add(controllerGrip2);
+
+        const group = new InteractiveGroup(renderer, camera);
+        scene.add(group);
+
+        let statsMesh = new HTMLMesh(debug);
+        statsMesh.position.x = - 0.25;
+        statsMesh.position.y = 1.5;
+        statsMesh.position.z = - 0.6;
+        // statsMesh.rotation.y = Math.PI / 4;
+        statsMesh.scale.setScalar(2.5);
+        group.add(statsMesh);
+
+
+        function render() {
+
+            if (!window.pose) return;
+            // debugPose(pose, 0)
+
+            var points = pose.keypoints3D;
+            BLAZE_POSE_INDICES.forEach(([from, to], count) => {
+                const startPt = points[from];
+                const endPt = points[to];
+
+                geometry.attributes.position.setXYZ(count * 2 + 0, startPt.x, startPt.y, startPt.z);
+                geometry.attributes.position.setXYZ(count * 2 + 1, endPt.x, endPt.y, endPt.z);
+            })
+
+            points.forEach((point, pos) => {
+                dummy.position.set(point.x, point.y, point.z);
+                dummy.updateMatrix();
+
+                boxes.setMatrixAt(pos, dummy.matrix);
+            });
+
+            boxes.instanceMatrix.needsUpdate = true;
+            boxes.computeBoundingSphere();
+
+            geometry.attributes.position.needsUpdate = true;
+
+            wrapper.position.y = 1
+            renderer.render(scene, camera);
+
+        }
+
+        // render();
+
+        renderer.setAnimationLoop(render);
+
+
+    </script>
+</body>
+
+</html>
