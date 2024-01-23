@@ -17,35 +17,42 @@
   </style>
 
   <!-- <a href="#" onclick="requestPermissions()">Start</a> -->
-  
+
   <script>
+
+    let w = window.innerWidth;
+    let h = window.innerHeight;
     var dpr = window.devicePixelRatio;
     var canvas = document.createElement('canvas');
-    canvas.width = window.innerWidth * dpr;
-    canvas.height = window.innerHeight * dpr;
-    canvas.style.width = `${window.innerWidth}px`;
-    canvas.style.height = `${window.innerHeight}px`;
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    canvas.style.width = `${w}px`;
+    canvas.style.height = `${h}px`;
     document.body.appendChild(canvas);
 
     var ctx = canvas.getContext('2d');
     ctx.scale(dpr, dpr);
-    ctx.translate(window.innerWidth / 2, window.innerHeight / 2);
+    ctx.translate(w / 2, h / 2);
     ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle'
     ctx.fillText(`Click to start`, 0, 0)
 
     function requestPermissions() {
-      if (typeof DeviceOrientationEvent.requestPermission === "function") {
-        DeviceOrientationEvent.requestPermission()
-          .then(permissionState => {
-            if (permissionState === "granted") {
-              // this.compassActive = true;
-              window.addEventListener("deviceorientation", handleDeviceOrientation, false);
-            }
-          })
-          .catch(e => {
-            ctx.fillText(`${e}`, 0, 0)
-          });
+      if (typeof DeviceOrientationEvent.requestPermission !== "function") {
+        ctx.fillText(`No DeviceOrientationEvent`, 0, 0)
+        return;
       }
+
+      DeviceOrientationEvent.requestPermission()
+        .then(permissionState => {
+          if (permissionState === "granted") {
+            // this.compassActive = true;
+            window.addEventListener("deviceorientation", handleDeviceOrientation, false);
+          }
+        })
+        .catch(e => {
+          ctx.fillText(`${e}`, 0, 0)
+        });
     }
 
     canvas.addEventListener('click', () => {
@@ -59,12 +66,55 @@
     // }, false);
 
     function handleDeviceOrientation(e) {
-      ctx.clearRect(-100, -100, 200, 200);
+      ctx.clearRect(-w, -w, h, h);
 
       const heading = e.webkitCompassHeading;
 
       ctx.fillText(`${heading.toFixed(1)}°`, 0, 0)
+
+      drawDial(heading);
     }
+
+    const LABEL_RADIUS = 120;
+    const LINE_START = 80;
+    const LINE_END = 95;
+
+    const CIRCLE_DEG = 360;
+    const PI_2 = Math.PI * 2;
+
+
+    function angleToCoords(angle, len = 1) {
+      const x = Math.cos(angle) * len
+      const y = Math.sin(angle) * len
+
+      return [x, y];
+    }
+
+    function drawDial(heading = 0) {
+      // draw labels
+      ctx.save();
+      ctx.font = '14px sans-serif'
+      for (let r = 0; r < CIRCLE_DEG; r += 30) {
+        const [x, y] = angleToCoords((r - heading - 90) / CIRCLE_DEG * PI_2, LABEL_RADIUS)
+        ctx.fillText(`${r}`, x, y)
+      }
+
+      for (let r = 0; r < CIRCLE_DEG; r += 2) {
+        const [sx, sy] = angleToCoords((r - heading - 90) / CIRCLE_DEG * PI_2, LINE_START)
+        const [ex, ey] = angleToCoords((r - heading - 90) / CIRCLE_DEG * PI_2, LINE_END)
+
+        ctx.lineWidth = (r % 30 == 0) ? 2 : 0.5;
+        ctx.beginPath();
+        ctx.moveTo(sx, sy);
+        ctx.lineTo(ex, ey);
+        ctx.stroke();
+      }
+
+      ctx.restore();
+
+    }
+
+    drawDial();
 
   </script>
 </body>
