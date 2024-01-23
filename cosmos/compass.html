@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <title>Compass</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+</head>
+
+<body>
+  <style>
+    body {
+      margin: 0;
+      left: 0;
+      top: 0;
+    }
+  </style>
+
+  <!-- <a href="#" onclick="requestPermissions()">Start</a> -->
+  
+  <script>
+    var dpr = window.devicePixelRatio;
+    var canvas = document.createElement('canvas');
+    canvas.width = window.innerWidth * dpr;
+    canvas.height = window.innerHeight * dpr;
+    canvas.style.width = `${window.innerWidth}px`;
+    canvas.style.height = `${window.innerHeight}px`;
+    document.body.appendChild(canvas);
+
+    var ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    ctx.translate(window.innerWidth / 2, window.innerHeight / 2);
+    ctx.textAlign = 'center';
+    ctx.fillText(`Click to start`, 0, 0)
+
+    function requestPermissions() {
+      if (typeof DeviceOrientationEvent.requestPermission === "function") {
+        DeviceOrientationEvent.requestPermission()
+          .then(permissionState => {
+            if (permissionState === "granted") {
+              // this.compassActive = true;
+              window.addEventListener("deviceorientation", handleDeviceOrientation, false);
+            }
+          })
+          .catch(e => {
+            ctx.fillText(`${e}`, 0, 0)
+          });
+      }
+    }
+
+    canvas.addEventListener('click', () => {
+      ctx.fillText(`click`, 0, 0)
+      requestPermissions();
+    }, false);
+
+    // document.body.addEventListener('touchstart', () => {
+    //   ctx.fillText(`Touch`, 0, 0)
+    //   requestPermissions();
+    // }, false);
+
+    function handleDeviceOrientation(e) {
+      ctx.clearRect(-100, -100, 200, 200);
+
+      const heading = e.webkitCompassHeading;
+
+      ctx.fillText(`${heading.toFixed(1)}°`, 0, 0)
+    }
+
+  </script>
+</body>
+
+</html>
