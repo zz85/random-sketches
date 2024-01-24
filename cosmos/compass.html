@@ -27,12 +27,14 @@
     const INDEX_LEN = 30;
     const font = 'system-ui' // system-ui sans-serif -apple-system BlinkMacSystemFont
     const fontWeight = '250' // lighter
+    const CROSSHAIR_TINY = 10;
 
     const CIRCLE_DEG = 360;
     const PI_2 = Math.PI * 2;
     const bearings = { 'N': 0, 'S': 180, 'E': 90, 'W': 270 };
 
-    let heading = 0, count = 0, touchedHeading = null;
+    let heading = 0, count = 0, touchedHeading = null,
+      alpha = 0, beta = 0, gamma = 0;
 
     let w = window.innerWidth;
     let h = window.innerHeight;
@@ -81,7 +83,9 @@
 
     function handleDeviceOrientation(e) {
       heading = e.webkitCompassHeading;
-      // touchedHeading = (`${event.alpha.toFixed(0)} : ${event.beta.toFixed(0)} : ${event.gamma.toFixed(0)}`);
+      alpha = e.alpha;
+      beta = e.beta;
+      gamma = e.gamma;
     }
 
     function angleToCoords(angle, len = 1) {
@@ -113,7 +117,9 @@
       const sections = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
 
       label(`${Math.round(heading) % 360}° ${sections[index % sections.length]}`)
-      //- ${touchedHeading}
+      // smallLabel(`touched: ${touchedHeading}`)
+      // smallLabel(`${alpha.toFixed(0)} : ${beta.toFixed(0)} : ${gamma.toFixed(0)}`);
+
 
       drawDial(heading);
 
@@ -129,9 +135,32 @@
         ctx.fillText(`${r}`, x, y)
       }
 
-      // draw crosshair
 
       ctx.lineWidth = 0.5;
+
+      // draw bubble
+      ctx.save()
+
+      ctx.translate(gamma / 4, beta / 4)
+      ctx.beginPath();
+
+      ctx.arc(0, 0, 30, 0, Math.PI * 2);
+      ctx.fillStyle = '#f3f3f3';
+      ctx.fill()
+
+      ctx.beginPath();
+      ctx.moveTo(0, -CROSSHAIR_TINY);
+      ctx.lineTo(0, CROSSHAIR_TINY);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-CROSSHAIR_TINY, 0);
+      ctx.lineTo(CROSSHAIR_TINY, 0);
+      ctx.strokeStyle = '#d0d0d0';
+      ctx.stroke();
+
+      ctx.restore();
+
+      // draw crosshair
       // N-S
       // const [nx, ny] = angleToCoords((bearings.N - heading - 90) / CIRCLE_DEG * PI_2,  CROSSHAIR_RADIUS);
       // const [sx, sy] = angleToCoords((bearings.S - heading - 90) / CIRCLE_DEG * PI_2,  CROSSHAIR_RADIUS);
