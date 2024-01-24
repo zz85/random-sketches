@@ -16,9 +16,20 @@
     }
   </style>
 
-  <!-- <a href="#" onclick="requestPermissions()">Start</a> -->
-
   <script>
+    const LABEL_RADIUS = 120;
+    const LINE_START = 80;
+    const LINE_END = 95;
+    const HEADING_RADIUS = 65;
+    const CROSSHAIR_RADIUS = 50;
+    const LABEL = 250;
+    const INDEX_LEN = 30;
+
+    const CIRCLE_DEG = 360;
+    const PI_2 = Math.PI * 2;
+    const bearings = { 'N': 0, 'S': 180, 'E': 90, 'W': 270 };
+
+    let heading = 0, count = 0, touchedHeading = null;
 
     let w = window.innerWidth;
     let h = window.innerHeight;
@@ -35,11 +46,11 @@
     ctx.translate(w / 2, h / 2);
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle'
-    ctx.fillText(`Click to start`, 0, 0)
+    ctx.fillText(`Click to start`, 0, LABEL)
 
     function requestPermissions() {
       if (typeof DeviceOrientationEvent.requestPermission !== "function") {
-        ctx.fillText(`No DeviceOrientationEvent`, 0, 0)
+        ctx.fillText(`No DeviceOrientationEvent`, 0, LABEL)
         return;
       }
 
@@ -48,40 +59,28 @@
           if (permissionState === "granted") {
             // this.compassActive = true;
             window.addEventListener("deviceorientation", handleDeviceOrientation, false);
+            draw();
           }
         })
         .catch(e => {
-          ctx.fillText(`${e}`, 0, 0)
+          ctx.fillText(`${e}`, 0, LABEL)
         });
     }
 
     canvas.addEventListener('click', () => {
-      ctx.fillText(`click`, 0, 0)
+      ctx.fillText(`click`, 0, LABEL)
       requestPermissions();
     }, false);
 
-    // document.body.addEventListener('touchstart', () => {
-    //   ctx.fillText(`Touch`, 0, 0)
-    //   requestPermissions();
-    // }, false);
+    document.body.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      touchedHeading = heading;
+    }, false);
+
 
     function handleDeviceOrientation(e) {
-      ctx.clearRect(-w, -w, h, h);
-
-      const heading = e.webkitCompassHeading;
-
-      ctx.fillText(`${heading.toFixed(1)}°`, 0, 0)
-
-      drawDial(heading);
+      heading = e.webkitCompassHeading;
     }
-
-    const LABEL_RADIUS = 120;
-    const LINE_START = 80;
-    const LINE_END = 95;
-
-    const CIRCLE_DEG = 360;
-    const PI_2 = Math.PI * 2;
-
 
     function angleToCoords(angle, len = 1) {
       const x = Math.cos(angle) * len
@@ -90,8 +89,17 @@
       return [x, y];
     }
 
+    function draw() {
+      ctx.clearRect(-w, -w, h, h);
+      ctx.fillText(`${Math.round(heading)}° - ${touchedHeading}`, 0, LABEL)
+
+      drawDial(heading);
+
+      requestAnimationFrame(draw);
+    }
+
     function drawDial(heading = 0) {
-      // draw labels
+      // draw degree labels
       ctx.save();
       ctx.font = '14px sans-serif'
       for (let r = 0; r < CIRCLE_DEG; r += 30) {
@@ -99,16 +107,48 @@
         ctx.fillText(`${r}`, x, y)
       }
 
+      // draw crosshair
+      // N-S
+      ctx.lineWidth = 0.5;
+      const [nx, ny] = angleToCoords((bearings.N - heading - 90) / CIRCLE_DEG * PI_2,  CROSSHAIR_RADIUS);
+      const [sx, sy] = angleToCoords((bearings.S - heading - 90) / CIRCLE_DEG * PI_2,  CROSSHAIR_RADIUS);
+      ctx.beginPath();
+      ctx.moveTo(nx, ny);
+      ctx.lineTo(sx, sy);
+      ctx.stroke();
+      // E-W
+      const [ex, ey] = angleToCoords((bearings.E - heading - 90) / CIRCLE_DEG * PI_2,  CROSSHAIR_RADIUS);
+      const [wx, wy] = angleToCoords((bearings.W - heading - 90) / CIRCLE_DEG * PI_2,  CROSSHAIR_RADIUS);
+      ctx.beginPath();
+      ctx.moveTo(ex, ey);
+      ctx.lineTo(wx, wy);
+      ctx.stroke();
+
+      // draw heading labels
+      for (let dir in bearings) {
+        const [x, y] = angleToCoords((bearings[dir] - heading - 90) / CIRCLE_DEG * PI_2,  HEADING_RADIUS);
+        ctx.fillText(`${dir}`, x, y)
+      }
+
       for (let r = 0; r < CIRCLE_DEG; r += 2) {
-        const [sx, sy] = angleToCoords((r - heading - 90) / CIRCLE_DEG * PI_2, LINE_START)
-        const [ex, ey] = angleToCoords((r - heading - 90) / CIRCLE_DEG * PI_2, LINE_END)
+        const [sx, sy] = angleToCoords((r - heading - 90) / CIRCLE_DEG * PI_2)
 
         ctx.lineWidth = (r % 30 == 0) ? 2 : 0.5;
         ctx.beginPath();
-        ctx.moveTo(sx, sy);
-        ctx.lineTo(ex, ey);
+        ctx.moveTo(sx * LINE_START, sy * LINE_START);
+        ctx.lineTo(sx * LINE_END, sy * LINE_END);
         ctx.stroke();
       }
+
+      // index line
+      ctx.save();
+      ctx.globalCompositeOperation = 'xor';
+      ctx.beginPath();
+      ctx.moveTo(0, -LINE_START);
+      ctx.lineTo(0, -LINE_START - INDEX_LEN);
+      ctx.lineWidth = 4;
+      ctx.stroke();
+      ctx.restore();
 
       ctx.restore();
 
