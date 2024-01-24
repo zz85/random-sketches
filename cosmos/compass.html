@@ -13,6 +13,7 @@
       margin: 0;
       left: 0;
       top: 0;
+      overflow: none;
     }
   </style>
 
@@ -22,8 +23,10 @@
     const LINE_END = 95;
     const HEADING_RADIUS = 65;
     const CROSSHAIR_RADIUS = 50;
-    const LABEL = 250;
+    const LABEL = 200;
     const INDEX_LEN = 30;
+    const font = 'system-ui' // system-ui sans-serif -apple-system BlinkMacSystemFont
+    const fontWeight = '250' // lighter
 
     const CIRCLE_DEG = 360;
     const PI_2 = Math.PI * 2;
@@ -46,29 +49,27 @@
     ctx.translate(w / 2, h / 2);
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle'
-    ctx.fillText(`Click to start`, 0, LABEL)
+    smallLabel(`Touch to start`)
 
     function requestPermissions() {
       if (typeof DeviceOrientationEvent.requestPermission !== "function") {
-        ctx.fillText(`No DeviceOrientationEvent`, 0, LABEL)
+        smallLabel(`No DeviceOrientationEvent`)
         return;
       }
 
       DeviceOrientationEvent.requestPermission()
         .then(permissionState => {
           if (permissionState === "granted") {
-            // this.compassActive = true;
             window.addEventListener("deviceorientation", handleDeviceOrientation, false);
             draw();
           }
         })
         .catch(e => {
-          ctx.fillText(`${e}`, 0, LABEL)
+          smallLabel(`${e}`)
         });
     }
 
     canvas.addEventListener('click', () => {
-      ctx.fillText(`click`, 0, LABEL)
       requestPermissions();
     }, false);
 
@@ -80,6 +81,7 @@
 
     function handleDeviceOrientation(e) {
       heading = e.webkitCompassHeading;
+      // touchedHeading = (`${event.alpha.toFixed(0)} : ${event.beta.toFixed(0)} : ${event.gamma.toFixed(0)}`);
     }
 
     function angleToCoords(angle, len = 1) {
@@ -89,9 +91,29 @@
       return [x, y];
     }
 
+    function label(text) {
+      ctx.save();
+      ctx.font = `${fontWeight} 50px ${font}`
+      ctx.fillText(text, 0, LABEL)
+      ctx.restore();
+    }
+
+    function smallLabel(text) {
+      ctx.save();
+      ctx.font = `${fontWeight} 10px ${font}`
+      ctx.fillText(text, 0, LABEL)
+      ctx.restore();
+    }
+
     function draw() {
       ctx.clearRect(-w, -w, h, h);
-      ctx.fillText(`${Math.round(heading)}° - ${touchedHeading}`, 0, LABEL)
+
+      // 360 - 8 headings = 45 degrees each
+      const index = Math.round(heading / 45);
+      const sections = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+
+      label(`${Math.round(heading) % 360}° ${sections[index % sections.length]}`)
+      //- ${touchedHeading}
 
       drawDial(heading);
 
@@ -101,32 +123,33 @@
     function drawDial(heading = 0) {
       // draw degree labels
       ctx.save();
-      ctx.font = '14px sans-serif'
+      ctx.font = `${fontWeight} 14px ${font}`
       for (let r = 0; r < CIRCLE_DEG; r += 30) {
         const [x, y] = angleToCoords((r - heading - 90) / CIRCLE_DEG * PI_2, LABEL_RADIUS)
         ctx.fillText(`${r}`, x, y)
       }
 
       // draw crosshair
-      // N-S
+
       ctx.lineWidth = 0.5;
-      const [nx, ny] = angleToCoords((bearings.N - heading - 90) / CIRCLE_DEG * PI_2,  CROSSHAIR_RADIUS);
-      const [sx, sy] = angleToCoords((bearings.S - heading - 90) / CIRCLE_DEG * PI_2,  CROSSHAIR_RADIUS);
-      ctx.beginPath();
-      ctx.moveTo(nx, ny);
-      ctx.lineTo(sx, sy);
-      ctx.stroke();
+      // N-S
+      // const [nx, ny] = angleToCoords((bearings.N - heading - 90) / CIRCLE_DEG * PI_2,  CROSSHAIR_RADIUS);
+      // const [sx, sy] = angleToCoords((bearings.S - heading - 90) / CIRCLE_DEG * PI_2,  CROSSHAIR_RADIUS);
       // E-W
-      const [ex, ey] = angleToCoords((bearings.E - heading - 90) / CIRCLE_DEG * PI_2,  CROSSHAIR_RADIUS);
-      const [wx, wy] = angleToCoords((bearings.W - heading - 90) / CIRCLE_DEG * PI_2,  CROSSHAIR_RADIUS);
+      // const [ex, ey] = angleToCoords((bearings.E - heading - 90) / CIRCLE_DEG * PI_2,  CROSSHAIR_RADIUS);
+      // const [wx, wy] = angleToCoords((bearings.W - heading - 90) / CIRCLE_DEG * PI_2,  CROSSHAIR_RADIUS);
       ctx.beginPath();
-      ctx.moveTo(ex, ey);
-      ctx.lineTo(wx, wy);
+      ctx.moveTo(0, -CROSSHAIR_RADIUS);
+      ctx.lineTo(0, CROSSHAIR_RADIUS);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-CROSSHAIR_RADIUS, 0);
+      ctx.lineTo(CROSSHAIR_RADIUS, 0);
       ctx.stroke();
 
       // draw heading labels
       for (let dir in bearings) {
-        const [x, y] = angleToCoords((bearings[dir] - heading - 90) / CIRCLE_DEG * PI_2,  HEADING_RADIUS);
+        const [x, y] = angleToCoords((bearings[dir] - heading - 90) / CIRCLE_DEG * PI_2, HEADING_RADIUS);
         ctx.fillText(`${dir}`, x, y)
       }
 
@@ -148,6 +171,18 @@
       ctx.lineTo(0, -LINE_START - INDEX_LEN);
       ctx.lineWidth = 4;
       ctx.stroke();
+      ctx.restore();
+
+      // draw N arrow
+      // const [x1, y2] = angleToCoords((- heading - 90) / CIRCLE_DEG * PI_2,  HEADING_RADIUS);
+      ctx.save();
+      ctx.rotate((- heading) / CIRCLE_DEG * PI_2)
+      ctx.fillStyle = 'red';
+      ctx.beginPath()
+      ctx.moveTo(0, -110);
+      ctx.lineTo(-5, -100);
+      ctx.lineTo(5, -100);
+      ctx.fill();
       ctx.restore();
 
       ctx.restore();
