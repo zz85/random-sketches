@@ -21,10 +21,14 @@
     const LABEL_RADIUS = 120;
     const LINE_START = 80;
     const LINE_END = 95;
+    const DIRECTION_START = 55; // direction marker
+    const DIRECTION_END = 80;
     const HEADING_RADIUS = 65;
     const CROSSHAIR_RADIUS = 50;
     const LABEL = 200;
-    const INDEX_LEN = 30;
+    const INDEX_LEN = 35;
+    const INDEX2_LEN = 25;
+    const MARKED_DIRECTION = LINE_START + 50;
     const font = 'system-ui' // system-ui sans-serif -apple-system BlinkMacSystemFont
     const fontWeight = '250' // lighter
     const CROSSHAIR_TINY = 10;
@@ -69,17 +73,15 @@
         .catch(e => {
           smallLabel(`${e}`)
         });
+      document.body.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        touchedHeading = touchedHeading ? null : heading % 360;
+      }, false);
     }
 
     canvas.addEventListener('click', () => {
       requestPermissions();
     }, false);
-
-    document.body.addEventListener('touchstart', (e) => {
-      e.preventDefault();
-      touchedHeading = heading;
-    }, false);
-
 
     function handleDeviceOrientation(e) {
       heading = e.webkitCompassHeading;
@@ -120,7 +122,6 @@
       // smallLabel(`touched: ${touchedHeading}`)
       // smallLabel(`${alpha.toFixed(0)} : ${beta.toFixed(0)} : ${gamma.toFixed(0)}`);
 
-
       drawDial(heading);
 
       requestAnimationFrame(draw);
@@ -131,6 +132,9 @@
       ctx.save();
       ctx.font = `${fontWeight} 14px ${font}`
       for (let r = 0; r < CIRCLE_DEG; r += 30) {
+        if (touchedHeading && Math.abs(touchedHeading - r) < 10) {
+          continue;
+        }
         const [x, y] = angleToCoords((r - heading - 90) / CIRCLE_DEG * PI_2, LABEL_RADIUS)
         ctx.fillText(`${r}`, x, y)
       }
@@ -176,11 +180,45 @@
       ctx.lineTo(CROSSHAIR_RADIUS, 0);
       ctx.stroke();
 
+
+      if (touchedHeading) {
+        ctx.save();
+        ctx.rotate((-90) / CIRCLE_DEG * PI_2);
+        ctx.beginPath();
+
+        // const from = heading - 90 // Math.min(heading, touchedHeading);
+        // const to = touchedHeading - 90 // Math.max(heading, touchedHeading);
+        let diff = touchedHeading - heading;
+        let dir = diff > 0;
+        if (Math.abs(diff) > 180) {
+          diff = dir ? diff - 360 : diff + 360;
+          dir = !dir;
+        }
+
+        ctx.arc(0, 0, DIRECTION_START, 0, diff / CIRCLE_DEG * PI_2, !dir);
+        ctx.arc(0, 0, DIRECTION_END, diff / CIRCLE_DEG * PI_2, 0, dir);
+        ctx.closePath();
+        ctx.fillStyle = 'red';
+        ctx.fill();
+        ctx.restore();
+
+        ctx.save();
+        ctx.font = `${fontWeight} 8px ${font}`;
+        // ctx.fillStyle = '#fff';
+        let [x, y] = angleToCoords((diff / 2 - 90) / CIRCLE_DEG * PI_2, 48);
+        ctx.fillText(`${Math.abs(diff).toFixed(0)}°`, x, y);
+        ctx.restore();
+      }
+
+      ctx.save();
+      ctx.font = `300 18px ${font}`
       // draw heading labels
       for (let dir in bearings) {
         const [x, y] = angleToCoords((bearings[dir] - heading - 90) / CIRCLE_DEG * PI_2, HEADING_RADIUS);
         ctx.fillText(`${dir}`, x, y)
       }
+      ctx.restore();
+
 
       for (let r = 0; r < CIRCLE_DEG; r += 2) {
         const [sx, sy] = angleToCoords((r - heading - 90) / CIRCLE_DEG * PI_2)
@@ -198,9 +236,22 @@
       ctx.beginPath();
       ctx.moveTo(0, -LINE_START);
       ctx.lineTo(0, -LINE_START - INDEX_LEN);
-      ctx.lineWidth = 4;
+      ctx.lineWidth = 2;
       ctx.stroke();
       ctx.restore();
+
+      if (touchedHeading) {
+        ctx.font = `${fontWeight} 22px ${font}`
+        const [sx, sy] = angleToCoords((touchedHeading - heading - 90) / CIRCLE_DEG * PI_2)
+
+        ctx.beginPath();
+        ctx.moveTo(sx * LINE_START, sy * LINE_START);
+        ctx.lineTo(sx * (LINE_START + INDEX2_LEN), sy * (LINE_START + INDEX2_LEN));
+        ctx.lineWidth = 4;
+        ctx.stroke();
+
+        ctx.fillText(`${touchedHeading.toFixed(0)}`, sx * MARKED_DIRECTION, sy * MARKED_DIRECTION);
+      }
 
       // draw N arrow
       // const [x1, y2] = angleToCoords((- heading - 90) / CIRCLE_DEG * PI_2,  HEADING_RADIUS);
