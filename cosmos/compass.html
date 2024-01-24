@@ -236,7 +236,7 @@
       ctx.beginPath();
       ctx.moveTo(0, -LINE_START);
       ctx.lineTo(0, -LINE_START - INDEX_LEN);
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 4;
       ctx.stroke();
       ctx.restore();
 
@@ -247,7 +247,7 @@
         ctx.beginPath();
         ctx.moveTo(sx * LINE_START, sy * LINE_START);
         ctx.lineTo(sx * (LINE_START + INDEX2_LEN), sy * (LINE_START + INDEX2_LEN));
-        ctx.lineWidth = 4;
+        ctx.lineWidth = 2;
         ctx.stroke();
 
         ctx.fillText(`${touchedHeading.toFixed(0)}`, sx * MARKED_DIRECTION, sy * MARKED_DIRECTION);
