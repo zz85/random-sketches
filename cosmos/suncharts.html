@@ -33,7 +33,11 @@
             --color: orange;
         }
 
-        .sunlightBar .legend {}
+        #charts {
+            padding: 5px;
+            height: 500px;
+            overflow: auto;
+        }
     </style>
 </head>
 
@@ -41,6 +45,7 @@
 <body>
 
     <script src="locator.js"></script>
+    <script src="sunplots.js"></script>
     <script src="vendor/suncalc.js"></script>
     <header>
         <h1>Sun Charts</h1>
@@ -52,9 +57,8 @@
         <p id="locLabel"></p>
         <button onclick="locator.getLocation(update);">Update my location</button>
         <p>
+            <p id="viz"></p>
             <p id="charts" />
-
-        <p id="viz"></p>
         </p>
     </main>
 
@@ -78,70 +82,6 @@
 
             getCharts(locator.latitude, locator.longitude);
             plotSun(new Date(), locator.latitude, locator.longitude)
-        }
-
-        function plotSun(date, lat, lon) {
-            date.setSeconds(0);
-            date.setMinutes(0);
-
-            var ctx = createCanvas(1600, 800)
-            var viz = document.getElementById('viz')
-            viz.replaceChildren(ctx.dom);
-
-            var points = [];
-            const MINS_A_DAY = 60 * 24;
-            const base = 200;
-            const hour_w = MINS_A_DAY / 24 / 2;
-
-            ctx.beginPath();
-            ctx.moveTo(0, base);
-            ctx.lineTo(25 * hour_w, base);
-            ctx.stroke();
-
-            for (let h = 0; h < 24; h += 1) {
-                date.setHours(h);
-                const pos = SunCalc.getPosition(date, lat, lon);
-
-                const alt = getAngle(pos.altitude);
-
-                // getAngle()
-                ctx.fillText(`${h}`, (h + 0) * hour_w, 50);
-
-                ctx.beginPath();
-                ctx.arc((h + 0) * hour_w, base - alt * 2, 5, 0, Math.PI * 2)
-                ctx.stroke();
-                ctx.fillText(`${alt.toFixed()}°`, (h + 0) * hour_w, base - alt * 2 - 30);
-
-                points.push(alt)
-            }
-
-            // ctx.beginPath();
-            // points.forEach((alt, h) => {
-            //     ctx.lineTo((h + 0) * hour_w, base - alt * 2)
-            // })
-            // ctx.stroke();
-
-            date.setHours(0);
-            ctx.lineWidth = 0.05;
-            ctx.beginPath();
-
-            for (let min = 0; min < MINS_A_DAY * 400; min += 1) { // 3, 15, 30 could still work
-                const pos = SunCalc.getPosition(new Date(date.getTime() + min * ONE_MIN), lat, lon);
-                const alt = getAngle(pos.altitude);
-
-                const mod_min = min % MINS_A_DAY;
-                ctx.lineTo(mod_min / 2, base - alt * 2)
-
-                // if (mod_min == 0) {
-                if (mod_min == MINS_A_DAY - 1) {
-                    ctx.stroke();
-                    ctx.beginPath();
-                    const day = min / MINS_A_DAY | 0;
-                    const density = day / 400 * 255;
-                    ctx.strokeStyle = `rgb(${density}, ${density}, ${density})`
-                }
-
-            }
         }
 
         function createCanvas(w, h) {
@@ -191,7 +131,9 @@
             Longest day: ${template(longestDay)}<br/>`
 
             function template(day) {
-                return `${day.date}, sunrise at ${day.sunrise}, sunset at ${day.sunset}, ${msToTime(day.daylight)} of daylight`
+                return `${day.date}, sunrise: ${day.sunrise}${tinyAzimuthHelper(day.sunrisePos.azimuth)},
+                sunset: ${day.sunset}${tinyAzimuthHelper(day.sunsetPos.azimuth)},
+                daylight: ${msToTime(day.daylight)}`
             }
 
             var table = [`<table>
@@ -211,13 +153,23 @@
 
                 table.push(`<tr>
                     <td>${day ? '' : '<mark>'}${date} ${day ? `<small>(day ${day > 0 ? '+' : ''}${day})</small>` : '</mark>'}</td>
-                    <td>${sunrise}<span style="transform: rotate(${sunriseDeg}deg);" class="arrow">↑</span><small><small>${fmtAngle(Math.PI + sunrisePos.azimuth)}</small></small></td>
-                    <td>${sunset}<span style="transform: rotate(${sunsetDeg}deg);" class="arrow">↑</span><small><small>${fmtAngle(Math.PI + sunsetPos.azimuth)}</small></small></td>
+                    <td>${sunrise}${tinyAzimuthHelper(sunrisePos.azimuth)}</td>
+                    <td>${sunset}${tinyAzimuthHelper(sunsetPos.azimuth)}</td>
                     <td>${sunlightPie(daylight / ONE_DAY)} ${msToTime(daylight)} <small>(${today.daylight > daylight ? '-' : '+'}${msToTime(Math.abs(today.daylight - daylight))})</small></td>                    
                     </tr>`)
             });
             table.push(`</tbody></table>`)
             charts.innerHTML = info + table.join('')
+        }
+
+        function tinyAzimuthHelper(azimuth) {
+            const angle = azimuth + Math.PI;
+            const deg = getAngle(angle);
+            return `${arrowHelper(deg)} <small><small>${fmtAngle(angle)}</small></small>`
+        }
+
+        function arrowHelper(dir) {
+            return `<span style="transform: rotate(${dir}deg);" class="arrow">↑</span>`
         }
 
         function pad(str) {
