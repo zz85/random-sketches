@@ -1,0 +1,31 @@
+https://github.com/swyxio/spark-joy/blob/master/README.md
+
+
+<link rel="stylesheet" href="https://unpkg.com/normalize.css@8.0.1/normalize.css">
+<link rel="stylesheet" href="https://unpkg.com/concrete.css@2.0.3/concrete.css">
+
+*
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@1/css/pico.min.css">
+*
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/picnic">
+
+**
+<link rel="stylesheet" href="https://unpkg.com/simpledotcss/simple.min.css">
+
+**
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/yegor256/tacit@gh-pages/tacit-css-1.7.1.min.css"/>
+**
+<link rel="stylesheet" href="https://unpkg.com/mvp.css"> 
+
+***
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="//writ.cmcenroe.me/1.0.4/writ.min.css">
+
+***
+<link rel="stylesheet" href="https://unpkg.com/terminal.css@0.7.4/dist/terminal.min.css" />
+
+https://www.getpapercss.com/
+https://mikemai.net/typesettings/index.html
+
+
+

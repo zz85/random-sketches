@@ -17,35 +17,26 @@
     }
   </style>
   <script src="vendor/suncalc.js"></script>
+  <script src="locator.js"></script>
 
+  <h1>This is a location test using the Web GeoLocation API</h1>
   <div id="latLabel"></div>
   <div id="lonLabel"></div>
+  <div id="timeLabel"></div>
+  <button onclick="locator.getLocation(update);">Update</button>
 
   <script>
-    let coords;
-    if (localStorage['cosmos']) {
-      coords = JSON.parse(localStorage['cosmos'])
+    const locator = new Locator();
+
+    function update() {
+      latLabel.innerHTML = locator.latitude;
+      lonLabel.innerHTML = locator.longitude;
+      timeLabel.innerHTML = `Last updated: ${new Date(locator.timestamp)}`;
     }
 
-    navigator.geolocation.getCurrentPosition(showPosition);
+    update();
 
-    function showPosition(position) {
-      const timestamp = position.timestamp;
-      const {
-        latitude, longitude, altitude, accuracy, altitudeAccuracy, heading, speed
-      } = position.coords;
-
-      coords = Object.assign({ timestamp }, {
-        latitude, longitude, altitude, accuracy, altitudeAccuracy, heading, speed
-      })
-
-      console.log(JSON.stringify(coords));
-
-      latLabel.innerHTML = latitude;
-      lonLabel.innerHTML = longitude;
-
-      localStorage['cosmos'] = JSON.stringify(coords)
-    }
+    locator.getLocation(update);
   </script>
 </body>
 

@@ -2,28 +2,106 @@
 <html lang="en">
 
 <head>
-  <title>Compass</title>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+    <title>Sun charts</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="//writ.cmcenroe.me/1.0.4/writ.min.css">
 </head>
 
+
 <body>
-  <style>
-    body {
-      margin: 0;
-      left: 0;
-      top: 0;
-      overflow: none;
-    }
-  </style>
-  <script src="vendor/suncalc.js"></script>
 
-  <div id="latLabel"></div>
-  <div id="lonLabel"></div>
+    <script src="locator.js"></script>
+    <script src="vendor/suncalc.js"></script>
+    <header>
+        <h1>Sun Charts</h1>
+        <p>An experiment using web geolocation API with suncalc.js</p>        
+    </header>
+    <main>
+        <p id="locLabel"></p>
+        <button onclick="locator.getLocation(update);">Update my location</button>
+        <p>
+            <!-- <h3>Table</h3> -->
+            <p id="charts" />
+        
+        </p>
+    </main>
 
-  <script>
-    // TODO generate charts
-  </script>
+    <script>
+        const locator = new Locator();
+
+        if (!locator.timestamp) {
+            locator.getLocation(update);
+        } else {
+            update();
+        }
+
+        function update() {
+            locLabel.innerHTML = `Location: ${locator.latitude.toFixed(3)}, ${locator.longitude.toFixed(3)}
+    <br/>Updated: ${new Date(locator.timestamp)}`;
+
+            getCharts(locator.latitude, locator.longitude);
+        }
+
+        function getCharts(lat, lon) {
+            var now = new Date();
+            var table = [`<table>
+                <thead>
+                <tr><td>day</td><td>date</td><td>sunrise</td><td>sunset</td></tr>
+                </thead><tbody>`];
+
+            const ONE_DAY = 1000 * 60 * 60 * 24;
+
+            for (let day = -10; day < 365; day++) {
+                const times = SunCalc.getTimes(new Date(now.getTime() + day * ONE_DAY), lat, lon);
+                const date = getLocalDate(times.sunrise);
+                const sunrise = getLocalTime(times.sunrise);
+                const sunset = getLocalTime(times.sunset);
+                const sunlight = sunset - sunrise;
+                const sunrisePos = SunCalc.getPosition(times.sunrise, lat, lon);
+                const sunsetPos = SunCalc.getPosition(times.sunset, lat, lon);
+
+                table.push(`<tr>
+                    <td>${day > 0 ? '+' : ''}${day}</td>
+                    <td>${date}</td>
+                    <td>${sunrise}</td>
+                    <td>${sunset}</td>
+                    </tr>`)
+
+                
+                // console.log(`+${day}`, getLocal(times.sunrise), '->', getLocal(times.sunset), getAngle(pos.azimuth), getAngle(pos.altitude))
+            }
+            table.push(`</tbody></table>`)
+            charts.innerHTML = table.join('')
+
+        }
+
+        function pad(str) {
+            const fmt = `00${str}`
+            return fmt.slice(fmt.length - 2)
+        }
+
+        function getLocal(date) {
+            return `${getLocalDate(date)} ${getLocalTime(date)}`
+        }
+
+        function getLocalTime(date) {
+            return `${pad(date.getHours())}:${pad(date.getMinutes())}`
+            //  + `:${pad(date.getSeconds())}`
+        }
+
+        function getLocalDate(date) {
+            return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+        }
+
+        function getAngle(rad) {
+            return `${(rad * 180 / Math.PI).toFixed(0)}°`
+        }
+
+        function msToTime(ms) {
+
+        }
+    </script>
 </body>
 
 </html>
