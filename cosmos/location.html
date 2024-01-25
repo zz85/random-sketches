@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <title>Compass</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+</head>
+
+<body>
+  <style>
+    body {
+      margin: 0;
+      left: 0;
+      top: 0;
+      overflow: none;
+    }
+  </style>
+  <script src="vendor/suncalc.js"></script>
+
+  <div id="latLabel"></div>
+  <div id="lonLabel"></div>
+
+  <script>
+    let coords;
+    if (localStorage['cosmos']) {
+      coords = JSON.parse(localStorage['cosmos'])
+    }
+
+    navigator.geolocation.getCurrentPosition(showPosition);
+
+    function showPosition(position) {
+      const timestamp = position.timestamp;
+      const {
+        latitude, longitude, altitude, accuracy, altitudeAccuracy, heading, speed
+      } = position.coords;
+
+      coords = Object.assign({ timestamp }, {
+        latitude, longitude, altitude, accuracy, altitudeAccuracy, heading, speed
+      })
+
+      console.log(JSON.stringify(coords));
+
+      latLabel.innerHTML = latitude;
+      lonLabel.innerHTML = longitude;
+
+      localStorage['cosmos'] = JSON.stringify(coords)
+    }
+  </script>
+</body>
+
+</html>
