@@ -6,6 +6,35 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="//writ.cmcenroe.me/1.0.4/writ.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/charts.css/dist/charts.min.css">
+    <style>
+        .arrow {
+            font-size: 10px;
+            padding: 0px 0px 0px 10px;
+            margin: 0px;
+            display: inline-block;
+            transform-origin: 80% 50%;
+        }
+
+        .sunlightPie {
+            display: inline-block;
+            height: 14px;
+            width: 14px;
+            /* max-width: 15px; */
+            /* width: 25px; */
+        }
+
+        .sunlightBar {
+            width: 100px;
+            margin: 0 auto;
+        }
+
+        .sunlightBar .bar {
+            --color: orange;
+        }
+
+        .sunlightBar .legend {}
+    </style>
 </head>
 
 
@@ -15,20 +44,26 @@
     <script src="vendor/suncalc.js"></script>
     <header>
         <h1>Sun Charts</h1>
-        <p>An experiment using web geolocation API with suncalc.js</p>        
+        <p>
+            Sunrise and sunset timings for a year<br />
+            an experiment using web geolocation API with suncalc.js</p>
     </header>
     <main>
         <p id="locLabel"></p>
         <button onclick="locator.getLocation(update);">Update my location</button>
         <p>
-            <!-- <h3>Table</h3> -->
             <p id="charts" />
-        
+
         </p>
     </main>
 
     <script>
         const locator = new Locator();
+
+        const ONE_SEC = 1000;
+        const ONE_MIN = ONE_SEC * 60;
+        const ONE_HOUR = ONE_MIN * 60;
+        const ONE_DAY = ONE_HOUR * 24;
 
         if (!locator.timestamp) {
             locator.getLocation(update);
@@ -43,34 +78,57 @@
             getCharts(locator.latitude, locator.longitude);
         }
 
+
+
         function getCharts(lat, lon) {
             var now = new Date();
             var table = [`<table>
                 <thead>
-                <tr><td>day</td><td>date</td><td>sunrise</td><td>sunset</td></tr>
+                <tr>
+                    <td>date</td>
+                    <td>sunrise</td>
+                    <td>sunset</td>
+                    <!--<td>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>-->
+                    <td>daylight</td>
+                </tr>
                 </thead><tbody>`];
 
-            const ONE_DAY = 1000 * 60 * 60 * 24;
-
+            let days = [];
             for (let day = -10; day < 365; day++) {
                 const times = SunCalc.getTimes(new Date(now.getTime() + day * ONE_DAY), lat, lon);
                 const date = getLocalDate(times.sunrise);
                 const sunrise = getLocalTime(times.sunrise);
                 const sunset = getLocalTime(times.sunset);
-                const sunlight = sunset - sunrise;
+                const daylight = times.sunset - times.sunrise;
                 const sunrisePos = SunCalc.getPosition(times.sunrise, lat, lon);
                 const sunsetPos = SunCalc.getPosition(times.sunset, lat, lon);
 
+                days.push({
+                    day, times, date, sunrise, sunset, daylight, sunrisePos, sunsetPos
+                })
+            }
+
+            const sortByDaylight = days.concat();
+            sortByDaylight.sort((a, b) => a.daylight - b.daylight);
+            const shortestDay = sortByDaylight[0]; // winter solstice
+            const longestDay = sortByDaylight[sortByDaylight.length - 1]; // summer solstice
+            const today = days[10];
+            console.log(shortestDay, longestDay);
+
+            days.forEach(({ day, times, date, sunrise, sunset, daylight, sunrisePos, sunsetPos }) => {
+
+                const sunriseDeg = getAngle(sunrisePos.azimuth + Math.PI);
+                const sunsetDeg = getAngle(sunsetPos.azimuth + Math.PI);
+
                 table.push(`<tr>
-                    <td>${day > 0 ? '+' : ''}${day}</td>
-                    <td>${date}</td>
-                    <td>${sunrise}</td>
-                    <td>${sunset}</td>
+                    <td>${day ? '' : '<mark>'}${date} ${day ? `<small>(day ${day > 0 ? '+' : ''}${day})</small>` : '</mark>'}</td>
+                    <td>${sunrise}<span style="transform: rotate(${sunriseDeg}deg);" class="arrow">↑</span></td>
+                    <td>${sunset}<span style="transform: rotate(${sunsetDeg}deg);" class="arrow">↑</span></td>
+                    <td>${sunlightPie(daylight / ONE_DAY)} ${msToTime(daylight)} <small>(${today.daylight > daylight ? '-' : '+'}${msToTime(Math.abs(today.daylight - daylight))})</small></td>                    
                     </tr>`)
 
-                
                 // console.log(`+${day}`, getLocal(times.sunrise), '->', getLocal(times.sunset), getAngle(pos.azimuth), getAngle(pos.altitude))
-            }
+            });
             table.push(`</tbody></table>`)
             charts.innerHTML = table.join('')
 
@@ -95,11 +153,69 @@
         }
 
         function getAngle(rad) {
-            return `${(rad * 180 / Math.PI).toFixed(0)}°`
+            return rad * 180 / Math.PI;
+        }
+
+        function fmtAngle(rad) {
+            return `${getAngle(rad).toFixed(0)}°`
         }
 
         function msToTime(ms) {
+            let remain = ms;
+            let result = [];
+            if (remain > ONE_HOUR) {
+                const hour = remain / ONE_HOUR | 0;
+                remain %= hour * ONE_HOUR;
+                result.push(`${hour}h`)
+            }
 
+            if (remain > ONE_MIN) {
+                const min = remain / ONE_MIN | 0;
+                remain %= min * ONE_MIN;
+                result.push(`${min}m`)
+            }
+
+            return result.join(' ')
+        }
+
+        function sunlightPie(x) {
+            return `
+            <div class="sunlightPie">
+                <table class="charts-css pie hide-data">
+                <tbody>
+                    <tr>
+                    <td style="--start: 0.00; --end: 0.00;">
+                        <span class="data"></span>
+                    </td>
+                    </tr>
+                    <tr>
+                    <td style="--start: 0.0; --end: ${x};">
+                        <span class="data"></span>
+                    </td>
+                    </tr>
+                    <!--
+                    -->
+                </tbody>
+                </table>
+            </div>
+            `
+        }
+
+        function sunlightBar(x, data = '') {
+            return `
+            <span class="sunlightBar">
+                <table class="charts-css bar stacked">
+                <tbody>
+                    <td style="--start: 0.0; --end: ${x};">
+                        <!--<span class="data">${data}</span>-->
+                    </td>
+                    </tr>
+                    <!-- multiple stacked
+                    -->
+                </tbody>
+                </table>
+            </span>
+            `
         }
     </script>
 </body>
