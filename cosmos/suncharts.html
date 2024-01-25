@@ -53,6 +53,8 @@
         <button onclick="locator.getLocation(update);">Update my location</button>
         <p>
             <p id="charts" />
+
+        <p id="viz"></p>
         </p>
     </main>
 
@@ -75,7 +77,6 @@
     <br/>Updated: ${new Date(locator.timestamp)}`;
 
             getCharts(locator.latitude, locator.longitude);
-
             plotSun(new Date(), locator.latitude, locator.longitude)
         }
 
@@ -84,42 +85,63 @@
             date.setMinutes(0);
 
             var ctx = createCanvas(1600, 800)
+            var viz = document.getElementById('viz')
+            viz.replaceChildren(ctx.dom);
 
             var points = [];
+            const MINS_A_DAY = 60 * 24;
             const base = 200;
-            const hour_w = 20;
+            const hour_w = MINS_A_DAY / 24 / 2;
 
-            for (let h = 0; h < 24; h++) {
+            ctx.beginPath();
+            ctx.moveTo(0, base);
+            ctx.lineTo(25 * hour_w, base);
+            ctx.stroke();
+
+            for (let h = 0; h < 24; h += 1) {
                 date.setHours(h);
                 const pos = SunCalc.getPosition(date, lat, lon);
 
                 const alt = getAngle(pos.altitude);
 
                 // getAngle()
-                ctx.fillText(`${h}`, (h + 1) * hour_w, 50);
-                // 1
-                // ctx.fillText(`${alt.toFixed(2)}`, (h + 1) * hour_w, 100 + ((h % 2) ? 50 : 0));
-                // 2
+                ctx.fillText(`${h}`, (h + 0) * hour_w, 50);
 
                 ctx.beginPath();
-                ctx.arc((h + 1) * hour_w, base - alt * 2, 5, 0, Math.PI * 2)
+                ctx.arc((h + 0) * hour_w, base - alt * 2, 5, 0, Math.PI * 2)
                 ctx.stroke();
-                ctx.fillText(`${alt.toFixed()}°`, (h + 1) * hour_w, base - alt * 2 - 30);
-
-                ctx.beginPath();
-                ctx.moveTo(0, base);
-                ctx.lineTo(25 * hour_w, base);
-                ctx.stroke();
+                ctx.fillText(`${alt.toFixed()}°`, (h + 0) * hour_w, base - alt * 2 - 30);
 
                 points.push(alt)
             }
 
-            ctx.beginPath();
-            points.forEach((alt, h) => {
-                ctx.lineTo((h + 1) * hour_w, base - alt * 2)
-            })
-            ctx.stroke();
+            // ctx.beginPath();
+            // points.forEach((alt, h) => {
+            //     ctx.lineTo((h + 0) * hour_w, base - alt * 2)
+            // })
+            // ctx.stroke();
 
+            date.setHours(0);
+            ctx.lineWidth = 0.05;
+            ctx.beginPath();
+
+            for (let min = 0; min < MINS_A_DAY * 400; min += 1) { // 3, 15, 30 could still work
+                const pos = SunCalc.getPosition(new Date(date.getTime() + min * ONE_MIN), lat, lon);
+                const alt = getAngle(pos.altitude);
+
+                const mod_min = min % MINS_A_DAY;
+                ctx.lineTo(mod_min / 2, base - alt * 2)
+
+                // if (mod_min == 0) {
+                if (mod_min == MINS_A_DAY - 1) {
+                    ctx.stroke();
+                    ctx.beginPath();
+                    const day = min / MINS_A_DAY | 0;
+                    const density = day / 400 * 255;
+                    ctx.strokeStyle = `rgb(${density}, ${density}, ${density})`
+                }
+
+            }
         }
 
         function createCanvas(w, h) {
@@ -130,18 +152,13 @@
             canvas.style.width = `${w}px`
             canvas.style.height = `${h}px`
 
-            document.body.appendChild(canvas);
-
             var ctx = canvas.getContext('2d')
             ctx.scale(dpr, dpr)
             ctx.w = w;
             ctx.h = h;
+            ctx.dom = canvas;
             return ctx;
         }
-
-
-
-
 
         function getCharts(lat, lon) {
             var now = new Date();
