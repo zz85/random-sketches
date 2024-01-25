@@ -53,7 +53,6 @@
         <button onclick="locator.getLocation(update);">Update my location</button>
         <p>
             <p id="charts" />
-
         </p>
     </main>
 
@@ -76,22 +75,76 @@
     <br/>Updated: ${new Date(locator.timestamp)}`;
 
             getCharts(locator.latitude, locator.longitude);
+
+            plotSun(new Date(), locator.latitude, locator.longitude)
         }
+
+        function plotSun(date, lat, lon) {
+            date.setSeconds(0);
+            date.setMinutes(0);
+
+            var ctx = createCanvas(1600, 800)
+
+            var points = [];
+            const base = 200;
+            const hour_w = 20;
+
+            for (let h = 0; h < 24; h++) {
+                date.setHours(h);
+                const pos = SunCalc.getPosition(date, lat, lon);
+
+                const alt = getAngle(pos.altitude);
+
+                // getAngle()
+                ctx.fillText(`${h}`, (h + 1) * hour_w, 50);
+                // 1
+                // ctx.fillText(`${alt.toFixed(2)}`, (h + 1) * hour_w, 100 + ((h % 2) ? 50 : 0));
+                // 2
+
+                ctx.beginPath();
+                ctx.arc((h + 1) * hour_w, base - alt * 2, 5, 0, Math.PI * 2)
+                ctx.stroke();
+                ctx.fillText(`${alt.toFixed()}°`, (h + 1) * hour_w, base - alt * 2 - 30);
+
+                ctx.beginPath();
+                ctx.moveTo(0, base);
+                ctx.lineTo(25 * hour_w, base);
+                ctx.stroke();
+
+                points.push(alt)
+            }
+
+            ctx.beginPath();
+            points.forEach((alt, h) => {
+                ctx.lineTo((h + 1) * hour_w, base - alt * 2)
+            })
+            ctx.stroke();
+
+        }
+
+        function createCanvas(w, h) {
+            var canvas = document.createElement('canvas');
+            var dpr = window.devicePixelRatio;
+            canvas.width = w * dpr;
+            canvas.height = h * dpr;
+            canvas.style.width = `${w}px`
+            canvas.style.height = `${h}px`
+
+            document.body.appendChild(canvas);
+
+            var ctx = canvas.getContext('2d')
+            ctx.scale(dpr, dpr)
+            ctx.w = w;
+            ctx.h = h;
+            return ctx;
+        }
+
+
 
 
 
         function getCharts(lat, lon) {
             var now = new Date();
-            var table = [`<table>
-                <thead>
-                <tr>
-                    <td>date</td>
-                    <td>sunrise</td>
-                    <td>sunset</td>
-                    <!--<td>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>-->
-                    <td>daylight</td>
-                </tr>
-                </thead><tbody>`];
 
             let days = [];
             for (let day = -10; day < 365; day++) {
@@ -115,23 +168,39 @@
             const today = days[10];
             console.log(shortestDay, longestDay);
 
-            days.forEach(({ day, times, date, sunrise, sunset, daylight, sunrisePos, sunsetPos }) => {
+            var info = `
+            Today: ${template(today)}<br/>
+            Shortest day: ${template(shortestDay)}<br/>
+            Longest day: ${template(longestDay)}<br/>`
 
+            function template(day) {
+                return `${day.date}, sunrise at ${day.sunrise}, sunset at ${day.sunset}, ${msToTime(day.daylight)} of daylight`
+            }
+
+            var table = [`<table>
+                <thead>
+                <tr>
+                    <td>date</td>
+                    <td>sunrise</td>
+                    <td>sunset</td>
+                    <!--<td>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>-->
+                    <td>daylight</td>
+                </tr>
+                </thead><tbody>`];
+
+            days.forEach(({ day, times, date, sunrise, sunset, daylight, sunrisePos, sunsetPos }) => {
                 const sunriseDeg = getAngle(sunrisePos.azimuth + Math.PI);
                 const sunsetDeg = getAngle(sunsetPos.azimuth + Math.PI);
 
                 table.push(`<tr>
                     <td>${day ? '' : '<mark>'}${date} ${day ? `<small>(day ${day > 0 ? '+' : ''}${day})</small>` : '</mark>'}</td>
-                    <td>${sunrise}<span style="transform: rotate(${sunriseDeg}deg);" class="arrow">↑</span></td>
-                    <td>${sunset}<span style="transform: rotate(${sunsetDeg}deg);" class="arrow">↑</span></td>
+                    <td>${sunrise}<span style="transform: rotate(${sunriseDeg}deg);" class="arrow">↑</span><small><small>${fmtAngle(Math.PI + sunrisePos.azimuth)}</small></small></td>
+                    <td>${sunset}<span style="transform: rotate(${sunsetDeg}deg);" class="arrow">↑</span><small><small>${fmtAngle(Math.PI + sunsetPos.azimuth)}</small></small></td>
                     <td>${sunlightPie(daylight / ONE_DAY)} ${msToTime(daylight)} <small>(${today.daylight > daylight ? '-' : '+'}${msToTime(Math.abs(today.daylight - daylight))})</small></td>                    
                     </tr>`)
-
-                // console.log(`+${day}`, getLocal(times.sunrise), '->', getLocal(times.sunset), getAngle(pos.azimuth), getAngle(pos.altitude))
             });
             table.push(`</tbody></table>`)
-            charts.innerHTML = table.join('')
-
+            charts.innerHTML = info + table.join('')
         }
 
         function pad(str) {
