@@ -58,15 +58,15 @@
     smallLabel(`Touch to start`)
 
     function requestPermissions() {
-      if (typeof DeviceOrientationEvent.requestPermission !== "function") {
+      if (typeof DeviceOrientationEvent.requestPermission !== 'function') {
         smallLabel(`No DeviceOrientationEvent`)
         return;
       }
 
       DeviceOrientationEvent.requestPermission()
         .then(permissionState => {
-          if (permissionState === "granted") {
-            window.addEventListener("deviceorientation", handleDeviceOrientation, false);
+          if (permissionState === 'granted') {
+            window.addEventListener('deviceorientation', handleDeviceOrientation, false);
             draw();
           }
         })
