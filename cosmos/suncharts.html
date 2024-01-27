@@ -108,8 +108,10 @@
         function getCharts(lat, lon) {
             var now = new Date();
 
+            const DAYS_BEFORE = 3;
+
             let days = [];
-            for (let day = -10; day < 365; day++) {
+            for (let day = -DAYS_BEFORE; day < 365; day++) {
                 const dt = new Date(now.getTime() + day * ONE_DAY);
                 const times = SunCalc.getTimes(dt, lat, lon);
                 const date = getLocalDate(times.sunrise);
@@ -129,7 +131,7 @@
             sortByDaylight.sort((a, b) => a.daylight - b.daylight);
             const shortestDay = sortByDaylight[0]; // winter solstice
             const longestDay = sortByDaylight[sortByDaylight.length - 1]; // summer solstice
-            const today = days[10];
+            const today = days[DAYS_BEFORE];
             console.log(shortestDay, longestDay);
 
             var info = `
