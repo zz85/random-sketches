@@ -57,8 +57,8 @@
         <p id="locLabel"></p>
         <button onclick="locator.getLocation(update);">Update my location</button>
         <p>
-            <p id="viz"></p>
             <p id="charts" />
+        <p id="viz"></p>
         </p>
     </main>
 
@@ -80,8 +80,12 @@
             locLabel.innerHTML = `Location: ${locator.latitude.toFixed(3)}, ${locator.longitude.toFixed(3)}
     <br/>Updated: ${new Date(locator.timestamp)}`;
 
-            getCharts(locator.latitude, locator.longitude);
-            plotSun(new Date(), locator.latitude, locator.longitude)
+            const [shortest, longest] = getCharts(locator.latitude, locator.longitude);
+            const dom = plotSun(new Date(), locator.latitude, locator.longitude, shortest, longest);
+            const compassDom = plotSunCompass(new Date(), locator.latitude, locator.longitude, shortest, longest);
+            var viz = document.getElementById('viz')
+            viz.replaceChildren(compassDom);
+            viz.appendChild(dom);
         }
 
         function createCanvas(w, h) {
@@ -105,7 +109,8 @@
 
             let days = [];
             for (let day = -10; day < 365; day++) {
-                const times = SunCalc.getTimes(new Date(now.getTime() + day * ONE_DAY), lat, lon);
+                const dt = new Date(now.getTime() + day * ONE_DAY);
+                const times = SunCalc.getTimes(dt, lat, lon);
                 const date = getLocalDate(times.sunrise);
                 const sunrise = getLocalTime(times.sunrise);
                 const sunset = getLocalTime(times.sunset);
@@ -114,6 +119,7 @@
                 const sunsetPos = SunCalc.getPosition(times.sunset, lat, lon);
 
                 days.push({
+                    dt,
                     day, times, date, sunrise, sunset, daylight, sunrisePos, sunsetPos
                 })
             }
@@ -126,7 +132,7 @@
             console.log(shortestDay, longestDay);
 
             var info = `
-            Today: ${template(today)}<br/>
+            Today: <b><mark>${template(today)}</mark></b><br/>
             Shortest day: ${template(shortestDay)}<br/>
             Longest day: ${template(longestDay)}<br/>`
 
@@ -160,6 +166,8 @@
             });
             table.push(`</tbody></table>`)
             charts.innerHTML = info + table.join('')
+
+            return [shortestDay, longestDay];
         }
 
         function tinyAzimuthHelper(azimuth) {
