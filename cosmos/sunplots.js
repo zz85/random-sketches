@@ -1,9 +1,6 @@
 const plotSun = plotSun2
 
 function plotSunCompass(date, lat, lon, shortest, longest) {
-    // const times = SunCalc.getTimes(date, lat, lon);
-    // console.log(times);
-
     const nowPos = SunCalc.getPosition(date, lat, lon);
     date.setSeconds(0);
     date.setMinutes(0);

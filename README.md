@@ -1,7 +1,8 @@
 # Random experiments
 * [sun charts](cosmos/suncharts.html) - JS based sunrise and sunset tables
 * [compass](cosmos/compass.html) - Web based implementation of IOS compass app
-* [compass with positioning](cosmos/compass_position.html) - like compass with positioning data
+  * [compass with positioning](cosmos/compass_position.html) - with positioning data
+  * [compass with sun position](cosmos/compass_sun.html) - with sunrise and sunset
 * [fullbody-quest](fullbody-quest) - Poor man's fullbody for Meta quest 2
 * [streaming-server](streaming-server) - Simple scaffolding for real-time web applications without websockets.
 * [protrait_effect](protrait_effect) - experiments to render the bokeh (aka Protrait on ios) effect with tensorflow.js and three.js
