@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <title>Compass with Coordinates and Elevation</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+</head>
+
+<body>
+  <style>
+    body {
+      margin: 0;
+      left: 0;
+      top: 0;
+      overflow: none;
+    }
+  </style>
+
+  <script>
+    const LABEL_RADIUS = 120;
+    const LINE_START = 80;
+    const LINE_END = 95;
+    const DIRECTION_START = 55; // direction marker
+    const DIRECTION_END = 80;
+    const HEADING_RADIUS = 65;
+    const CROSSHAIR_RADIUS = 50;
+    const LABEL = 200;
+    const INDEX_LEN = 35;
+    const INDEX2_LEN = 25;
+    const MARKED_DIRECTION = LINE_START + 50;
+    const font = 'system-ui' // system-ui sans-serif -apple-system BlinkMacSystemFont
+    const fontWeight = '250' // lighter
+    const CROSSHAIR_TINY = 10;
+
+    const CIRCLE_DEG = 360;
+    const PI_2 = Math.PI * 2;
+    const bearings = { 'N': 0, 'S': 180, 'E': 90, 'W': 270 };
+
+    let heading = 0, count = 0, touchedHeading = null,
+      alpha = 0, beta = 0, gamma = 0, coords;
+
+    let w = window.innerWidth;
+    let h = window.innerHeight;
+    var dpr = window.devicePixelRatio;
+    var canvas = document.createElement('canvas');
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    canvas.style.width = `${w}px`;
+    canvas.style.height = `${h}px`;
+    document.body.appendChild(canvas);
+
+    var ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    ctx.translate(w / 2, h / 2);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle'
+    smallLabel(`Touch to start`)
+
+    function toDegMinSec(angle) {
+      const deg = Math.abs(angle);
+      const lat = deg | 0;
+      const min = (deg - lat) * 60 | 0;
+      const sec = (deg - lat - min / 60) * 3600;
+      return [lat, min, sec];
+    }
+
+    function fmtDeg(angle, pos, neg) {
+      const [deg, min, sec] = toDegMinSec(angle);
+      return `${deg}°${min}'${Math.round(sec)} ${angle > 0 ? pos : neg }`
+    }
+
+    function showPosition(position) {
+      coords = position.coords;
+
+      const {
+        latitude, longitude, altitude, accuracy, altitudeAccuracy, heading, speed
+      } = coords;
+      ctx.clearRect(-w, -w, h, h);
+
+      smallLabel(`Position: ${JSON.stringify({ latitude, longitude, altitude, accuracy, altitudeAccuracy, heading, speed })}`)
+    }
+
+    async function requestPermissions() {
+      if (typeof DeviceOrientationEvent.requestPermission !== 'function') {
+        smallLabel(`No DeviceOrientationEvent`)
+        // return;
+      } else {
+
+      await DeviceOrientationEvent.requestPermission()
+        .then(permissionState => {
+          if (permissionState === 'granted') {
+            window.addEventListener('deviceorientation', handleDeviceOrientation, false);
+          }
+        })
+        .catch(e => {
+          smallLabel(`${e}`)
+        });
+      }
+
+      if (!navigator.geolocation) {
+        smallLabel(`No geolocation`)
+      }
+      navigator.geolocation.getCurrentPosition(showPosition);
+
+      draw();
+
+      document.body.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        touchedHeading = touchedHeading ? null : heading % 360;
+      }, false);
+    }
+
+    canvas.addEventListener('click', () => {
+      requestPermissions();
+    }, false);
+
+    function handleDeviceOrientation(e) {
+      heading = e.webkitCompassHeading;
+      alpha = e.alpha;
+      beta = e.beta;
+      gamma = e.gamma;
+    }
+
+    function angleToCoords(angle, len = 1) {
+      const x = Math.cos(angle) * len
+      const y = Math.sin(angle) * len
+
+      return [x, y];
+    }
+
+    function label(text) {
+      ctx.save();
+      ctx.font = `${fontWeight} 50px ${font}`
+      ctx.fillText(text, 0, LABEL)
+      ctx.restore();
+    }
+
+    function smallLabel(text) {
+      ctx.save();
+      ctx.font = `${fontWeight} 10px ${font}`
+      ctx.fillText(text, 0, LABEL + 20)
+      ctx.restore();
+    }
+
+    function bottomLabel(text, offset = 0) {
+      ctx.save();
+      ctx.font = `${fontWeight} 14px ${font}`
+      ctx.fillText(text, 0, LABEL + 40 + offset)
+      ctx.restore();
+    }
+
+    function draw() {
+      ctx.clearRect(-w, -w, h, h);
+
+      // 360 - 8 headings = 45 degrees each
+      const index = Math.round(heading / 45);
+      const sections = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+
+      label(`${Math.round(heading) % 360}° ${sections[index % sections.length]}`)
+
+      // smallLabel(`touched: ${touchedHeading}`)
+      // smallLabel(`${alpha.toFixed(0)} : ${beta.toFixed(0)} : ${gamma.toFixed(0)}`);
+
+      if (coords) {
+        const {
+          latitude, longitude, altitude, accuracy, altitudeAccuracy, heading, speed
+        } = coords;
+        if (latitude !== null) {
+          const latlon = `${fmtDeg(latitude, 'N', 'S')} ${fmtDeg(longitude, 'E', 'W')}`;
+          bottomLabel(latlon)
+        }
+
+        if (altitude !== null) {
+          bottomLabel(`${altitude.toFixed(0)}m Elevation`, 20)
+        }
+      }
+
+      drawDial(heading);
+
+      requestAnimationFrame(draw);
+    }
+
+    function drawDial(heading = 0) {
+      // draw degree labels
+      ctx.save();
+      ctx.font = `${fontWeight} 14px ${font}`
+      for (let r = 0; r < CIRCLE_DEG; r += 30) {
+        if (touchedHeading && Math.abs(touchedHeading - r) < 10) {
+          continue;
+        }
+        const [x, y] = angleToCoords((r - heading - 90) / CIRCLE_DEG * PI_2, LABEL_RADIUS)
+        ctx.fillText(`${r}`, x, y)
+      }
+
+
+      ctx.lineWidth = 0.5;
+
+      // draw bubble
+      ctx.save()
+
+      ctx.translate(gamma / 4, beta / 4)
+      ctx.beginPath();
+
+      ctx.arc(0, 0, 30, 0, Math.PI * 2);
+      ctx.fillStyle = '#f3f3f3';
+      ctx.fill()
+
+      ctx.beginPath();
+      ctx.moveTo(0, -CROSSHAIR_TINY);
+      ctx.lineTo(0, CROSSHAIR_TINY);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-CROSSHAIR_TINY, 0);
+      ctx.lineTo(CROSSHAIR_TINY, 0);
+      ctx.strokeStyle = '#d0d0d0';
+      ctx.stroke();
+
+      ctx.restore();
+
+      // draw crosshair
+      // N-S
+      // const [nx, ny] = angleToCoords((bearings.N - heading - 90) / CIRCLE_DEG * PI_2,  CROSSHAIR_RADIUS);
+      // const [sx, sy] = angleToCoords((bearings.S - heading - 90) / CIRCLE_DEG * PI_2,  CROSSHAIR_RADIUS);
+      // E-W
+      // const [ex, ey] = angleToCoords((bearings.E - heading - 90) / CIRCLE_DEG * PI_2,  CROSSHAIR_RADIUS);
+      // const [wx, wy] = angleToCoords((bearings.W - heading - 90) / CIRCLE_DEG * PI_2,  CROSSHAIR_RADIUS);
+      ctx.beginPath();
+      ctx.moveTo(0, -CROSSHAIR_RADIUS);
+      ctx.lineTo(0, CROSSHAIR_RADIUS);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-CROSSHAIR_RADIUS, 0);
+      ctx.lineTo(CROSSHAIR_RADIUS, 0);
+      ctx.stroke();
+
+
+      if (touchedHeading) {
+        ctx.save();
+        ctx.rotate((-90) / CIRCLE_DEG * PI_2);
+        ctx.beginPath();
+
+        // const from = heading - 90 // Math.min(heading, touchedHeading);
+        // const to = touchedHeading - 90 // Math.max(heading, touchedHeading);
+        let diff = touchedHeading - heading;
+        let dir = diff > 0;
+        if (Math.abs(diff) > 180) {
+          diff = dir ? diff - 360 : diff + 360;
+          dir = !dir;
+        }
+
+        ctx.arc(0, 0, DIRECTION_START, 0, diff / CIRCLE_DEG * PI_2, !dir);
+        ctx.arc(0, 0, DIRECTION_END, diff / CIRCLE_DEG * PI_2, 0, dir);
+        ctx.closePath();
+        ctx.fillStyle = 'red';
+        ctx.fill();
+        ctx.restore();
+
+        ctx.save();
+        ctx.font = `${fontWeight} 8px ${font}`;
+        // ctx.fillStyle = '#fff';
+        let [x, y] = angleToCoords((diff / 2 - 90) / CIRCLE_DEG * PI_2, 48);
+        ctx.fillText(`${Math.abs(diff).toFixed(0)}°`, x, y);
+        ctx.restore();
+      }
+
+      ctx.save();
+      ctx.font = `300 18px ${font}`
+      // draw heading labels
+      for (let dir in bearings) {
+        const [x, y] = angleToCoords((bearings[dir] - heading - 90) / CIRCLE_DEG * PI_2, HEADING_RADIUS);
+        ctx.fillText(`${dir}`, x, y)
+      }
+      ctx.restore();
+
+      for (let r = 0; r < CIRCLE_DEG; r += 2) {
+        const [sx, sy] = angleToCoords((r - heading - 90) / CIRCLE_DEG * PI_2)
+
+        ctx.lineWidth = (r % 30 == 0) ? 2 : 0.5;
+        ctx.beginPath();
+        ctx.moveTo(sx * LINE_START, sy * LINE_START);
+        ctx.lineTo(sx * LINE_END, sy * LINE_END);
+        ctx.stroke();
+      }
+
+      // index line
+      ctx.save();
+      ctx.globalCompositeOperation = 'xor';
+      ctx.beginPath();
+      ctx.moveTo(0, -LINE_START);
+      ctx.lineTo(0, -LINE_START - INDEX_LEN);
+      ctx.lineWidth = 4;
+      ctx.stroke();
+      ctx.restore();
+
+      if (touchedHeading) {
+        ctx.font = `${fontWeight} 22px ${font}`
+        const [sx, sy] = angleToCoords((touchedHeading - heading - 90) / CIRCLE_DEG * PI_2)
+
+        ctx.beginPath();
+        ctx.moveTo(sx * LINE_START, sy * LINE_START);
+        ctx.lineTo(sx * (LINE_START + INDEX2_LEN), sy * (LINE_START + INDEX2_LEN));
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        ctx.fillText(`${touchedHeading.toFixed(0)}`, sx * MARKED_DIRECTION, sy * MARKED_DIRECTION);
+      }
+
+      // draw N arrow
+      // const [x1, y2] = angleToCoords((- heading - 90) / CIRCLE_DEG * PI_2,  HEADING_RADIUS);
+      ctx.save();
+      ctx.rotate((- heading) / CIRCLE_DEG * PI_2)
+      ctx.fillStyle = 'red';
+      ctx.beginPath()
+      ctx.moveTo(0, -110);
+      ctx.lineTo(-5, -100);
+      ctx.lineTo(5, -100);
+      ctx.fill();
+      ctx.restore();
+
+      ctx.restore();
+
+    }
+
+    drawDial();
+
+  </script>
+</body>
+
+</html>
