@@ -8,7 +8,8 @@
 * [protrait_effect](protrait_effect) - experiments to render the bokeh (aka Protrait on ios) effect with tensorflow.js and three.js
 * [fishy-sketches](fishy-sketches) - drawing fishes with bezier curves in 2d
 ####  History / Notes
-* 26 Jan 2024 - [Compass app variant](cosmos/compass_position.html) that uses geolocation for coordinates and altitude
+* 27 Jan 2024 - exploration of AR with compass direction.
+* 26 Jan 2024 - [Compass with position](cosmos/compass_position.html), compass variant that uses geolocation for coordinates and altitude. Also combined sun positioning to show [compass with sun position](cosmos/compass_sun.html)
 * 24 Jan 2024 - JS based generation and visualizations of [sunrise and sunset tables](cosmos/suncharts.html). Explore the use of the suncalc libaries and [geolocation](cosmos/location.html) api.
 * 23 Jan 2024 - A JS canvas based implementation of the IOS [Compass app](cosmos/compass.html), utilizing device orientation event and webkit compass heading. I implemented most of the UI/UX including bearing display and the dial rotation, including bubble level and direction marking. What's missing are vibration (disallowed in safari) and GPS coordinates and some subtle animations. One improvement I have over Apple's implementation
 is that tapping the screen not only marks the change in direction, but gives the angle difference. This

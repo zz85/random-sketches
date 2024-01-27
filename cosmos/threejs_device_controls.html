@@ -120,12 +120,14 @@
             }
           </script>
     <script type="module">
-
         import * as THREE from 'three';
+        import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
+        import { FontLoader } from 'three/addons/loaders/FontLoader.js';
 
         import { DeviceOrientationControls } from './vendor/DeviceOrientationControls.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-        let camera, scene, renderer, controls;
+        let camera, scene, renderer, controls, ctx;
 
         const startButton = document.getElementById('startButton');
         startButton.addEventListener('click', function () {
@@ -136,7 +138,6 @@
         }, false);
 
         function init() {
-
             const overlay = document.getElementById('overlay');
             overlay.remove();
 
@@ -146,25 +147,115 @@
             hud.height = window.innerHeight * dpr;
             hud.style.width = `${window.innerWidth}px`
             hud.style.height = `${window.innerHeight}px`
-            var ctx = hud.getContext('2d');
+            ctx = hud.getContext('2d');
             ctx.font = '40px sans-serif'
             // ctx.fillStyle = '#000'
             ctx.fillStyle = '#fff'
             ctx.fillText("Hi world", 100, 100);
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.scale(dpr, dpr);
+
+            const loader = new FontLoader();
+            const font = loader.load(
+                'opensans_extrabold_nsew.json',
+                // 'regular.json',
+                // onLoad callback
+                function (font) {
+                    const options = {
+                        font: font,
+                        size: 0.2,
+                        height: 0.5,
+                        curveSegments: 12,
+                        bevelEnabled: false,
+                        // bevelThickness: 10,
+                        // bevelSize: 8,
+                        // bevelOffset: 0,
+                        // bevelSegments: 5
+                    };
+
+                    const material = new THREE.MeshLambertMaterial({ color: 0x63aed9 });
+
+                    const geometry = {};
+                    'NSEW'.split('').map(c => {
+                        // 
+                        const geo = new TextGeometry(c, options);
+                        geo.computeBoundingBox();
+                        const centerOffset = - 0.5 * (geo.boundingBox.max.x - geo.boundingBox.min.x);
+                        const centerYOffset = - 0.5 * (geo.boundingBox.max.y - geo.boundingBox.min.y);
+                        geo.translate(centerOffset, centerYOffset, 0);
+                        geometry[c] = geo;
+                    })
+
+                    const LETTER_DISTANCE = 5;
+
+                    // MeshLambertMaterial
+                    const n = new THREE.Mesh(geometry.N, material);
+                    n.position.z = LETTER_DISTANCE;
+                    // n.rotation.y = Math.PI;
+                    n.rotation.y = Math.PI
+                    scene.add(n);
+
+                    const s = new THREE.Mesh(geometry.S, material);
+                    s.position.z = -LETTER_DISTANCE;
+                    // s.rotation.y = Math.PI;
+                    // s.rotation.z = Math.PI;
+                    scene.add(s);
+
+                    const e = new THREE.Mesh(geometry.E, material);
+                    e.position.x = -LETTER_DISTANCE;
+                    e.rotation.y = Math.PI / 2
+                    scene.add(e);
+
+                    const w = new THREE.Mesh(geometry.W, material);
+                    w.position.x = LETTER_DISTANCE;
+                    w.rotation.y = -Math.PI / 2;
+                    scene.add(w);
+
+                    Object.assign(window, { n, s, e, w })
+                },
+
+                // onProgress callback
+                function (xhr) {
+                    console.log((xhr.loaded / xhr.total * 100) + '% loaded');
+                },
+
+                // onError callback
+                function (err) {
+                    console.log('An error happened');
+                }
+            );
 
             camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.001, 1100);
+            window.c = camera;
 
             controls = new DeviceOrientationControls(camera);
+            // controls = new OrbitControls( camera, hud );
+            // controls.enableDamping = true; // an animation loop is required when either damping or auto-rotation are enabled
+            // 	controls.dampingFactor = 0.05;
+
+            // 	controls.screenSpacePanning = false;
+
+            // 	controls.minDistance = 0.1;
+            // 	controls.maxDistance = 500;
+
+            // 	controls.maxPolarAngle = Math.PI / 2;
 
             scene = new THREE.Scene();
 
-            // const helperGeometry = new THREE.BoxGeometry(100, 100, 100, 4, 4, 4);
-            // const helperMaterial = new THREE.MeshBasicMaterial({ color: 0xff00ff, wireframe: true });
-            // const helper = new THREE.Mesh(helperGeometry, helperMaterial);
-            // scene.add(helper);
+            const light = new THREE.AmbientLight(0xc0c0c0); // soft white light 0x404040
+            scene.add(light);
+
+            const plight = new THREE.PointLight(0x404040, 0.1, 1000);
+            plight.position.set(0, 2, 0);
+            scene.add(plight);
+
+            // White directional light at half intensity shining from the top.
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+            scene.add(directionalLight);
 
             const helperGeometry = new THREE.BoxGeometry(1, 1, 1, 4, 4, 4);
-            const helperMaterial = new THREE.MeshBasicMaterial({ color: 0xff00ff, wireframe: true });
+            const helperMaterial = new THREE.MeshLambertMaterial({ color: 0xff00ff, wireframe: true });
             const helper = new THREE.Mesh(helperGeometry, helperMaterial);
             helper.position.z = 2;
             scene.add(helper);
@@ -188,6 +279,9 @@
             const torus = new THREE.Mesh(torusGeometry, helperMaterial);
             cone.position.y = -2;
             //scene.add( torus );
+
+
+
 
             /*
             
@@ -215,11 +309,56 @@
 
         }
 
-        function animate() {
+        let calibrated;
 
+        function animate() {
             window.requestAnimationFrame(animate);
 
             controls.update();
+
+            let heading = controls.deviceOrientation.webkitCompassHeading;
+
+            if (heading && !calibrated) {
+                scene.rotation.y = (heading + 180) / 180 * Math.PI
+                calibrated = true;
+            }
+
+            function toScreenPosition(obj, camera,) {
+                if (!obj) return;
+
+                obj.updateMatrixWorld();
+
+                const frustum = new THREE.Frustum()
+                const matrix = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
+                frustum.setFromProjectionMatrix(matrix)
+                if (!frustum.containsPoint(obj.position)) {
+                    return
+                }
+
+                var vector = new THREE.Vector3();
+
+                var widthHalf = 0.5 * window.innerWidth;
+                var heightHalf = 0.5 * window.innerHeight;
+
+                vector.setFromMatrixPosition(obj.matrixWorld);
+                vector.project(camera);
+
+                vector.x = (vector.x * widthHalf) + widthHalf;
+                vector.y = - (vector.y * heightHalf) + heightHalf;
+
+                return {
+                    x: vector.x,
+                    y: vector.y
+                };
+
+            };
+
+            var screen = toScreenPosition(window.n, camera);
+            ctx.clearRect(0, 0, 1000, 1000)
+            if (screen) {
+                ctx.fillText('N', screen.x, screen.y)
+            }
+
             renderer.render(scene, camera);
 
         }
