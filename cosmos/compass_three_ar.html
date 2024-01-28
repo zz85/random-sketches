@@ -108,7 +108,7 @@
         <button id="startButton">Start Demo</button>
     </div>
     <div id="info">
-        Testing info
+        Compass orientation
     </div>
 
     <script type="importmap">
@@ -130,14 +130,19 @@
         let camera, scene, renderer, controls, ctx, orbitalControls;
 
         const startButton = document.getElementById('startButton');
-        startButton.addEventListener('click', function () {
+        startButton.addEventListener('click', start, false);
 
-            init();
+        function start(orbit) {
+            init(orbit);
             animate();
+        }
 
-        }, false);
+        if (!window.DeviceOrientationEvent || !window.DeviceOrientationEvent.requestPermission) {
+            start();
+        }
 
-        function init() {
+        function init(e) {
+            const orbit = !e;
             const overlay = document.getElementById('overlay');
             overlay.remove();
 
@@ -160,56 +165,60 @@
             const font = loader.load(
                 'opensans_extrabold_nsew.json',
                 // 'regular.json',
-                // onLoad callback
                 function (font) {
+                    const FONT_SIZE = 0.1;
+                    const LETTER_DISTANCE = 0.5;
+
                     const options = {
                         font: font,
-                        size: 0.2,
-                        height: 0.2 / 6,
+                        size: FONT_SIZE,
+                        height: FONT_SIZE/5,
                         curveSegments: 3,
                         bevelEnabled: false,
-                        // bevelThickness: 10,
-                        // bevelSize: 8,
-                        // bevelOffset: 0,
-                        // bevelSegments: 5
                     };
 
                     const material = new THREE.MeshLambertMaterial({ color: 0x63aed9 });
 
+                    let centerYOffset 
                     const geometry = {};
                     'NSEW'.split('').map(c => {
                         // 
                         const geo = new TextGeometry(c, options);
                         geo.computeBoundingBox();
                         const centerOffset = - 0.5 * (geo.boundingBox.max.x - geo.boundingBox.min.x);
-                        const centerYOffset = - 0.5 * (geo.boundingBox.max.y - geo.boundingBox.min.y);
+                        centerYOffset = - 0.5 * (geo.boundingBox.max.y - geo.boundingBox.min.y);
                         geo.translate(centerOffset, centerYOffset, 0);
+                        // geo.translate(centerOffset, 0, 0);
                         geometry[c] = geo;
                     })
-
-                    const LETTER_DISTANCE = 5;
+                    
 
                     // MeshLambertMaterial
                     const n = new THREE.Mesh(geometry.N, material);
                     n.position.z = LETTER_DISTANCE;
                     // n.rotation.y = Math.PI;
                     n.rotation.y = Math.PI
+                    n.position.y = -centerYOffset;
                     scene.add(n);
 
                     const s = new THREE.Mesh(geometry.S, material);
                     s.position.z = -LETTER_DISTANCE;
                     // s.rotation.y = Math.PI;
                     // s.rotation.z = Math.PI;
+
+                    s.position.y = -centerYOffset;
                     scene.add(s);
 
                     const e = new THREE.Mesh(geometry.E, material);
                     e.position.x = -LETTER_DISTANCE;
                     e.rotation.y = Math.PI / 2
+                    e.position.y = -centerYOffset;
                     scene.add(e);
 
                     const w = new THREE.Mesh(geometry.W, material);
                     w.position.x = LETTER_DISTANCE;
                     w.rotation.y = -Math.PI / 2;
+                    w.position.y = -centerYOffset;
                     scene.add(w);
 
                     Object.assign(window, { n, s, e, w })
@@ -227,11 +236,25 @@
             );
 
             camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.001, 1100);
-            // camera.position.y = 1
-            // camera.lookAt(0, 0, -1);
-            window.c = camera;
 
             controls = new DeviceOrientationControls(camera);
+            if (orbit) {
+                camera.lookAt(0, 0, -1);
+                window.c = camera;
+
+                // 
+                orbitalControls = new OrbitControls(camera, hud);
+                orbitalControls.enableDamping = true; // an animation loop is required when either damping or auto-rotation are enabled
+                orbitalControls.dampingFactor = 0.05;
+
+                orbitalControls.screenSpacePanning = false;
+
+                orbitalControls.minDistance = 0.1;
+                orbitalControls.maxDistance = 500;
+
+                orbitalControls.maxPolarAngle = Math.PI;
+                controls = orbitalControls;
+            }
 
             scene = new THREE.Scene();
 
@@ -246,31 +269,22 @@
             const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
             scene.add(directionalLight);
 
-            const helperGeometry = new THREE.BoxGeometry(1, 1, 1, 4, 4, 4);
             const helperMaterial = new THREE.MeshLambertMaterial({ color: 0xff00ff, wireframe: true });
-            const helper = new THREE.Mesh(helperGeometry, helperMaterial);
-            helper.position.z = 2;
+            const material = new THREE.MeshLambertMaterial({ color: 0xffffff, wireframe: !true });
+
+
+            const planeGeometry = new THREE.PlaneGeometry( 1.5, 1.5 );
+            planeGeometry.rotateX(-Math.PI / 2);
+            const helper = new THREE.Mesh(planeGeometry, material);
             scene.add(helper);
 
-            const sphereGeometry = new THREE.SphereGeometry(0.5, 20, 10);
-            const sphere = new THREE.Mesh(sphereGeometry, helperMaterial);
-            sphere.position.x = 2;
-            scene.add(sphere);
+            const circleGeometry = new THREE.CircleGeometry( 0.5, 32 ); 
+            circleGeometry.rotateX(-Math.PI / 2);
+            const circle = new THREE.Mesh(circleGeometry, helperMaterial);
+            circle.position.y = 0.001;
+            scene.add(circle);
 
-            const capsuleGeometry = new THREE.CapsuleGeometry(0.5, 1, 4, 8);
-            const capsule = new THREE.Mesh(capsuleGeometry, helperMaterial);
-            capsule.position.z = -2;
-            scene.add(capsule);
-
-            const coneGeometry = new THREE.ConeGeometry(0.5, 0.5, 32);
-            const cone = new THREE.Mesh(coneGeometry, helperMaterial);
-            cone.position.y = 2;
-            scene.add(cone);
-
-            const torusGeometry = new THREE.TorusGeometry(0.2, 0.2, 6, 20);
-            const torus = new THREE.Mesh(torusGeometry, helperMaterial);
-            torus.position.x = -2;
-            scene.add(torus);
+            scene.position.y = -0.2;
 
 
             //
@@ -336,10 +350,11 @@
             var screen = toScreenPosition(window.n, camera);
             ctx.clearRect(0, 0, 1000, 1000)
             if (screen) {
-                ctx.fillText('N', screen.x, screen.y)
+                // ctx.fillText('N', screen.x, screen.y)
             }
 
             renderer.render(scene, camera);
+            window.s = scene;
 
         }
 
