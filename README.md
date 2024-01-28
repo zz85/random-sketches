@@ -9,7 +9,7 @@
 * [fishy-sketches](fishy-sketches) - drawing fishes with bezier curves in 2d
 ####  History / Notes
 * 28 Jan 2024 - updated Sun path viz with equal altitude spacing
-* 27 Jan 2024 - exploration of AR with compass direction.
+* 27 Jan 2024 - exploration of AR with compass direction. [threejs device orientation test](cosmos/compass_three_ar_orient_test.html)
 * 26 Jan 2024 - [Compass with position](cosmos/compass_position.html), compass variant that uses geolocation for coordinates and altitude. Also combined sun positioning to show [compass with sun position](cosmos/compass_sun.html)
 * 24 Jan 2024 - JS based generation and visualizations of [sunrise and sunset tables](cosmos/suncharts.html). Explore the use of the suncalc libaries and [geolocation](cosmos/location.html) api.
 * 23 Jan 2024 - A JS canvas based implementation of the IOS [Compass app](cosmos/compass.html), utilizing device orientation event and webkit compass heading. I implemented most of the UI/UX including bearing display and the dial rotation, including bubble level and direction marking. What's missing are vibration (disallowed in safari) and GPS coordinates and some subtle animations. One improvement I have over Apple's implementation

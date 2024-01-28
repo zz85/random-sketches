@@ -2,7 +2,7 @@
 <html lang="en">
 
 <head>
-    <title>three.js webgl - controls - deviceorientation</title>
+    <title>sun path three.js webgl - deviceorientation</title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
     <style>
@@ -127,7 +127,7 @@
         import { DeviceOrientationControls } from './vendor/DeviceOrientationControls.js';
         import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-        let camera, scene, renderer, controls, ctx;
+        let camera, scene, renderer, controls, ctx, orbitalControls;
 
         const startButton = document.getElementById('startButton');
         startButton.addEventListener('click', function () {
@@ -227,19 +227,22 @@
             );
 
             camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.001, 1100);
+            camera.position.y = 1.6
+            camera.lookAt(0, 0, -1);
             window.c = camera;
 
-            controls = new DeviceOrientationControls(camera);
-            // controls = new OrbitControls( camera, hud );
-            // controls.enableDamping = true; // an animation loop is required when either damping or auto-rotation are enabled
-            // 	controls.dampingFactor = 0.05;
+            // controls = new DeviceOrientationControls(camera);
+            orbitalControls = new OrbitControls(camera, hud);
+            orbitalControls.enableDamping = true; // an animation loop is required when either damping or auto-rotation are enabled
+            orbitalControls.dampingFactor = 0.05;
 
-            // 	controls.screenSpacePanning = false;
+            orbitalControls.screenSpacePanning = false;
 
-            // 	controls.minDistance = 0.1;
-            // 	controls.maxDistance = 500;
+            orbitalControls.minDistance = 0.1;
+            orbitalControls.maxDistance = 500;
 
-            // 	controls.maxPolarAngle = Math.PI / 2;
+            // orbitalControls.maxPolarAngle = Math.PI / 2;
+            controls = orbitalControls;
 
             scene = new THREE.Scene();
 
@@ -281,20 +284,6 @@
             //scene.add( torus );
 
 
-
-
-            /*
-            
-                z
-              x  -x
-                -z
-
-            */
-
-
-            // scene.rotation.y = Math.PI / 3;
-
-
             //
 
             renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -316,11 +305,13 @@
 
             controls.update();
 
-            let heading = controls.deviceOrientation.webkitCompassHeading;
+            if (controls.deviceOrientation) {
+                let heading = controls.deviceOrientation.webkitCompassHeading;
 
-            if (heading && !calibrated) {
-                scene.rotation.y = (heading + 180) / 180 * Math.PI
-                calibrated = true;
+                if (heading && !calibrated) {
+                    scene.rotation.y = (heading + 180) / 180 * Math.PI
+                    calibrated = true;
+                }
             }
 
             function toScreenPosition(obj, camera,) {
