@@ -172,14 +172,14 @@
                     const options = {
                         font: font,
                         size: FONT_SIZE,
-                        height: FONT_SIZE/5,
+                        height: FONT_SIZE / 5,
                         curveSegments: 3,
                         bevelEnabled: false,
                     };
 
                     const material = new THREE.MeshLambertMaterial({ color: 0x63aed9 });
 
-                    let centerYOffset 
+                    let centerYOffset
                     const geometry = {};
                     'NSEW'.split('').map(c => {
                         // 
@@ -191,7 +191,7 @@
                         // geo.translate(centerOffset, 0, 0);
                         geometry[c] = geo;
                     })
-                    
+
 
                     // MeshLambertMaterial
                     const n = new THREE.Mesh(geometry.N, material);
@@ -239,6 +239,7 @@
 
             controls = new DeviceOrientationControls(camera);
             if (orbit) {
+                camera.position.y = 1.5
                 camera.lookAt(0, 0, -1);
                 window.c = camera;
 
@@ -273,16 +274,42 @@
             const material = new THREE.MeshLambertMaterial({ color: 0xffffff, wireframe: !true });
 
 
-            const planeGeometry = new THREE.PlaneGeometry( 1.5, 1.5 );
+            const planeGeometry = new THREE.PlaneGeometry(1.5, 1.5);
             planeGeometry.rotateX(-Math.PI / 2);
             const helper = new THREE.Mesh(planeGeometry, material);
             scene.add(helper);
 
-            const circleGeometry = new THREE.CircleGeometry( 0.5, 32 ); 
+            const circleGeometry = new THREE.CircleGeometry(0.5, 32);
             circleGeometry.rotateX(-Math.PI / 2);
             const circle = new THREE.Mesh(circleGeometry, helperMaterial);
             circle.position.y = 0.001;
             scene.add(circle);
+
+
+            const doodecahedronGeo = new THREE.DodecahedronGeometry(0.1, 0);
+            const doodecahedron = new THREE.Mesh(doodecahedronGeo, helperMaterial);
+            doodecahedron.position.x = 0.5;
+            doodecahedron.position.y = 0.5;
+            scene.add(doodecahedron);
+
+            const icosahedronGeo = new THREE.IcosahedronGeometry(0.1, 1);
+            const icosahedron = new THREE.Mesh(icosahedronGeo, helperMaterial);
+            icosahedron.position.x = -0.5;
+            icosahedron.position.y = 0.5;
+            scene.add(icosahedron);
+
+            const octahedronGeo = new THREE.OctahedronGeometry(0.1, 1);
+            const octahedron = new THREE.Mesh(octahedronGeo, helperMaterial);
+            octahedron.position.z = -0.5;
+            octahedron.position.y = 0.5;
+            scene.add(octahedron);
+
+            const sphereGeo = new THREE.SphereGeometry(0.1, 4, 3);
+            const sphere = new THREE.Mesh(sphereGeo, helperMaterial);
+            sphere.position.z = 0.5;
+            sphere.position.y = 0.5;
+            scene.add(sphere);
+
 
             scene.position.y = -0.2;
 
