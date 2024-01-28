@@ -288,7 +288,7 @@
                 }
             );
 
-            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.001, 1100);
+            camera = new THREE.PerspectiveCamera(68, window.innerWidth / window.innerHeight, 0.001, 1100);
 
             controls = new DeviceOrientationControls(camera);
             if (orbit) {
@@ -376,9 +376,14 @@
                 console.log(sunpos);
                 const radius = 2;
 
+                const sunMaterial = new THREE.MeshLambertMaterial({
+                    color: 0xFFA500
+                    // , transparent: true, opacity: 1 - Math.abs(pos.relative) / 12 * 0.5
+                });
+
                 sunpos.forEach((pos, i) => {
                     // if (pos.relative < 0) return;
-                    const sphere = new THREE.Mesh(icosahedronGeo, material);
+                    const sphere = new THREE.Mesh(icosahedronGeo, sunMaterial);
                     const h = Math.sin(pos.altitude) * radius;
                     const r = Math.cos(pos.altitude) * radius;
                     const bearing = pos.azimuth - Math.PI / 2;

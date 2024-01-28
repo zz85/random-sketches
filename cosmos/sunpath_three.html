@@ -186,7 +186,7 @@
         // const LETTER_DISTANCE = 0.8;
         // const CIRCLE_SIZE = 0.9;
 
-    const FONT_SIZE = 0.2;
+        const FONT_SIZE = 0.2;
         const LETTER_DISTANCE = 0.8;
         const CIRCLE_SIZE = 0.9;
 
@@ -329,7 +329,7 @@
             scene.add(directionalLight);
 
             const helperMaterial = new THREE.MeshLambertMaterial({ color: 0xff00ff, wireframe: true });
-            const material = new THREE.MeshLambertMaterial({ color: 0xffffff, wireframe: !true });
+            const material = new THREE.MeshLambertMaterial({ color: 0xffffff, wireframe: !true, transparent: true, opacity: 0.8 });
 
 
             // scene.position.y = -0.2;
@@ -347,7 +347,7 @@
             const circle = new THREE.Mesh(circleGeometry,
                 // helperMaterial
                 material
-                );
+            );
             helper.add(circle);
 
             // helper.position.y = -0.5;
@@ -377,14 +377,16 @@
             sphere.position.y = 0.5;
             // scene.add(sphere);
 
-
             startLocator((sunpos) => {
                 console.log(sunpos);
                 const SUNPATH_RADIUS = 1;
 
                 sunpos.forEach((pos, i) => {
                     // if (pos.relative < 0) return;
-                    const material = new THREE.MeshLambertMaterial({ color: 0xFFA500 });
+                    const material = new THREE.MeshLambertMaterial({
+                        color: 0xFFA500, transparent: true,
+                        opacity: 1 - Math.abs(pos.relative) / 12 * 0.5
+                    });
                     const sphere = new THREE.Mesh(icosahedronGeo, material);
                     const h = Math.sin(pos.altitude) * SUNPATH_RADIUS;
                     const r = Math.cos(pos.altitude) * SUNPATH_RADIUS;
