@@ -75,6 +75,10 @@
             locator.getLocation(update);
         } else {
             update();
+
+            if ((Date.now() - locator.timestamp) > ONE_HOUR) {
+                locator.getLocation(update);
+            }
         }
 
         function update() {
