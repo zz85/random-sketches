@@ -1,5 +1,5 @@
 # Random experiments
-* [sun charts](cosmos/suncharts.html) - JS based sunrise and sunset tables
+* [sun charts](cosmos/suncharts.html) - JS based sunrise and sunset tables and visualizations
 * [compass](cosmos/compass.html) - Web based implementation of IOS compass app
   * [compass with positioning](cosmos/compass_position.html) - with positioning data
   * [compass with sun position](cosmos/compass_sun.html) - with sunrise and sunset
@@ -8,6 +8,7 @@
 * [protrait_effect](protrait_effect) - experiments to render the bokeh (aka Protrait on ios) effect with tensorflow.js and three.js
 * [fishy-sketches](fishy-sketches) - drawing fishes with bezier curves in 2d
 ####  History / Notes
+* 28 Jan 2024 - updated Sun path viz with equal altitude spacing
 * 27 Jan 2024 - exploration of AR with compass direction.
 * 26 Jan 2024 - [Compass with position](cosmos/compass_position.html), compass variant that uses geolocation for coordinates and altitude. Also combined sun positioning to show [compass with sun position](cosmos/compass_sun.html)
 * 24 Jan 2024 - JS based generation and visualizations of [sunrise and sunset tables](cosmos/suncharts.html). Explore the use of the suncalc libaries and [geolocation](cosmos/location.html) api.

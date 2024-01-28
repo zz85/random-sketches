@@ -1,6 +1,249 @@
 const plotSun = plotSun2
+const plotSunCompass = plotSunCompass3;
 
-function plotSunCompass(date, lat, lon, shortest, longest) {
+function plotSunCompass3(date, lat, lon, shortest, longest) {
+    const nowPos = SunCalc.getPosition(date, lat, lon);
+    date.setSeconds(0);
+    date.setMinutes(0);
+
+    var ctx = createCanvas(400, 400)
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle'
+
+    ctx.fillText('Sun Direction', 200, 30);
+
+    const square = 200;
+    const radius = 150;
+    ctx.translate(square, square);
+
+    ctx.strokeStyle = '#999'
+    ctx.beginPath();
+    ctx.moveTo(-radius, 0);
+    ctx.lineTo(radius, 0);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(0, -radius);
+    ctx.lineTo(0, radius);
+    ctx.stroke();
+
+    ctx.save();
+    ctx.lineWidth = 0.5;
+    ctx.strokeStyle = '#ddd'
+    ctx.beginPath();
+    ctx.arc(0, 0, radius, 0, Math.PI * 2)
+    ctx.stroke();
+    ctx.restore();
+
+    function loc(pos) {
+        // const r = Math.cos(pos.altitude) * radius;
+        const r = (1 - (pos.altitude/ Math.PI * 180) / 90) * radius;
+        const bearing = pos.azimuth + Math.PI / 2;
+        const x = Math.cos(bearing) * r;
+        const y = Math.sin(bearing) * r;
+        return [x, y]
+    }
+
+    let [x, y] = loc(nowPos);
+    ctx.fillText(`☀️`, x, y);
+
+    ctx.save();
+    ctx.lineWidth = 0.5;
+    ctx.strokeStyle = '#ddd'
+    ctx.fillStyle = '#333'
+    ctx.font = '4px sans-serif'
+    for (let angle = 0; angle <= 90; angle += 10)  {
+        const r = (1 - angle / 90) * radius;
+        ctx.beginPath()
+        ctx.arc(0, 0, r,  0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.fillText(`${angle}°`, r, -5);
+    }
+    ctx.restore();
+
+    ctx.save();
+    for (let h = 0; h < 24; h += 1) {
+        date.setHours(h);
+        const pos = SunCalc.getPosition(date, lat, lon);
+        let [x, y] = loc(pos);
+
+        if (pos.altitude < 0) {
+            ctx.globalAlpha =  0.2
+            continue;
+        } else {
+            ctx.globalAlpha =  1
+        }
+        ctx.beginPath();
+        ctx.arc(x, y, 4, 0, Math.PI * 2);
+        ctx.fillStyle = 'orange'
+        ctx.fill();
+
+        ctx.font = '8px sans-serif'
+        ctx.fillStyle = 'black'
+        // ctx.fillText(`${h}`, x, y - 5);
+        ctx.fillText(`${(pos.altitude/ Math.PI * 180).toFixed(0)}`, x, y - 5);
+
+        ctx.lineWidth = 0.5
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(x, y);
+        ctx.stroke();
+    }
+    ctx.restore();
+
+    ctx.save();
+    ctx.font = '6px sans-serif';
+    [shortest.dt, longest.dt].forEach((dt, i) => {
+        let label = false;
+        const syn = ['_', '^']
+        for (let h = 0; h < 24; h += 1) {
+            dt.setHours(h);
+            const pos = SunCalc.getPosition(dt, lat, lon);
+            let [x, y] = loc(pos);
+
+            if (pos.altitude < 0) continue;
+            if (!label) {
+                ctx.fillText(getLocalDate(dt), x, y + (i == 0 ? 50 : -50));
+                label = true;
+            }
+
+            ctx.fillText(`${h}`, x, y + (i == 0 ? 15 : -15));
+            ctx.fillText(`${syn[i]}`, x, y);
+        }
+    })
+    ctx.restore();
+
+    const bearing = 40;
+    ctx.fillText('N', 0, -bearing);
+    ctx.fillText('S', 0, bearing);
+    ctx.fillText('E', bearing, 0);
+    ctx.fillText('W', -bearing, 0);
+
+    return ctx.dom;
+}
+
+function plotSunCompass2(date, lat, lon, shortest, longest) {
+    const nowPos = SunCalc.getPosition(date, lat, lon);
+    date.setSeconds(0);
+    date.setMinutes(0);
+
+    var ctx = createCanvas(400, 400)
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle'
+
+    ctx.fillText('Sun Direction', 200, 30);
+
+    const square = 200;
+    const radius = 150;
+    ctx.translate(square, square);
+
+    ctx.strokeStyle = '#999'
+    ctx.beginPath();
+    ctx.moveTo(-radius, 0);
+    ctx.lineTo(radius, 0);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(0, -radius);
+    ctx.lineTo(0, radius);
+    ctx.stroke();
+
+    ctx.save();
+    ctx.lineWidth = 0.5;
+    ctx.strokeStyle = '#ddd'
+    ctx.beginPath();
+    ctx.arc(0, 0, radius, 0, Math.PI * 2)
+    ctx.stroke();
+    ctx.restore();
+
+    function loc(pos) {
+        const r = Math.cos(pos.altitude) * radius;
+        const bearing = pos.azimuth + Math.PI / 2;
+        const x = Math.cos(bearing) * r;
+        const y = Math.sin(bearing) * r;
+        return [x, y]
+    }
+
+    let [x, y] = loc(nowPos);
+    ctx.fillText(`☀️`, x, y);
+
+    ctx.save();
+    ctx.lineWidth = 0.5;
+    ctx.strokeStyle = '#ddd'
+    ctx.fillStyle = '#333'
+    ctx.font = '4px sans-serif'
+    for (let angle = 0; angle <= 90; angle += 10)  {
+        const r = Math.cos(angle * Math.PI / 180) * radius
+        ctx.beginPath()
+        ctx.arc(0, 0, r,  0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.fillText(`${angle}°`, r, -5);
+    }
+    ctx.restore();
+
+    ctx.save();
+    for (let h = 0; h < 24; h += 1) {
+        date.setHours(h);
+        const pos = SunCalc.getPosition(date, lat, lon);
+        let [x, y] = loc(pos);
+
+        if (pos.altitude < 0) {
+            ctx.globalAlpha =  0.2
+            // continue;
+        } else {
+            ctx.globalAlpha =  1
+        }
+        ctx.beginPath();
+        ctx.arc(x, y, 4, 0, Math.PI * 2);
+        ctx.fillStyle = 'orange'
+        ctx.fill();
+
+        ctx.font = '8px sans-serif'
+        ctx.fillStyle = 'black'
+        ctx.fillText(`${h}`, x, y - 5);
+
+        ctx.lineWidth = 0.5
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(x, y);
+        ctx.stroke();
+    }
+    ctx.restore();
+
+    ctx.save();
+    ctx.font = '6px sans-serif';
+    [shortest.dt, longest.dt].forEach((dt, i) => {
+        let label = false;
+        const syn = ['_', '^']
+        for (let h = 0; h < 24; h += 1) {
+            dt.setHours(h);
+            const pos = SunCalc.getPosition(dt, lat, lon);
+            let [x, y] = loc(pos);
+
+            if (pos.altitude < 0) continue;
+            if (!label) {
+                ctx.fillText(getLocalDate(dt), x, y + (i == 0 ? 50 : -50));
+                label = true;
+            }
+
+            ctx.fillText(`${h}`, x, y + (i == 0 ? 15 : -15));
+            ctx.fillText(`${syn[i]}`, x, y);
+        }
+    })
+    ctx.restore();
+
+    const bearing = 40;
+    ctx.fillText('N', 0, -bearing);
+    ctx.fillText('S', 0, bearing);
+    ctx.fillText('E', bearing, 0);
+    ctx.fillText('W', -bearing, 0);
+
+    return ctx.dom;
+}
+
+function plotSunCompass1(date, lat, lon, shortest, longest) {
     const nowPos = SunCalc.getPosition(date, lat, lon);
     date.setSeconds(0);
     date.setMinutes(0);
