@@ -131,15 +131,69 @@
         import { DeviceOrientationControls } from './vendor/DeviceOrientationControls.js';
         import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-        let camera, scene, renderer, controls, ctx, orbitalControls;
+        let camera, scene, renderer, controls, ctx, orbitalControls, helper;
 
         const CIRCLE_RADIUS = 0.2;
         const HELPER_Y = -0.15;
         const FONT_SIZE = 0.05;
         const LETTER_DISTANCE = 0.15;
+        const DEG_LABEL_DISTANCE = 20;
+        const DEG_LABEL_SIZE = 0.5;
 
         const startButton = document.getElementById('startButton');
         startButton.addEventListener('click', start, false);
+
+        let isFontReady = [];
+        function fontReady(cb) {
+            if (isFontReady !== null) {
+                return isFontReady.push(cb)
+            }
+
+            console.log('font', font);
+            cb(font);
+        }
+
+        const headings = {
+            N: 0,
+            S: 180,
+            E: 90,
+            W: 270,
+        }
+
+        const TO_RAD = Math.PI / 180;
+
+        function angleToCoords(angle) {
+            return [
+                Math.cos(angle), Math.sin(angle)
+            ]
+        }
+
+        function setMeshFromAngle(mesh, deg, radius) {
+            const angle = deg * TO_RAD + Math.PI / 2;
+            const [x, z] = angleToCoords(angle);
+            mesh.position.set(x * radius, 0, z * radius);
+            mesh.rotation.y = -(angle + Math.PI / 2);
+        }
+
+        function createTextGeo(text, font, fontSize) {
+            const options = {
+                font: font,
+                size: fontSize,
+                height: fontSize / 5,
+                curveSegments: 3,
+                bevelEnabled: false,
+            };
+
+            const geo = new TextGeometry(text, options);
+            geo.computeBoundingBox();
+            const centerOffset = - 0.5 * (geo.boundingBox.max.x - geo.boundingBox.min.x);
+            const centerYOffset = - 0.5 * (geo.boundingBox.max.y - geo.boundingBox.min.y);
+            geo.centerYOffset = centerYOffset;
+            geo.translate(centerOffset, centerYOffset, 0);
+            return geo;
+        }
+
+        const loader = new FontLoader();
 
         function start(e) {
             init(e);
@@ -152,7 +206,7 @@
             if (e) start(e);
         }
         window.addEventListener('deviceorientation', dmEvents, false);
-        setTimeout(() => { dmEvents()}, 100)
+        setTimeout(() => { dmEvents() }, 100)
 
 
         if (!window.DeviceOrientationEvent || !window.DeviceOrientationEvent.requestPermission) {
@@ -160,10 +214,70 @@
             start();
         }
 
+
+
+
+        function onFontReady(font) {
+            isFontReady.forEach(cb => cb(font));
+            isFontReady = null;
+
+            const material = new THREE.MeshLambertMaterial({ color: 0x63aed9 });
+
+            // let centerYOffset
+            const geometry = {};
+            Object.keys(headings).map(c => {
+                const geo = createTextGeo(c, font, FONT_SIZE);
+
+                const mesh = new THREE.Mesh(geo, material);
+                setMeshFromAngle(mesh, headings[c], LETTER_DISTANCE);
+                mesh.position.y = -geo.centerYOffset;
+
+                helper.add(mesh);
+            })
+
+            const rev = {
+                0: 'N',
+                45: 'NE',
+                90: 'E',
+                136: 'SE',
+                180: 'S',
+                225: 'SW',
+                270: 'W',
+                315: 'NW'
+            }
+            for (let heading = 0; heading < 360; heading += 15) {
+                let text = `${heading}°`;
+                let b = rev[heading];
+                const geo = createTextGeo(b ? b : text, font, DEG_LABEL_SIZE);
+                const mesh = new THREE.Mesh(geo, material);
+                setMeshFromAngle(mesh, heading, DEG_LABEL_DISTANCE);
+                mesh.position.y = -geo.centerYOffset;
+
+                scene.add(mesh);
+            }
+        }
+
         function init(e) {
             const orbit = !e;
             const overlay = document.getElementById('overlay');
             overlay.remove();
+
+            loader.load(
+                'vendor/Open_Sans_ExtraBold_Regular_numbers.json',
+                // 'opensans_extrabold_nsew.json',
+                // 'regular.json',
+                onFontReady,
+
+                // onProgress callback
+                function (xhr) {
+                    console.log((xhr.loaded / xhr.total * 100) + '% loaded');
+                },
+
+                // onError callback
+                function (err) {
+                    console.log('An error happened');
+                }
+            );
 
             var hud = document.getElementById('hud');
             const dpr = window.devicePixelRatio;
@@ -179,77 +293,6 @@
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.scale(dpr, dpr);
-
-            const loader = new FontLoader();
-            const font = loader.load(
-                'opensans_extrabold_nsew.json',
-                // 'regular.json',
-                function (font) {
-                    const options = {
-                        font: font,
-                        size: FONT_SIZE,
-                        height: FONT_SIZE / 5,
-                        curveSegments: 3,
-                        bevelEnabled: false,
-                    };
-
-                    const material = new THREE.MeshLambertMaterial({ color: 0x63aed9 });
-
-                    let centerYOffset
-                    const geometry = {};
-                    'NSEW'.split('').map(c => {
-                        // 
-                        const geo = new TextGeometry(c, options);
-                        geo.computeBoundingBox();
-                        const centerOffset = - 0.5 * (geo.boundingBox.max.x - geo.boundingBox.min.x);
-                        centerYOffset = - 0.5 * (geo.boundingBox.max.y - geo.boundingBox.min.y);
-                        geo.translate(centerOffset, centerYOffset, 0);
-                        // geo.translate(centerOffset, 0, 0);
-                        geometry[c] = geo;
-                    })
-
-
-                    // MeshLambertMaterial
-                    const n = new THREE.Mesh(geometry.N, material);
-                    n.position.z = LETTER_DISTANCE;
-                    // n.rotation.y = Math.PI;
-                    n.rotation.y = Math.PI
-                    n.position.y = -centerYOffset;
-                    helper.add(n);
-
-                    const s = new THREE.Mesh(geometry.S, material);
-                    s.position.z = -LETTER_DISTANCE;
-                    // s.rotation.y = Math.PI;
-                    // s.rotation.z = Math.PI;
-
-                    s.position.y = -centerYOffset;
-                    helper.add(s);
-
-                    const e = new THREE.Mesh(geometry.E, material);
-                    e.position.x = -LETTER_DISTANCE;
-                    e.rotation.y = Math.PI / 2
-                    e.position.y = -centerYOffset;
-                    helper.add(e);
-
-                    const w = new THREE.Mesh(geometry.W, material);
-                    w.position.x = LETTER_DISTANCE;
-                    w.rotation.y = -Math.PI / 2;
-                    w.position.y = -centerYOffset;
-                    helper.add(w);
-
-                    Object.assign(window, { n, s, e, w })
-                },
-
-                // onProgress callback
-                function (xhr) {
-                    console.log((xhr.loaded / xhr.total * 100) + '% loaded');
-                },
-
-                // onError callback
-                function (err) {
-                    console.log('An error happened');
-                }
-            );
 
             camera = new THREE.PerspectiveCamera(68, window.innerWidth / window.innerHeight, 0.001, 1100);
 
@@ -292,8 +335,6 @@
                 transparent: true, opacity: 0.8
             });
 
-
-
             // scene.position.y = -0.2;
             const planeGeometry = new THREE.PlaneGeometry(1.5, 1.5);
             planeGeometry.rotateX(-Math.PI / 2);
@@ -301,7 +342,7 @@
             const plane = new THREE.Mesh(planeGeometry, helperMaterial);
             scene.add(plane);
 
-            const helper = new THREE.Object3D()
+            helper = new THREE.Object3D()
             scene.add(helper);
 
             const circleGeometry = new THREE.CircleGeometry(CIRCLE_RADIUS, 32);
@@ -355,7 +396,6 @@
                             color: 0xFF0000
                         }) :
                         sunMaterial
-
                     );
                     const h = Math.sin(pos.altitude) * radius;
                     const r = Math.cos(pos.altitude) * radius;
@@ -371,6 +411,17 @@
                         sphere.scale.set(2, 2, 2)
                     }
                     scene.add(sphere)
+
+                    fontReady((font) => {
+                        const geo = createTextGeo(`${pos.h}`, font, 0.07)
+                        const mesh = new THREE.Mesh(geo, sunMaterial);
+                        // setMeshFromAngle(mesh, pos.azimuth * 180 / Math.PI, radius);
+                        // mesh.position.y = y -geo.centerYOffset;
+                        mesh.position.set(x, h + 0.25, y);
+                        mesh.lookAt(0, 0, 0)
+
+                        scene.add(mesh);
+                    })
                 })
             })
 
@@ -449,11 +500,11 @@
 
             };
 
-            var screen = toScreenPosition(window.n, camera);
+            // var screen = toScreenPosition(window.n, camera);
 
-            if (screen) {
-                // ctx.fillText('N', screen.x, screen.y)
-            }
+            // if (screen) {
+            //     // ctx.fillText('N', screen.x, screen.y)
+            // }
 
             renderer.render(scene, camera);
             window.s = scene;
