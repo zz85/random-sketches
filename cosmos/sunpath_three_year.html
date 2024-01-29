@@ -336,12 +336,21 @@
             helper.add(sphere);
 
             startLocator((sunpos) => {
-                sunpos.filter(s => !s.day).forEach((pos, i) => {
-                    // if (pos.relative < 0) return;
-                    const material = new THREE.MeshLambertMaterial({
-                        color: 0xFFA500, transparent: true,
-                        opacity: 1 - Math.abs(pos.relative) / 12 * 0.5
+                const material = new THREE.MeshLambertMaterial({
+                        color: 0xFFA500,
+                        // transparent: true,
+                        // opacity: 0.5,
+                        // 1 - Math.abs(pos.relative) / 12 * 0.5
                     });
+
+
+                sunpos.filter(s =>  
+                    s.day !== null &&
+                    // s.day % 4 == 0 &&
+                    s.altitude > -0.10
+                    ).forEach((pos, i) => {
+                    // if (pos.relative < 0) return;
+                    
                     const sphere = new THREE.Mesh(icosahedronGeo, material);
                     const h = Math.sin(pos.altitude) * SUNPATH_RADIUS;
                     const r = Math.cos(pos.altitude) * SUNPATH_RADIUS;
@@ -350,7 +359,7 @@
                     const y = Math.sin(bearing) * r;
 
                     sphere.position.set(x, h, y);
-                    sphere.scale.multiplyScalar(pos.now ? 1 : 0.8 - 0.05 * Math.abs(pos.relative))
+                    sphere.scale.multiplyScalar(0.1)
                     scene.add(sphere)
                 })
             })

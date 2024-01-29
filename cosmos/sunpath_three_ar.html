@@ -113,54 +113,7 @@
 
     <script src="locator.js"></script>
     <script src="vendor/suncalc.js"></script>
-    <script>
-        var now = new Date();
-        var this_hour = new Date(now)
-        this_hour.setMinutes(0);
-        this_hour.setSeconds(0);
-
-        const locator = new Locator();
-
-        const ONE_SEC = 1000;
-        const ONE_MIN = ONE_SEC * 60;
-        const ONE_HOUR = ONE_MIN * 60;
-        const ONE_DAY = ONE_HOUR * 24;
-
-        function startLocator(cb) {
-            const configureLocator = () => cb(locationUpdate());
-
-            if (!locator.timestamp) {
-                locator.getLocation(configureLocator);
-            } else {
-                configureLocator();
-
-                if ((Date.now() - locator.timestamp) > ONE_HOUR) {
-                    locator.getLocation(configureLocator);
-                }
-            }
-        }
-
-        function locationUpdate() {
-            const sunPos = [];
-
-            const pos = SunCalc.getPosition(now, locator.latitude, locator.longitude);
-            sunPos.push(Object.assign({
-                now: true,
-                relative: 0,
-                h: now.getHours(),
-            }, pos))
-            for (let i = -12; i < 12; i++) {
-                const date = new Date(this_hour.getTime() + i * ONE_HOUR);
-                const pos = SunCalc.getPosition(date, locator.latitude, locator.longitude);
-                sunPos.push(Object.assign({
-                    relative: i,
-                    h: date.getHours(),
-                }, pos))
-            }
-
-            return sunPos;
-        }
-    </script>
+    <script src="sunpath.js"></script>
 
     <script type="importmap">
             {
@@ -188,12 +141,22 @@
         const startButton = document.getElementById('startButton');
         startButton.addEventListener('click', start, false);
 
-        function start(orbit) {
-            init(orbit);
+        function start(e) {
+            init(e);
             animate();
         }
 
+        // Hack to by pass click if device orientation events are already received
+        const dmEvents = (e) => {
+            window.removeEventListener('deviceorientation', dmEvents, false);
+            if (e) start(e);
+        }
+        window.addEventListener('deviceorientation', dmEvents, false);
+        setTimeout(() => { dmEvents()}, 100)
+
+
         if (!window.DeviceOrientationEvent || !window.DeviceOrientationEvent.requestPermission) {
+            // start triggered without dom events
             start();
         }
 
@@ -385,7 +348,7 @@
                     // , transparent: true, opacity: 1 - Math.abs(pos.relative) / 12 * 0.5
                 });
 
-                sunpos.forEach((pos, i) => {
+                sunpos.filter(s => !s.day).forEach((pos, i) => {
                     // if (pos.relative < 0) return;
                     const sphere = new THREE.Mesh(icosahedronGeo, pos.now ?
                         new THREE.MeshLambertMaterial({

@@ -1,6 +1,8 @@
 # Random experiments
 
 - [sun path](cosmos/sunpath_three_ar.html) - AR visualization of sun path with three.js
+  - [sun day path](cosmos/sunpath_three.html) - Sun's visualization path of the day
+  - [sun day path](cosmos/sunpath_three_year.html) - Sun's visualization path of the year
 - [sun charts](cosmos/suncharts.html) - JS based sunrise and sunset tables and visualizations
 - [compass](cosmos/compass.html) - Web based implementation of IOS compass app
   - [compass with positioning](cosmos/compass_position.html) - with positioning data
