@@ -185,10 +185,12 @@
         // const FONT_SIZE = 0.2;
         // const LETTER_DISTANCE = 0.8;
         // const CIRCLE_SIZE = 0.9;
+        const SUNPATH_RADIUS = 1;
 
         const FONT_SIZE = 0.2;
         const LETTER_DISTANCE = 0.8;
         const CIRCLE_SIZE = 0.9;
+        const SPHERE_RADIUS = 0.9;
 
         const startButton = document.getElementById('startButton');
         startButton.addEventListener('click', start, false);
@@ -198,8 +200,9 @@
             animate();
         }
 
+        start();
         if (!window.DeviceOrientationEvent || !window.DeviceOrientationEvent.requestPermission) {
-            start();
+            // start();
         }
 
         function init(e) {
@@ -298,6 +301,7 @@
             controls = new DeviceOrientationControls(camera);
             if (orbit) {
                 camera.position.y = 1.5
+                camera.position.z = 3;
                 camera.lookAt(0, 0, -1);
                 window.c = camera;
 
@@ -371,15 +375,17 @@
             octahedron.position.y = 0.5;
             // scene.add(octahedron);
 
-            const sphereGeo = new THREE.SphereGeometry(0.1, 4, 3);
-            const sphere = new THREE.Mesh(sphereGeo, helperMaterial);
-            sphere.position.z = 0.5;
-            sphere.position.y = 0.5;
-            // scene.add(sphere);
+            const sphereGeo = new THREE.SphereGeometry(SPHERE_RADIUS, 10, 9);
+            const spherematerial = new THREE.MeshLambertMaterial({ color: 0x63aed9, opacity: 0.8, wireframe: true, transparent: true, side: THREE.DoubleSide });
+
+            const sphere = new THREE.Mesh(sphereGeo,
+                //helperMaterial
+                spherematerial);
+
+            helper.add(sphere);
 
             startLocator((sunpos) => {
-                console.log(sunpos);
-                const SUNPATH_RADIUS = 1;
+
 
                 sunpos.forEach((pos, i) => {
                     // if (pos.relative < 0) return;

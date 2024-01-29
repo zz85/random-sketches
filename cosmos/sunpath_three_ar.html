@@ -65,7 +65,7 @@
         #overlay {
             position: absolute;
             z-index: 2;
-            top: 0;
+            bottom: 0;
             left: 0;
             width: 100%;
             height: 100%;
@@ -324,7 +324,11 @@
             scene.add(directionalLight);
 
             const helperMaterial = new THREE.MeshLambertMaterial({ color: 0xff00ff, wireframe: true });
-            const material = new THREE.MeshLambertMaterial({ color: 0xffffff, wireframe: !true });
+            const material = new THREE.MeshLambertMaterial({
+                color: 0xffffff, wireframe: !true,
+                transparent: true, opacity: 0.8
+            });
+
 
 
             // scene.position.y = -0.2;
@@ -383,7 +387,13 @@
 
                 sunpos.forEach((pos, i) => {
                     // if (pos.relative < 0) return;
-                    const sphere = new THREE.Mesh(icosahedronGeo, sunMaterial);
+                    const sphere = new THREE.Mesh(icosahedronGeo, pos.now ?
+                        new THREE.MeshLambertMaterial({
+                            color: 0xFF0000
+                        }) :
+                        sunMaterial
+
+                    );
                     const h = Math.sin(pos.altitude) * radius;
                     const r = Math.cos(pos.altitude) * radius;
                     const bearing = pos.azimuth - Math.PI / 2;
@@ -391,7 +401,12 @@
                     const y = Math.sin(bearing) * r;
 
                     sphere.position.set(x, h, y);
-                    sphere.scale.multiplyScalar(pos.now ? 1 : 0.8 - 0.05 * Math.abs(pos.relative))
+                    sphere.scale.multiplyScalar(0.8 - 0.05 * Math.abs(pos.relative))
+
+                    if (pos.now) {
+                        sphere.position.multiplyScalar(2);
+                        sphere.scale.set(2, 2, 2)
+                    }
                     scene.add(sphere)
                 })
             })
@@ -415,15 +430,28 @@
         let calibrated;
 
         function animate() {
+            ctx.clearRect(0, 0, 1000, 1000)
             window.requestAnimationFrame(animate);
 
             controls.update();
 
             if (controls.deviceOrientation) {
                 let heading = controls.deviceOrientation.webkitCompassHeading;
+                const target = (heading + 180) / 180 * Math.PI;
+
+                /*
+                there's not really a need to calibrate new compass heading
+                as it that would require device motion to re-calibrate too
+                if (heading !== null) {
+                    const diff = target - scene.rotation.y;
+                    ctx.fillText(`${diff}`, 200, 200);
+                    if (diff) {
+                        scene.rotation.y += diff * 0.01;
+                    }
+                }*/
 
                 if (heading && !calibrated) {
-                    scene.rotation.y = (heading + 180) / 180 * Math.PI
+                    scene.rotation.y = target;
                     calibrated = true;
                 }
             }
@@ -459,7 +487,7 @@
             };
 
             var screen = toScreenPosition(window.n, camera);
-            ctx.clearRect(0, 0, 1000, 1000)
+
             if (screen) {
                 // ctx.fillText('N', screen.x, screen.y)
             }
