@@ -1,8 +1,8 @@
 # Random experiments
 
-- [sun path](cosmos/sunpath_three_ar.html) - AR visualization of sun path with three.js
+- [sun path AR](cosmos/sunpath_three_ar.html) - AR visualization of sun path with three.js
   - [sun day path](cosmos/sunpath_three.html) - Sun's visualization path of the day
-  - [sun day path](cosmos/sunpath_three_year.html) - Sun's visualization path of the year
+  - [sun year path](cosmos/sunpath_three_year.html) - Sun's visualization path of the year
 - [sun charts](cosmos/suncharts.html) - JS based sunrise and sunset tables and visualizations
 - [compass](cosmos/compass.html) - Web based implementation of IOS compass app
   - [compass with positioning](cosmos/compass_position.html) - with positioning data
@@ -18,7 +18,7 @@
 * updated Sun path viz with equal altitude spacing
 * Initial implementation of AR sunpath using threejs, geolocation and device motion
 * [sun path ar](cosmos/sunpath_three_ar.html) for mobile and [sun path three](cosmos/sunpath_three.html) for desktop experimentations
-* [sun day path](cosmos/sunpath_three_year.html) - Sun's visualization path of the year
+* [sun year path](cosmos/sunpath_three_year.html) - Sun's visualization path of the year
 - 27 Jan 2024 - exploration of AR with compass direction. [threejs device orientation test](cosmos/compass_three_ar_orient_test.html)
 - 26 Jan 2024 - [Compass with position](cosmos/compass_position.html), compass variant that uses geolocation for coordinates and altitude. Also combined sun positioning to show [compass with sun position](cosmos/compass_sun.html)
 - 24 Jan 2024 - JS based generation and visualizations of [sunrise and sunset tables](cosmos/suncharts.html). Explore the use of the suncalc libaries and [geolocation](cosmos/location.html) api.
