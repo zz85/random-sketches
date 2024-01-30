@@ -2,7 +2,7 @@
 <html lang="en">
 
 <head>
-    <title>sun path three.js webgl - deviceorientation</title>
+    <title>sun path AR</title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
     <style>
@@ -108,7 +108,9 @@
         <button id="startButton">Start!</button>
     </div>
     <div id="info">
-        Sun path
+        Sun path AR
+        <!-- background: none, sky shader, passthrough, somewhere -->
+        <!-- sunpath: today, year, animate -->
     </div>
 
     <script src="locator.js"></script>
@@ -140,19 +142,6 @@
         const DEG_LABEL_DISTANCE = 20;
         const DEG_LABEL_SIZE = 0.5;
 
-        const startButton = document.getElementById('startButton');
-        startButton.addEventListener('click', start, false);
-
-        let isFontReady = [];
-        function fontReady(cb) {
-            if (isFontReady !== null) {
-                return isFontReady.push(cb)
-            }
-
-            console.log('font', font);
-            cb(font);
-        }
-
         const headings = {
             N: 0,
             S: 180,
@@ -161,6 +150,18 @@
         }
 
         const TO_RAD = Math.PI / 180;
+
+        const startButton = document.getElementById('startButton');
+        startButton.addEventListener('click', start, false);
+
+        let isFontReady = [];
+        function fontReady(cb) {
+            if (isFontReady.length !== null) {
+                return isFontReady.push(cb)
+            }
+
+            cb(isFontReady);
+        }
 
         function angleToCoords(angle) {
             return [
@@ -208,53 +209,14 @@
         window.addEventListener('deviceorientation', dmEvents, false);
         setTimeout(() => { dmEvents() }, 100)
 
-
         if (!window.DeviceOrientationEvent || !window.DeviceOrientationEvent.requestPermission) {
             // start triggered without dom events
             start();
         }
 
-
-
-
         function onFontReady(font) {
             isFontReady.forEach(cb => cb(font));
-            isFontReady = null;
-
-            const material = new THREE.MeshLambertMaterial({ color: 0x63aed9 });
-
-            // let centerYOffset
-            const geometry = {};
-            Object.keys(headings).map(c => {
-                const geo = createTextGeo(c, font, FONT_SIZE);
-
-                const mesh = new THREE.Mesh(geo, material);
-                setMeshFromAngle(mesh, headings[c], LETTER_DISTANCE);
-                mesh.position.y = -geo.centerYOffset;
-
-                helper.add(mesh);
-            })
-
-            const rev = {
-                0: 'N',
-                45: 'NE',
-                90: 'E',
-                136: 'SE',
-                180: 'S',
-                225: 'SW',
-                270: 'W',
-                315: 'NW'
-            }
-            for (let heading = 0; heading < 360; heading += 15) {
-                let text = `${heading}°`;
-                let b = rev[heading];
-                const geo = createTextGeo(b ? b : text, font, DEG_LABEL_SIZE);
-                const mesh = new THREE.Mesh(geo, material);
-                setMeshFromAngle(mesh, heading, DEG_LABEL_DISTANCE);
-                mesh.position.y = -geo.centerYOffset;
-
-                scene.add(mesh);
-            }
+            isFontReady = font;
         }
 
         function init(e) {
@@ -264,15 +226,13 @@
 
             loader.load(
                 'vendor/Open_Sans_ExtraBold_Regular_numbers.json',
-                // 'opensans_extrabold_nsew.json',
-                // 'regular.json',
+                // 'vendor/opensans_extrabold_nsew.json',
+                // 'vendor/regular.json',
                 onFontReady,
-
                 // onProgress callback
                 function (xhr) {
                     console.log((xhr.loaded / xhr.total * 100) + '% loaded');
                 },
-
                 // onError callback
                 function (err) {
                     console.log('An error happened');
@@ -287,7 +247,6 @@
             hud.style.height = `${window.innerHeight}px`
             ctx = hud.getContext('2d');
             ctx.font = '40px sans-serif'
-            // ctx.fillStyle = '#000'
             ctx.fillStyle = '#fff'
             ctx.fillText("Hi world", 100, 100);
             ctx.textAlign = 'center';
@@ -335,10 +294,8 @@
                 transparent: true, opacity: 0.8
             });
 
-            // scene.position.y = -0.2;
             const planeGeometry = new THREE.PlaneGeometry(1.5, 1.5);
             planeGeometry.rotateX(-Math.PI / 2);
-            // const helper = new THREE.Mesh(planeGeometry, material);
             const plane = new THREE.Mesh(planeGeometry, helperMaterial);
             scene.add(plane);
 
@@ -347,42 +304,58 @@
 
             const circleGeometry = new THREE.CircleGeometry(CIRCLE_RADIUS, 32);
             circleGeometry.rotateX(-Math.PI / 2);
-            const circle = new THREE.Mesh(circleGeometry,
-                // helperMaterial
-                material
-            );
+            const circle = new THREE.Mesh(circleGeometry, material);
             helper.add(circle);
 
             helper.position.y = HELPER_Y;
 
             const doodecahedronGeo = new THREE.DodecahedronGeometry(0.1, 0);
-            const doodecahedron = new THREE.Mesh(doodecahedronGeo, helperMaterial);
-            doodecahedron.position.x = 0.5;
-            doodecahedron.position.y = 0.5;
-            // scene.add(doodecahedron);
-
             const icosahedronGeo = new THREE.IcosahedronGeometry(0.1, 0);
-            const icosahedron = new THREE.Mesh(icosahedronGeo, helperMaterial);
-            icosahedron.position.x = -0.5;
-            icosahedron.position.y = 0.5;
-            // scene.add(icosahedron);
-
             const octahedronGeo = new THREE.OctahedronGeometry(0.1, 1);
-            const octahedron = new THREE.Mesh(octahedronGeo, helperMaterial);
-            octahedron.position.z = -0.5;
-            octahedron.position.y = 0.5;
-            // scene.add(octahedron);
-
             const sphereGeo = new THREE.SphereGeometry(0.1, 4, 3);
-            const sphere = new THREE.Mesh(sphereGeo, helperMaterial);
-            sphere.position.z = 0.5;
-            sphere.position.y = 0.5;
-            // scene.add(sphere);
 
+            fontReady((font) => {
+                const material = new THREE.MeshLambertMaterial({ color: 0x63aed9 });
+
+                // let centerYOffset
+                const geometry = {};
+                Object.keys(headings).map(c => {
+                    const geo = createTextGeo(c, font, FONT_SIZE);
+
+                    const mesh = new THREE.Mesh(geo, material);
+                    setMeshFromAngle(mesh, headings[c], LETTER_DISTANCE);
+                    mesh.position.y = -geo.centerYOffset;
+
+                    helper.add(mesh);
+                    window[c] = mesh;
+                })
+
+                const rev = {
+                    0: 'N',
+                    45: 'NE',
+                    90: 'E',
+                    136: 'SE',
+                    180: 'S',
+                    225: 'SW',
+                    270: 'W',
+                    315: 'NW'
+                }
+
+                for (let heading = 0; heading < 360; heading += 15) {
+                    let text = `${heading}°`;
+                    let b = rev[heading];
+                    const geo = createTextGeo(b ? b : text, font, DEG_LABEL_SIZE);
+                    const mesh = new THREE.Mesh(geo, material);
+                    setMeshFromAngle(mesh, heading, DEG_LABEL_DISTANCE);
+                    mesh.position.y = -geo.centerYOffset;
+
+                    scene.add(mesh);
+                }
+            });
 
             startLocator((sunpos) => {
                 console.log(sunpos);
-                const radius = 2;
+                const radius = 3;
 
                 const sunMaterial = new THREE.MeshLambertMaterial({
                     color: 0xFFA500
@@ -404,7 +377,7 @@
                     const y = Math.sin(bearing) * r;
 
                     sphere.position.set(x, h, y);
-                    sphere.scale.multiplyScalar(0.8 - 0.05 * Math.abs(pos.relative))
+                    // sphere.scale.multiplyScalar(0.8 - 0.05 * Math.abs(pos.relative))
 
                     if (pos.now) {
                         sphere.position.multiplyScalar(2);
@@ -415,9 +388,8 @@
                     fontReady((font) => {
                         const geo = createTextGeo(`${pos.h}`, font, 0.07)
                         const mesh = new THREE.Mesh(geo, sunMaterial);
-                        // setMeshFromAngle(mesh, pos.azimuth * 180 / Math.PI, radius);
-                        // mesh.position.y = y -geo.centerYOffset;
                         mesh.position.set(x, h + 0.25, y);
+                        mesh.position.y -= -geo.centerYOffset;
                         mesh.lookAt(0, 0, 0)
 
                         scene.add(mesh);
@@ -470,17 +442,17 @@
                 }
             }
 
-            function toScreenPosition(obj, camera,) {
+            function toScreenPosition(obj, camera) {
                 if (!obj) return;
 
                 obj.updateMatrixWorld();
 
-                const frustum = new THREE.Frustum()
-                const matrix = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
-                frustum.setFromProjectionMatrix(matrix)
-                if (!frustum.containsPoint(obj.position)) {
-                    return
-                }
+                // const frustum = new THREE.Frustum()
+                // const matrix = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
+                // frustum.setFromProjectionMatrix(matrix)
+                // if (!frustum.containsPoint(obj.position)) {
+                //     return
+                // }
 
                 var vector = new THREE.Vector3();
 
@@ -492,6 +464,8 @@
 
                 vector.x = (vector.x * widthHalf) + widthHalf;
                 vector.y = - (vector.y * heightHalf) + heightHalf;
+                // console.log(vector);
+                // if (vector.z < -1 || vector.z > 1) return;
 
                 return {
                     x: vector.x,
@@ -500,11 +474,11 @@
 
             };
 
-            // var screen = toScreenPosition(window.n, camera);
+            var screen = toScreenPosition(window.N, camera);
 
-            // if (screen) {
-            //     // ctx.fillText('N', screen.x, screen.y)
-            // }
+            if (screen) {
+                ctx.fillText('N', screen.x, screen.y)
+            }
 
             renderer.render(scene, camera);
             window.s = scene;
