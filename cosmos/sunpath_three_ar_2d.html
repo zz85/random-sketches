@@ -8,8 +8,8 @@
     <style>
         body {
             margin: 0;
-            /* background-color: #000; */
-            color: #fff;
+            background-color: #000;
+            /* color: #fff; */
             font-family: Monospace;
             font-size: 13px;
             line-height: 24px;
@@ -137,6 +137,8 @@
 
         let camera, scene, renderer, controls, ctx, orbitalControls, helper;
 
+        const labelObjects = [];
+
         const CIRCLE_RADIUS = 0.2;
         const HELPER_Y = -0.15;
         const FONT_SIZE = 0.05;
@@ -207,87 +209,32 @@
             }
 
             update(camera) {
-                if ( camera.parent === null && camera.matrixWorldAutoUpdate === true ) camera.updateMatrixWorld();
+                if (camera.parent === null && camera.matrixWorldAutoUpdate === true) camera.updateMatrixWorld();
 
-                this._viewMatrix.copy( camera.matrixWorldInverse );
-                this._viewProjectionMatrix.multiplyMatrices( camera.projectionMatrix, this._viewMatrix );
+                this._viewMatrix.copy(camera.matrixWorldInverse);
+                this._viewProjectionMatrix.multiplyMatrices(camera.projectionMatrix, this._viewMatrix);
             }
 
             toScreenPosition(obj) {
                 if (!obj) return;
                 // we expect matrix to have updated
                 // so we don't call obj.updateMatrixWorld();
-                this._vector.setFromMatrixPosition( obj.matrixWorld );
-                this._vector.applyMatrix4( this._viewProjectionMatrix );
+                this._vector.setFromMatrixPosition(obj.matrixWorld);
+                this._vector.applyMatrix4(this._viewProjectionMatrix);
 
                 const visible = this._vector.z >= - 1 && this._vector.z <= 1;
-
-                if (!visible) {
-                    return;
-                }
 
                 return {
                     x: (this._vector.x * 0.5 + 0.5) * window.innerWidth,
                     y: (-this._vector.y * 0.5 + 0.5) * window.innerHeight,
+                    z: this._vector.z,
+                    visible
                 }
 
             }
         }
 
         const toScreen = new Obj2Screen();
-
-        function toScreenPosition(obj, camera) {
-            if (!obj) return;
-
-            // obj.updateMatrixWorld();
-
-            // const frustum = new THREE.Frustum()
-            // const matrix = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
-            // frustum.setFromProjectionMatrix(matrix)
-            // if (!frustum.containsPoint(obj.position)) {
-            //     return
-            // }
-
-            /*
-            var tmp = new THREE.Vector3();
-            tmp.copy(obj.position);
-            // console.log('before', tmp)
-            camera.worldToLocal(tmp)
-            // console.log('after', tmp)
-            if (tmp.z > 0) {
-                return 
-            }
-            return {
-                x: (tmp.x * 0.5 + 0.5) * window.innerWidth,
-                y: (tmp.y * 0.5 + 0.5) * window.innerHeight,
-            }
-            */
-
-
-
-            var vector = new THREE.Vector3();
-
-            var widthHalf = 0.5 * window.innerWidth;
-            var heightHalf = 0.5 * window.innerHeight;
-
-            vector.setFromMatrixPosition(obj.matrixWorld);
-            vector.project(camera);
-
-            // [-1, 1] -> [0, width]
-            // * 0.5 + 0.5
-            // vector.x = (vector.x * widthHalf) + widthHalf;
-            vector.x = (vector.x * 0.5 + 0.5) * widthHalf * 2;  
-            vector.y = - (vector.y * heightHalf) + heightHalf;
-            // console.log(vector);
-            // if (vector.z < -1 || vector.z > 1) return;
-
-            return {
-                x: vector.x,
-                y: vector.y
-            };
-
-        };
-        
 
         function start(e) {
             init(e);
@@ -427,7 +374,7 @@
                     0: 'N',
                     45: 'NE',
                     90: 'E',
-                    136: 'SE',
+                    135: 'SE',
                     180: 'S',
                     225: 'SW',
                     270: 'W',
@@ -435,14 +382,22 @@
                 }
 
                 for (let heading = 0; heading < 360; heading += 15) {
-                    let text = `${heading}°`;
-                    let b = rev[heading];
-                    const geo = createTextGeo(b ? b : text, font, DEG_LABEL_SIZE);
-                    const mesh = new THREE.Mesh(geo, material);
-                    setMeshFromAngle(mesh, heading, DEG_LABEL_DISTANCE);
-                    mesh.position.y = -geo.centerYOffset;
+                    const b = rev[heading];
+                    const label = b ? b : `${heading}°`;
 
-                    scene.add(mesh);
+                    // const geo = createTextGeo(label, font, DEG_LABEL_SIZE);
+                    // const mesh = new THREE.Mesh(geo, material);
+                    // setMeshFromAngle(mesh, heading, DEG_LABEL_DISTANCE);
+                    // mesh.position.y = -geo.centerYOffset;
+                    // scene.add(mesh);
+
+                    const text = new THREE.Object3D();
+                    setMeshFromAngle(text, heading, DEG_LABEL_DISTANCE);
+                    text.text = label;
+                    text.heading = 1;
+                    text.size = 10;
+                    labelObjects.push(text);
+                    scene.add(text);
                 }
             });
 
@@ -455,7 +410,10 @@
                     // , transparent: true, opacity: 1 - Math.abs(pos.relative) / 12 * 0.5
                 });
 
-                sunpos.filter(s => !s.day).forEach((pos, i) => {
+                const today = sunpos.filter(s => !s.day);
+                console.log(today);
+
+                today.forEach((pos, i) => {
                     // if (pos.relative < 0) return;
                     const sphere = new THREE.Mesh(icosahedronGeo, pos.now ?
                         new THREE.MeshLambertMaterial({
@@ -471,6 +429,22 @@
 
                     sphere.position.set(x, h, y);
                     // sphere.scale.multiplyScalar(0.8 - 0.05 * Math.abs(pos.relative))
+
+                    const sunPath = new THREE.Object3D();
+                    sunPath.position.set(x, h, y);
+                    if (pos.now) {
+                        sunPath.now = 1
+                    } else {
+                        sunPath.sunPath = 1;
+                    }
+                    sunPath.text = pos.h;
+                    sunPath.altitude = pos.altitude;
+                    sunPath.azimuth = pos.azimuth;
+
+
+
+                    scene.add(sunPath);
+                    labelObjects.push(sunPath);
 
                     if (pos.now) {
                         sphere.position.multiplyScalar(2);
@@ -497,7 +471,7 @@
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setPixelRatio(window.devicePixelRatio);
             renderer.setSize(window.innerWidth, window.innerHeight);
-            document.body.appendChild(renderer.domElement);
+            // document.body.appendChild(renderer.domElement);
 
             //
 
@@ -509,7 +483,7 @@
         let calibrated;
 
         function animate() {
-            ctx.clearRect(0, 0, 1000, 1000)
+            ctx.clearRect(0, 0, hud.width, hud.height)
             window.requestAnimationFrame(animate);
 
             controls.update();
@@ -523,18 +497,92 @@
                 }
             }
 
-            
             // var screen = toScreenPosition(window.N, camera);
             toScreen.update(camera);
-            var screen = toScreen.toScreenPosition(window.N)
 
-            if (screen) {
-                ctx.fillText('N', screen.x, screen.y)
+            labelObjects.forEach(obj => {
+                // screen space
+                obj.screen = toScreen.toScreenPosition(obj);
+            })
+
+            const headings = labelObjects.filter(h => h.heading);
+            const sunPath = labelObjects.filter(h => h.sunPath);
+            const sunNow = labelObjects.filter(h => h.now);
+
+
+            ctx.beginPath();
+            ctx.strokeStyle = '#666'
+            ctx.lineWidth = 4;
+            headings.forEach((heading, i) => {
+                const screen = heading.screen;
+                // if (!screen.visible) return;
+                ctx.lineTo(screen.x, screen.y);
+            })
+
+            // if (headings[0] && headings[0].screen.visible) {
+            //     ctx.lineTo(headings[0].screen.x, headings[0].screen.y);
+            // }
+            ctx.closePath();
+            ctx.stroke();
+
+
+            ctx.strokeStyle = 'orange'
+            ctx.lineWidth = 4;
+
+            for (let i = 0; i < sunPath.length; i++) {
+                const j = (i + 1) % sunPath.length;
+                const current = sunPath[i];
+                const next = sunPath[j];
+
+                if (!current.screen.visible || !next.screen.visible) {
+                    continue;
+                }
+
+                ctx.beginPath();
+                ctx.moveTo(current.screen.x, current.screen.y);
+                ctx.lineTo(next.screen.x, next.screen.y);
+                ctx.stroke();
             }
+
+
+            headings.forEach(heading => {
+                const screen = heading.screen;
+                if (!screen.visible) return;
+                ctx.font = `${heading.size}px sans-serif`;
+                ctx.beginPath();
+                ctx.fillStyle = '#666'
+                ctx.arc(screen.x, screen.y, 10, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#fff'
+                ctx.fillText(heading.text, screen.x, screen.y);
+            })
+
+            sunPath.forEach(heading => {
+                const screen = heading.screen;
+                if (!screen.visible) return;
+                ctx.font = `14px sans-serif`;
+                ctx.beginPath();
+                ctx.fillStyle = 'orange'
+                ctx.arc(screen.x, screen.y, 10, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#fff'
+                ctx.fillText(heading.text, screen.x, screen.y);
+            })
+
+            sunNow.forEach(heading => {
+                const screen = heading.screen;
+                if (!screen.visible) return;
+                ctx.font = `8px sans-serif`;
+                ctx.beginPath();
+                ctx.fillStyle = 'red'
+                ctx.arc(screen.x, screen.y, 20, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#fff'
+                ctx.fillText(`${new Date()}`, screen.x, screen.y - 20);
+            })
 
             renderer.render(scene, camera);
             window.s = scene;
-
         }
 
         function onWindowResize() {

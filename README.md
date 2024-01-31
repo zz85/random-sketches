@@ -3,6 +3,7 @@
 - [sun path AR](cosmos/sunpath_three_ar.html) - AR visualization of sun path with three.js
   - [sun day path](cosmos/sunpath_three.html) - Sun's visualization path of the day
   - [sun year path](cosmos/sunpath_three_year.html) - Sun's visualization path of the year
+  - [sun path ar 2d](cosmos/sunpath_three_ar_2d.html)
 - [sun charts](cosmos/suncharts.html) - JS based sunrise and sunset tables and visualizations
 - [compass](cosmos/compass.html) - Web based implementation of IOS compass app
   - [compass with positioning](cosmos/compass_position.html) - with positioning data
@@ -14,7 +15,7 @@
 
 #### History / Notes
 30 Jan 2024
-- alternative implementation of sunpath ar but rendered on 2d canvas
+- [sun path ar 2d](cosmos/sunpath_three_ar_2d.html) alternative implementation of sunpath ar but rendered on 2d canvas. this uses threejs for 3d calculations but not rendering.
 
 28 Jan 2024
 * updated Sun path viz with equal altitude spacing
