@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>sun path AR</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+    <style>
+        body {
+            margin: 0;
+            /* background-color: #000; */
+            color: #fff;
+            font-family: Monospace;
+            font-size: 13px;
+            line-height: 24px;
+            overscroll-behavior: none;
+        }
+
+        a {
+            color: #ff0;
+            text-decoration: none;
+        }
+
+        a:hover {
+            text-decoration: underline;
+        }
+
+        button {
+            cursor: pointer;
+            text-transform: uppercase;
+        }
+
+        #info {
+            position: absolute;
+            top: 0px;
+            width: 100%;
+            padding: 10px;
+            box-sizing: border-box;
+            text-align: center;
+            -moz-user-select: none;
+            -webkit-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+            pointer-events: none;
+            z-index: 1;
+            /* TODO Solve this in HTML */
+        }
+
+        a,
+        button,
+        input,
+        select {
+            pointer-events: auto;
+        }
+
+        .dg.ac {
+            -moz-user-select: none;
+            -webkit-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+            z-index: 2 !important;
+            /* TODO Solve this in HTML */
+        }
+
+        #overlay {
+            position: absolute;
+            z-index: 2;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0, 0, 0, 0.7);
+        }
+
+        #overlay button {
+            background: #ffffff;
+            border: 0;
+            color: #000000;
+            padding: 16px 20px;
+            text-transform: uppercase;
+            cursor: pointer;
+        }
+
+        #notSupported {
+            width: 50%;
+            margin: auto;
+            background-color: #f00;
+            margin-top: 20px;
+            padding: 10px;
+        }
+
+        #hud {
+            position: absolute;
+            top: 0px;
+            left: 0px;
+            /* background: #000; */
+            z-index: 100;
+        }
+    </style>
+</head>
+
+<body>
+    <canvas id="hud"></canvas>
+    <div id="overlay">
+        <button id="startButton">Start!</button>
+    </div>
+
+    <!-- 3d -> 2d projection        -->
+    <div id="info">
+        Sun path AR
+        <!-- background: none, sky shader, passthrough, somewhere -->
+        <!-- sunpath: today, year, animate -->
+    </div>
+
+    <script src="locator.js"></script>
+    <script src="vendor/suncalc.js"></script>
+    <script src="sunpath.js"></script>
+
+    <script type="importmap">
+            {
+              "imports": {
+                "three": "https://unpkg.com/three@0.160.1/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.1/examples/jsm/"
+              }
+            }
+          </script>
+    <script type="module">
+        import * as THREE from 'three';
+        import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
+        import { FontLoader } from 'three/addons/loaders/FontLoader.js';
+
+        import { DeviceOrientationControls } from './vendor/DeviceOrientationControls.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        let camera, scene, renderer, controls, ctx, orbitalControls, helper;
+
+        const CIRCLE_RADIUS = 0.2;
+        const HELPER_Y = -0.15;
+        const FONT_SIZE = 0.05;
+        const LETTER_DISTANCE = 0.15;
+        const DEG_LABEL_DISTANCE = 20;
+        const DEG_LABEL_SIZE = 0.5;
+
+        const headings = {
+            N: 0,
+            S: 180,
+            E: 90,
+            W: 270,
+        }
+
+        const TO_RAD = Math.PI / 180;
+
+        const startButton = document.getElementById('startButton');
+        startButton.addEventListener('click', start, false);
+
+        let isFontReady = [];
+        function fontReady(cb) {
+            if (isFontReady.length !== undefined) {
+                return isFontReady.push(cb)
+            }
+
+            cb(isFontReady);
+        }
+
+        function angleToCoords(angle) {
+            return [
+                Math.cos(angle), Math.sin(angle)
+            ]
+        }
+
+        function setMeshFromAngle(mesh, deg, radius) {
+            const angle = deg * TO_RAD + Math.PI / 2;
+            const [x, z] = angleToCoords(angle);
+            mesh.position.set(x * radius, 0, z * radius);
+            mesh.rotation.y = -(angle + Math.PI / 2);
+        }
+
+        function createTextGeo(text, font, fontSize) {
+            const options = {
+                font: font,
+                size: fontSize,
+                height: fontSize / 5,
+                curveSegments: 3,
+                bevelEnabled: false,
+            };
+
+            const geo = new TextGeometry(text, options);
+            geo.computeBoundingBox();
+            const centerOffset = - 0.5 * (geo.boundingBox.max.x - geo.boundingBox.min.x);
+            const centerYOffset = - 0.5 * (geo.boundingBox.max.y - geo.boundingBox.min.y);
+            geo.centerYOffset = centerYOffset;
+            geo.translate(centerOffset, centerYOffset, 0);
+            return geo;
+        }
+
+        const loader = new FontLoader();
+
+        // based on https://github.com/mrdoob/three.js/blob/master/examples/jsm/renderers/CSS2DRenderer.js
+        class Obj2Screen {
+            constructor() {
+                this._vector = new THREE.Vector3();
+                this._viewMatrix = new THREE.Matrix4();
+                this._viewProjectionMatrix = new THREE.Matrix4();
+            }
+
+            update(camera) {
+                if ( camera.parent === null && camera.matrixWorldAutoUpdate === true ) camera.updateMatrixWorld();
+
+                this._viewMatrix.copy( camera.matrixWorldInverse );
+                this._viewProjectionMatrix.multiplyMatrices( camera.projectionMatrix, this._viewMatrix );
+            }
+
+            toScreenPosition(obj) {
+                if (!obj) return;
+                // we expect matrix to have updated
+                // so we don't call obj.updateMatrixWorld();
+                this._vector.setFromMatrixPosition( obj.matrixWorld );
+                this._vector.applyMatrix4( this._viewProjectionMatrix );
+
+                const visible = this._vector.z >= - 1 && this._vector.z <= 1;
+
+                if (!visible) {
+                    return;
+                }
+
+                return {
+                    x: (this._vector.x * 0.5 + 0.5) * window.innerWidth,
+                    y: (-this._vector.y * 0.5 + 0.5) * window.innerHeight,
+                }
+
+            }
+        }
+
+        const toScreen = new Obj2Screen();
+
+        function toScreenPosition(obj, camera) {
+            if (!obj) return;
+
+            // obj.updateMatrixWorld();
+
+            // const frustum = new THREE.Frustum()
+            // const matrix = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
+            // frustum.setFromProjectionMatrix(matrix)
+            // if (!frustum.containsPoint(obj.position)) {
+            //     return
+            // }
+
+            /*
+            var tmp = new THREE.Vector3();
+            tmp.copy(obj.position);
+            // console.log('before', tmp)
+            camera.worldToLocal(tmp)
+            // console.log('after', tmp)
+            if (tmp.z > 0) {
+                return 
+            }
+            return {
+                x: (tmp.x * 0.5 + 0.5) * window.innerWidth,
+                y: (tmp.y * 0.5 + 0.5) * window.innerHeight,
+            }
+            */
+
+
+
+            var vector = new THREE.Vector3();
+
+            var widthHalf = 0.5 * window.innerWidth;
+            var heightHalf = 0.5 * window.innerHeight;
+
+            vector.setFromMatrixPosition(obj.matrixWorld);
+            vector.project(camera);
+
+            // [-1, 1] -> [0, width]
+            // * 0.5 + 0.5
+            // vector.x = (vector.x * widthHalf) + widthHalf;
+            vector.x = (vector.x * 0.5 + 0.5) * widthHalf * 2;  
+            vector.y = - (vector.y * heightHalf) + heightHalf;
+            // console.log(vector);
+            // if (vector.z < -1 || vector.z > 1) return;
+
+            return {
+                x: vector.x,
+                y: vector.y
+            };
+
+        };
+        
+
+        function start(e) {
+            init(e);
+            animate();
+        }
+
+        // Hack to by pass click if device orientation events are already received
+        const dmEvents = (e) => {
+            window.removeEventListener('deviceorientation', dmEvents, false);
+            if (e) start(e);
+        }
+        window.addEventListener('deviceorientation', dmEvents, false);
+        setTimeout(() => { dmEvents() }, 100)
+
+        if (!window.DeviceOrientationEvent || !window.DeviceOrientationEvent.requestPermission) {
+            // start triggered without dom events
+            start();
+        }
+
+        function onFontReady(font) {
+            isFontReady.forEach(cb => cb(font));
+            isFontReady = font;
+        }
+
+        function init(e) {
+            const orbit = !e;
+            const overlay = document.getElementById('overlay');
+            overlay.remove();
+
+            loader.load(
+                'vendor/Open_Sans_ExtraBold_Regular_numbers.json',
+                // 'vendor/opensans_extrabold_nsew.json',
+                // 'vendor/regular.json',
+                onFontReady,
+                // onProgress callback
+                function (xhr) {
+                    console.log((xhr.loaded / xhr.total * 100) + '% loaded');
+                },
+                // onError callback
+                function (err) {
+                    console.log('An error happened');
+                }
+            );
+
+            var hud = document.getElementById('hud');
+            const dpr = window.devicePixelRatio;
+            hud.width = window.innerWidth * dpr;
+            hud.height = window.innerHeight * dpr;
+            hud.style.width = `${window.innerWidth}px`
+            hud.style.height = `${window.innerHeight}px`
+            ctx = hud.getContext('2d');
+            ctx.font = '40px sans-serif'
+            ctx.fillStyle = '#fff'
+            ctx.fillText("Hi world", 100, 100);
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.scale(dpr, dpr);
+
+            camera = new THREE.PerspectiveCamera(68, window.innerWidth / window.innerHeight, 0.001, 1100);
+
+            controls = new DeviceOrientationControls(camera);
+            if (orbit) {
+                camera.position.y = 1.5
+                camera.lookAt(0, 0, -1);
+                window.c = camera;
+
+                // 
+                orbitalControls = new OrbitControls(camera, hud);
+                orbitalControls.enableDamping = true; // an animation loop is required when either damping or auto-rotation are enabled
+                orbitalControls.dampingFactor = 0.05;
+
+                orbitalControls.screenSpacePanning = false;
+
+                orbitalControls.minDistance = 0.1;
+                orbitalControls.maxDistance = 500;
+
+                orbitalControls.maxPolarAngle = Math.PI;
+                controls = orbitalControls;
+            }
+
+            scene = new THREE.Scene();
+
+            const light = new THREE.AmbientLight(0xc0c0c0); // soft white light 0x404040
+            scene.add(light);
+
+            const plight = new THREE.PointLight(0x404040, 0.1, 1000);
+            plight.position.set(0, 2, 0);
+            scene.add(plight);
+
+            // White directional light at half intensity shining from the top.
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+            scene.add(directionalLight);
+
+            const helperMaterial = new THREE.MeshLambertMaterial({ color: 0xff00ff, wireframe: true });
+            const material = new THREE.MeshLambertMaterial({
+                color: 0xffffff, wireframe: !true,
+                transparent: true, opacity: 0.8
+            });
+
+            const planeGeometry = new THREE.PlaneGeometry(1.5, 1.5);
+            planeGeometry.rotateX(-Math.PI / 2);
+            const plane = new THREE.Mesh(planeGeometry, helperMaterial);
+            scene.add(plane);
+
+            helper = new THREE.Object3D()
+            scene.add(helper);
+
+            const circleGeometry = new THREE.CircleGeometry(CIRCLE_RADIUS, 32);
+            circleGeometry.rotateX(-Math.PI / 2);
+            const circle = new THREE.Mesh(circleGeometry, material);
+            helper.add(circle);
+
+            helper.position.y = HELPER_Y;
+
+            const doodecahedronGeo = new THREE.DodecahedronGeometry(0.1, 0);
+            const icosahedronGeo = new THREE.IcosahedronGeometry(0.1, 0);
+            const octahedronGeo = new THREE.OctahedronGeometry(0.1, 1);
+            const sphereGeo = new THREE.SphereGeometry(0.1, 4, 3);
+
+            fontReady((font) => {
+                const material = new THREE.MeshLambertMaterial({ color: 0x63aed9 });
+
+                // let centerYOffset
+                const geometry = {};
+                Object.keys(headings).map(c => {
+                    const geo = createTextGeo(c, font, FONT_SIZE);
+
+                    const mesh = new THREE.Mesh(geo, material);
+                    setMeshFromAngle(mesh, headings[c], LETTER_DISTANCE);
+                    mesh.position.y = -geo.centerYOffset;
+
+                    helper.add(mesh);
+                    window[c] = mesh;
+                })
+
+                const rev = {
+                    0: 'N',
+                    45: 'NE',
+                    90: 'E',
+                    136: 'SE',
+                    180: 'S',
+                    225: 'SW',
+                    270: 'W',
+                    315: 'NW'
+                }
+
+                for (let heading = 0; heading < 360; heading += 15) {
+                    let text = `${heading}°`;
+                    let b = rev[heading];
+                    const geo = createTextGeo(b ? b : text, font, DEG_LABEL_SIZE);
+                    const mesh = new THREE.Mesh(geo, material);
+                    setMeshFromAngle(mesh, heading, DEG_LABEL_DISTANCE);
+                    mesh.position.y = -geo.centerYOffset;
+
+                    scene.add(mesh);
+                }
+            });
+
+            startLocator((sunpos) => {
+                console.log(sunpos);
+                const radius = 3;
+
+                const sunMaterial = new THREE.MeshLambertMaterial({
+                    color: 0xFFA500
+                    // , transparent: true, opacity: 1 - Math.abs(pos.relative) / 12 * 0.5
+                });
+
+                sunpos.filter(s => !s.day).forEach((pos, i) => {
+                    // if (pos.relative < 0) return;
+                    const sphere = new THREE.Mesh(icosahedronGeo, pos.now ?
+                        new THREE.MeshLambertMaterial({
+                            color: 0xFF0000
+                        }) :
+                        sunMaterial
+                    );
+                    const h = Math.sin(pos.altitude) * radius;
+                    const r = Math.cos(pos.altitude) * radius;
+                    const bearing = pos.azimuth - Math.PI / 2;
+                    const x = Math.cos(bearing) * r;
+                    const y = Math.sin(bearing) * r;
+
+                    sphere.position.set(x, h, y);
+                    // sphere.scale.multiplyScalar(0.8 - 0.05 * Math.abs(pos.relative))
+
+                    if (pos.now) {
+                        sphere.position.multiplyScalar(2);
+                        sphere.scale.set(2, 2, 2)
+                    }
+                    scene.add(sphere)
+
+                    fontReady((font) => {
+                        const geo = createTextGeo(`${pos.h}`, font, 0.07)
+                        const mesh = new THREE.Mesh(geo, sunMaterial);
+                        mesh.position.set(x, h + 0.25, y);
+                        mesh.position.y -= -geo.centerYOffset;
+                        mesh.lookAt(0, 0, 0)
+
+                        scene.add(mesh);
+                    })
+                })
+            })
+
+
+
+            //
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            //
+
+            window.addEventListener('resize', onWindowResize, false);
+
+
+        }
+
+        let calibrated;
+
+        function animate() {
+            ctx.clearRect(0, 0, 1000, 1000)
+            window.requestAnimationFrame(animate);
+
+            controls.update();
+
+            if (controls.deviceOrientation) {
+                let heading = controls.deviceOrientation.webkitCompassHeading;
+                const target = (heading + 180) / 180 * Math.PI;
+                if (heading && !calibrated) {
+                    scene.rotation.y = target;
+                    calibrated = true;
+                }
+            }
+
+            
+            // var screen = toScreenPosition(window.N, camera);
+            toScreen.update(camera);
+            var screen = toScreen.toScreenPosition(window.N)
+
+            if (screen) {
+                ctx.fillText('N', screen.x, screen.y)
+            }
+
+            renderer.render(scene, camera);
+            window.s = scene;
+
+        }
+
+        function onWindowResize() {
+
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+
+            renderer.setSize(window.innerWidth, window.innerHeight);
+
+        }
+
+    </script>
+</body>
+
+</html>
