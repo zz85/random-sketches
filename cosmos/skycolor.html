@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Sky color experiments</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        canvas {
+            display: block;
+        }
+    </style>
+</head>
+
+
+<body>
+    <script>
+        function createCanvas(w, h) {
+            var canvas = document.createElement('canvas');
+            var dpr = window.devicePixelRatio;
+            canvas.width = w * dpr;
+            canvas.height = h * dpr;
+            canvas.style.width = `${w}px`
+            canvas.style.height = `${h}px`
+
+            var ctx = canvas.getContext('2d')
+            ctx.scale(dpr, dpr)
+            ctx.w = w;
+            ctx.h = h;
+            ctx.dom = canvas;
+            return ctx;
+        }
+
+        var ctx = createCanvas(400, 300)
+        document.body.appendChild(ctx.dom);
+
+        var blues = [
+            '#011f4b',
+            '#03396c',
+            '#005b96',
+            '#6497b1',
+            '#b3cde0',
+        ]; //https://www.color-hex.com/color-palette/1294
+
+        // distinct
+
+        for (let i = 0; i < blues.length; i++) {
+            ctx.fillStyle = blues[i];
+            ctx.fillRect((i / blues.length) * ctx.w, 0, ctx.w / blues.length, ctx.h);
+        }
+
+        // blend
+        var ctx = createCanvas(400, 300)
+        document.body.appendChild(ctx.dom);
+
+        var gradient = ctx.createLinearGradient(0, 0, ctx.w, 0);
+        ctx.fillStyle = gradient;
+        for (let i = 0; i < blues.length; i++) {
+            gradient.addColorStop(i/(blues.length - 1), blues[i]);    
+        }
+        ctx.fillRect(0, 0, ctx.w, ctx.h);
+
+        
+        // animate
+
+        // mixbox
+
+    </script>
+</body>
+
+</html>
