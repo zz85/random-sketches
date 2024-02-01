@@ -52,6 +52,18 @@ function locationUpdate() {
     const startOfDay = new Date(this_hour);
     startOfDay.setHours(0);
 
+    // today detailed
+    for (let min = 0; min < 60 * 24; min += 15) {
+        const date = new Date(startOfDay.getTime() + min * ONE_MIN);
+        const pos = SunCalc.getPosition(date, locator.latitude, locator.longitude);
+        sunPos.push(Object.assign({
+            // day,
+            h: date.getHours(),
+            min: date.getMinutes(),
+            today: true,
+        }, pos))
+    }
+
     // do this for next 365 days
     for (let day = 0; day < 366; day++) {
         let newDay = new Date(startOfDay.getTime() + day * ONE_DAY);

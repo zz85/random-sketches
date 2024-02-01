@@ -8,7 +8,7 @@
     <style>
         body {
             margin: 0;
-            background-color: #000;
+            /* background-color: #333; */
             /* color: #fff; */
             font-family: Monospace;
             font-size: 13px;
@@ -129,8 +129,6 @@
           </script>
     <script type="module">
         import * as THREE from 'three';
-        import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
-        import { FontLoader } from 'three/addons/loaders/FontLoader.js';
 
         import { DeviceOrientationControls } from './vendor/DeviceOrientationControls.js';
         import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -158,15 +156,6 @@
         const startButton = document.getElementById('startButton');
         startButton.addEventListener('click', start, false);
 
-        let isFontReady = [];
-        function fontReady(cb) {
-            if (isFontReady.length !== undefined) {
-                return isFontReady.push(cb)
-            }
-
-            cb(isFontReady);
-        }
-
         function angleToCoords(angle) {
             return [
                 Math.cos(angle), Math.sin(angle)
@@ -179,26 +168,6 @@
             mesh.position.set(x * radius, 0, z * radius);
             mesh.rotation.y = -(angle + Math.PI / 2);
         }
-
-        function createTextGeo(text, font, fontSize) {
-            const options = {
-                font: font,
-                size: fontSize,
-                height: fontSize / 5,
-                curveSegments: 3,
-                bevelEnabled: false,
-            };
-
-            const geo = new TextGeometry(text, options);
-            geo.computeBoundingBox();
-            const centerOffset = - 0.5 * (geo.boundingBox.max.x - geo.boundingBox.min.x);
-            const centerYOffset = - 0.5 * (geo.boundingBox.max.y - geo.boundingBox.min.y);
-            geo.centerYOffset = centerYOffset;
-            geo.translate(centerOffset, centerYOffset, 0);
-            return geo;
-        }
-
-        const loader = new FontLoader();
 
         // based on https://github.com/mrdoob/three.js/blob/master/examples/jsm/renderers/CSS2DRenderer.js
         class Obj2Screen {
@@ -254,30 +223,10 @@
             start();
         }
 
-        function onFontReady(font) {
-            isFontReady.forEach(cb => cb(font));
-            isFontReady = font;
-        }
-
         function init(e) {
             const orbit = !e;
             const overlay = document.getElementById('overlay');
             overlay.remove();
-
-            loader.load(
-                'vendor/Open_Sans_ExtraBold_Regular_numbers.json',
-                // 'vendor/opensans_extrabold_nsew.json',
-                // 'vendor/regular.json',
-                onFontReady,
-                // onProgress callback
-                function (xhr) {
-                    console.log((xhr.loaded / xhr.total * 100) + '% loaded');
-                },
-                // onError callback
-                function (err) {
-                    console.log('An error happened');
-                }
-            );
 
             var hud = document.getElementById('hud');
             const dpr = window.devicePixelRatio;
@@ -297,7 +246,7 @@
 
             controls = new DeviceOrientationControls(camera);
             if (orbit) {
-                camera.position.y = 1.5
+                // camera.position.y = 1.5
                 camera.lookAt(0, 0, -1);
                 window.c = camera;
 
@@ -342,129 +291,81 @@
             helper = new THREE.Object3D()
             scene.add(helper);
 
-            const circleGeometry = new THREE.CircleGeometry(CIRCLE_RADIUS, 32);
-            circleGeometry.rotateX(-Math.PI / 2);
-            const circle = new THREE.Mesh(circleGeometry, material);
-            helper.add(circle);
 
-            helper.position.y = HELPER_Y;
+            const rev = {
+                0: 'N',
+                45: 'NE',
+                90: 'E',
+                135: 'SE',
+                180: 'S',
+                225: 'SW',
+                270: 'W',
+                315: 'NW'
+            }
 
-            const doodecahedronGeo = new THREE.DodecahedronGeometry(0.1, 0);
-            const icosahedronGeo = new THREE.IcosahedronGeometry(0.1, 0);
-            const octahedronGeo = new THREE.OctahedronGeometry(0.1, 1);
-            const sphereGeo = new THREE.SphereGeometry(0.1, 4, 3);
+            for (let heading = 0; heading < 360; heading += 15) {
+                const b = rev[heading];
+                const label = b ? b : `${heading}°`;
 
-            fontReady((font) => {
-                const material = new THREE.MeshLambertMaterial({ color: 0x63aed9 });
-
-                // let centerYOffset
-                const geometry = {};
-                Object.keys(headings).map(c => {
-                    const geo = createTextGeo(c, font, FONT_SIZE);
-
-                    const mesh = new THREE.Mesh(geo, material);
-                    setMeshFromAngle(mesh, headings[c], LETTER_DISTANCE);
-                    mesh.position.y = -geo.centerYOffset;
-
-                    helper.add(mesh);
-                    window[c] = mesh;
-                })
-
-                const rev = {
-                    0: 'N',
-                    45: 'NE',
-                    90: 'E',
-                    135: 'SE',
-                    180: 'S',
-                    225: 'SW',
-                    270: 'W',
-                    315: 'NW'
-                }
-
-                for (let heading = 0; heading < 360; heading += 15) {
-                    const b = rev[heading];
-                    const label = b ? b : `${heading}°`;
-
-                    // const geo = createTextGeo(label, font, DEG_LABEL_SIZE);
-                    // const mesh = new THREE.Mesh(geo, material);
-                    // setMeshFromAngle(mesh, heading, DEG_LABEL_DISTANCE);
-                    // mesh.position.y = -geo.centerYOffset;
-                    // scene.add(mesh);
-
-                    const text = new THREE.Object3D();
-                    setMeshFromAngle(text, heading, DEG_LABEL_DISTANCE);
-                    text.text = label;
-                    text.heading = 1;
-                    text.size = 10;
-                    labelObjects.push(text);
-                    scene.add(text);
-                }
-            });
+                const text = new THREE.Object3D();
+                setMeshFromAngle(text, heading, DEG_LABEL_DISTANCE);
+                text.text = label;
+                text.heading = 1;
+                text.size = 10;
+                labelObjects.push(text);
+                scene.add(text);
+            }
 
             startLocator((sunpos) => {
-                console.log(sunpos);
                 const radius = 3;
 
-                const sunMaterial = new THREE.MeshLambertMaterial({
-                    color: 0xFFA500
-                    // , transparent: true, opacity: 1 - Math.abs(pos.relative) / 12 * 0.5
-                });
+                const paths = sunpos.filter(pos => pos.today);
 
-                const today = sunpos.filter(s => !s.day);
-                console.log(today);
-
-                today.forEach((pos, i) => {
-                    // if (pos.relative < 0) return;
-                    const sphere = new THREE.Mesh(icosahedronGeo, pos.now ?
-                        new THREE.MeshLambertMaterial({
-                            color: 0xFF0000
-                        }) :
-                        sunMaterial
-                    );
+                paths.forEach(pos => {
                     const h = Math.sin(pos.altitude) * radius;
                     const r = Math.cos(pos.altitude) * radius;
                     const bearing = pos.azimuth - Math.PI / 2;
                     const x = Math.cos(bearing) * r;
                     const y = Math.sin(bearing) * r;
 
-                    sphere.position.set(x, h, y);
-                    // sphere.scale.multiplyScalar(0.8 - 0.05 * Math.abs(pos.relative))
-
                     const sunPath = new THREE.Object3D();
+                    Object.assign(sunPath, pos);
+
                     sunPath.position.set(x, h, y);
-                    if (pos.now) {
-                        sunPath.now = 1
-                    } else {
-                        sunPath.sunPath = 1;
-                    }
+                    sunPath.sunpos2 = true;
                     sunPath.text = pos.h;
-                    sunPath.altitude = pos.altitude;
-                    sunPath.azimuth = pos.azimuth;
-
-
 
                     scene.add(sunPath);
                     labelObjects.push(sunPath);
-
-                    if (pos.now) {
-                        sphere.position.multiplyScalar(2);
-                        sphere.scale.set(2, 2, 2)
-                    }
-                    scene.add(sphere)
-
-                    fontReady((font) => {
-                        const geo = createTextGeo(`${pos.h}`, font, 0.07)
-                        const mesh = new THREE.Mesh(geo, sunMaterial);
-                        mesh.position.set(x, h + 0.25, y);
-                        mesh.position.y -= -geo.centerYOffset;
-                        mesh.lookAt(0, 0, 0)
-
-                        scene.add(mesh);
-                    })
                 })
+
+                const today = sunpos.filter(s => !s.day);
+                console.log(today);
+
+                // today.forEach((pos, i) => {
+                //     // if (pos.relative < 0) return;
+
+                //     const h = Math.sin(pos.altitude) * radius;
+                //     const r = Math.cos(pos.altitude) * radius;
+                //     const bearing = pos.azimuth - Math.PI / 2;
+                //     const x = Math.cos(bearing) * r;
+                //     const y = Math.sin(bearing) * r;
+
+                //     const sunPath = new THREE.Object3D();
+                //     sunPath.position.set(x, h, y);
+                //     if (pos.now) {
+                //         sunPath.now = 1
+                //     } else {
+                //         sunPath.sunPath = 1;
+                //     }
+                //     sunPath.text = pos.h;
+                //     sunPath.altitude = pos.altitude;
+                //     sunPath.azimuth = pos.azimuth;
+
+                //     scene.add(sunPath);
+                //     labelObjects.push(sunPath);
+                // })
             })
-
-
 
             //
 
@@ -484,6 +385,8 @@
 
         function animate() {
             ctx.clearRect(0, 0, hud.width, hud.height)
+            ctx.fillStyle = '#333'
+            ctx.fillRect(0, 0, hud.width, hud.height)
             window.requestAnimationFrame(animate);
 
             controls.update();
@@ -508,26 +411,31 @@
             const headings = labelObjects.filter(h => h.heading);
             const sunPath = labelObjects.filter(h => h.sunPath);
             const sunNow = labelObjects.filter(h => h.now);
+            const sunPath2 = labelObjects.filter(h => h.sunpos2);
 
 
             ctx.beginPath();
             ctx.strokeStyle = '#666'
             ctx.lineWidth = 4;
-            headings.forEach((heading, i) => {
-                const screen = heading.screen;
-                // if (!screen.visible) return;
-                ctx.lineTo(screen.x, screen.y);
-            })
 
-            // if (headings[0] && headings[0].screen.visible) {
-            //     ctx.lineTo(headings[0].screen.x, headings[0].screen.y);
-            // }
-            ctx.closePath();
-            ctx.stroke();
+            for (let i = 0; i < headings.length; i++) {
+                const j = (i + 1) % headings.length;
+                const current = headings[i];
+                const next = headings[j];
 
+                if (!current.screen.visible || !next.screen.visible) {
+                    continue;
+                }
 
-            ctx.strokeStyle = 'orange'
-            ctx.lineWidth = 4;
+                ctx.beginPath();
+                ctx.moveTo(current.screen.x, current.screen.y);
+                ctx.lineTo(next.screen.x, next.screen.y);
+                ctx.stroke();
+            }
+
+            ctx.globalAlpha = 0.8;
+            ctx.strokeStyle = 'yellow'
+            ctx.lineWidth = 8;
 
             for (let i = 0; i < sunPath.length; i++) {
                 const j = (i + 1) % sunPath.length;
@@ -544,6 +452,82 @@
                 ctx.stroke();
             }
 
+            function altitudeColor(rad) {
+                const deg = rad / TO_RAD;
+                const color = deg > 12 ?
+                    '#FFC000' : deg > 6 ?
+                        '#FFBF00' : deg > -4 ?
+                            'orange' : deg > -6 ?
+                                '#005b96' : deg > -12 ?
+                                    '#011f4b' :  // 12
+                                    'black'; // 18
+
+                return color;
+            }
+
+            let start = false;
+            for (let i = 0; i < sunPath2.length; i++) {
+                const j = (i + 1) % sunPath2.length;
+                const current = sunPath2[i];
+                const next = sunPath2[j];
+
+                if (!current.screen.visible || !next.screen.visible) {
+                    continue;
+                }
+
+                const x1 = current.screen.x;
+                const y1 = current.screen.y;
+                const x2 = next.screen.x;
+                const y2 = next.screen.y;
+
+                ctx.beginPath();
+                ctx.moveTo(x1, y1);
+                ctx.lineTo(x2, y2);
+
+                var currentColor = altitudeColor(current.altitude);
+                var nextColor = altitudeColor(next.altitude);
+                var gradient = ctx.createLinearGradient(x1, y1, x2, y2)
+                gradient.addColorStop(0, currentColor);
+                gradient.addColorStop(1, nextColor);
+
+                ctx.strokeStyle = gradient;
+                ctx.stroke();
+            }
+
+            /*
+            let started = false;
+            
+
+            
+            for (let i = 0; i < sunPath2.length; i++) {
+                const j = (i + 1) % sunPath2.length;
+                const current = sunPath2[i];
+                const next = sunPath2[j];
+
+                
+
+                if (current.altitude < -0.833 * TO_RAD || !current.screen.visible || !next.screen.visible) {
+                    if (started) {
+                        ctx.stroke();
+                        started = false;
+                    }
+                    continue;
+                }
+
+                if (!started) {
+                    ctx.beginPath();
+                    ctx.moveTo(current.screen.x, current.screen.y);
+                    started = true;
+                } else  {
+                    ctx.lineTo(next.screen.x, next.screen.y);
+                }
+            }
+
+            if (started) {
+                ctx.stroke();
+                started = false;
+            }
+            */
 
             headings.forEach(heading => {
                 const screen = heading.screen;
@@ -557,18 +541,7 @@
                 ctx.fillText(heading.text, screen.x, screen.y);
             })
 
-            sunPath.forEach(heading => {
-                const screen = heading.screen;
-                if (!screen.visible) return;
-                ctx.font = `14px sans-serif`;
-                ctx.beginPath();
-                ctx.fillStyle = 'orange'
-                ctx.arc(screen.x, screen.y, 10, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.fillStyle = '#fff'
-                ctx.fillText(heading.text, screen.x, screen.y);
-            })
-
+            // Sun
             sunNow.forEach(heading => {
                 const screen = heading.screen;
                 if (!screen.visible) return;
@@ -579,6 +552,19 @@
                 ctx.fill();
                 ctx.fillStyle = '#fff'
                 ctx.fillText(`${new Date()}`, screen.x, screen.y - 20);
+            })
+
+            sunPath2.forEach(heading => {
+                const screen = heading.screen;
+                if (heading.min != 0) return;
+                if (!screen.visible) return;
+                ctx.font = `14px sans-serif`;
+                ctx.beginPath();
+                ctx.fillStyle = 'orange'
+                ctx.arc(screen.x, screen.y, 10, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#fff'
+                ctx.fillText(heading.text, screen.x, screen.y);
             })
 
             renderer.render(scene, camera);

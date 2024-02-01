@@ -156,7 +156,7 @@
 
         let isFontReady = [];
         function fontReady(cb) {
-            if (isFontReady.length !== null) {
+            if (isFontReady.length !== undefined) {
                 return isFontReady.push(cb)
             }
 
@@ -362,7 +362,7 @@
                     // , transparent: true, opacity: 1 - Math.abs(pos.relative) / 12 * 0.5
                 });
 
-                sunpos.filter(s => !s.day).forEach((pos, i) => {
+                sunpos.filter(s => !s.day && s.min == 0).forEach((pos, i) => {
                     // if (pos.relative < 0) return;
                     const sphere = new THREE.Mesh(icosahedronGeo, pos.now ?
                         new THREE.MeshLambertMaterial({
@@ -477,7 +477,7 @@
             var screen = toScreenPosition(window.N, camera);
 
             if (screen) {
-                ctx.fillText('N', screen.x, screen.y)
+                // ctx.fillText('N', screen.x, screen.y)
             }
 
             renderer.render(scene, camera);
