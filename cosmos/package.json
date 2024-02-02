@@ -6,6 +6,7 @@
   "dependencies": {
     "geomag": "^1.0.0",
     "geomagnetism": "^0.1.1",
+    "spectral.js": "^2.0.2",
     "suncalc": "^1.9.0",
     "suncalc3": "^2.0.5",
     "three": "^0.161.0"

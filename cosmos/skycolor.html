@@ -14,6 +14,7 @@
 
 
 <body>
+    <script src="vendor/spectral.min.js"></script>
     <script>
         function createCanvas(w, h) {
             var canvas = document.createElement('canvas');
@@ -56,14 +57,180 @@
         var gradient = ctx.createLinearGradient(0, 0, ctx.w, 0);
         ctx.fillStyle = gradient;
         for (let i = 0; i < blues.length; i++) {
-            gradient.addColorStop(i/(blues.length - 1), blues[i]);    
+            gradient.addColorStop(i / (blues.length - 1), blues[i]);
         }
         ctx.fillRect(0, 0, ctx.w, ctx.h);
 
-        
+
+        // animate
+        var ctx = createCanvas(400, 300)
+        document.body.appendChild(ctx.dom);
+
+        ((ctx) => {
+            ctx.dom.onmouseover = () => {
+                let i = 0;
+
+                const animate = () => {
+
+                    ctx.fillStyle = blues[i];
+                    ctx.fillRect(0, 0, ctx.w, ctx.h);
+
+                    i++;
+                    if (i < blues.length)
+                        setTimeout(animate, 500);
+                }
+
+                animate();
+            }
+        })(ctx)
+
+        var ctx = createCanvas(400, 300)
+        document.body.appendChild(ctx.dom);
+
+        var orange = [
+            '#ffb150',
+            '#ffa263',
+            '#ff9853',
+            '#ff855b',
+            '#ffbb39',
+        ];
+
+        for (let i = 0; i < orange.length; i++) {
+            ctx.fillStyle = orange[i];
+            ctx.fillRect((i / orange.length) * ctx.w, 0, ctx.w / orange.length, ctx.h);
+        }
+
+        // oklab / spectral mixing
+        var palette = spectral.palette('#00357B', '#F0F0F0', 9);
+        var ctx = createCanvas(400, 300)
+        document.body.appendChild(ctx.dom);
+        for (let i = 0; i < palette.length; i++) {
+            ctx.fillStyle = palette[i];
+            ctx.fillRect((i / palette.length) * ctx.w, 0, ctx.w / palette.length, ctx.h);
+        }
+
+        var palette = spectral.palette('#00357B', '#F0F0F0', 5);
+        var ctx = createCanvas(400, 300)
+        document.body.appendChild(ctx.dom);
+        for (let i = 0; i < palette.length; i++) {
+            ctx.fillStyle = palette[i];
+            ctx.fillRect((i / palette.length) * ctx.w, 0, ctx.w / palette.length, ctx.h);
+        }
+
+        var palette = spectral.palette('#00357B', '#F0F0F0', 3);
+        var ctx = createCanvas(400, 300)
+        document.body.appendChild(ctx.dom);
+        for (let i = 0; i < palette.length; i++) {
+            ctx.fillStyle = palette[i];
+            ctx.fillRect((i / palette.length) * ctx.w, 0, ctx.w / palette.length, ctx.h);
+        }
+
+
         // animate
 
-        // mixbox
+        ((ctx) => {
+            var ctx = createCanvas(400, 300)
+            document.body.appendChild(ctx.dom);
+
+            ctx.dom.onmouseover = () => {
+                let i = 0;
+
+                const animate = () => {
+                    let color = spectral.mix('rgb(0, 33, 133)', 'rgb(215, 153, 0)', i);
+
+                    ctx.fillStyle = color
+                    ctx.fillRect(0, 0, ctx.w, ctx.h);
+
+                    i += 0.1;
+                    if (i < 1)
+                        setTimeout(animate, 500);
+                }
+
+                animate();
+            }
+        })(ctx);
+
+
+        ((ctx) => {
+            var ctx = createCanvas(400, 300)
+            document.body.appendChild(ctx.dom);
+            var array = [
+            '#ED2938',
+            '#FF8C01',
+            '#FFAA1C',
+            '#ffe733',
+        ]
+
+            ctx.dom.onmouseover = () => {
+                let i = 0;
+
+                const animate = () => {
+                    var color = array[i]
+
+                    ctx.fillStyle = color
+                    ctx.fillRect(0, 0, ctx.w, ctx.h);
+
+                    i ++
+                    if (i < array.length)
+                        setTimeout(animate, 500);
+                }
+
+                animate();
+            }
+        })(ctx);
+
+        [[
+            '#ED2938',
+            '#FF8C01',
+            '#FFAA1C',
+            '#ffe733',
+        ], ['#ff1c05',
+            '#ff4405',
+            '#ff5405',
+            '#ff7805',
+            '#ff9505'],
+        '#ffd500 #fba31a #f37220 #df1e26'.split(' ') // 941a1c
+        ].forEach(array => {
+            var ctx = createCanvas(400, 300)
+            document.body.appendChild(ctx.dom);
+
+            for (let i = 0; i < array.length; i++) {
+                ctx.fillStyle = array[i];
+                ctx.fillRect((i / array.length) * ctx.w, 0, ctx.w / array.length, ctx.h);
+            }
+
+        })
+
+        // var palette = spectral.palette('rgb(0, 33, 133)', 'rgb(215, 153, 0)', 5);\\
+
+        var palette = spectral.palette('#00357B', '#ff1c05', 5);
+        var palette = spectral.palette('#00357B', '#ED2938', 5);
+
+        var ctx = createCanvas(400, 300)
+        document.body.appendChild(ctx.dom);
+        for (let i = 0; i < palette.length; i++) {
+            ctx.fillStyle = palette[i];
+            ctx.fillRect((i / palette.length) * ctx.w, 0, ctx.w / palette.length, ctx.h);
+        }
+
+        // blend
+        [
+            ['#00357B', '#ED2938'],
+            '#ffd500 #fba31a #f37220 #df1e26'.split(' '),
+            '#ffd500 #df1e26'.split(' '),
+            spectral.palette('#00357B', '#ED2938', 5),
+            ['#00357B', '#ED2938'],
+        ].forEach(array => {
+            var ctx = createCanvas(400, 300)
+            document.body.appendChild(ctx.dom);
+
+            var gradient = ctx.createLinearGradient(0, 0, ctx.w, 0);
+            ctx.fillStyle = gradient;
+            for (let i = 0; i < array.length; i++) {
+                gradient.addColorStop(i / (array.length - 1), array[i]);
+            }
+            ctx.fillRect(0, 0, ctx.w, ctx.h);
+        });
 
     </script>
 </body>
