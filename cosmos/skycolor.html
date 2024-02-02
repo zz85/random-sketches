@@ -32,10 +32,118 @@
             return ctx;
         }
 
-        var ctx = createCanvas(400, 300)
-        document.body.appendChild(ctx.dom);
+        function handleCanvas(title) {
+            // 800, 600
+            var ctx = createCanvas(400, 300)
+            document.body.appendChild(ctx.dom);
 
-        var blues = [
+            var div = document.createElement('div');
+            div.innerHTML = title;
+            document.body.appendChild(div);
+
+            return ctx;
+        }
+
+        // distinct
+        function equalPalette(colors, ctx) {
+            for (let i = 0; i < colors.length; i++) {
+                ctx.fillStyle = colors[i];
+                ctx.fillRect((i / colors.length) * ctx.w, 0, ctx.w / colors.length, ctx.h);
+            }
+        }
+
+        // blend
+        function blendPalette(colors, ctx) {
+            var gradient = ctx.createLinearGradient(0, 0, ctx.w, 0);
+            ctx.fillStyle = gradient;
+            for (let i = 0; i < colors.length; i++) {
+                gradient.addColorStop((i + 0) / (colors.length + 0 - 1), colors[i]);
+            }
+            ctx.fillRect(0, 0, ctx.w, ctx.h);
+        }
+
+        // fork https://observablehq.com/@shan/oklab-color-wheel
+        // to rgb, with conversion from linear to srgb
+        const oklab = (lab) => {
+            const L = lab[0], a = lab[1], b = lab[2]
+            const l_ = L + 0.3963377774 * a + 0.2158037573 * b;
+            const m_ = L - 0.1055613458 * a - 0.0638541728 * b;
+            const s_ = L - 0.0894841775 * a - 1.2914855480 * b;
+            const l = l_ * l_ * l_;
+            const m = m_ * m_ * m_;
+            const s = s_ * s_ * s_;
+
+            return [
+                255 * gamma(+4.0767245293 * l - 3.3072168827 * m + 0.2307590544 * s),
+                255 * gamma(-1.2681437731 * l + 2.6093323231 * m - 0.3411344290 * s),
+                255 * gamma(-0.0041119885 * l - 0.7034763098 * m + 1.7068625689 * s)
+            ];
+        }
+
+        const rgbToOkLab = c => {
+            const r = gamma_inv(c[0] / 255);
+            const g = gamma_inv(c[1] / 255);
+            const b = gamma_inv(c[2] / 255);
+            const l = 0.4121656120 * r + 0.5362752080 * g + 0.0514575653 * b;
+            const m = 0.2118591070 * r + 0.6807189584 * g + 0.1074065790 * b;
+            const s = 0.0883097947 * r + 0.2818474174 * g + 0.6302613616 * b;
+
+            const l_ = Math.cbrt(l);
+            const m_ = Math.cbrt(m);
+            const s_ = Math.cbrt(s);
+
+            return [
+                0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_,
+                1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_,
+                0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_
+            ]
+        }
+
+        const gamma_inv = x => x >= 0.04045 ? Math.pow((x + 0.055) / (1 + 0.055), 2.4) : x / 12.92
+        const gamma = x => (x >= 0.0031308 ? 1.055 * Math.pow(x, 1 / 2.4) - 0.055 : 12.92 * x)
+        // const gamma_inv = x => Math.pow(1, 1 / 2.2);
+        // const gamma = x => Math.pow(1, 2.2);
+
+        // animate
+        function animatePalette(colors, ctx, interval = 800) {
+            let i = 0;
+            let animate;
+
+            const paint = () => {
+                ctx.fillStyle = colors[i];
+                ctx.fillRect(0, 0, ctx.w, ctx.h);
+
+                i++;
+                i %= colors.length;
+            }
+
+            paint();
+
+            ctx.dom.onmouseenter = () => {
+                if (!animate) {
+                    animate = setInterval(paint, interval)
+                }
+            }
+
+            ctx.dom.onmouseleave = () => {
+                animate = clearInterval(animate)
+            }
+        }
+
+        function parseHex(str) {
+            if (!str.startsWith('#')) return;
+
+            str = str.substring(1)
+            if (str.length == 6) {
+                return [
+                    parseInt(str.substring(0, 2), 16),
+                    parseInt(str.substring(2, 4), 16),
+                    parseInt(str.substring(4, 6), 16),
+                ]
+            }
+        }
+
+        const blues = [
             '#011f4b',
             '#03396c',
             '#005b96',
@@ -43,49 +151,15 @@
             '#b3cde0',
         ]; //https://www.color-hex.com/color-palette/1294
 
-        // distinct
+        var ctx = handleCanvas('Shades of blue');
+        equalPalette(blues, ctx)
 
-        for (let i = 0; i < blues.length; i++) {
-            ctx.fillStyle = blues[i];
-            ctx.fillRect((i / blues.length) * ctx.w, 0, ctx.w / blues.length, ctx.h);
-        }
-
-        // blend
-        var ctx = createCanvas(400, 300)
-        document.body.appendChild(ctx.dom);
-
-        var gradient = ctx.createLinearGradient(0, 0, ctx.w, 0);
-        ctx.fillStyle = gradient;
-        for (let i = 0; i < blues.length; i++) {
-            gradient.addColorStop(i / (blues.length - 1), blues[i]);
-        }
-        ctx.fillRect(0, 0, ctx.w, ctx.h);
-
+        var ctx = handleCanvas('Shades of blue (blended)');
+        blendPalette(blues, ctx)
 
         // animate
-        var ctx = createCanvas(400, 300)
-        document.body.appendChild(ctx.dom);
-
-        ((ctx) => {
-            ctx.dom.onmouseover = () => {
-                let i = 0;
-
-                const animate = () => {
-
-                    ctx.fillStyle = blues[i];
-                    ctx.fillRect(0, 0, ctx.w, ctx.h);
-
-                    i++;
-                    if (i < blues.length)
-                        setTimeout(animate, 500);
-                }
-
-                animate();
-            }
-        })(ctx)
-
-        var ctx = createCanvas(400, 300)
-        document.body.appendChild(ctx.dom);
+        var ctx = handleCanvas('Animate shades of blue')
+        animatePalette(blues, ctx);
 
         var orange = [
             '#ffb150',
@@ -95,36 +169,22 @@
             '#ffbb39',
         ];
 
-        for (let i = 0; i < orange.length; i++) {
-            ctx.fillStyle = orange[i];
-            ctx.fillRect((i / orange.length) * ctx.w, 0, ctx.w / orange.length, ctx.h);
-        }
+        var ctx = handleCanvas('Shades of orange');
+        equalPalette(orange, ctx)
+
 
         // oklab / spectral mixing
         var palette = spectral.palette('#00357B', '#F0F0F0', 9);
-        var ctx = createCanvas(400, 300)
-        document.body.appendChild(ctx.dom);
-        for (let i = 0; i < palette.length; i++) {
-            ctx.fillStyle = palette[i];
-            ctx.fillRect((i / palette.length) * ctx.w, 0, ctx.w / palette.length, ctx.h);
-        }
+        var ctx = handleCanvas(`spectral palette '#00357B', '#F0F0F0' of 9`);
+        equalPalette(palette, ctx)
 
         var palette = spectral.palette('#00357B', '#F0F0F0', 5);
-        var ctx = createCanvas(400, 300)
-        document.body.appendChild(ctx.dom);
-        for (let i = 0; i < palette.length; i++) {
-            ctx.fillStyle = palette[i];
-            ctx.fillRect((i / palette.length) * ctx.w, 0, ctx.w / palette.length, ctx.h);
-        }
+        var ctx = handleCanvas(`spectral palette '#00357B', '#F0F0F0' of 5`);
+        equalPalette(palette, ctx)
 
         var palette = spectral.palette('#00357B', '#F0F0F0', 3);
-        var ctx = createCanvas(400, 300)
-        document.body.appendChild(ctx.dom);
-        for (let i = 0; i < palette.length; i++) {
-            ctx.fillStyle = palette[i];
-            ctx.fillRect((i / palette.length) * ctx.w, 0, ctx.w / palette.length, ctx.h);
-        }
-
+        var ctx = handleCanvas(`spectral palette '#00357B', '#F0F0F0' of 3`);
+        equalPalette(palette, ctx);
 
         // animate
 
@@ -150,87 +210,149 @@
             }
         })(ctx);
 
-
-        ((ctx) => {
-            var ctx = createCanvas(400, 300)
-            document.body.appendChild(ctx.dom);
-            var array = [
+        var array = [
             '#ED2938',
             '#FF8C01',
             '#FFAA1C',
             '#ffe733',
-        ]
+        ];
+        var ctx = handleCanvas('Animate shades')
+        animatePalette(array, ctx);
 
-            ctx.dom.onmouseover = () => {
-                let i = 0;
-
-                const animate = () => {
-                    var color = array[i]
-
-                    ctx.fillStyle = color
-                    ctx.fillRect(0, 0, ctx.w, ctx.h);
-
-                    i ++
-                    if (i < array.length)
-                        setTimeout(animate, 500);
-                }
-
-                animate();
-            }
-        })(ctx);
-
-        [[
-            '#ED2938',
-            '#FF8C01',
-            '#FFAA1C',
-            '#ffe733',
-        ], ['#ff1c05',
-            '#ff4405',
-            '#ff5405',
-            '#ff7805',
-            '#ff9505'],
-        '#ffd500 #fba31a #f37220 #df1e26'.split(' ') // 941a1c
-        ].forEach(array => {
-            var ctx = createCanvas(400, 300)
-            document.body.appendChild(ctx.dom);
-
-            for (let i = 0; i < array.length; i++) {
-                ctx.fillStyle = array[i];
-                ctx.fillRect((i / array.length) * ctx.w, 0, ctx.w / array.length, ctx.h);
-            }
-
+        [
+            [
+                '#ED2938',
+                '#FF8C01',
+                '#FFAA1C',
+                '#ffe733',
+            ],
+            [
+                '#ff1c05',
+                '#ff4405',
+                '#ff5405',
+                '#ff7805',
+                '#ff9505'],
+            '#ffd500 #fba31a #f37220 #df1e26'.split(' ') // 941a1c
+        ].forEach((array, i) => {
+            var ctx = handleCanvas(`Orange shades ${i + 1}`);
+            equalPalette(array, ctx)
         })
 
-        // var palette = spectral.palette('rgb(0, 33, 133)', 'rgb(215, 153, 0)', 5);\\
 
-        var palette = spectral.palette('#00357B', '#ff1c05', 5);
-        var palette = spectral.palette('#00357B', '#ED2938', 5);
+        const blue_red = [
+            // '#011f4b',
+            '#00357B',
+            '#ED2938'];
 
-        var ctx = createCanvas(400, 300)
-        document.body.appendChild(ctx.dom);
-        for (let i = 0; i < palette.length; i++) {
-            ctx.fillStyle = palette[i];
-            ctx.fillRect((i / palette.length) * ctx.w, 0, ctx.w / palette.length, ctx.h);
+        // other blue red
+        // // var palette = spectral.palette('rgb(0, 33, 133)', 'rgb(215, 153, 0)', 5);\\
+        // '#00357B', '#ff1c05'
+
+
+        function interpolate(colors, n, k) {
+            var start = colors[0];
+            var end = colors[1];
+
+            var results = [];
+            for (let i = 0; i < n; i++) {
+                let interpolate = i / (n - 1);
+                if (k) interpolate = k(interpolate)
+
+                const color = start.map((color, c) => {
+                    return (end[c] - color) * interpolate + color
+                })
+
+                results.push(color)
+            }
+
+            return results;
         }
 
-        // blend
-        [
-            ['#00357B', '#ED2938'],
-            '#ffd500 #fba31a #f37220 #df1e26'.split(' '),
-            '#ffd500 #df1e26'.split(' '),
-            spectral.palette('#00357B', '#ED2938', 5),
-            ['#00357B', '#ED2938'],
-        ].forEach(array => {
-            var ctx = createCanvas(400, 300)
-            document.body.appendChild(ctx.dom);
+        function toRgb(color) {
+            return `rgb(${color[0]} ${color[1]} ${color[2]}`
+        }
 
-            var gradient = ctx.createLinearGradient(0, 0, ctx.w, 0);
-            ctx.fillStyle = gradient;
-            for (let i = 0; i < array.length; i++) {
-                gradient.addColorStop(i / (array.length - 1), array[i]);
-            }
-            ctx.fillRect(0, 0, ctx.w, ctx.h);
-        });
+        var divisions = 10;
+        // const cubic = (i) => 1 - i;
+        const cubic = (i) => i * i * i
+        // const cubic = (i) => i * i * (2 - i)
+        //https://iquilezles.org/articles/functions/
+        const curve = (i) => i * i * (2 - i)
+        const smoothstep = x => x * x * (3 - 2 * x)
+
+        const smootherstep = x => x * x * x * (x * (6.0 * x - 15.0) + 10.0);
+
+        var linear_blue_red = interpolate(blue_red.map(parseHex), divisions,).map(toRgb);
+
+        var lab = blue_red.map(parseHex).map(rgbToOkLab);
+        var oklab_blue_red = interpolate(lab, divisions,).map(oklab).map(toRgb);
+        // var oklab_blue_red = interpolate(lab.map(oklab), divisions).map(toRgb); // sanity check!
+
+
+        var spectral_blue_red = spectral.palette(...blue_red, divisions)
+
+        var ctx = handleCanvas(`Blue Red OkLab (animate)`);
+        animatePalette(oklab_blue_red, ctx, 600)
+        var ctx = handleCanvas(`Blue Red Linear (animate)`);
+        animatePalette(linear_blue_red, ctx, 600)
+        var ctx = handleCanvas(`Blue Red Spectral (animate)`);
+        animatePalette(spectral_blue_red, ctx, 600)
+
+
+
+        var ctx = handleCanvas(`Blue Red OkLab`);
+        equalPalette(oklab_blue_red, ctx)
+        var ctx = handleCanvas(`Blue Red Linear`);
+        equalPalette(linear_blue_red, ctx)
+        var ctx = handleCanvas(`Blue Red Spectral`);
+        equalPalette(spectral_blue_red, ctx)
+
+            // blend
+            ;[
+                blue_red, // Blend 1 canvas interpolation
+                spectral_blue_red, // spectral
+
+                '#ffd500 #fba31a #f37220 #df1e26'.split(' '),
+                '#ffd500 #df1e26'.split(' '),
+            ].forEach((array, i) => {
+                var ctx = handleCanvas(`Blends ${i + 1}`);
+                blendPalette(array, ctx)
+            });
+
+        const yellow_red = '#ffd500 #df1e26'.split(' ')
+        var modifier = smoothstep;
+
+        var linear_yellow_red = interpolate(yellow_red.map(parseHex), divisions, modifier).map(toRgb);
+        var lab = yellow_red.map(parseHex).map(rgbToOkLab);
+        var oklab_yellow_red = interpolate(lab, divisions, modifier).map(oklab).map(toRgb);
+        var spectral_yellow_red = spectral.palette(...yellow_red, divisions)
+
+        var ctx = handleCanvas(`Yellow Red OkLab (animate)`);
+        animatePalette(oklab_yellow_red, ctx, 400)
+        var ctx = handleCanvas(`Yellow Red Linear (animate)`);
+        animatePalette(linear_yellow_red, ctx, 400)
+        var ctx = handleCanvas(`Yellow Red Spectral (animate)`);
+        animatePalette(spectral_yellow_red, ctx, 400)
+
+        var ctx = handleCanvas(`Yellow Red OkLab`);
+        equalPalette(oklab_yellow_red, ctx)
+        var ctx = handleCanvas(`Yellow Red Linear`);
+        equalPalette(linear_yellow_red, ctx)
+        var ctx = handleCanvas(`Yellow Red Spectral`);
+        equalPalette(spectral_yellow_red, ctx)
+
+        var modifier = curve
+        const blue_white = '#10002b #ffffff'.split(' ') // 011f4b 00004b
+        var linear_blue_white = interpolate(blue_white.map(parseHex), divisions, modifier).map(toRgb);
+        var lab = blue_white.map(parseHex).map(rgbToOkLab);
+        var oklab_blue_white = interpolate(lab, divisions, modifier).map(oklab).map(toRgb);
+        var spectral_blue_white = spectral.palette(...blue_white, divisions)
+        var ctx = handleCanvas(`Blue white OkLab`);
+        equalPalette(oklab_blue_white, ctx)
+        var ctx = handleCanvas(`Blue white Linear`);
+        equalPalette(linear_blue_white, ctx)
+        var ctx = handleCanvas(`Blue white Spectral`);
+        equalPalette(spectral_blue_white, ctx)
 
     </script>
 </body>
