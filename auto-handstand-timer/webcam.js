@@ -9,13 +9,13 @@ async function openMediaDevices(constraints) {
     return await navigator.mediaDevices.getUserMedia(constraints);
 }
 
-function setupVideoElement() {
+function setupVideoElement(noInsert) {
     const video = document.createElement('video');
     video.autoplay = true;
     video.playsInline = true;
     video.controls = false;
 
-    document.body.appendChild(video);
+    if (!noInsert) document.body.appendChild(video);
     return video;
 }
 

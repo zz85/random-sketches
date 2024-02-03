@@ -46,6 +46,7 @@
 
         // distinct
         function equalPalette(colors, ctx) {
+            ctx.dom.onclick = () => console.log(colors);
             for (let i = 0; i < colors.length; i++) {
                 ctx.fillStyle = colors[i];
                 ctx.fillRect((i / colors.length) * ctx.w, 0, ctx.w / colors.length, ctx.h);
@@ -97,12 +98,16 @@
                 1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_,
                 0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_
             ]
+
         }
+
+        // const gamma_inv = x => x
+        // const gamma= x => x
 
         const gamma_inv = x => x >= 0.04045 ? Math.pow((x + 0.055) / (1 + 0.055), 2.4) : x / 12.92
         const gamma = x => (x >= 0.0031308 ? 1.055 * Math.pow(x, 1 / 2.4) - 0.055 : 12.92 * x)
-        // const gamma_inv = x => Math.pow(1, 1 / 2.2);
-        // const gamma = x => Math.pow(1, 2.2);
+        // const gamma_inv = x => Math.pow(x, 2.2);
+        // const gamma = x => Math.pow(x, 1/ 2.2);
 
         // animate
         function animatePalette(colors, ctx, interval = 800) {
@@ -240,8 +245,8 @@
 
 
         const blue_red = [
-            // '#011f4b',
-            '#00357B',
+            '#011f4b',
+            // '#00357B',
             '#ED2938'];
 
         // other blue red
@@ -249,26 +254,37 @@
         // '#00357B', '#ff1c05'
 
 
-        function interpolate(colors, n, k) {
+        function interpolate(colors, n, k, light) {
             var start = colors[0];
             var end = colors[1];
 
             var results = [];
             for (let i = 0; i < n; i++) {
                 let interpolate = i / (n - 1);
-                if (k) interpolate = k(interpolate)
-
+                if (k && (!(light && !(i == 0))) ) interpolate = k(interpolate)
+  
                 const color = start.map((color, c) => {
-                    return (end[c] - color) * interpolate + color
+                    const r = (end[c] - color) * interpolate + color;
+                    return r;
                 })
 
                 results.push(color)
             }
+            console.log(results);
 
             return results;
         }
 
+        function asHex(h) {
+            const s = '00' + h.toString(16);
+            return s.substr(s.length - 2)
+        }
+
         function toRgb(color) {
+            const r = asHex(color[0] | 0);
+            const g = asHex(color[1] | 0);
+            const b = asHex(color[2] | 0);
+            return `#${r}${g}${b}`
             return `rgb(${color[0]} ${color[1]} ${color[2]}`
         }
 
@@ -282,10 +298,10 @@
 
         const smootherstep = x => x * x * x * (x * (6.0 * x - 15.0) + 10.0);
 
-        var linear_blue_red = interpolate(blue_red.map(parseHex), divisions,).map(toRgb);
+        var linear_blue_red = interpolate(blue_red.map(parseHex), divisions).map(toRgb);
 
         var lab = blue_red.map(parseHex).map(rgbToOkLab);
-        var oklab_blue_red = interpolate(lab, divisions,).map(oklab).map(toRgb);
+        var oklab_blue_red = interpolate(lab, divisions).map(oklab).map(toRgb);
         // var oklab_blue_red = interpolate(lab.map(oklab), divisions).map(toRgb); // sanity check!
 
 
@@ -341,11 +357,13 @@
         var ctx = handleCanvas(`Yellow Red Spectral`);
         equalPalette(spectral_yellow_red, ctx)
 
-        var modifier = curve
-        const blue_white = '#10002b #ffffff'.split(' ') // 011f4b 00004b
+        // var modifier = (x) => 1 - (1 - x) * (1 - x);
+        // var modifier = (x) => x * x;
+        // modifier = null
+        const blue_white = '#10109b #ffffff'.split(' ') // 011f4b 00004b | 10109b #5f5f5f | 1010f0 #efefef
         var linear_blue_white = interpolate(blue_white.map(parseHex), divisions, modifier).map(toRgb);
         var lab = blue_white.map(parseHex).map(rgbToOkLab);
-        var oklab_blue_white = interpolate(lab, divisions, modifier).map(oklab).map(toRgb);
+        var oklab_blue_white = interpolate(lab, divisions, modifier, true).map(oklab).map(toRgb);
         var spectral_blue_white = spectral.palette(...blue_white, divisions)
         var ctx = handleCanvas(`Blue white OkLab`);
         equalPalette(oklab_blue_white, ctx)
@@ -353,6 +371,21 @@
         equalPalette(linear_blue_white, ctx)
         var ctx = handleCanvas(`Blue white Spectral`);
         equalPalette(spectral_blue_white, ctx)
+
+        // const darkish_blues = '#2a58ce #07173e'.split(' ') // 011f4b 00004b | 10109b #5f5f5f | 1010f0 #efefef
+        const darkish_blues = '#07173e #ffffff'.split(' ') // 011f4b 00004b | 10109b #5f5f5f | 1010f0 #efefef
+        var linear_darkish_blues = interpolate(darkish_blues.map(parseHex), 8, modifier).map(toRgb);
+        var lab = darkish_blues.map(parseHex).map(rgbToOkLab);
+        var oklab_darkish_blues = interpolate(lab, 8, modifier, true).map(oklab).map(toRgb);
+        var spectral_darkish_blues = spectral.palette(...darkish_blues, 8)
+        var ctx = handleCanvas(`Darksih blues OkLab`);
+        equalPalette(oklab_darkish_blues, ctx)
+        var ctx = handleCanvas(`Darksih blues Linear`);
+        equalPalette(linear_darkish_blues, ctx)
+        var ctx = handleCanvas(`Darksih blues Spectral`);
+        equalPalette(spectral_darkish_blues, ctx)
+
+
 
     </script>
 </body>

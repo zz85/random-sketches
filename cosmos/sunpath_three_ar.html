@@ -134,6 +134,7 @@
         import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
         let camera, scene, renderer, controls, ctx, orbitalControls, helper;
+        let compassDeclination = 0;
 
         const CIRCLE_RADIUS = 0.2;
         const HELPER_Y = -0.15;
@@ -355,6 +356,7 @@
 
             startLocator((sunpos) => {
                 console.log(sunpos);
+
                 const radius = 3;
 
                 const sunMaterial = new THREE.MeshLambertMaterial({
@@ -362,7 +364,7 @@
                     // , transparent: true, opacity: 1 - Math.abs(pos.relative) / 12 * 0.5
                 });
 
-                sunpos.filter(s => !s.day && s.min == 0).forEach((pos, i) => {
+                sunpos.filter(s => !s.day && s.min == 0 || s.now).forEach((pos, i) => {
                     // if (pos.relative < 0) return;
                     const sphere = new THREE.Mesh(icosahedronGeo, pos.now ?
                         new THREE.MeshLambertMaterial({

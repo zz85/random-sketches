@@ -336,7 +336,7 @@
             helper.add(sphere);
 
             startLocator((sunpos) => {
-                sunpos.filter(s => !s.day).forEach((pos, i) => {
+                sunpos.filter(s => !s.day || s.now).forEach((pos, i) => {
                     // if (pos.relative < 0) return;
                     const material = new THREE.MeshLambertMaterial({
                         color: 0xFFA500, transparent: true,

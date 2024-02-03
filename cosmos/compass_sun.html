@@ -39,7 +39,7 @@
 
     let heading = 0, count = 0, touchedHeading = null,
       alpha = 0, beta = 0, gamma = 0, coords,
-      rise, set;
+      rise, set, sunNow;
 
     let w = window.innerWidth;
     let h = window.innerHeight;
@@ -82,6 +82,7 @@
       const times = SunCalc.getTimes(new Date(), latitude, longitude);
       rise = SunCalc.getPosition(times.sunrise, latitude, longitude).azimuth;
       set = SunCalc.getPosition(times.sunset, latitude, longitude).azimuth;
+      sunNow = SunCalc.getPosition(new Date(), latitude, longitude).azimuth;
 
       smallLabel(`Position: ${JSON.stringify({ latitude, longitude, altitude, accuracy, altitudeAccuracy, heading, speed })}`)
     }
@@ -290,14 +291,18 @@
 
       if (rise !== null) {
         const [x, y] = angleToCoords(rise - (heading - 90) / CIRCLE_DEG * PI_2, 100)
-        ctx.fillText(`☀️`, x, y)
+        ctx.fillText(`🌅`, x, y)
       }
 
       if (set !== null) {
         const [x, y] = angleToCoords(set - (heading - 90) / CIRCLE_DEG * PI_2, 100)
-        ctx.fillText(`🌅`, x, y)
+        ctx.fillText(`🌇`, x, y)
       }
 
+      if (sunNow !== null) {
+        const [x, y] = angleToCoords(sunNow - (heading - 90) / CIRCLE_DEG * PI_2, 100)
+        ctx.fillText(`☀️`, x, y)
+      }
 
       // index line
       ctx.save();
