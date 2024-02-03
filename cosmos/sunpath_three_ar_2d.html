@@ -183,6 +183,7 @@
 
 
         let compassDeclination = 0, compassRotation = 0, compassHeading = 0;
+        let sunFinder;
         let calibrated;
         let video;
         let currentSkyColor;
@@ -391,6 +392,7 @@
                 sunPath.text = sunPath.h;
                 scene.add(sunPath);
                 labelObjects.push(sunPath);
+                sunFinder = sunPath;
             })
 
             // month paths
@@ -650,40 +652,78 @@
                 ctx.fillText(heading.text, screen.x, screen.y);
             })
 
-            // draw overlay
-            ctx.save();
-            ctx.translate(window.innerWidth / 2, window.innerHeight / 2);
-            ctx.beginPath();
-            ctx.arc(0, 0, 30, 0, Math.PI * 2);
-            ctx.fillStyle = 'rgb(255 255 255 / 0.5)'
-            ctx.fill();
-
-            ctx.lineWidth = 1;
-            ctx.strokeStyle = '#fff';
-            ctx.fillStyle = '#fff';
-            ctx.font = '10px sans-serif'
-
-            ctx.beginPath();
-            ctx.arc(0, 0, 10, 0, Math.PI * 2);
-            ctx.stroke();
-
-            ctx.save();
-
-            if (controls.deviceOrientation) {
-                // ctx.rotate((controls.deviceOrientation.alpha) * Math.PI / 180)
-                ctx.fillText('+', 0, 0) // ⌖
-                ctx.fillText(`${(compassHeading % 360).toFixed(0)}°`, 25, 0)
-
-                ctx.fillText(`${(controls.deviceOrientation.beta - 90).toFixed(0)}°`, 0, 25)
-            }
-            // compassRotation
-
-            ctx.restore();
+            drawOverlay();
 
 
 
             ctx.restore();
             window.s = scene;
+        }
+
+        function drawOverlay() {
+            if (!controls.deviceOrientation) return;
+
+
+            ctx.save();
+            ctx.translate(window.innerWidth / 2, window.innerHeight / 2);
+            ctx.beginPath();
+            ctx.arc(0, 0, 28, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgb(128 128 128 / 0.5)'
+            ctx.fill();
+
+            ctx.lineWidth = 0.5;
+            ctx.strokeStyle = '#fff';
+            ctx.fillStyle = '#fff';
+            ctx.font = '8px sans-serif'
+
+            ctx.beginPath();
+            ctx.arc(0, 0, 8, 0, Math.PI * 2);
+            ctx.stroke();
+
+            ctx.save();
+
+
+            // draw overlay
+            const zRot = camera.rotation.z * 180 / Math.PI;
+            const xRot = camera.rotation.x * 180 / Math.PI;
+            ctx.rotate(camera.rotation.z)
+            ctx.beginPath();
+            const CROSSHAIR_RADIUS = 3;
+            ctx.moveTo(0, -CROSSHAIR_RADIUS),
+                ctx.lineTo(0, CROSSHAIR_RADIUS);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(-CROSSHAIR_RADIUS, 0),
+                ctx.lineTo(CROSSHAIR_RADIUS, 0);
+            ctx.stroke();
+
+            // ctx.fillText('+', 0, 0) // ⌖
+            ctx.fillText(`${(compassHeading % 360).toFixed(0)}°`, 18, 0)
+            // ctx.fillText(`${(controls.deviceOrientation.beta - 90).toFixed(0)}°`, 0, 25)
+
+            ctx.fillText(`${(xRot | 0)}°`, 0, 18)
+
+            ctx.restore();
+
+            if (sunFinder) {
+                const sx = sunFinder.screen.x - window.innerWidth / 2;
+                const sy = sunFinder.screen.y - window.innerHeight / 2;
+                const d2 = sx * sx + sy * sy;
+                if (d2 > 18 * 18) {
+                    const d = Math.sqrt(d2);
+                    const vx = sx / d;
+                    const vy = sy / d;
+                    ctx.fillText(`${(vx).toFixed(2)}, ${(vy).toFixed(2)}`, -18, 0)
+
+                    const opacity = Math.max(Math.min((d - 20) / 200, 1), 0);
+                    ctx.fillStyle = `rgb(255 255 255 / ${opacity}`
+                    ctx.beginPath()
+                    ctx.arc(vx * 30, vy * 30, 5, 0, Math.PI * 2);
+                    ctx.fill();
+
+
+                }
+            }
         }
 
         function onWindowResize() {
