@@ -344,13 +344,6 @@
 
             //
 
-            // renderer = new THREE.WebGLRenderer({ antialias: true });
-            // renderer.setPixelRatio(window.devicePixelRatio);
-            // renderer.setSize(window.innerWidth, window.innerHeight);
-            // document.body.appendChild(renderer.domElement);
-
-            //
-
             window.addEventListener('resize', onWindowResize, false);
 
 
@@ -361,69 +354,50 @@
 
             if (geomag) {
                 const field = geomag.field(locator.latitude, locator.longitude, locator.altitude || 0);
-
-                const {
-                    declination,
-                    inclination,
-                    intensity,
-                    northIntensity,
-                    eastIntensity,
-                    verticalIntensity,
-                    horizontalIntensity,
-                } = field;
-
-                compassDeclination = declination;
+                compassDeclination = field.declination;
                 if (calibrated) {
                     scene.rotation.y += compassDeclination / 180 * Math.PI;
                 }
             }
 
-
             const radius = 3;
 
             const paths = sunpos.filter(pos => pos.today);
 
-            paths.forEach(pos => {
+            const sunposTo3d = (pos) => {
                 const h = Math.sin(pos.altitude) * radius;
                 const r = Math.cos(pos.altitude) * radius;
                 const bearing = pos.azimuth - Math.PI / 2;
                 const x = Math.cos(bearing) * r;
                 const y = Math.sin(bearing) * r;
 
-                const sunPath = new THREE.Object3D();
-                Object.assign(sunPath, pos);
+                const obj = new THREE.Object3D();
+                obj.position.set(x, h, y);
+                Object.assign(obj, pos);
 
-                sunPath.position.set(x, h, y);
-                sunPath.sunpos2 = true;
-                sunPath.text = pos.h;
+                return obj;
+            }
 
+            paths.map(sunposTo3d).forEach(sunPath => {
+                sunPath.pathToday = true;
+                sunPath.text = sunPath.h;
                 scene.add(sunPath);
                 labelObjects.push(sunPath);
             })
 
-            // const today = sunpos.filter(s => !s.day);
             const today = sunpos.filter(s => s.now);
+            today.map(sunposTo3d).forEach(sunPath => {
+                sunPath.now = true;
+                sunPath.text = sunPath.h;
+                scene.add(sunPath);
+                labelObjects.push(sunPath);
+            })
 
-            today.forEach((pos, i) => {
-                // if (pos.relative < 0) return;
-
-                const h = Math.sin(pos.altitude) * radius;
-                const r = Math.cos(pos.altitude) * radius;
-                const bearing = pos.azimuth - Math.PI / 2;
-                const x = Math.cos(bearing) * r;
-                const y = Math.sin(bearing) * r;
-
-                const sunPath = new THREE.Object3D();
-                sunPath.position.set(x, h, y);
-                if (pos.now) {
-                    sunPath.now = 1
-                } else {
-                    sunPath.sunPath = 1;
-                }
-                sunPath.text = pos.h;
-                sunPath.altitude = pos.altitude;
-                sunPath.azimuth = pos.azimuth;
-
+            // month paths
+            sunpos.filter(s => s.day !== undefined
+            ).map(sunposTo3d).forEach(sunPath => {
+                sunPath.sunPath = true;
+                sunPath.text = sunPath.h;
                 scene.add(sunPath);
                 labelObjects.push(sunPath);
             })
@@ -471,7 +445,6 @@
                 }
             }
 
-            // var screen = toScreenPosition(window.N, camera);
             toScreen.update(camera);
             scene.updateMatrixWorld();
 
@@ -483,11 +456,12 @@
             const headings = labelObjects.filter(h => h.heading);
             const sunPath = labelObjects.filter(h => h.sunPath);
             const sunNow = labelObjects.filter(h => h.now);
-            const sunPath2 = labelObjects.filter(h => h.sunpos2);
+            const sunPathToday = labelObjects.filter(h => h.pathToday);
 
             ctx.beginPath();
             ctx.strokeStyle = '#666'
             ctx.lineWidth = COMPASS_LINE_WIDTH;
+            ctx.globalAlpha = 0.9; //0.8;
 
             // compass / horizon lines
             for (let i = 0; i < headings.length; i++) {
@@ -505,24 +479,51 @@
                 ctx.stroke();
             }
 
-            ctx.globalAlpha = 0.9; //0.8;
-            ctx.strokeStyle = 'yellow'
-            ctx.lineWidth = SUN_PATH_LINE_WIDTH;
+
+            ctx.strokeStyle = '#dedede'
+            ctx.lineWidth = 1;
 
             for (let i = 0; i < sunPath.length; i++) {
                 const j = (i + 1) % sunPath.length;
                 const current = sunPath[i];
                 const next = sunPath[j];
 
-                if (!current.screen.visible || !next.screen.visible) {
+                if (!current.screen.visible || !next.screen.visible
+                    || current.day != next.day) {
                     continue;
                 }
 
-                ctx.beginPath();
-                ctx.moveTo(current.screen.x, current.screen.y);
-                ctx.lineTo(next.screen.x, next.screen.y);
-                ctx.stroke();
+                const solstice_months = current.month == 5 || current.month == 11;
+
+
+                if (current.date && current.date.getDate() == 20
+                // && solstice_months
+                ) {
+                    ctx.beginPath();
+                    ctx.moveTo(current.screen.x, current.screen.y);
+                    ctx.lineTo(next.screen.x, next.screen.y);
+                    ctx.stroke();
+                }
+
+                // if (!current.date) {
+                //     ctx.beginPath();
+                //     ctx.arc(current.screen.x, current.screen.y, 2, 0, Math.PI * 2);
+                //     ctx.fillStyle = '#fff'
+                //     ctx.fill();
+                // }
+
+                if (current.min == 0 && solstice_months) {
+                    ctx.beginPath();
+                    ctx.arc(current.screen.x, current.screen.y, 2, 0, Math.PI * 2);
+                    ctx.fillStyle = '#fff'
+                    ctx.fill();
+
+                    ctx.fillText(current.h, current.screen.x, current.screen.y - 10)
+                }
             }
+
+            ctx.strokeStyle = 'yellow'
+            ctx.lineWidth = SUN_PATH_LINE_WIDTH;
 
             function altitudeColor(rad) {
                 const deg = rad / TO_RAD;
@@ -580,10 +581,10 @@
                 return blues[3];
             }
 
-            for (let i = 0; i < sunPath2.length; i++) {
-                const j = (i + 1) % sunPath2.length;
-                const current = sunPath2[i];
-                const next = sunPath2[j];
+            for (let i = 0; i < sunPathToday.length; i++) {
+                const j = (i + 1) % sunPathToday.length;
+                const current = sunPathToday[i];
+                const next = sunPathToday[j];
 
                 if (!current.screen.visible || !next.screen.visible) {
                     continue;
@@ -611,10 +612,10 @@
             /*
             let started = false;
             
-            for (let i = 0; i < sunPath2.length; i++) {
-                const j = (i + 1) % sunPath2.length;
-                const current = sunPath2[i];
-                const next = sunPath2[j];
+            for (let i = 0; i < sunPathToday.length; i++) {
+                const j = (i + 1) % sunPathToday.length;
+                const current = sunPathToday[i];
+                const next = sunPathToday[j];
 
                 if (current.altitude < -0.833 * TO_RAD || !current.screen.visible || !next.screen.visible) {
                     if (started) {
@@ -668,7 +669,7 @@
             })
 
             // Sun hour labels
-            sunPath2.forEach(heading => {
+            sunPathToday.forEach(heading => {
                 const screen = heading.screen;
                 if (heading.min != 0) return;
                 if (!screen.visible) return;
@@ -690,7 +691,7 @@
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
 
-            renderer.setSize(window.innerWidth, window.innerHeight);
+            // renderer.setSize(window.innerWidth, window.innerHeight);
 
         }
 

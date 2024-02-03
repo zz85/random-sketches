@@ -32,9 +32,9 @@ function locationUpdate() {
     const sunPos = [];
 
     // Now { now, relative, h }
-    // Today hours { relative, h }
     // Today detailed { h, min, today }
-    // Year path { day, h } // months + mins
+    // Today hours { relative, h }
+    // Year path { day, h, month } // months + mins
 
     // now
     const pos = SunCalc.getPosition(now, locator.latitude, locator.longitude);
@@ -62,9 +62,9 @@ function locationUpdate() {
         const date = new Date(startOfDay.getTime() + min * ONE_MIN);
         const pos = SunCalc.getPosition(date, locator.latitude, locator.longitude);
         sunPos.push(Object.assign({
-            // day,
             h: date.getHours(),
             min: date.getMinutes(),
+            month: date.getMonth(),
             today: true,
         }, pos))
     }
@@ -87,12 +87,15 @@ function locationUpdate() {
         }
 
         if (q) {
-            for (let min = 0; min < 60 * 24; min += 5) {
+            for (let min = 0; min < 60 * 24; min += 15) {
                 const date = new Date(startOfDay.getTime() + day * ONE_DAY + min * ONE_MIN);
                 const pos = SunCalc.getPosition(date, locator.latitude, locator.longitude);
                 sunPos.push(Object.assign({
                     day,
+                    date,
                     h: date.getHours(),
+                    min: date.getMinutes(),
+                    month: date.getMonth(),
                 }, pos))
             }
         }

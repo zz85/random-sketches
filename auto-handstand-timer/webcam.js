@@ -1,6 +1,7 @@
 // polls devices
 async function getConnectedDevices(type) {
     const devices = await navigator.mediaDevices.enumerateDevices();
+    console.log(devices);
     return type ? devices.filter(device => device.kind === type) : devices;
 }
 

@@ -18,7 +18,7 @@
 
 2 Feb 2024
 - Added [true north](cosmos/compass_sun_north.html) for compass heading, updated compass sun position to include current angle
-- Integrate "AR passthrough" for [sun path ar 2d](cosmos/sunpath_three_ar_2d.html)
+- Integrate "AR passthrough" for [sun path ar 2d](cosmos/sunpath_three_ar_2d.html), removed WebGL renderer
 
 1 Feb 2024
 - Added [color palette test](cosmos/skycolor.html) utilizing rgb, oklab and spectral interpolation
