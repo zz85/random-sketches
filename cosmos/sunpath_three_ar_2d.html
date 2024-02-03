@@ -709,19 +709,46 @@
                 const sx = sunFinder.screen.x - window.innerWidth / 2;
                 const sy = sunFinder.screen.y - window.innerHeight / 2;
                 const d2 = sx * sx + sy * sy;
+
+                var tmp = new THREE.Vector3();
+                sunFinder.localToWorld(tmp);
+                camera.worldToLocal(tmp);
+                tmp.z = 0.5
+                tmp.normalize();
+                // ctx.fillText(`${tmp.x.toFixed(2)}, ${tmp.y.toFixed(2)}`, -18, 0)
+
                 if (d2 > 18 * 18) {
                     const d = Math.sqrt(d2);
-                    const vx = sx / d;
-                    const vy = sy / d;
-                    ctx.fillText(`${(vx).toFixed(2)}, ${(vy).toFixed(2)}`, -18, 0)
+                    const f = d < 800 ?
+                        Math.max(Math.min((d - 20) / 400, 1), 0) :
+                        1 - Math.max((d - 800) / 800, 1) * 0.5;
 
-                    const opacity = Math.max(Math.min((d - 20) / 200, 1), 0);
-                    ctx.fillStyle = `rgb(255 255 255 / ${opacity}`
-                    ctx.beginPath()
-                    ctx.arc(vx * 30, vy * 30, 5, 0, Math.PI * 2);
-                    ctx.fill();
+                    const smoothstep = x => x * x * (3 - 2 * x)
+                    const opacity = smoothstep(f) * 0.7 + 0.1;
 
+                    // ctx.fillText(`${d}`, -18, 0)
 
+                    // const opacity = Math.max(Math.min((d2 - 400) / 40000, 1), 0) * 0.8;
+
+                    const vx = tmp.x;
+                    const vy = -tmp.y;
+
+                    ctx.fillStyle = `rgb(200 200 200 / ${opacity}`
+
+                    const DIRECTION_HELPER_RADIUS = 40;
+                    // ctx.beginPath()
+                    // ctx.arc(vx * DIRECTION_HELPER_RADIUS, vy * DIRECTION_HELPER_RADIUS, 5, 0, Math.PI * 2);
+                    // ctx.fill();
+
+                    ctx.font = '50px sans-serif'
+                    const angle = Math.atan2(vy, vx);
+
+                    // ctx.fillText('›', DIRECTION_HELPER_RADIUS, 0)
+                    ctx.translate(vx * DIRECTION_HELPER_RADIUS, vy * DIRECTION_HELPER_RADIUS);
+                    ctx.rotate(angle);
+                    ctx.fillText('›', 0, 0)
+
+                    // ›»>
                 }
             }
         }
