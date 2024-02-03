@@ -75,6 +75,15 @@
             background: rgba(0, 0, 0, 0.7);
         }
 
+        #info button {
+            background: #ffffff;
+            border: 0;
+            color: #000000;
+            padding: 4px 4px;
+            /* text-transform: uppercase; */
+            cursor: pointer;
+        }
+
         #overlay button {
             background: #ffffff;
             border: 0;
@@ -112,8 +121,10 @@
 
     <!-- 3d -> 2d projection        -->
     <div id="info">
-        Sun path AR 2
-        <button onclick="startPassthrough(this)">Enable Passthrough</button>
+        Sun path AR 2<br/>
+        <button onclick="startPassthrough(this)">Passthrough</button>
+        <button onclick="toggleTrueNorth(this)">Compass north</button><br/>
+        
         <!-- background: none, passthrough, sky shader, somewhere -->
         <!-- sunpath: today, year, animate -->
     </div>
@@ -186,6 +197,7 @@
         let sunFinder;
         let calibrated;
         let video;
+        let trueNorth = true;
         let currentSkyColor;
 
         function angleToCoords(angle) {
@@ -272,6 +284,12 @@
             }, true);
         }
 
+        window.toggleTrueNorth = function toggleTrueNorth(dom) {
+            scene.rotation.y += (trueNorth ? -compassDeclination : compassDeclination)
+            trueNorth = !trueNorth;
+            dom.innerHTML = trueNorth ? 'Compass North' : 'True North'
+        }
+
         function init(e) {
             const orbit = !e;
             const overlay = document.getElementById('overlay');
@@ -350,6 +368,14 @@
 
         }
 
+        function addText(text, x, y, delta) {
+            ctx.save();
+            ctx.translate(x, y)
+            ctx.rotate((delta) || camera.rotation.z)
+            ctx.fillText(text, 0, 0)
+            ctx.restore();
+        }
+
         function handleSunPositions(sunpos) {
             // startPassthrough()
 
@@ -357,7 +383,7 @@
                 const field = geomag.field(locator.latitude, locator.longitude, locator.altitude || 0);
                 compassDeclination = field.declination / 180 * Math.PI;
                 if (calibrated) {
-                    scene.rotation.y = compassDeclination + compassRotation
+                    scene.rotation.y = compassRotation + (trueNorth ? compassDeclination : 0)
                 }
             }
 
@@ -407,6 +433,8 @@
 
         function animate() {
             ctx.clearRect(0, 0, window.innerWidth, window.innerHeight)
+
+
             if (!video) {
                 // ctx.fillStyle = currentSkyColor ? currentSkyColor : '#333'
                 ctx.fillStyle = '#999'
@@ -441,7 +469,7 @@
                 compassHeading = controls.deviceOrientation.webkitCompassHeading;
                 compassRotation = (compassHeading + 180) / 180 * Math.PI;
                 if (compassHeading && !calibrated) {
-                    scene.rotation.y = compassDeclination + compassRotation
+                    scene.rotation.y = compassRotation + (trueNorth ? compassDeclination : 0)
                     calibrated = true;
                 }
             }
@@ -480,8 +508,7 @@
                 ctx.stroke();
             }
 
-
-            ctx.strokeStyle = '#dedede'
+            ctx.strokeStyle = '#aeaeae' // dedede
             ctx.lineWidth = 1;
 
             for (let i = 0; i < sunPath.length; i++) {
@@ -495,6 +522,11 @@
                 }
 
                 const solstice_months = current.month == 5 || current.month == 11;
+                var now = new THREE.Vector2(next.screen.x, next.screen.y).sub(new THREE.Vector2(current.screen.x, current.screen.y));
+                var diff = Math.atan2(now.y, now.x);
+
+
+
 
 
                 if (current.date && current.date.getDate() == 20
@@ -504,6 +536,16 @@
                     ctx.moveTo(current.screen.x, current.screen.y);
                     ctx.lineTo(next.screen.x, next.screen.y);
                     ctx.stroke();
+
+                    ctx.font = '8px sans-serif'
+                    if (current.date.getHours() == 12 && current.min == 0) {
+                        if (current.month == 5) {
+                            addText(`Summer solstice (${getLocalDate(current.date)})`, current.screen.x, current.screen.y - 20, diff)
+                        }
+                        else if (current.month == 11) {
+                            addText(`Winter solstice (${getLocalDate(current.date)})`, current.screen.x, current.screen.y + 20, diff)
+                        }
+                    }
                 }
 
                 // if (!current.date) {
@@ -518,8 +560,7 @@
                     ctx.arc(current.screen.x, current.screen.y, 2, 0, Math.PI * 2);
                     ctx.fillStyle = '#fff'
                     ctx.fill();
-
-                    ctx.fillText(current.h, current.screen.x, current.screen.y - 10)
+                    addText(current.h, current.screen.x, current.screen.y - 10, diff)
                 }
             }
 
@@ -619,8 +660,9 @@
                 ctx.fillStyle = SUN_COLOR;
                 ctx.arc(screen.x, screen.y, 20, 0, Math.PI * 2);
                 ctx.fill();
+
                 ctx.fillStyle = '#fff'
-                ctx.fillText(`${new Date()}`, screen.x, screen.y - 20);
+                addText(`${(new Date() + '').split(' ').slice(0, 5).join(' ')}`, screen.x, screen.y - 20);
 
                 currentSkyColor = altitudeColor(heading.altitude)
             })
@@ -635,7 +677,7 @@
                 ctx.arc(screen.x, screen.y, 12, 0, Math.PI * 2);
                 ctx.fill();
                 ctx.fillStyle = '#fff'
-                ctx.fillText(heading.text, screen.x, screen.y);
+                addText(heading.text, screen.x, screen.y);
             })
 
             // Sun hour labels
@@ -649,12 +691,10 @@
                 ctx.arc(screen.x, screen.y, 12, 0, Math.PI * 2);
                 ctx.fill();
                 ctx.fillStyle = '#fff'
-                ctx.fillText(heading.text, screen.x, screen.y);
+                addText(heading.text, screen.x, screen.y);
             })
 
             drawOverlay();
-
-
 
             ctx.restore();
             window.s = scene;
@@ -681,7 +721,6 @@
             ctx.stroke();
 
             ctx.save();
-
 
             // draw overlay
             const zRot = camera.rotation.z * 180 / Math.PI;

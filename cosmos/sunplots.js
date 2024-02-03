@@ -1,6 +1,28 @@
 const plotSun = plotSun2
 const plotSunCompass = plotSunCompass3;
 
+/* Time helpers */
+
+function pad(str) {
+    const fmt = `00${str}`
+    return fmt.slice(fmt.length - 2)
+}
+
+function getLocal(date) {
+    return `${getLocalDate(date)} ${getLocalTime(date)}`
+}
+
+function getLocalTime(date) {
+    return `${pad(date.getHours())}:${pad(date.getMinutes())}`
+    //  + `:${pad(date.getSeconds())}`
+}
+
+function getLocalDate(date) {
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
+
+
+
 function plotSunCompass3(date, lat, lon, shortest, longest) {
     const nowPos = SunCalc.getPosition(date, lat, lon);
     date.setSeconds(0);
