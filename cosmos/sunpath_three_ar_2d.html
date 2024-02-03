@@ -182,7 +182,7 @@
         }, false);
 
 
-        let compassDeclination = 0;
+        let compassDeclination = 0, compassRotation = 0, compassHeading = 0;
         let calibrated;
         let video;
         let currentSkyColor;
@@ -354,9 +354,9 @@
 
             if (geomag) {
                 const field = geomag.field(locator.latitude, locator.longitude, locator.altitude || 0);
-                compassDeclination = field.declination;
+                compassDeclination = field.declination / 180 * Math.PI;
                 if (calibrated) {
-                    scene.rotation.y += compassDeclination / 180 * Math.PI;
+                    scene.rotation.y = compassDeclination + compassRotation
                 }
             }
 
@@ -436,11 +436,10 @@
             controls.update();
 
             if (controls.deviceOrientation) {
-                let heading = controls.deviceOrientation.webkitCompassHeading;
-                const target = (heading + 180) / 180 * Math.PI;
-                if (heading && !calibrated) {
-                    scene.rotation.y = target;
-                    scene.rotation.y += compassDeclination / 180 * Math.PI;
+                compassHeading = controls.deviceOrientation.webkitCompassHeading;
+                compassRotation = (compassHeading + 180) / 180 * Math.PI;
+                if (compassHeading && !calibrated) {
+                    scene.rotation.y = compassDeclination + compassRotation
                     calibrated = true;
                 }
             }
@@ -497,7 +496,7 @@
 
 
                 if (current.date && current.date.getDate() == 20
-                // && solstice_months
+                    // && solstice_months
                 ) {
                     ctx.beginPath();
                     ctx.moveTo(current.screen.x, current.screen.y);
@@ -609,37 +608,6 @@
                 ctx.stroke();
             }
 
-            /*
-            let started = false;
-            
-            for (let i = 0; i < sunPathToday.length; i++) {
-                const j = (i + 1) % sunPathToday.length;
-                const current = sunPathToday[i];
-                const next = sunPathToday[j];
-
-                if (current.altitude < -0.833 * TO_RAD || !current.screen.visible || !next.screen.visible) {
-                    if (started) {
-                        ctx.stroke();
-                        started = false;
-                    }
-                    continue;
-                }
-
-                if (!started) {
-                    ctx.beginPath();
-                    ctx.moveTo(current.screen.x, current.screen.y);
-                    started = true;
-                } else  {
-                    ctx.lineTo(next.screen.x, next.screen.y);
-                }
-            }
-
-            if (started) {
-                ctx.stroke();
-                started = false;
-            }
-            */
-
             // Sun
             sunNow.forEach(heading => {
                 const screen = heading.screen;
@@ -682,7 +650,39 @@
                 ctx.fillText(heading.text, screen.x, screen.y);
             })
 
-            // renderer.render(scene, camera);
+            // draw overlay
+            ctx.save();
+            ctx.translate(window.innerWidth / 2, window.innerHeight / 2);
+            ctx.beginPath();
+            ctx.arc(0, 0, 30, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgb(255 255 255 / 0.5)'
+            ctx.fill();
+
+            ctx.lineWidth = 1;
+            ctx.strokeStyle = '#fff';
+            ctx.fillStyle = '#fff';
+            ctx.font = '10px sans-serif'
+
+            ctx.beginPath();
+            ctx.arc(0, 0, 10, 0, Math.PI * 2);
+            ctx.stroke();
+
+            ctx.save();
+
+            if (controls.deviceOrientation) {
+                // ctx.rotate((controls.deviceOrientation.alpha) * Math.PI / 180)
+                ctx.fillText('+', 0, 0) // ⌖
+                ctx.fillText(`${(compassHeading % 360).toFixed(0)}°`, 25, 0)
+
+                ctx.fillText(`${(controls.deviceOrientation.beta - 90).toFixed(0)}°`, 0, 25)
+            }
+            // compassRotation
+
+            ctx.restore();
+
+
+
+            ctx.restore();
             window.s = scene;
         }
 
