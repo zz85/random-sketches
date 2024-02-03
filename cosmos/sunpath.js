@@ -31,6 +31,11 @@ function startLocator(cb) {
 function locationUpdate() {
     const sunPos = [];
 
+    // Now { now, relative, h }
+    // Today hours { relative, h }
+    // Today detailed { h, min, today }
+    // Year path { day, h } // months + mins
+
     // now
     const pos = SunCalc.getPosition(now, locator.latitude, locator.longitude);
     sunPos.push(Object.assign({

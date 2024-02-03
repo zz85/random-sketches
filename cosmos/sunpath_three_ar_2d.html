@@ -42,7 +42,7 @@
             -ms-user-select: none;
             user-select: none;
             pointer-events: none;
-            z-index: 1;
+            z-index: 9;
             /* TODO Solve this in HTML */
         }
 
@@ -64,7 +64,7 @@
 
         #overlay {
             position: absolute;
-            z-index: 2;
+            z-index: 10;
             bottom: 0;
             left: 0;
             width: 100%;
@@ -97,21 +97,24 @@
             top: 0px;
             left: 0px;
             /* background: #000; */
-            z-index: 100;
+            z-index: 5;
         }
     </style>
 </head>
 
 <body>
-    <canvas id="hud"></canvas>
+
     <div id="overlay">
         <button id="startButton">Start!</button>
     </div>
 
+    <canvas id="hud"></canvas>
+
     <!-- 3d -> 2d projection        -->
     <div id="info">
-        Sun path AR
-        <!-- background: none, sky shader, passthrough, somewhere -->
+        Sun path AR 2
+        <button onclick="startPassthrough(this)">Enable Passthrough</button>
+        <!-- background: none, passthrough, sky shader, somewhere -->
         <!-- sunpath: today, year, animate -->
     </div>
 
@@ -139,6 +142,13 @@
 
         const labelObjects = [];
 
+        const LABEL_SUN_HOUR_NIGHT = '#15326b' // "#102860" #09215d 15326b 3462a4
+        const LABEL_SUN_HOUR_DAY = 'orange';
+        const SUN_COLOR = "#f17923" // orange red
+        const SUN_PATH_LINE_WIDTH = 6
+        const COMPASS_LINE_WIDTH = 5;
+
+
         const CIRCLE_RADIUS = 0.2;
         const HELPER_Y = -0.15;
         const FONT_SIZE = 0.05;
@@ -158,9 +168,24 @@
         const startButton = document.getElementById('startButton');
         startButton.addEventListener('click', start, false);
 
+        /// fix user scaling
+        document.addEventListener('touchmove', function (event) {
+            if (event.scale !== 1) { event.preventDefault(); }
+        }, false);
+        var lastTouchEnd = 0;
+        document.addEventListener('touchend', function (event) {
+            var now = (new Date()).getTime();
+            if (now - lastTouchEnd <= 300) {
+                event.preventDefault();
+            }
+            lastTouchEnd = now;
+        }, false);
+
+
         let compassDeclination = 0;
         let calibrated;
         let video;
+        let currentSkyColor;
 
         function angleToCoords(angle) {
             return [
@@ -229,6 +254,23 @@
             start();
         }
 
+        window.startPassthrough = function startPassthrough(stop) {
+            stop.style.display = 'none'
+            const vid = setupVideoElement(true);
+            vid.style.display = 'none'
+
+            captureWebcamTo(vid, async () => {
+                video = vid;
+                // info.innerHTML += `</br>cams: ${JSON.stringify(await getConnectedDevices('videoinput'))}</br>`
+                // Front Camera
+                // Back Triple Camera
+                // Back Dual
+                // Back Telephoto Camera
+                // Ultra Wide
+                // Dual wide
+            }, true);
+        }
+
         function init(e) {
             const orbit = !e;
             const overlay = document.getElementById('overlay');
@@ -271,32 +313,8 @@
             }
 
             scene = new THREE.Scene();
-
-            const light = new THREE.AmbientLight(0xc0c0c0); // soft white light 0x404040
-            scene.add(light);
-
-            const plight = new THREE.PointLight(0x404040, 0.1, 1000);
-            plight.position.set(0, 2, 0);
-            scene.add(plight);
-
-            // White directional light at half intensity shining from the top.
-            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
-            scene.add(directionalLight);
-
-            const helperMaterial = new THREE.MeshLambertMaterial({ color: 0xff00ff, wireframe: true });
-            const material = new THREE.MeshLambertMaterial({
-                color: 0xffffff, wireframe: !true,
-                transparent: true, opacity: 0.8
-            });
-
-            const planeGeometry = new THREE.PlaneGeometry(1.5, 1.5);
-            planeGeometry.rotateX(-Math.PI / 2);
-            const plane = new THREE.Mesh(planeGeometry, helperMaterial);
-            scene.add(plane);
-
             helper = new THREE.Object3D()
             scene.add(helper);
-
 
             const rev = {
                 0: 'N',
@@ -322,96 +340,13 @@
                 scene.add(text);
             }
 
-            startLocator(async (sunpos) => {
-                const vid = setupVideoElement(true);
-
-                captureWebcamTo(vid, async () => {
-                    video = vid;
-                    // info.innerHTML += `</br>cams: ${JSON.stringify(await getConnectedDevices('videoinput'))}</br>`
-                    // Front Camera
-                    // Back Triple Camera
-                    // Back Dual
-                    // Back Telephoto Camera
-                    // Ultra Wide
-                    // Dual wide
-                }, true)
-
-                if (geomag) {
-                    const field = geomag.field(locator.latitude, locator.longitude, locator.altitude || 0);
-
-                    const {
-                        declination,
-                        inclination,
-                        intensity,
-                        northIntensity,
-                        eastIntensity,
-                        verticalIntensity,
-                        horizontalIntensity,
-                    } = field;
-
-                    compassDeclination = declination;
-                    if (calibrated) {
-                        scene.rotation.y += compassDeclination / 180 * Math.PI;
-                    }
-                }
-
-
-                const radius = 3;
-
-                const paths = sunpos.filter(pos => pos.today);
-
-                paths.forEach(pos => {
-                    const h = Math.sin(pos.altitude) * radius;
-                    const r = Math.cos(pos.altitude) * radius;
-                    const bearing = pos.azimuth - Math.PI / 2;
-                    const x = Math.cos(bearing) * r;
-                    const y = Math.sin(bearing) * r;
-
-                    const sunPath = new THREE.Object3D();
-                    Object.assign(sunPath, pos);
-
-                    sunPath.position.set(x, h, y);
-                    sunPath.sunpos2 = true;
-                    sunPath.text = pos.h;
-
-                    scene.add(sunPath);
-                    labelObjects.push(sunPath);
-                })
-
-                // const today = sunpos.filter(s => !s.day);
-                const today = sunpos.filter(s => s.now);
-                console.log('today', today);
-
-                today.forEach((pos, i) => {
-                    // if (pos.relative < 0) return;
-
-                    const h = Math.sin(pos.altitude) * radius;
-                    const r = Math.cos(pos.altitude) * radius;
-                    const bearing = pos.azimuth - Math.PI / 2;
-                    const x = Math.cos(bearing) * r;
-                    const y = Math.sin(bearing) * r;
-
-                    const sunPath = new THREE.Object3D();
-                    sunPath.position.set(x, h, y);
-                    if (pos.now) {
-                        sunPath.now = 1
-                    } else {
-                        sunPath.sunPath = 1;
-                    }
-                    sunPath.text = pos.h;
-                    sunPath.altitude = pos.altitude;
-                    sunPath.azimuth = pos.azimuth;
-
-                    scene.add(sunPath);
-                    labelObjects.push(sunPath);
-                })
-            })
+            startLocator(handleSunPositions)
 
             //
 
-            renderer = new THREE.WebGLRenderer({ antialias: true });
-            renderer.setPixelRatio(window.devicePixelRatio);
-            renderer.setSize(window.innerWidth, window.innerHeight);
+            // renderer = new THREE.WebGLRenderer({ antialias: true });
+            // renderer.setPixelRatio(window.devicePixelRatio);
+            // renderer.setSize(window.innerWidth, window.innerHeight);
             // document.body.appendChild(renderer.domElement);
 
             //
@@ -421,12 +356,84 @@
 
         }
 
+        function handleSunPositions(sunpos) {
+            // startPassthrough()
 
+            if (geomag) {
+                const field = geomag.field(locator.latitude, locator.longitude, locator.altitude || 0);
+
+                const {
+                    declination,
+                    inclination,
+                    intensity,
+                    northIntensity,
+                    eastIntensity,
+                    verticalIntensity,
+                    horizontalIntensity,
+                } = field;
+
+                compassDeclination = declination;
+                if (calibrated) {
+                    scene.rotation.y += compassDeclination / 180 * Math.PI;
+                }
+            }
+
+
+            const radius = 3;
+
+            const paths = sunpos.filter(pos => pos.today);
+
+            paths.forEach(pos => {
+                const h = Math.sin(pos.altitude) * radius;
+                const r = Math.cos(pos.altitude) * radius;
+                const bearing = pos.azimuth - Math.PI / 2;
+                const x = Math.cos(bearing) * r;
+                const y = Math.sin(bearing) * r;
+
+                const sunPath = new THREE.Object3D();
+                Object.assign(sunPath, pos);
+
+                sunPath.position.set(x, h, y);
+                sunPath.sunpos2 = true;
+                sunPath.text = pos.h;
+
+                scene.add(sunPath);
+                labelObjects.push(sunPath);
+            })
+
+            // const today = sunpos.filter(s => !s.day);
+            const today = sunpos.filter(s => s.now);
+
+            today.forEach((pos, i) => {
+                // if (pos.relative < 0) return;
+
+                const h = Math.sin(pos.altitude) * radius;
+                const r = Math.cos(pos.altitude) * radius;
+                const bearing = pos.azimuth - Math.PI / 2;
+                const x = Math.cos(bearing) * r;
+                const y = Math.sin(bearing) * r;
+
+                const sunPath = new THREE.Object3D();
+                sunPath.position.set(x, h, y);
+                if (pos.now) {
+                    sunPath.now = 1
+                } else {
+                    sunPath.sunPath = 1;
+                }
+                sunPath.text = pos.h;
+                sunPath.altitude = pos.altitude;
+                sunPath.azimuth = pos.azimuth;
+
+                scene.add(sunPath);
+                labelObjects.push(sunPath);
+            })
+        }
 
         function animate() {
             ctx.clearRect(0, 0, window.innerWidth, window.innerHeight)
             if (!video) {
-                ctx.fillStyle = '#333'
+                // ctx.fillStyle = currentSkyColor ? currentSkyColor : '#333'
+                ctx.fillStyle = '#999'
                 ctx.fillRect(0, 0, window.innerWidth, window.innerHeight)
             } else {
                 ctx.save();
@@ -435,6 +442,16 @@
                 const vh = video.videoHeight
                 console.log(vw, hud.width);
                 // ctx.drawImage(video, 0, 0);
+
+                const screenRatio = window.innerWidth / window.innerHeight;
+                const videoRatio = vw / vh;
+                if (videoRatio > screenRatio) {
+                    var expand = window.innerHeight / vh;
+                    ctx.scale(expand, expand);
+                } else {
+                    var expand = window.innerWidth / vw;
+                    ctx.scale(expand, expand);
+                }
                 ctx.drawImage(video, -vw / 2, -vh / 2, vw, vh);
                 ctx.restore();
                 // ctx.drawImage(video, 0, 0);
@@ -456,6 +473,7 @@
 
             // var screen = toScreenPosition(window.N, camera);
             toScreen.update(camera);
+            scene.updateMatrixWorld();
 
             labelObjects.forEach(obj => {
                 // screen space
@@ -467,11 +485,11 @@
             const sunNow = labelObjects.filter(h => h.now);
             const sunPath2 = labelObjects.filter(h => h.sunpos2);
 
-
             ctx.beginPath();
             ctx.strokeStyle = '#666'
-            ctx.lineWidth = 4;
+            ctx.lineWidth = COMPASS_LINE_WIDTH;
 
+            // compass / horizon lines
             for (let i = 0; i < headings.length; i++) {
                 const j = (i + 1) % headings.length;
                 const current = headings[i];
@@ -487,12 +505,7 @@
                 ctx.stroke();
             }
 
-            const LABEL_SUN_HOUR_NIGHT = '#15326b' // "#102860" #09215d 15326b 3462a4
-            const LABEL_SUN_HOUR_DAY = 'orange';
-            const SUN_COLOR = "#f17923" // orange red
-            const SUN_PATH_LINE_WIDTH = 6
-
-            ctx.globalAlpha = 0.9 ; //0.8;
+            ctx.globalAlpha = 0.9; //0.8;
             ctx.strokeStyle = 'yellow'
             ctx.lineWidth = SUN_PATH_LINE_WIDTH;
 
@@ -513,61 +526,60 @@
 
             function altitudeColor(rad) {
                 const deg = rad / TO_RAD;
-                // const color = deg > 12 ?
-                //     '#FFC000' : deg > 6 ? /* > 12 noon sun */
-                //         '#FFBF00' : deg > -4 ? /* [6, 12] (early sun) */
-                //             'orange' : deg > -6 ?  /* [-4, 6] (golden hour -> sunset -> civil part 1) */
-                //                 '#005b96' : deg > -12 ?  /* [-4, -6] (civil part 2, blue hour) */
-                //                     '#011f4b': deg > -18 ? /* [-6,- 12] (natical) */
-                //                     '#303030': /* [-18,- 12] (astro) */
-                //                     'black'; // below 18
 
-                // const color = deg > 18 ?
-                // "#fdce01" : deg > 12 ?
-                // "#fabd04": deg > 6 ? /* > 12 noon sun */
-                // "#f6a509" : deg > -4 ? /* [6, 12] (early sun) */
-                // "#f1880f" : deg > -6 ?  /* [-4, 6] (golden hour -> sunset -> civil part 1) */
-                //                 '#244db7' : deg > -12 ?  /* [-4, -6] (civil part 2, blue hour) */
-                //                     '#1a3a8c': deg > -18 ? /* [-6,- 12] (natical) */
-                //                     '#102863': /* [-18,- 12] (astro) */
-                //                     '#06173d'; // below 18
+                const yellowsAltitude = [
+                    18, // mid day sun
+                    12, // morning 2 sun
+                    6, // morning sun
+                    -4, // golden hour,
+                ]
 
+                const yellows = [
+                    "#fdce01",
+                    "#fabd04",
+                    "#f6a509",
+                    "#f1880f",
+                ]
+
+                const bluesAltitude = [
+                    -6, /* [-4, 6] (golden hour -> sunset = civil part 1) */
+                    - 12, /* [-6,- 12] (natical) */
+                    -18, /* [-18,- 12] (astro) */
+                    /* ends below 18 degrees */
+                ]
                 const blues = [
-                // "#4e6cc1",
-                // "#3552b5",
-                // "#1e37a8",
-                // "#0f109a"
+                    // '#005b96',
+                    // '#011f4b',
+                    // '#303030',
+                    // 'black',
 
-                "#8cb8df",
-                "#3462a4",
-                "#15326b",
-                "#07173e",
+                    // "#65728d",
+                    // "#435272",
+                    // "#233457",
+                    // "#06173d",
 
-                // "#5e91c9",
-                // "#3462a4",
-                // "#15326b",
-                // "#07173e",
-
-                // "#65728d",
-                // "#435272",
-                // "#233457",
-                // "#06173d",
+                    "#8cb8df",
+                    "#3462a4",
+                    "#15326b",
+                    "#07173e",
                 ];
 
-                const color = deg > 18 ?
-                "#fdce01" : deg > 12 ?
-                "#fabd04": deg > 6 ? /* > 12 noon sun */
-                "#f6a509" : deg > -4 ? /* [6, 12] (early sun) */
-                "#f1880f" : deg > -6 ?  /* [-4, 6] (golden hour -> sunset -> civil part 1) */
-                blues[0] : deg > -12 ?  /* [-4, -6] (civil part 2, blue hour) */
-                                blues[1]: deg > -18 ? /* [-6,- 12] (natical) */
-                                    blues[2]: /* [-18,- 12] (astro) */
-                                    blues[3]; // below 18
 
-                return color;
+                for (let i = 0; i < yellows.length; i++) {
+                    if (deg > yellowsAltitude[i]) {
+                        return yellows[i]
+                    }
+                }
+
+                for (let i = 0; i < blues.length; i++) {
+                    if (deg > bluesAltitude[i]) {
+                        return blues[i]
+                    }
+                }
+
+                return blues[3];
             }
 
-            let start = false;
             for (let i = 0; i < sunPath2.length; i++) {
                 const j = (i + 1) % sunPath2.length;
                 const current = sunPath2[i];
@@ -599,14 +611,10 @@
             /*
             let started = false;
             
-
-            
             for (let i = 0; i < sunPath2.length; i++) {
                 const j = (i + 1) % sunPath2.length;
                 const current = sunPath2[i];
                 const next = sunPath2[j];
-
-                
 
                 if (current.altitude < -0.833 * TO_RAD || !current.screen.visible || !next.screen.visible) {
                     if (started) {
@@ -630,8 +638,6 @@
                 started = false;
             }
             */
- 
-
 
             // Sun
             sunNow.forEach(heading => {
@@ -644,6 +650,8 @@
                 ctx.fill();
                 ctx.fillStyle = '#fff'
                 ctx.fillText(`${new Date()}`, screen.x, screen.y - 20);
+
+                currentSkyColor = altitudeColor(heading.altitude)
             })
 
             // compass headers
@@ -658,7 +666,7 @@
                 ctx.fillStyle = '#fff'
                 ctx.fillText(heading.text, screen.x, screen.y);
             })
-         
+
             // Sun hour labels
             sunPath2.forEach(heading => {
                 const screen = heading.screen;
@@ -673,7 +681,7 @@
                 ctx.fillText(heading.text, screen.x, screen.y);
             })
 
-            renderer.render(scene, camera);
+            // renderer.render(scene, camera);
             window.s = scene;
         }
 
