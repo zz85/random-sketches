@@ -2,7 +2,7 @@
 <html lang="en">
 
 <head>
-    <title>sun path AR</title>
+    <title>Sun path AR</title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
     <style>
@@ -119,12 +119,16 @@
 
     <canvas id="hud"></canvas>
 
-    <!-- 3d -> 2d projection        -->
+    <!-- 3d -> 2d projection -->
     <div id="info">
-        Sun path AR 2<br/>
+        Sunpath AR HUD<br />
         <button onclick="startPassthrough(this)">Passthrough</button>
-        <button onclick="toggleTrueNorth(this)">Compass north</button><br/>
-        
+        <button onclick="toggleTrueNorth(this)">Compass north</button><br />
+        <label for="showSolstices"><input type="checkbox" id="showSolstices" onclick="updateOverlays()" checked />Show
+            Solstices</label>
+        <label for="showYearPath"><input type="checkbox" id="showYearPath" onclick="updateOverlays()" />Show Year
+            path</label>
+
         <!-- background: none, passthrough, sky shader, somewhere -->
         <!-- sunpath: today, year, animate -->
     </div>
@@ -199,6 +203,8 @@
         let video;
         let trueNorth = true;
         let currentSkyColor;
+        let hideYearPath = false;
+        let hideSolstices = false;
 
         function angleToCoords(angle) {
             return [
@@ -266,6 +272,15 @@
             // start triggered without dom events
             start();
         }
+
+        window.updateOverlays = () => {
+            hideSolstices = !showSolstices.checked;
+            hideYearPath = !showYearPath.checked;
+        }
+
+        updateOverlays();
+
+
 
         window.startPassthrough = function startPassthrough(stop) {
             stop.style.display = 'none'
@@ -487,142 +502,105 @@
             const sunNow = labelObjects.filter(h => h.now);
             const sunPathToday = labelObjects.filter(h => h.pathToday);
 
-            ctx.beginPath();
-            ctx.strokeStyle = '#666'
-            ctx.lineWidth = COMPASS_LINE_WIDTH;
-            ctx.globalAlpha = 0.9; //0.8;
-
-            // compass / horizon lines
-            for (let i = 0; i < headings.length; i++) {
-                const j = (i + 1) % headings.length;
-                const current = headings[i];
-                const next = headings[j];
-
-                if (!current.screen.visible || !next.screen.visible) {
-                    continue;
-                }
-
-                ctx.beginPath();
-                ctx.moveTo(current.screen.x, current.screen.y);
-                ctx.lineTo(next.screen.x, next.screen.y);
-                ctx.stroke();
-            }
-
-            ctx.strokeStyle = '#aeaeae' // dedede
-            ctx.lineWidth = 1;
-
-            for (let i = 0; i < sunPath.length; i++) {
-                const j = (i + 1) % sunPath.length;
-                const current = sunPath[i];
-                const next = sunPath[j];
-
-                if (!current.screen.visible || !next.screen.visible
-                    || current.day != next.day) {
-                    continue;
-                }
-
-                const solstice_months = current.month == 5 || current.month == 11;
-                var now = new THREE.Vector2(next.screen.x, next.screen.y).sub(new THREE.Vector2(current.screen.x, current.screen.y));
-                var diff = Math.atan2(now.y, now.x);
-
-
-
-
-
-                if (current.date && current.date.getDate() == 20
-                    // && solstice_months
-                ) {
-                    ctx.beginPath();
-                    ctx.moveTo(current.screen.x, current.screen.y);
-                    ctx.lineTo(next.screen.x, next.screen.y);
-                    ctx.stroke();
-
-                    ctx.font = '8px sans-serif'
-                    if (current.date.getHours() == 12 && current.min == 0) {
-                        if (current.month == 5) {
-                            addText(`Summer solstice (${getLocalDate(current.date)})`, current.screen.x, current.screen.y - 20, diff)
-                        }
-                        else if (current.month == 11) {
-                            addText(`Winter solstice (${getLocalDate(current.date)})`, current.screen.x, current.screen.y + 20, diff)
-                        }
-                    }
-                }
-
-                // if (!current.date) {
-                //     ctx.beginPath();
-                //     ctx.arc(current.screen.x, current.screen.y, 2, 0, Math.PI * 2);
-                //     ctx.fillStyle = '#fff'
-                //     ctx.fill();
-                // }
-
-                if (current.min == 0 && solstice_months) {
-                    ctx.beginPath();
-                    ctx.arc(current.screen.x, current.screen.y, 2, 0, Math.PI * 2);
-                    ctx.fillStyle = '#fff'
-                    ctx.fill();
-                    addText(current.h, current.screen.x, current.screen.y - 10, diff)
-                }
-            }
+            drawSunPaths(sunPath);
 
             ctx.strokeStyle = 'yellow'
             ctx.lineWidth = SUN_PATH_LINE_WIDTH;
 
-            function altitudeColor(rad) {
-                const deg = rad / TO_RAD;
-
-                const yellowsAltitude = [
-                    18, // mid day sun
-                    12, // morning 2 sun
-                    6, // morning sun
-                    -4, // golden hour,
-                ]
-
-                const yellows = [
-                    "#fdce01",
-                    "#fabd04",
-                    "#f6a509",
-                    "#f1880f",
-                ]
-
-                const bluesAltitude = [
-                    -6, /* [-4, 6] (golden hour -> sunset = civil part 1) */
-                    - 12, /* [-6,- 12] (natical) */
-                    -18, /* [-18,- 12] (astro) */
-                    /* ends below 18 degrees */
-                ]
-                const blues = [
-                    // '#005b96',
-                    // '#011f4b',
-                    // '#303030',
-                    // 'black',
-
-                    // "#65728d",
-                    // "#435272",
-                    // "#233457",
-                    // "#06173d",
-
-                    "#8cb8df",
-                    "#3462a4",
-                    "#15326b",
-                    "#07173e",
-                ];
+            drawSun(sunNow);
 
 
-                for (let i = 0; i < yellows.length; i++) {
-                    if (deg > yellowsAltitude[i]) {
-                        return yellows[i]
-                    }
+            drawHorizonLines(headings);
+            drawSunpathToday(sunPathToday)
+
+            drawOverlay();
+
+            ctx.restore();
+            window.s = scene;
+        }
+
+        function altitudeColor(rad) {
+            const deg = rad / TO_RAD;
+
+            const yellowsAltitude = [
+                18, // mid day sun
+                12, // morning 2 sun
+                6, // morning sun
+                -4, // golden hour,
+            ]
+
+            const yellows = [
+                "#fdce01",
+                "#fabd04",
+                "#f6a509",
+                "#f1880f",
+            ]
+
+            const bluesAltitude = [
+                -6, /* [-4, 6] (golden hour -> sunset = civil part 1) */
+                - 12, /* [-6,- 12] (natical) */
+                -18, /* [-18,- 12] (astro) */
+                /* ends below 18 degrees */
+            ]
+            const blues = [
+                // '#005b96',
+                // '#011f4b',
+                // '#303030',
+                // 'black',
+
+                // "#65728d",
+                // "#435272",
+                // "#233457",
+                // "#06173d",
+
+                "#8cb8df",
+                "#3462a4",
+                "#15326b",
+                "#07173e",
+            ];
+
+
+            for (let i = 0; i < yellows.length; i++) {
+                if (deg > yellowsAltitude[i]) {
+                    return yellows[i]
                 }
-
-                for (let i = 0; i < blues.length; i++) {
-                    if (deg > bluesAltitude[i]) {
-                        return blues[i]
-                    }
-                }
-
-                return blues[3];
             }
 
+            for (let i = 0; i < blues.length; i++) {
+                if (deg > bluesAltitude[i]) {
+                    return blues[i]
+                }
+            }
+
+            return blues[3];
+        }
+
+        function drawSun(sunNow) {
+            // Sun
+            sunNow.forEach(heading => {
+                const screen = heading.screen;
+                if (!screen.visible) return;
+                ctx.font = `8px sans-serif`;
+                ctx.beginPath();
+                ctx.fillStyle = SUN_COLOR;
+                ctx.arc(screen.x, screen.y, 20, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = '#fff'
+
+                const alt = heading.altitude * 180 / Math.PI;
+                const azi = heading.azimuth * 180 / Math.PI + 180;
+
+
+                addText(`${(new Date() + '').split(' ').slice(0, 5).join(' ')}`, screen.x, screen.y - 40)
+                // ⤸⟳⥀↷
+                addText(`Now: ↷${azi.toFixed(0)}° ⇵${alt.toFixed(0)}°`, screen.x, screen.y - 30);
+
+                currentSkyColor = altitudeColor(heading.altitude)
+            })
+        }
+
+        function drawSunpathToday(sunPathToday) {
             for (let i = 0; i < sunPathToday.length; i++) {
                 const j = (i + 1) % sunPathToday.length;
                 const current = sunPathToday[i];
@@ -651,21 +629,42 @@
                 ctx.stroke();
             }
 
-            // Sun
-            sunNow.forEach(heading => {
+            // Sun hour labels
+            sunPathToday.forEach(heading => {
                 const screen = heading.screen;
+                if (heading.min != 0) return;
                 if (!screen.visible) return;
-                ctx.font = `8px sans-serif`;
+                ctx.font = `12px sans-serif`;
                 ctx.beginPath();
-                ctx.fillStyle = SUN_COLOR;
-                ctx.arc(screen.x, screen.y, 20, 0, Math.PI * 2);
+                ctx.fillStyle = heading.altitude < 0 ? LABEL_SUN_HOUR_NIGHT : LABEL_SUN_HOUR_DAY;
+                ctx.arc(screen.x, screen.y, 12, 0, Math.PI * 2);
                 ctx.fill();
-
                 ctx.fillStyle = '#fff'
-                addText(`${(new Date() + '').split(' ').slice(0, 5).join(' ')}`, screen.x, screen.y - 20);
-
-                currentSkyColor = altitudeColor(heading.altitude)
+                addText(heading.text, screen.x, screen.y);
             })
+        }
+
+        function drawHorizonLines(headings) {
+            ctx.beginPath();
+            ctx.strokeStyle = '#666'
+            ctx.lineWidth = COMPASS_LINE_WIDTH;
+            ctx.globalAlpha = 0.9; //0.8;
+
+            // compass / horizon lines
+            for (let i = 0; i < headings.length; i++) {
+                const j = (i + 1) % headings.length;
+                const current = headings[i];
+                const next = headings[j];
+
+                if (!current.screen.visible || !next.screen.visible) {
+                    continue;
+                }
+
+                ctx.beginPath();
+                ctx.moveTo(current.screen.x, current.screen.y);
+                ctx.lineTo(next.screen.x, next.screen.y);
+                ctx.stroke();
+            }
 
             // compass headers
             headings.forEach(heading => {
@@ -680,24 +679,74 @@
                 addText(heading.text, screen.x, screen.y);
             })
 
-            // Sun hour labels
-            sunPathToday.forEach(heading => {
-                const screen = heading.screen;
-                if (heading.min != 0) return;
-                if (!screen.visible) return;
-                ctx.font = `12px sans-serif`;
-                ctx.beginPath();
-                ctx.fillStyle = heading.altitude < 0 ? LABEL_SUN_HOUR_NIGHT : LABEL_SUN_HOUR_DAY;
-                ctx.arc(screen.x, screen.y, 12, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.fillStyle = '#fff'
-                addText(heading.text, screen.x, screen.y);
-            })
+        }
 
-            drawOverlay();
+        // for the year
+        function drawSunPaths(sunPath) {
+            if (hideSolstices) return;
+            ctx.save();
+            for (let i = 0; i < sunPath.length; i++) {
+                const j = (i + 1) % sunPath.length;
+                const current = sunPath[i];
+                const next = sunPath[j];
 
+                if (!current.screen.visible || !next.screen.visible
+                    || current.day != next.day) {
+                    continue;
+                }
+
+                const solstice_months = current.month == 5 || current.month == 11;
+                var now = new THREE.Vector2(next.screen.x, next.screen.y).sub(new THREE.Vector2(current.screen.x, current.screen.y));
+                var diff = Math.atan2(now.y, now.x);
+                ctx.strokeStyle = '#dedede'; // solstice_months ? '#dedede' : '#9e9e9e' // 
+                ctx.globalAlpha = solstice_months ? 0.7 : 0.1;
+
+                ctx.lineWidth = 2;
+
+                if (hideYearPath && !solstice_months) continue;
+
+                if (current.date && current.date.getDate() == 20
+                    // && solstice_months
+                ) {
+                    ctx.beginPath();
+                    ctx.moveTo(current.screen.x, current.screen.y);
+                    ctx.lineTo(next.screen.x, next.screen.y);
+                    ctx.stroke();
+
+                    ctx.font = '8px sans-serif'
+                    if (current.date.getHours() == 12 && current.min == 0) {
+                        if (current.month == 5) {
+                            addText(`Summer solstice (${getLocalDate(current.date)})`, current.screen.x, current.screen.y - 20, diff)
+                        }
+                        else if (current.month == 11) {
+                            addText(`Winter solstice (${getLocalDate(current.date)})`, current.screen.x, current.screen.y + 20, diff)
+                        }
+                    }
+                }
+
+                // if (!current.date) {
+                //     ctx.beginPath();
+                //     ctx.arc(current.screen.x, current.screen.y, 2, 0, Math.PI * 2);
+                //     ctx.fillStyle = '#fff'
+                //     ctx.fill();
+                // }
+
+
+                const hourMark = current.min == 0;
+                if (true
+                    // && hourMark
+                    // && solstice_months
+                ) {
+                    ctx.beginPath();
+                    ctx.arc(current.screen.x, current.screen.y, 2, 0, Math.PI * 2);
+                    ctx.fillStyle = '#fff'
+                    ctx.fill();
+
+                    if (hourMark)
+                        addText(current.h, current.screen.x, current.screen.y - 10, diff)
+                }
+            }
             ctx.restore();
-            window.s = scene;
         }
 
         function drawOverlay() {
@@ -737,7 +786,8 @@
             ctx.stroke();
 
             // ctx.fillText('+', 0, 0) // ⌖
-            ctx.fillText(`${(compassHeading % 360).toFixed(0)}°`, 18, 0)
+            const heading = compassHeading + (trueNorth ? compassDeclination * 180 / Math.PI : 0);
+            ctx.fillText(`${(heading % 360).toFixed(0)}°`, 18, 0)
             // ctx.fillText(`${(controls.deviceOrientation.beta - 90).toFixed(0)}°`, 0, 25)
 
             ctx.fillText(`${(xRot | 0)}°`, 0, 18)
@@ -756,14 +806,14 @@
                 tmp.normalize();
                 // ctx.fillText(`${tmp.x.toFixed(2)}, ${tmp.y.toFixed(2)}`, -18, 0)
 
-                if (d2 > 18 * 18) {
+                if (d2 > 25 * 25) {
                     const d = Math.sqrt(d2);
                     const f = d < 800 ?
-                        Math.max(Math.min((d - 20) / 400, 1), 0) :
+                        Math.max(Math.min((d - 50) / 400, 1), 0) :
                         1 - Math.max((d - 800) / 800, 1) * 0.5;
 
                     const smoothstep = x => x * x * (3 - 2 * x)
-                    const opacity = smoothstep(f) * 0.7 + 0.1;
+                    const opacity = smoothstep(f) * 0.7 + 0.2;
 
                     // ctx.fillText(`${d}`, -18, 0)
 
@@ -772,22 +822,23 @@
                     const vx = tmp.x;
                     const vy = -tmp.y;
 
-                    ctx.fillStyle = `rgb(200 200 200 / ${opacity}`
+                    ctx.fillStyle = `rgb(220 220 220 / ${opacity}`
 
                     const DIRECTION_HELPER_RADIUS = 40;
                     // ctx.beginPath()
                     // ctx.arc(vx * DIRECTION_HELPER_RADIUS, vy * DIRECTION_HELPER_RADIUS, 5, 0, Math.PI * 2);
                     // ctx.fill();
 
-                    ctx.font = '50px sans-serif'
+
                     const angle = Math.atan2(vy, vx);
+                    // ctx.font = '50px sans-serif'
+                    ctx.font = '20px sans-serif'
 
                     // ctx.fillText('›', DIRECTION_HELPER_RADIUS, 0)
                     ctx.translate(vx * DIRECTION_HELPER_RADIUS, vy * DIRECTION_HELPER_RADIUS);
                     ctx.rotate(angle);
-                    ctx.fillText('›', 0, 0)
-
-                    // ›»>
+                    ctx.fillText('➜', 0, 0)
+                    // ›»>☛☞➔→➜➡︎➤➭➮➧
                 }
             }
         }
