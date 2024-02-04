@@ -163,7 +163,6 @@
         const SUN_PATH_LINE_WIDTH = 6
         const COMPASS_LINE_WIDTH = 5;
 
-
         const CIRCLE_RADIUS = 0.2;
         const HELPER_Y = -0.15;
         const FONT_SIZE = 0.05;
@@ -205,6 +204,7 @@
         let currentSkyColor;
         let hideYearPath = false;
         let hideSolstices = false;
+        let sunTimesToday;
 
         function angleToCoords(angle) {
             return [
@@ -393,7 +393,6 @@
 
         function handleSunPositions(sunpos) {
             // startPassthrough()
-
             if (geomag) {
                 const field = geomag.field(locator.latitude, locator.longitude, locator.altitude || 0);
                 compassDeclination = field.declination / 180 * Math.PI;
@@ -401,6 +400,8 @@
                     scene.rotation.y = compassRotation + (trueNorth ? compassDeclination : 0)
                 }
             }
+
+            sunTimesToday = SunCalc.getTimes(new Date(), locator.latitude, locator.longitude);
 
             const radius = 3;
 
@@ -591,10 +592,34 @@
                 const alt = heading.altitude * 180 / Math.PI;
                 const azi = heading.azimuth * 180 / Math.PI + 180;
 
-
-                addText(`${(new Date() + '').split(' ').slice(0, 5).join(' ')}`, screen.x, screen.y - 40)
+                addText(`${(new Date() + '').split(' ').slice(0, 5).join(' ')}`, screen.x, screen.y - 70)
                 // ⤸⟳⥀↷
-                addText(`Now: ↷${azi.toFixed(0)}° ⇵${alt.toFixed(0)}°`, screen.x, screen.y - 30);
+                addText(`Now: ↷${azi.toFixed(0)}° ⇵${alt.toFixed(0)}°`, screen.x, screen.y - 60);
+
+                if (sunTimesToday) {
+
+                    var diff = sunTimesToday.sunset.getTime() - Date.now();
+
+                    var relative = '';
+                    if (diff > ONE_HOUR) {
+                        relative += `${diff / ONE_HOUR | 0}h `
+                    }
+
+                    var mins = diff % ONE_HOUR;
+                    if (mins > ONE_MIN) {
+                        relative += `${mins / ONE_MIN | 0}min `
+                    }
+
+                    relative = relative ? relative + 'more' : relative;
+
+                    var setTimes = `⇡ ${getLocalTime(sunTimesToday.sunrise)}, ⇣ ${getLocalTime(sunTimesToday.sunset)} (${relative})`;
+                    addText(setTimes, screen.x, screen.y - 50);
+
+
+
+                }
+
+
 
                 currentSkyColor = altitudeColor(heading.altitude)
             })
