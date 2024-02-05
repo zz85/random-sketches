@@ -4,6 +4,7 @@
   "main": "index.js",
   "license": "MIT",
   "dependencies": {
+    "astronomy-engine": "^2.1.19",
     "geomag": "^1.0.0",
     "geomagnetism": "^0.1.1",
     "spectral.js": "^2.0.2",

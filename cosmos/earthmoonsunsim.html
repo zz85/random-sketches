@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>earth moon sun sim</title>
+    <meta charset="utf-8">
+    <style>
+        body { 
+            background: #333;
+        }
+    </style>
+</head>
+
+
+<body>
+    <script>
+        // Feb 4 2024, 23:19. A sketch to viz moon around earth around sun
+        // using simplified known facts
+        // 365 days for earth around sun
+        // 27.5 days for moon around earth
+        // 24h for earth rotation
+        function createCanvas(w, h) {
+            var canvas = document.createElement('canvas');
+            var dpr = window.devicePixelRatio;
+            canvas.width = w * dpr;
+            canvas.height = h * dpr;
+            canvas.style.width = `${w}px`
+            canvas.style.height = `${h}px`
+
+            var ctx = canvas.getContext('2d')
+            ctx.scale(dpr, dpr)
+            ctx.w = w;
+            ctx.h = h;
+            ctx.dom = canvas;
+            return ctx;
+        }
+
+
+        var ctx = createCanvas(800, 600)
+        document.body.appendChild(ctx.dom);
+
+        
+
+        function draw(cb) {
+            ctx.save();
+            cb();
+            ctx.restore();
+        }
+
+        function sun() {
+            ctx.beginPath();
+            ctx.fillStyle = 'orange'
+            ctx.arc(0, 0, 40, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        function earth() {
+            const EARTH_DISTANCE = 100;
+            const DAYS_IN_YEAR = 365.25;
+            var period = day / DAYS_IN_YEAR * Math.PI * 2;
+            var x = Math.cos(period) * EARTH_DISTANCE;
+            var y = Math.sin(period) * EARTH_DISTANCE;
+
+            const EARTH_SIZE = 20;
+
+            ctx.beginPath();
+            ctx.strokeStyle = 'green' // or blue
+            ctx.arc(x, y, EARTH_SIZE, 0, Math.PI * 2);
+            ctx.stroke();
+
+            ctx.translate(x, y);
+
+            ctx.beginPath();
+            ctx.arc(0, 0, 20, period - Math.PI * 0.5, period - Math.PI * 1.5);
+            ctx.fillStyle = '#333'
+            ctx.fill();
+
+            ctx.beginPath();
+            ctx.arc(0, 0, 20, period - Math.PI * 1.5, period - Math.PI * 2.5);
+            ctx.fillStyle = '#fff'
+            ctx.fill();
+
+
+            var earth = hours /24 * Math.PI * 2;
+
+            ctx.beginPath();
+            ctx.arc(Math.cos(earth) * EARTH_SIZE, Math.sin(earth) * EARTH_SIZE, 4, 0, Math.PI * 2);
+            ctx.fillStyle = 'green'
+            ctx.fill();
+
+
+            const EARTH_MOON_DISTANCE = 40;
+            const MOON_ORBIT = 27.5;
+            var mperiod = day / MOON_ORBIT * Math.PI * 2;
+            var mx = Math.cos(mperiod) * EARTH_MOON_DISTANCE;
+            var my = Math.sin(mperiod) * EARTH_MOON_DISTANCE;
+
+            ctx.beginPath();
+            ctx.strokeStyle = 'grey'
+            ctx.arc(mx, my, 10, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // var period = Math.atan2( y+my, x + mx)
+
+            ctx.translate(mx, my);
+            ctx.beginPath();
+            ctx.arc(0, 0, 10, period - Math.PI * 0.5, period - Math.PI * 1.5);
+            ctx.fillStyle = '#333'
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(0, 0, 10, period - Math.PI * 1.5, period - Math.PI * 2.5);
+            ctx.fillStyle = '#eee'
+            ctx.fill();
+
+
+
+            
+        }
+
+        function moon() {
+            
+        }
+
+        function clearScreen() {
+            ctx.clearRect(-ctx.w/2, -ctx.h/2, ctx.w, ctx.h);
+        }
+
+        ctx.translate(ctx.w / 2, ctx.h / 2);
+
+        
+
+        // globals
+        var day = 0; // 0-365
+        var hours = 0;
+
+
+        setInterval(() => {
+            var inc = 1/4;
+            hours += inc;
+            hours %= 24;
+            day += inc/24;
+        }, 100)
+
+        function animate() {
+            clearScreen();
+
+            ctx.fillStyle = '#FFF'
+            ctx.fillText(`Day: ${day | 0} Hour: ${hours}`, -130, -140)
+            draw(sun)
+            draw(earth)
+
+            requestAnimationFrame(animate)
+        }
+
+        animate();
+
+        
+        
+
+
+    </script>
+</body>
+
+</html>

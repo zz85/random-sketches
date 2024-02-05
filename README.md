@@ -1,9 +1,9 @@
 # Random experiments
 
-- [sun path AR](cosmos/sunpath_three_ar.html) - AR visualization of sun path with three.js
+- [sun path ar 2d](cosmos/sunpath_three_ar_2d.html) - Heads up display using AR passthrough style
+  - [sun path AR](cosmos/sunpath_three_ar.html) - AR visualization of sun path with three.js
   - [sun day path](cosmos/sunpath_three.html) - Sun's visualization path of the day
   - [sun year path](cosmos/sunpath_three_year.html) - Sun's visualization path of the year
-  - [sun path ar 2d](cosmos/sunpath_three_ar_2d.html) - 
 - [sun charts](cosmos/suncharts.html) - JS based sunrise and sunset tables and visualizations
 - [compass](cosmos/compass.html) - Web based implementation of IOS compass app
   - [compass with positioning](cosmos/compass_position.html) - with positioning data
@@ -15,6 +15,9 @@
 - [fishy-sketches](fishy-sketches) - drawing fishes with bezier curves in 2d
 
 #### History / Notes
+
+5 Feb 2024
+- Simple visualization to work out [earth, moon, and sun](earthmoonsunsim.html) relations
 
 2 Feb 2024
 - Added [true north](cosmos/compass_sun_north.html) for compass heading, updated compass sun position to include current angle
