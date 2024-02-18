@@ -2,8 +2,9 @@
 <html>
 
 <head>
-    <link rel="stylesheet" href="node_modules/xterm/css/xterm.css" />
-    <!-- <script src="node_modules/xterm/lib/xterm.js"></script> -->
+    <link rel="stylesheet" href="node_modules/@xterm/xterm/css/xterm.css" />
+    <!-- <script src="node_modules/@xterm/xterm/lib/xterm.js"></script>
+    <script src="node_modules/@xterm/addon-fit/lib/addon-fit.js"></script> -->
     <style>
         #terminal {
             width: 100%;
@@ -36,9 +37,11 @@
         import { Terminal } from '@xterm/xterm';
         import { FitAddon } from '@xterm/addon-fit';
 
+        var id = Date.now();
+
         const terminal = new Terminal({
             cursorBlink: true,
-            disableStdin: true,
+            // disableStdin: true,
             // minimumContrastRatio: 7
         });
         const fitAddon = new FitAddon();
@@ -48,14 +51,36 @@
 
         var resized = {};
 
+        terminal.onData(data => {
+            // console.log('data', data)
+            const headers = {
+                id,
+                "Content-Type": "application/json",
+            };
+            fetch('/tmux/send', {
+                headers,
+                method: 'POST',
+                body: JSON.stringify({ data })
+            })
+        });
+
+        terminal.onBinary(data => {
+            // this._sendBinary(data);
+            console.log('binary', data)
+        });
+
         terminal.onResize(function (evt) {
             console.log('resize', evt);
             resized = evt;
-            // const terminal_size = {
-            //     Width: evt.cols,
-            //     Height: evt.rows,
-            // };
-            // websocket.send("\x04" + JSON.stringify(terminal_size));
+            const headers = {
+                id,
+                cols: evt.cols,
+                rows: evt.rows,
+            };
+            fetch('/tmux/resize', {
+                headers,
+                method: 'POST'
+            })
         });
 
         fitAddon.fit();
@@ -78,9 +103,9 @@
 
         const connect = async () => {
             try {
-                var response = await fetch('/pty/', {
+                var response = await fetch('/tmux', {
                     headers: Object.assign({
-                        'hello': 'world'
+                        id,
                     }, resized)
                 })
 
@@ -95,9 +120,8 @@
                         break;
                     }
 
-                    console.log('got', value)
+                    // console.log('got', value)
                     terminal.write(value)
-
                 }
 
                 reader.releaseLock();
