@@ -16,6 +16,9 @@
 
 #### History / Notes
 
+6 Feb 2024
+- canvas version of the Starlings murmurations inspired by https://twitter.com/JulianGarnier/status/1754495444896416025
+
 5 Feb 2024
 - Simple visualization to work out [earth, moon, and sun](earthmoonsunsim.html) relations
 

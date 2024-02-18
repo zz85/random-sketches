@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Murmuration @ Sunset</title>
+    <meta charset="utf-8">
+</head>
+<body>
+    <style>
+        body { overflow: none; margin: 0; padding: 0; }
+    </style>
+
+    <script>
+        function createCanvas(w, h) {
+            var canvas = document.createElement('canvas');
+            var dpr = window.devicePixelRatio;
+            canvas.width = w * dpr;
+            canvas.height = h * dpr;
+            canvas.style.width = `${w}px`
+            canvas.style.height = `${h}px`
+
+            var ctx = canvas.getContext('2d')
+            ctx.scale(dpr, dpr)
+            ctx.w = w;
+            ctx.h = h;
+            ctx.dom = canvas;
+            return ctx;
+        }
+
+        var ctx = createCanvas(innerWidth, innerHeight);
+        document.body.appendChild(ctx.dom);
+
+        var gradient = ctx.createLinearGradient(0, 0, 0, ctx.h);
+        gradient.addColorStop(0, `hsl(206 55% 56%)`);
+        gradient.addColorStop(0.66, `hsl(0 3% 74%)`);
+        gradient.addColorStop(1, `hsl(29 55% 54%)`);
+
+        var { random, sqrt } = Math;
+
+        var starlings = new Array(4000).fill(0).map(v => {
+            return {
+                color: `hsl(${random() * 10 + 15} 60% ${random() * 8 + 10}% / ${random() * 70 + 30}%`,
+                r: 0.25 * 0.25 * sqrt(random()) * ctx.w,
+                angle: random() * Math.PI * 2,
+                size: random() + 1,
+                x: 0,
+                y: 0,
+            }
+        })
+
+        var target = { x: 200, y: 200 }
+        var current = { x: 400, y: 400 }
+        var prev = Object.assign({}, target);
+        var click = Date.now();
+        var nextDuration;
+        
+        function nextTime() {
+            click = Date.now();
+            Object.assign(prev, target);
+            target.x = Math.random() * ctx.w;
+            target.y = Math.random() * ctx.h;
+            nextDuration = Math.random() * 200 + 2500;
+
+            starlings.forEach(starling => {
+                starling.r = 0.25 * 0.25 * sqrt(random()) * ctx.w;
+                starling.angle = random() * Math.PI * 2;
+            })
+
+            setTimeout(nextTime, nextDuration)
+        }
+
+        nextTime();
+
+        function tween(k) {
+            // return t* t;
+            // return - k * ( k - 2 );
+            if ( ( k *= 2 ) < 1 ) return 0.5 * k * k;
+		    return - 0.5 * ( --k * ( k - 2 ) - 1 );
+        }
+
+        function animate() {
+            ctx.save();    
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, ctx.w, ctx.h)
+
+            var lapsed = Date.now() - click;
+            var t = lapsed / nextDuration;
+            t = tween(t)
+            current.x = (target.x - prev.x) * t + prev.x;
+            current.y = (target.y - prev.y) * t + prev.y;
+            
+            starlings.forEach(starling => {
+                ctx.fillStyle = starling.color;
+                ctx.beginPath();
+                // ctx.fillRect(
+                //     target.x + starling.r * Math.cos(starling.angle),
+                //     target.y + starling.r * Math.sin(starling.angle),
+                //     starling.size, starling.size
+                // );
+
+                // 
+
+                var x = current.x + Math.sin(Date.now() * 0.0007) * ctx.w * 0.5 * 0.5;
+                var y = current.y + Math.cos(Date.now() * 0.00012) * ctx.h * 0.5 * 0.5;
+
+                x += starling.r * Math.cos(starling.angle),
+                y += starling.r * Math.sin(starling.angle);
+
+                starling.x += (x - starling.x) * 0.05;
+                starling.y += (y - starling.y) * 0.05;
+                
+                ctx.arc(
+                    starling.x, starling.y,
+                    starling.size / 2,
+                    0, Math.PI * 2
+                );
+                ctx.fill();
+            })
+
+            ctx.restore();
+        }
+
+        animate();
+
+        setInterval(animate, 50)
+    </script>
+</body>
+</html>
