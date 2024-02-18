@@ -1,0 +1,115 @@
+<!doctype html>
+<html>
+
+<head>
+    <link rel="stylesheet" href="node_modules/xterm/css/xterm.css" />
+    <!-- <script src="node_modules/xterm/lib/xterm.js"></script> -->
+    <style>
+        #terminal {
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+        }
+
+        /* html,
+        body {
+            height: 100%
+        }
+
+        body {
+            display: flex;
+            align-items: stretch;
+        }
+
+        #root {
+            width: 100%
+        } */
+    </style>
+</head>
+
+<body>
+    <div id="terminal"></div>
+    <script type="module">
+        import { Terminal } from '@xterm/xterm';
+        import { FitAddon } from '@xterm/addon-fit';
+
+        const terminal = new Terminal({
+            cursorBlink: true,
+            disableStdin: true,
+            // minimumContrastRatio: 7
+        });
+        const fitAddon = new FitAddon();
+        terminal.loadAddon(fitAddon);
+        var containerElement = document.getElementById('terminal');
+        terminal.open(containerElement);
+
+        var resized = {};
+
+        terminal.onResize(function (evt) {
+            console.log('resize', evt);
+            resized = evt;
+            // const terminal_size = {
+            //     Width: evt.cols,
+            //     Height: evt.rows,
+            // };
+            // websocket.send("\x04" + JSON.stringify(terminal_size));
+        });
+
+        fitAddon.fit();
+
+        const xterm_resize_ob = new ResizeObserver(function (entries) {
+            // since we are observing only a single element, so we access the first element in entries array
+            try {
+                fitAddon && fitAddon.fit();
+            } catch (err) {
+                console.log(err);
+            }
+        });
+
+        // start observing for resize
+        xterm_resize_ob.observe(document.querySelector("#terminal"));
+
+        window.t = terminal;
+
+        var active;
+
+        const connect = async () => {
+            try {
+                var response = await fetch('/pty/', {
+                    headers: Object.assign({
+                        'hello': 'world'
+                    }, resized)
+                })
+
+                var rb = response.body
+                const reader = rb.getReader();
+                while (true) {
+                    console.log('reading...')
+                    const { done, value } = await reader.read();
+
+                    if (done) {
+                        console.log('oh done');
+                        break;
+                    }
+
+                    console.log('got', value)
+                    terminal.write(value)
+
+                }
+
+                reader.releaseLock();
+            } catch (e) {
+                console.error(e)
+                active = setTimeout(connect, 2500)
+            }
+        };
+
+        active = setTimeout(connect, 1500)
+
+    </script>
+</body>
+
+</html>

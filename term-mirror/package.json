@@ -1,0 +1,22 @@
+{
+  "name": "term-mirror",
+  "version": "1.0.0",
+  "main": "index.js",
+  "license": "MIT",
+  "scripts": {
+    "vite": "npx vite --host"
+  },
+  "devDependencies": {
+    "vite": "^5.1.3"
+  },
+  "files": [
+    "*.html",
+    "*.js"
+  ],
+  "dependencies": {
+    "@xterm/addon-fit": "^0.9.0-beta.1",
+    "@xterm/xterm": "^5.4.0-beta.1",
+    "express": "^4.18.2",
+    "node-pty": "^1.0.0"
+  }
+}
