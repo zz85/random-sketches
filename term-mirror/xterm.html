@@ -41,9 +41,10 @@
 
         const terminal = new Terminal({
             cursorBlink: true,
-            // disableStdin: true,
-            // minimumContrastRatio: 7
+            disableStdin: !true,
+            minimumContrastRatio: 7
         });
+	terminal.focus();
         const fitAddon = new FitAddon();
         terminal.loadAddon(fitAddon);
         var containerElement = document.getElementById('terminal');
@@ -131,7 +132,8 @@
             }
         };
 
-        active = setTimeout(connect, 1500)
+        // active = setTimeout(connect, 1500)
+	connect();
 
     </script>
 </body>

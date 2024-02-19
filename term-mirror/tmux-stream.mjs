@@ -33,7 +33,7 @@ function start(cols, rows, res, id) {
 
   res.on('close', (e) => {
     console.log('res close')
-    ptyProcess.kill();
+    ptyProcess.destroy();
     ptyProcess = null;
     ids.delete(id)
   });
@@ -51,8 +51,12 @@ function start(cols, rows, res, id) {
 }
 
 import express from 'express'
+// import cors from 'cors'
+
 var app = express()
 app.use(express.json());
+// app.use(cors())
+app.use(express.static('dist'))
 
 app.get('*', (req, res) => {
   console.log('get', req.url, req.headers)

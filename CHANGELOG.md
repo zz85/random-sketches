@@ -2,7 +2,7 @@
 11 Feb 2024
 - [Terminal Mirror](term-mirror/README.md) - Mirrors a tmux session to a web interface over fetch streaming. This was interesting as an "external monitor" in passthrough mode on my quest.
 
-![](notes/tmux-mirroring-2024-02-18.png)
+![tmux mirroring pic](notes/tmux-mirroring-2024-02-18.png)
 ![](notes/tmux-mirroring-2024-02-18.mov)
 
 6 Feb 2024

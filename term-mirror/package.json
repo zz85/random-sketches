@@ -4,7 +4,8 @@
   "main": "index.js",
   "license": "MIT",
   "scripts": {
-    "vite": "npx vite --host"
+    "vite": "npx vite --host",
+    "build": "cp xterm.html index.html; npx vite build"
   },
   "devDependencies": {
     "vite": "^5.1.3"

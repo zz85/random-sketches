@@ -1,7 +1,6 @@
 ## Term Mirror
 
 1. setup
-
 ```
 npm i
 ```
@@ -20,3 +19,17 @@ npm run vite
 5. visit page
 locahost/xterm.html
 
+## standalone builds
+
+Run builds ones
+
+```
+cp xterm.html index.html
+npx vite build
+```
+
+now you can always run
+```
+node tmux-stream.mjs
+```
+without vite.
