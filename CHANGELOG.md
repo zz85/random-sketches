@@ -1,3 +1,7 @@
+# Logs
+
+16 March 2024
+- Adding TextGeometry to three.js, including serialization/deserialization support https://github.com/mrdoob/three.js/pull/27931
 
 11 Feb 2024
 - [Terminal Mirror](term-mirror/README.md) - Mirrors a tmux session to a web interface over fetch streaming. This was interesting as an "external monitor" in passthrough mode on my quest.
@@ -8,9 +12,8 @@
 6 Feb 2024
 - Canvas version of the Starlings murmurations inspired by https://twitter.com/JulianGarnier/status/1754495444896416025 (incomplete, need to follow up on tweens)
 
-
 5 Feb 2024
-- Simple visualization to work out [earth, moon, and sun](earthmoonsunsim.html) relations
+- Simple visualization to work out [earth, moon, and sun](cosmos/earthmoonsunsim.html) relations
 
 2 Feb 2024
 - Added [true north](cosmos/compass_sun_north.html) for compass heading, updated compass sun position to include current angle

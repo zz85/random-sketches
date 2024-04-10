@@ -2,7 +2,7 @@
 <html lang="en">
 
 <head>
-    <title>sun path today</title>
+    <title>moon path today</title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
     <style>
@@ -113,7 +113,8 @@
 
     <script src="locator.js"></script>
     <script src="vendor/suncalc.js"></script>
-    <script src="sunpath.js"></script>
+    <!-- <script src="sunpath.js"></script> -->
+    <script src="moonpath.js"></script>
 
     <script type="importmap">
             {
@@ -312,19 +313,13 @@
             const doodecahedron = new THREE.Mesh(doodecahedronGeo, helperMaterial);
             doodecahedron.position.x = 0.5;
             doodecahedron.position.y = 0.5;
-            // scene.add(doodecahedron);
+            scene.add(doodecahedron);
 
             const icosahedronGeo = new THREE.IcosahedronGeometry(0.1, 0);
             const icosahedron = new THREE.Mesh(icosahedronGeo, helperMaterial);
             icosahedron.position.x = -0.5;
             icosahedron.position.y = 0.5;
             // scene.add(icosahedron);
-
-            const octahedronGeo = new THREE.OctahedronGeometry(0.1, 1);
-            const octahedron = new THREE.Mesh(octahedronGeo, helperMaterial);
-            octahedron.position.z = -0.5;
-            octahedron.position.y = 0.5;
-            // scene.add(octahedron);
 
             const sphereGeo = new THREE.SphereGeometry(SPHERE_RADIUS, 10, 9);
             const spherematerial = new THREE.MeshLambertMaterial({ color: 0x63aed9, opacity: 0.8, wireframe: true, transparent: true, side: THREE.DoubleSide });
@@ -339,7 +334,8 @@
                 sunpos.filter(s => !s.day || s.now).forEach((pos, i) => {
                     // if (pos.relative < 0) return;
                     const material = new THREE.MeshLambertMaterial({
-                        color: 0xFFA500, transparent: true,
+                        color: pos.sun ? 0xFFA500 : 0x939393,
+                        transparent: true,
                         opacity: 1 - Math.abs(pos.relative) / 12 * 0.5
                     });
                     const sphere = new THREE.Mesh(icosahedronGeo, material);

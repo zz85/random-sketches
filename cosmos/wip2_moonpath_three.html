@@ -2,7 +2,7 @@
 <html lang="en">
 
 <head>
-    <title>sun path today</title>
+    <title>moon path AR</title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
     <style>
@@ -65,7 +65,7 @@
         #overlay {
             position: absolute;
             z-index: 2;
-            top: 0;
+            bottom: 0;
             left: 0;
             width: 100%;
             height: 100%;
@@ -108,12 +108,14 @@
         <button id="startButton">Start!</button>
     </div>
     <div id="info">
-        Sun path
+        Sun path AR
+        <!-- background: none, sky shader, passthrough, somewhere -->
+        <!-- sunpath: today, year, animate -->
     </div>
 
     <script src="locator.js"></script>
     <script src="vendor/suncalc.js"></script>
-    <script src="sunpath.js"></script>
+    <script src="moonpath.js"></script>
 
     <script type="importmap">
             {
@@ -131,35 +133,112 @@
         import { DeviceOrientationControls } from './vendor/DeviceOrientationControls.js';
         import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-        let camera, scene, renderer, controls, ctx, orbitalControls;
+        let camera, scene, renderer, controls, ctx, orbitalControls, helper;
+        let compassDeclination = 0;
 
-        // const FONT_SIZE = 0.2;
-        // const LETTER_DISTANCE = 0.8;
-        // const CIRCLE_SIZE = 0.9;
-        const SUNPATH_RADIUS = 1;
+        const CIRCLE_RADIUS = 0.2;
+        const HELPER_Y = -0.15;
+        const FONT_SIZE = 0.05;
+        const LETTER_DISTANCE = 0.15;
+        const DEG_LABEL_DISTANCE = 20;
+        const DEG_LABEL_SIZE = 0.5;
 
-        const FONT_SIZE = 0.2;
-        const LETTER_DISTANCE = 0.8;
-        const CIRCLE_SIZE = 0.9;
-        const SPHERE_RADIUS = 0.9;
+        const headings = {
+            N: 0,
+            S: 180,
+            E: 90,
+            W: 270,
+        }
+
+        const TO_RAD = Math.PI / 180;
 
         const startButton = document.getElementById('startButton');
         startButton.addEventListener('click', start, false);
 
-        function start(orbit) {
-            init(orbit);
+        let isFontReady = [];
+        function fontReady(cb) {
+            if (isFontReady.length !== undefined) {
+                return isFontReady.push(cb)
+            }
+
+            cb(isFontReady);
+        }
+
+        function angleToCoords(angle) {
+            return [
+                Math.cos(angle), Math.sin(angle)
+            ]
+        }
+
+        function setMeshFromAngle(mesh, deg, radius) {
+            const angle = deg * TO_RAD + Math.PI / 2;
+            const [x, z] = angleToCoords(angle);
+            mesh.position.set(x * radius, 0, z * radius);
+            mesh.rotation.y = -(angle + Math.PI / 2);
+        }
+
+        function createTextGeo(text, font, fontSize) {
+            const options = {
+                font: font,
+                size: fontSize,
+                height: fontSize / 5,
+                curveSegments: 3,
+                bevelEnabled: false,
+            };
+
+            const geo = new TextGeometry(text, options);
+            geo.computeBoundingBox();
+            const centerOffset = - 0.5 * (geo.boundingBox.max.x - geo.boundingBox.min.x);
+            const centerYOffset = - 0.5 * (geo.boundingBox.max.y - geo.boundingBox.min.y);
+            geo.centerYOffset = centerYOffset;
+            geo.translate(centerOffset, centerYOffset, 0);
+            return geo;
+        }
+
+        const loader = new FontLoader();
+
+        function start(e) {
+            init(e);
             animate();
         }
 
-        start();
+        // Hack to by pass click if device orientation events are already received
+        const dmEvents = (e) => {
+            window.removeEventListener('deviceorientation', dmEvents, false);
+            if (e) start(e);
+        }
+        window.addEventListener('deviceorientation', dmEvents, false);
+        setTimeout(() => { dmEvents() }, 100)
+
         if (!window.DeviceOrientationEvent || !window.DeviceOrientationEvent.requestPermission) {
-            // start();
+            // start triggered without dom events
+            start();
+        }
+
+        function onFontReady(font) {
+            isFontReady.forEach(cb => cb(font));
+            isFontReady = font;
         }
 
         function init(e) {
             const orbit = !e;
             const overlay = document.getElementById('overlay');
             overlay.remove();
+
+            loader.load(
+                'vendor/Open_Sans_ExtraBold_Regular_numbers.json',
+                // 'vendor/opensans_extrabold_nsew.json',
+                // 'vendor/regular.json',
+                onFontReady,
+                // onProgress callback
+                function (xhr) {
+                    console.log((xhr.loaded / xhr.total * 100) + '% loaded');
+                },
+                // onError callback
+                function (err) {
+                    console.log('An error happened');
+                }
+            );
 
             var hud = document.getElementById('hud');
             const dpr = window.devicePixelRatio;
@@ -169,90 +248,17 @@
             hud.style.height = `${window.innerHeight}px`
             ctx = hud.getContext('2d');
             ctx.font = '40px sans-serif'
-            // ctx.fillStyle = '#000'
             ctx.fillStyle = '#fff'
             ctx.fillText("Hi world", 100, 100);
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.scale(dpr, dpr);
 
-            const loader = new FontLoader();
-            const font = loader.load(
-                'vendor/opensans_extrabold_nsew.json',
-                // 'regular.json',
-                function (font) {
-                    const options = {
-                        font: font,
-                        size: FONT_SIZE,
-                        height: FONT_SIZE / 5,
-                        curveSegments: 3,
-                        bevelEnabled: false,
-                    };
-
-                    const material = new THREE.MeshLambertMaterial({ color: 0x63aed9 });
-
-                    let centerYOffset
-                    const geometry = {};
-                    'NSEW'.split('').map(c => {
-                        // 
-                        const geo = new TextGeometry(c, options);
-                        geo.computeBoundingBox();
-                        const centerOffset = - 0.5 * (geo.boundingBox.max.x - geo.boundingBox.min.x);
-                        centerYOffset = - 0.5 * (geo.boundingBox.max.y - geo.boundingBox.min.y);
-                        geo.translate(centerOffset, centerYOffset, 0);
-                        // geo.translate(centerOffset, 0, 0);
-                        geometry[c] = geo;
-                    })
-
-
-                    // MeshLambertMaterial
-                    const n = new THREE.Mesh(geometry.N, material);
-                    n.position.z = LETTER_DISTANCE;
-                    // n.rotation.y = Math.PI;
-                    n.rotation.y = Math.PI
-                    n.position.y = -centerYOffset;
-                    helper.add(n);
-
-                    const s = new THREE.Mesh(geometry.S, material);
-                    s.position.z = -LETTER_DISTANCE;
-                    // s.rotation.y = Math.PI;
-                    // s.rotation.z = Math.PI;
-
-                    s.position.y = -centerYOffset;
-                    helper.add(s);
-
-                    const e = new THREE.Mesh(geometry.E, material);
-                    e.position.x = -LETTER_DISTANCE;
-                    e.rotation.y = Math.PI / 2
-                    e.position.y = -centerYOffset;
-                    helper.add(e);
-
-                    const w = new THREE.Mesh(geometry.W, material);
-                    w.position.x = LETTER_DISTANCE;
-                    w.rotation.y = -Math.PI / 2;
-                    w.position.y = -centerYOffset;
-                    helper.add(w);
-
-                    Object.assign(window, { n, s, e, w })
-                },
-
-                // onProgress callback
-                function (xhr) {
-                    console.log((xhr.loaded / xhr.total * 100) + '% loaded');
-                },
-
-                // onError callback
-                function (err) {
-                    console.log('An error happened');
-                }
-            );
-
-            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.001, 1100);
+            camera = new THREE.PerspectiveCamera(68, window.innerWidth / window.innerHeight, 0.001, 1100);
 
             controls = new DeviceOrientationControls(camera);
             if (orbit) {
                 camera.position.y = 1.5
-                camera.position.z = 3;
                 camera.lookAt(0, 0, -1);
                 window.c = camera;
 
@@ -284,76 +290,120 @@
             scene.add(directionalLight);
 
             const helperMaterial = new THREE.MeshLambertMaterial({ color: 0xff00ff, wireframe: true });
-            const material = new THREE.MeshLambertMaterial({ color: 0xffffff, wireframe: !true, transparent: true, opacity: 0.8 });
+            const material = new THREE.MeshLambertMaterial({
+                color: 0xffffff, wireframe: !true,
+                transparent: true, opacity: 0.8
+            });
 
-
-            // scene.position.y = -0.2;
             const planeGeometry = new THREE.PlaneGeometry(1.5, 1.5);
             planeGeometry.rotateX(-Math.PI / 2);
-            // const helper = new THREE.Mesh(planeGeometry, material);
             const plane = new THREE.Mesh(planeGeometry, helperMaterial);
             scene.add(plane);
 
-            const helper = new THREE.Object3D()
+            helper = new THREE.Object3D()
             scene.add(helper);
 
-            const circleGeometry = new THREE.CircleGeometry(CIRCLE_SIZE, 32);
+            const circleGeometry = new THREE.CircleGeometry(CIRCLE_RADIUS, 32);
             circleGeometry.rotateX(-Math.PI / 2);
-            const circle = new THREE.Mesh(circleGeometry,
-                // helperMaterial
-                material
-            );
+            const circle = new THREE.Mesh(circleGeometry, material);
             helper.add(circle);
 
-            // helper.position.y = -0.5;
-
+            helper.position.y = HELPER_Y;
 
             const doodecahedronGeo = new THREE.DodecahedronGeometry(0.1, 0);
-            const doodecahedron = new THREE.Mesh(doodecahedronGeo, helperMaterial);
-            doodecahedron.position.x = 0.5;
-            doodecahedron.position.y = 0.5;
-            // scene.add(doodecahedron);
-
             const icosahedronGeo = new THREE.IcosahedronGeometry(0.1, 0);
-            const icosahedron = new THREE.Mesh(icosahedronGeo, helperMaterial);
-            icosahedron.position.x = -0.5;
-            icosahedron.position.y = 0.5;
-            // scene.add(icosahedron);
-
             const octahedronGeo = new THREE.OctahedronGeometry(0.1, 1);
-            const octahedron = new THREE.Mesh(octahedronGeo, helperMaterial);
-            octahedron.position.z = -0.5;
-            octahedron.position.y = 0.5;
-            // scene.add(octahedron);
+            const sphereGeo = new THREE.SphereGeometry(0.1, 4, 3);
 
-            const sphereGeo = new THREE.SphereGeometry(SPHERE_RADIUS, 10, 9);
-            const spherematerial = new THREE.MeshLambertMaterial({ color: 0x63aed9, opacity: 0.8, wireframe: true, transparent: true, side: THREE.DoubleSide });
+            fontReady((font) => {
+                const material = new THREE.MeshLambertMaterial({ color: 0x63aed9 });
 
-            const sphere = new THREE.Mesh(sphereGeo,
-                //helperMaterial
-                spherematerial);
+                // let centerYOffset
+                const geometry = {};
+                Object.keys(headings).map(c => {
+                    const geo = createTextGeo(c, font, FONT_SIZE);
 
-            helper.add(sphere);
+                    const mesh = new THREE.Mesh(geo, material);
+                    setMeshFromAngle(mesh, headings[c], LETTER_DISTANCE);
+                    mesh.position.y = -geo.centerYOffset;
+
+                    helper.add(mesh);
+                    window[c] = mesh;
+                })
+
+                const rev = {
+                    0: 'N',
+                    45: 'NE',
+                    90: 'E',
+                    135: 'SE',
+                    180: 'S',
+                    225: 'SW',
+                    270: 'W',
+                    315: 'NW'
+                }
+
+                for (let heading = 0; heading < 360; heading += 15) {
+                    let text = `${heading}°`;
+                    let b = rev[heading];
+                    const geo = createTextGeo(b ? b : text, font, DEG_LABEL_SIZE);
+                    const mesh = new THREE.Mesh(geo, material);
+                    setMeshFromAngle(mesh, heading, DEG_LABEL_DISTANCE);
+                    mesh.position.y = -geo.centerYOffset;
+
+                    scene.add(mesh);
+                }
+            });
 
             startLocator((sunpos) => {
-                sunpos.filter(s => !s.day || s.now).forEach((pos, i) => {
+                console.log(sunpos);
+
+                const radius = 3;
+
+                const sunMaterial = new THREE.MeshLambertMaterial({
+                    color: 0xFFA500
+                    // , transparent: true, opacity: 1 - Math.abs(pos.relative) / 12 * 0.5
+                });
+
+                const moonMaterial = new THREE.MeshLambertMaterial({
+                    color: 0x939393
+                    // , transparent: true, opacity: 1 - Math.abs(pos.relative) / 12 * 0.5
+                });
+
+                sunpos.filter(s => !s.day && s.min == 0 || s.now).forEach((pos, i) => {
                     // if (pos.relative < 0) return;
-                    const material = new THREE.MeshLambertMaterial({
-                        color: 0xFFA500, transparent: true,
-                        opacity: 1 - Math.abs(pos.relative) / 12 * 0.5
-                    });
-                    const sphere = new THREE.Mesh(icosahedronGeo, material);
-                    const h = Math.sin(pos.altitude) * SUNPATH_RADIUS;
-                    const r = Math.cos(pos.altitude) * SUNPATH_RADIUS;
+                    const sphere = new THREE.Mesh(icosahedronGeo, pos.now ?
+                        new THREE.MeshLambertMaterial({
+                            color: pos.sun ? 0xFF0000 : 0x333333
+                        }) :
+                        pos.sun ? sunMaterial  : moonMaterial
+                    );
+                    const h = Math.sin(pos.altitude) * radius;
+                    const r = Math.cos(pos.altitude) * radius;
                     const bearing = pos.azimuth - Math.PI / 2;
                     const x = Math.cos(bearing) * r;
                     const y = Math.sin(bearing) * r;
 
                     sphere.position.set(x, h, y);
-                    sphere.scale.multiplyScalar(pos.now ? 1 : 0.8 - 0.05 * Math.abs(pos.relative))
+                    // sphere.scale.multiplyScalar(0.8 - 0.05 * Math.abs(pos.relative))
+
+                    if (pos.now) {
+                        sphere.position.multiplyScalar(2);
+                        sphere.scale.set(2, 2, 2)
+                    }
                     scene.add(sphere)
+
+                    fontReady((font) => {
+                        const geo = createTextGeo(`${pos.h}`, font, 0.07)
+                        const mesh = new THREE.Mesh(geo, sunMaterial);
+                        mesh.position.set(x, h + 0.25, y);
+                        mesh.position.y -= -geo.centerYOffset;
+                        mesh.lookAt(0, 0, 0)
+
+                        scene.add(mesh);
+                    })
                 })
             })
+
 
 
             //
@@ -373,30 +423,43 @@
         let calibrated;
 
         function animate() {
+            ctx.clearRect(0, 0, 1000, 1000)
             window.requestAnimationFrame(animate);
 
             controls.update();
 
             if (controls.deviceOrientation) {
                 let heading = controls.deviceOrientation.webkitCompassHeading;
+                const target = (heading + 180) / 180 * Math.PI;
+
+                /*
+                there's not really a need to calibrate new compass heading
+                as it that would require device motion to re-calibrate too
+                if (heading !== null) {
+                    const diff = target - scene.rotation.y;
+                    ctx.fillText(`${diff}`, 200, 200);
+                    if (diff) {
+                        scene.rotation.y += diff * 0.01;
+                    }
+                }*/
 
                 if (heading && !calibrated) {
-                    scene.rotation.y = (heading + 180) / 180 * Math.PI
+                    scene.rotation.y = target;
                     calibrated = true;
                 }
             }
 
-            function toScreenPosition(obj, camera,) {
+            function toScreenPosition(obj, camera) {
                 if (!obj) return;
 
                 obj.updateMatrixWorld();
 
-                const frustum = new THREE.Frustum()
-                const matrix = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
-                frustum.setFromProjectionMatrix(matrix)
-                if (!frustum.containsPoint(obj.position)) {
-                    return
-                }
+                // const frustum = new THREE.Frustum()
+                // const matrix = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
+                // frustum.setFromProjectionMatrix(matrix)
+                // if (!frustum.containsPoint(obj.position)) {
+                //     return
+                // }
 
                 var vector = new THREE.Vector3();
 
@@ -408,6 +471,8 @@
 
                 vector.x = (vector.x * widthHalf) + widthHalf;
                 vector.y = - (vector.y * heightHalf) + heightHalf;
+                // console.log(vector);
+                // if (vector.z < -1 || vector.z > 1) return;
 
                 return {
                     x: vector.x,
@@ -416,8 +481,8 @@
 
             };
 
-            var screen = toScreenPosition(window.n, camera);
-            ctx.clearRect(0, 0, 1000, 1000)
+            var screen = toScreenPosition(window.N, camera);
+
             if (screen) {
                 // ctx.fillText('N', screen.x, screen.y)
             }

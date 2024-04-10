@@ -36,17 +36,34 @@
     <script type="module">
         import { Terminal } from '@xterm/xterm';
         import { FitAddon } from '@xterm/addon-fit';
+        
 
         var id = Date.now();
 
         const terminal = new Terminal({
             cursorBlink: true,
             disableStdin: !true,
-            minimumContrastRatio: 7
+            // minimumContrastRatio: 21,
+            allowTransparency: false,
         });
-	terminal.focus();
+	    terminal.focus();
         const fitAddon = new FitAddon();
         terminal.loadAddon(fitAddon);
+
+        // import { Unicode11Addon } from '@xterm/addon-unicode11';
+        // const unicode11Addon = new Unicode11Addon();
+        // terminal.loadAddon(unicode11Addon);
+        // // activate the new version
+        // terminal.unicode.activeVersion = '11';
+
+        import { CanvasAddon } from '@xterm/addon-canvas';
+        terminal.loadAddon(new CanvasAddon());
+
+        // import { WebglAddon } from '@xterm/addon-webgl';
+        // terminal.loadAddon(new WebglAddon());
+
+
+
         var containerElement = document.getElementById('terminal');
         terminal.open(containerElement);
 

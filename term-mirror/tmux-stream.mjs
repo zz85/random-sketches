@@ -1,5 +1,6 @@
 import * as os from 'node:os';
 import * as pty from 'node-pty';
+import { readFileSync } from 'node:fs';
 
 const shell = os.platform() === 'win32' ? 'powershell.exe' : 'bash';
 
@@ -22,7 +23,10 @@ function start(cols, rows, res, id) {
     cols: cols || 80,
     rows: rows || 30,
     cwd: process.env.HOME,
-    env: process.env
+    env: Object.assign({
+      TERM: 'xterm-256color',
+      COLORTERM: 'truecolor',
+    }, process.env)
   });
 
   ids.set(id, ptyProcess);
@@ -58,6 +62,17 @@ app.use(express.json());
 // app.use(cors())
 app.use(express.static('dist'))
 
+app.get('/tmux/open', (req, res) => {
+  const filename = req.headers.filename
+  if (!filename) {
+    return res.sendStatus(404);  
+  }
+  
+  // res.sendStatus(200);
+  res.write(readFileSync(filename, 'utf-8'))
+  res.end()
+})
+
 app.get('*', (req, res) => {
   console.log('get', req.url, req.headers)
 
@@ -67,6 +82,8 @@ app.get('*', (req, res) => {
   res.setHeader('Transfer-Encoding', 'chunked');
   res.flushHeaders();
 })
+
+
 
 app.post('/tmux/resize', (req, res) => {
   resize(req.headers.cols | 0, req.headers.rows | 0, req.headers.id);
