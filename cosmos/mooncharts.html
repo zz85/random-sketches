@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Moon charts</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="//writ.cmcenroe.me/1.0.4/writ.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/charts.css/dist/charts.min.css">
+    <style>
+        .arrow {
+            font-size: 10px;
+            padding: 0px 0px 0px 10px;
+            margin: 0px;
+            display: inline-block;
+            transform-origin: 80% 50%;
+        }
+
+        .sunlightPie {
+            display: inline-block;
+            height: 14px;
+            width: 14px;
+            /* max-width: 15px; */
+            /* width: 25px; */
+        }
+
+        .sunlightBar {
+            width: 100px;
+            margin: 0 auto;
+        }
+
+        .sunlightBar .bar {
+            --color: orange;
+        }
+
+        #charts {
+            padding: 5px;
+            height: 500px;
+            overflow: auto;
+        }
+    </style>
+</head>
+
+
+<body>
+
+    <script src="locator.js"></script>
+    <script src="sunplots.js"></script>
+    <script src="vendor/suncalc.js"></script>
+    <header>
+        <h1>Moon Charts</h1>
+        <p>
+        </p>
+    </header>
+    <main>
+        <p id="locLabel"></p>
+        <button onclick="locator.getLocation(update);">Update my location</button>
+        <button onclick="charts.style.display = charts.style.display ? '' : 'none'">Toggle Table</button>
+        <p>
+            <p id="charts" />
+        <p id="viz"></p>
+        </p>
+    </main>
+
+    <script>
+        const locator = new Locator();
+
+        const ONE_SEC = 1000;
+        const ONE_MIN = ONE_SEC * 60;
+        const ONE_HOUR = ONE_MIN * 60;
+        const ONE_DAY = ONE_HOUR * 24;
+
+        if (!locator.timestamp) {
+            locator.getLocation(update);
+        } else {
+            update();
+
+            if ((Date.now() - locator.timestamp) > ONE_HOUR) {
+                locator.getLocation(update);
+            }
+        }
+
+        function update() {
+            locLabel.innerHTML = `Location: ${locator.latitude.toFixed(3)}, ${locator.longitude.toFixed(3)}
+    <br/>Updated: ${new Date(locator.timestamp)}`;
+
+            // const [shortest, longest] = 
+            getCharts(locator.latitude, locator.longitude);
+            // const dom = plotSun(new Date(), locator.latitude, locator.longitude, shortest, longest);
+            // const compassDom = plotSunCompass(new Date(), locator.latitude, locator.longitude, shortest, longest);
+            // var viz = document.getElementById('viz')
+            // viz.replaceChildren(compassDom);
+            // viz.appendChild(dom);
+        }
+
+        function createCanvas(w, h) {
+            var canvas = document.createElement('canvas');
+            var dpr = window.devicePixelRatio;
+            canvas.width = w * dpr;
+            canvas.height = h * dpr;
+            canvas.style.width = `${w}px`
+            canvas.style.height = `${h}px`
+
+            var ctx = canvas.getContext('2d')
+            ctx.scale(dpr, dpr)
+            ctx.w = w;
+            ctx.h = h;
+            ctx.dom = canvas;
+            return ctx;
+        }
+
+        function getCharts(lat, lon) {
+            var now = new Date();
+            var moonTimesToday = SunCalc.getMoonTimes(now, lat, lon);
+            console.log('moonTimesToday', moonTimesToday);
+
+            var moonTimesTmr = SunCalc.getMoonTimes(new Date(now.getTime() + ONE_DAY), lat, lon);
+            console.log('moonTimesTmr', moonTimesTmr);
+
+
+            const DAYS_BEFORE = 3;
+
+            let days = [];
+            for (let day = -DAYS_BEFORE; day < 5; day++) {
+                const dt = new Date(now.getTime() + day * ONE_DAY);
+                const times = SunCalc.getTimes(dt, lat, lon);
+
+
+            }
+        }
+
+        function getCharts2(lat, lon) {
+
+            const sortByDaylight = days.concat();
+            sortByDaylight.sort((a, b) => a.daylight - b.daylight);
+            const shortestDay = sortByDaylight[0]; // winter solstice
+            const longestDay = sortByDaylight[sortByDaylight.length - 1]; // summer solstice
+            const today = days[DAYS_BEFORE];
+            console.log(shortestDay, longestDay);
+
+            var info = `
+            Today: <b><mark>${template(today)}</mark></b><br/>
+            Shortest day: ${template(shortestDay)}<br/>
+            Longest day: ${template(longestDay)}<br/>`
+
+            function template(day) {
+                return `${day.date}, sunrise: ${day.sunrise}${tinyAzimuthHelper(day.sunrisePos.azimuth)},
+                sunset: ${day.sunset}${tinyAzimuthHelper(day.sunsetPos.azimuth)},
+                daylight: ${msToTime(day.daylight)}`
+            }
+
+            var table = [`<table>
+                <thead>
+                <tr>
+                    <td>date</td>
+                    <td>sunrise</td>
+                    <td>sunset</td>
+                    <!--<td>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</td>-->
+                    <td>daylight</td>
+                </tr>
+                </thead><tbody>`];
+
+            days.forEach(({ day, times, date, sunrise, sunset, daylight, sunrisePos, sunsetPos }) => {
+                const sunriseDeg = getAngle(sunrisePos.azimuth + Math.PI);
+                const sunsetDeg = getAngle(sunsetPos.azimuth + Math.PI);
+
+                table.push(`<tr>
+                    <td>${day ? '' : '<mark>'}${date} ${day ? `<small>(day ${day > 0 ? '+' : ''}${day})</small>` : '</mark>'}</td>
+                    <td>${sunrise}${tinyAzimuthHelper(sunrisePos.azimuth)}</td>
+                    <td>${sunset}${tinyAzimuthHelper(sunsetPos.azimuth)}</td>
+                    <td>${sunlightPie(daylight / ONE_DAY)} ${msToTime(daylight)} <small>(${today.daylight > daylight ? '-' : '+'}${msToTime(Math.abs(today.daylight - daylight))})</small></td>                    
+                    </tr>`)
+            });
+            table.push(`</tbody></table>`)
+            // charts.innerHTML = info + table.join('')
+
+            return;
+        }
+
+        function tinyAzimuthHelper(azimuth) {
+            const angle = azimuth + Math.PI;
+            const deg = getAngle(angle);
+            return `${arrowHelper(deg)} <small><small>${fmtAngle(angle)}</small></small>`
+        }
+
+        function arrowHelper(dir) {
+            return `<span style="transform: rotate(${dir}deg);" class="arrow">↑</span>`
+        }
+
+
+        function getAngle(rad) {
+            return rad * 180 / Math.PI;
+        }
+
+        function fmtAngle(rad) {
+            return `${getAngle(rad).toFixed(0)}°`
+        }
+
+        function msToTime(ms) {
+            let remain = ms;
+            let result = [];
+            if (remain > ONE_HOUR) {
+                const hour = remain / ONE_HOUR | 0;
+                remain %= hour * ONE_HOUR;
+                result.push(`${hour}h`)
+            }
+
+            if (remain > ONE_MIN) {
+                const min = remain / ONE_MIN | 0;
+                remain %= min * ONE_MIN;
+                result.push(`${min}m`)
+            }
+
+            return result.join(' ')
+        }
+
+        function sunlightPie(x) {
+            return `
+            <div class="sunlightPie">
+                <table class="charts-css pie hide-data">
+                <tbody>
+                    <tr>
+                    <td style="--start: 0.00; --end: 0.00;">
+                        <span class="data"></span>
+                    </td>
+                    </tr>
+                    <tr>
+                    <td style="--start: 0.0; --end: ${x};">
+                        <span class="data"></span>
+                    </td>
+                    </tr>
+                    <!--
+                    -->
+                </tbody>
+                </table>
+            </div>
+            `
+        }
+
+        function sunlightBar(x, data = '') {
+            return `
+            <span class="sunlightBar">
+                <table class="charts-css bar stacked">
+                <tbody>
+                    <td style="--start: 0.0; --end: ${x};">
+                        <!--<span class="data">${data}</span>-->
+                    </td>
+                    </tr>
+                    <!-- multiple stacked
+                    -->
+                </tbody>
+                </table>
+            </span>
+            `
+        }
+    </script>
+</body>
+
+</html>
