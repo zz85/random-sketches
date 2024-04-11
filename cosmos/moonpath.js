@@ -7,8 +7,9 @@ const ONE_DAY = ONE_HOUR * 24;
  * Pre-configures locator and sun data
  */
 var now = new Date();
+var delta = 0; // - 2 * ONE_DAY;
 
-now = new Date(now.getTime() - 2 * ONE_DAY) 
+now = new Date(now.getTime())
 
 var this_hour = new Date(now)
 this_hour.setMinutes(0);
