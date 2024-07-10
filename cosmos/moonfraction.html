@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>moon viz</title>
+    <meta charset="utf-8">
+    <style>
+        body { 
+            background: #111;
+            /* eee */
+        }
+    </style>
+</head>
+
+
+<body>
+    <script src="vendor/suncalc.js"></script>
+    <script>
+        // 354 ch 47/48 of Astronomical Algorithms
+        // 9 July 2024
+
+        function createCanvas(w, h) {
+            var canvas = document.createElement('canvas');
+            var dpr = window.devicePixelRatio;
+            canvas.width = w * dpr;
+            canvas.height = h * dpr;
+            canvas.style.width = `${w}px`
+            canvas.style.height = `${h}px`
+
+            var ctx = canvas.getContext('2d')
+            ctx.scale(dpr, dpr)
+            ctx.w = w;
+            ctx.h = h;
+            ctx.dom = canvas;
+            return ctx;
+        }
+
+        function drawMoon(date, illumination) {
+            console.log(illumination);
+            let { fraction, phase, angle } = illumination;
+            
+            var BOX = 200;
+            var RADIUS = 80; 
+            var ctx = createCanvas(BOX, BOX)
+            document.body.appendChild(ctx.dom);
+
+            ctx.translate(BOX/2, BOX/2);
+
+            ctx.save();
+
+            ctx.rotate(angle/ 360)
+            ctx.lineWidth = 2;
+            ctx.arc(0, 0, RADIUS, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.fillStyle = '#3f3f3f'
+            // ctx.fillStyle = 'lightgrey';
+            // ctx.fillStyle = 'darkgrey';
+            // ctx.fillStyle = 'black';
+            ctx.fill();
+
+            /*
+            ctx.moveTo(0, -RADIUS);
+            ctx.quadraticCurveTo((1 - fraction) * RADIUS, 0, 0, RADIUS);
+            ctx.stroke();
+            */
+
+            /*
+            ctx.moveTo(0, -RADIUS);
+            let max = (1 - fraction) * RADIUS;
+
+            for (let y = -RADIUS; y <= RADIUS; y++) {
+                let k = Math.abs(y) / RADIUS;
+                let t = 1 - k * k;
+                // let t = Math.sin((1 + k) * Math.PI * 0.5)
+                if (y > - RADIUS) {
+                    ctx.lineTo(t * max, y)
+                } else {
+                    ctx.moveTo(t * max, y)
+                }
+                
+            }
+            ctx.stroke();
+            */
+
+            /*
+            // fun yang
+            ctx.moveTo(0, -RADIUS);
+            let max = (1 - fraction) * RADIUS;
+
+            for (let y = -RADIUS; y <= RADIUS; y++) {
+                let k = y / RADIUS;
+                let t = Math.sin(k * Math.PI)
+                if (y > - RADIUS) {
+                    ctx.lineTo(t * max, y)
+                } else {
+                    ctx.moveTo(t * max, y)
+                }
+                
+            }
+            ctx.stroke();
+            */
+           ctx.beginPath();
+            ctx.moveTo(0, -RADIUS);
+            
+            const rot = Math.acos((0.5 - fraction) * 2);
+
+            for (let r = 0; r < 180; r++) {
+                let rad = r / 360 * Math.PI * 2 - 0.5 * Math.PI;
+                let x = Math.cos(rad) * RADIUS;
+                let y = Math.sin(rad) * RADIUS;
+
+                ctx.lineTo(x, y)
+            }
+
+            for (let r = 180; r >= 0; r--) {
+                let rad = r / 360 * Math.PI * 2 - 0.5 * Math.PI;
+                let x = Math.cos(rad) * RADIUS;
+                let y = Math.sin(rad) * RADIUS;
+
+                // let x2 = Math.cos(-fraction * Math.PI) * x;
+                let x2 = Math.cos(rot) * x;
+
+                ctx.lineTo(x2, y)
+            }
+            ctx.closePath();
+            ctx.stroke();
+            ctx.fillStyle = '#fff293';
+            // ctx.fillStyle = 'yellow';
+            // ctx.fillStyle = 'white';
+            ctx.fill();
+            
+
+            /*
+            let illuminationFraction = 1 - fraction;
+            // Draw the shadow over the moon to represent the illumination
+            ctx.beginPath();
+            ctx.arc(0 + (RADIUS * (1 - illuminationFraction) * 2), 0, RADIUS, 0, 2 * Math.PI);
+            ctx.fillStyle = 'black';
+            ctx.fill();
+            ctx.globalCompositeOperation = 'destination-out';
+
+            // Draw the illuminated portion
+            ctx.beginPath();
+            ctx.arc(0 + (RADIUS * (1 - illuminationFraction) * 2), 0, RADIUS, 0, 2 * Math.PI);
+            ctx.fillStyle = 'lightgray';
+            ctx.fill();
+            ctx.closePath();
+
+            // Reset the global composite operation
+            ctx.globalCompositeOperation = 'source-over';
+
+            // draw a moon outline for better visibility
+            // ctx.beginPath();
+            // ctx.arc(0, 0, RADIUS, 0, 2 * Math.PI);
+            // ctx.strokeStyle = 'gray';
+            // ctx.lineWidth = 2;
+            // ctx.stroke();
+            // ctx.closePath();
+            */
+
+            // info
+            // ctx.fillStyle = '#333'
+            ctx.restore();
+            ctx.fillText(`${date.toString().substring(0, 15)}`, -40, -40)
+            ctx.fillText(`Fraction: ${fraction.toFixed(2)}`, -40, -30)
+            ctx.fillText(`Phase: ${phase.toFixed(2)}`, -40, -20)
+            ctx.fillText(`Angle: ${angle.toFixed(2)}`, -40, -10)
+
+        }     
+
+        var lat = 46.998628;
+        var lon = -121.533743;
+
+        var today = Date.now();
+
+        for (let i = 0 ; i < 30; i++) {
+            let date = new Date(today + i * 24 * 60 *  60 * 1000);
+            var illumination = SunCalc.getMoonIllumination(date, lat, lon)
+            drawMoon(date, illumination)
+        }
+
+    </script>
+</body>
+
+</html>
