@@ -48,7 +48,7 @@
 
             ctx.save();
 
-            ctx.rotate(angle/ 360)
+            ctx.rotate(angle + 0.5 * Math.PI)
             ctx.lineWidth = 2;
             ctx.arc(0, 0, RADIUS, 0, Math.PI * 2);
             ctx.stroke();
