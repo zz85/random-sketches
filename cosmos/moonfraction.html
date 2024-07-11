@@ -6,7 +6,7 @@
     <meta charset="utf-8">
     <style>
         body { 
-            background: #111;
+            background: #666;
             /* eee */
         }
     </style>
@@ -52,10 +52,10 @@
             ctx.lineWidth = 2;
             ctx.arc(0, 0, RADIUS, 0, Math.PI * 2);
             ctx.stroke();
-            ctx.fillStyle = '#3f3f3f'
+            // ctx.fillStyle = '#3f3f3f'
             // ctx.fillStyle = 'lightgrey';
             // ctx.fillStyle = 'darkgrey';
-            // ctx.fillStyle = 'black';
+            ctx.fillStyle = 'black';
             ctx.fill();
 
             /*
@@ -117,16 +117,24 @@
                 let x = Math.cos(rad) * RADIUS;
                 let y = Math.sin(rad) * RADIUS;
 
+                // incorrect
                 // let x2 = Math.cos(-fraction * Math.PI) * x;
-                let x2 = Math.cos(rot) * x;
+                // correctt
+                // let x2 = Math.cos(rot) * x;
+                // the fraction line refers to the ratio of illuminated
+                //  length and also the area. so a linear interpolation of
+                // of x works the same as rotating based on angle
+                // 0 => x, 0.5 => 0, 1 => -x
+                let x2 = (fraction * -2 + 1) * x;
 
                 ctx.lineTo(x2, y)
             }
             ctx.closePath();
             ctx.stroke();
-            ctx.fillStyle = '#fff293';
+            // ctx.fillStyle = '#fff293';
             // ctx.fillStyle = 'yellow';
             // ctx.fillStyle = 'white';
+            ctx.fillStyle = '#fff9fe';
             ctx.fill();
             
 
