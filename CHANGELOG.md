@@ -1,7 +1,10 @@
 # Logs
 
+11 Jul 2024
+- [moon charts](cosmos/mooncharts.html) - strip down to basic 30 day dump. 
+
 10 Jul 2024
-- Visualization of moon across it's phases. [moonfraction](cosmos/moonfraction.html). Other WIPs [moonpath wip1](cosmos/wip_moonpath_three.html) [moonpath wip2](cosmos/wip2_moonpath_three.html) [moon charts](cosmos/mooncharts.html)
+- Visualization of moon across it's phases. [moonfraction](cosmos/moonfraction.html). Other WIPs [moonpath wip1](cosmos/wip_moonpath_three.html) [moonpath wip2](cosmos/wip2_moonpath_three.html)
 
 16 March 2024
 - Adding TextGeometry to three.js, including serialization/deserialization support https://github.com/mrdoob/three.js/pull/27931
