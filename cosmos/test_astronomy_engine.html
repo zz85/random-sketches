@@ -1,0 +1,84 @@
+<html>
+    <meta charset="utf-8">
+<body>
+
+<script src="vendor/astronomy.browser.min.js"></script>
+<script src="locator.js"></script>
+<script>
+
+const loc = new Locator();
+loc.getLocation(loc => {
+    console.log(loc);
+
+    const lat = loc.latitude;
+    const lon = loc.longitude;
+
+    start(lat, lon);
+});
+
+function start(lat, lon) {
+    // rise and set
+
+    const observer = new Astronomy.Observer(lat, lon, 0);
+    const date = new Date();
+
+    let sunrise  = Astronomy.SearchRiseSet(Astronomy.Body.Sun,  observer, +1, date, 300);
+    let sunset   = Astronomy.SearchRiseSet(Astronomy.Body.Sun,  observer, -1, date, 300);
+    let moonrise = Astronomy.SearchRiseSet(Astronomy.Body.Moon, observer, +1, date, 300);
+    let moonset  = Astronomy.SearchRiseSet(Astronomy.Body.Moon, observer, -1, date, 300);
+
+    let marsrise = Astronomy.SearchRiseSet(Astronomy.Body.Mars, observer, +1, date, 300);
+    let marsset = Astronomy.SearchRiseSet(Astronomy.Body.Mars, observer, -1, date, 300);
+
+    console.log('', sunrise, sunset, moonrise, moonset, marsrise, marsset);
+
+    // moon phase
+    const phase = Astronomy.MoonPhase(date);
+    console.log('phase', phase);
+
+    const illum = Astronomy.Illumination(Astronomy.Body.Moon, date);
+    console.log('illum', illum);
+
+    // phase_angle
+    // phase_fraction
+
+      // Predict when the next 10 lunar quarter phases will happen.
+    console.log('The next 10 lunar quarters are:');
+    const QuarterName = ['New Moon 🌑', 'First Quarter 🌓', 'Full Moon 🌕', 'Third Quarter 🌗'];
+    let mq;
+    for (let i=0; i < 10; ++i) {
+        if (mq === undefined) {
+            // The first time around the for loop, we search forward
+            // from the current date and time to find the next quarter
+            // phase, whatever it might be.
+            mq = Astronomy.SearchMoonQuarter(date);
+        } else {
+            // Use the previous moon quarter information to find the next quarter phase event.
+            mq = Astronomy.NextMoonQuarter(mq);
+        }
+        console.log(`${(mq.time.date)} : ${QuarterName[mq.quarter]}`);
+    }
+
+    // Seasons
+    let seasons = Astronomy.Seasons(date.getFullYear());
+
+    function Format(x) {
+        return x.toFixed(2).padStart(8);
+    }
+    
+    // Positions
+    for (let body of ['Sun', 'Moon', 'Mercury', 'Venus', 'Mars', 'Jupiter', 'Saturn', 'Uranus', 'Neptune', 'Pluto']) {
+        let equ_2000 = Astronomy.Equator(body, date, observer, false, true);
+        let equ_ofdate = Astronomy.Equator(body, date, observer, true, true);
+        let hor = Astronomy.Horizon(date, observer, equ_ofdate.ra, equ_ofdate.dec, 'normal');
+        console.log(`${body.padEnd(8)} ${Format(equ_2000.ra)} ${Format(equ_2000.dec)} ${Format(hor.azimuth)} ${Format(hor.altitude)}`);
+    }
+
+    //
+}
+
+
+
+</script>
+</body>
+</html>

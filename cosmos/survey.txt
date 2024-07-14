@@ -1,0 +1,63 @@
+Survey of open source libraries
+
+===
+https://www.npmjs.com/package/suncalc
+nice simple implementation of sun, moon calculations
+based on Astronomical Algorithms and other formulas from
+astronomical answers: https://aa.quae.nl/en/reken/zonpositie.html
+
+
+https://www.npmjs.com/package/suncalc3
+an extended version of suncal, provides emojis and more detailed moon phases
+
+https://www.npmjs.com/package/astronomy-engine
+Accurate but compact algorithm
+JS, C, python lib
+tested against VSOP87 and NOVAS C 3.1.
+
+https://www.npmjs.com/package/astronomy-bundle
+based on Jean Meeus 'Astronomical Algorithms' book and the VSOP87 theory.
+
+https://www.npmjs.com/package/spacetime-daylight
+sun times based on location
+
+https://www.npmjs.com/package/lunarphase-js
+just moon coordinates
+
+
+https://docs.rs/crate/practical-astronomy-rust/latest
+https://github.com/jfcarr/practical-astronomy-rust/
+rust package based on
+
+
+http://www.planetaryorbits.com/javascript-tutorials-overview.html
+orbit simulations
+
+https://github.com/mivion/ephemeris?tab=readme-ov-file
+js implementation of Steve Moshier's algorithms
+
+http://www.stjarnhimlen.se/comp/ppcomp.html
+How to compute planetary positions
+
+
+The formula for calculating the tidal height (h) at a given location (latitude ϕ and longitude λ) and time (t) based on the positions of the moon and sun is as follows:
+
+h = A_m * cos(2π * (t - t_m) / T_m) * cos(2π * δ_m / 360) * cos(2π * (λ - λ_m) / 360) + A_s * cos(2π * (t - t_s) / T_s) * cos(2π * δ_s / 360) * cos(2π * (λ - λ_s) / 360)
+
+Where:
+
+    A_m and A_s are the amplitudes of the tidal forces due to the moon and sun, respectively (A_m ≈ 0.42 m, A_s ≈ 0.23 m)
+    t is the time for which the tidal height is calculated
+    t_m and t_s are the times of the moon's and sun's meridian transits (when they cross the local meridian), respectively
+    T_m and T_s are the periods of the moon's and sun's orbits around the Earth (T_m ≈ 24 hours 50 minutes, T_s ≈ 24 hours)
+    δ_m and δ_s are the declinations (angular distances north or south of the celestial equator) of the moon and sun, respectively
+    λ is the longitude of the location
+    λ_m and λ_s are the longitudes of the moon and sun, respectively
+
+https://stellarium-web.org/
+
+https://nssdc.gsfc.nasa.gov/planetary/factsheet/
+
+https://ssd.jpl.nasa.gov/horizons/
+horizons.jpl.nasa.gov 6775
+

@@ -1,5 +1,8 @@
 # Logs
 
+14 July 2024
+- Testing astronomy engine lib
+
 11 Jul 2024
 - [moon charts](cosmos/mooncharts.html) - strip down to basic 30 day dump. 
 
