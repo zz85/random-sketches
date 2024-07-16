@@ -14,6 +14,20 @@ class Locator {
         }
     }
 
+    load(cb) {
+        const ONE_HOUR = 60 * 60 * 1000;
+        if (!this.timestamp) {
+            this.getLocation(cb);
+        } else {
+            cb(this);
+
+            // use cache results for 1 hour
+            if ((Date.now() - this.timestamp) > ONE_HOUR) {
+                this.getLocation(cb);
+            }
+        }
+    }
+
     getLocation(cb) {
         navigator.geolocation.getCurrentPosition((position) => {
             this.showPosition(position);

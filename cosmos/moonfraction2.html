@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>moon viz 2</title>
+    <meta charset="utf-8">
+    <style>
+        body { 
+            background: #666;
+            /* eee */
+        }
+    </style>
+</head>
+
+
+<body>
+    <script src="vendor/astronomy.browser.min.js"></script>
+    <script>
+        // 354 ch 47/48 of Astronomical Algorithms
+        // 9 July 2024
+
+        function createCanvas(w, h) {
+            var canvas = document.createElement('canvas');
+            var dpr = window.devicePixelRatio;
+            canvas.width = w * dpr;
+            canvas.height = h * dpr;
+            canvas.style.width = `${w}px`
+            canvas.style.height = `${h}px`
+
+            var ctx = canvas.getContext('2d')
+            ctx.scale(dpr, dpr)
+            ctx.w = w;
+            ctx.h = h;
+            ctx.dom = canvas;
+            return ctx;
+        }
+
+        function drawMoon(date, illumination) {
+            console.log(illumination);
+            const { phase_fraction, phase_angle, mag } = illumination;
+            const angle = phase_angle / 180 * Math.PI;
+            const fraction = phase_fraction;
+            
+            var BOX = 200;
+            var RADIUS = 80; 
+            var ctx = createCanvas(BOX, BOX)
+            document.body.appendChild(ctx.dom);
+
+            ctx.translate(BOX/2, BOX/2);
+
+            ctx.save();
+
+            ctx.rotate(angle - 0.25 * Math.PI)
+            ctx.lineWidth = 2;
+            ctx.arc(0, 0, RADIUS, 0, Math.PI * 2);
+            ctx.stroke();
+            // ctx.fillStyle = '#3f3f3f'
+            // ctx.fillStyle = 'lightgrey';
+            // ctx.fillStyle = 'darkgrey';
+            ctx.fillStyle = 'black';
+            ctx.fill();
+
+           
+           ctx.beginPath();
+            ctx.moveTo(0, -RADIUS);
+            
+            const rot = Math.acos((0.5 - fraction) * 2);
+
+            for (let r = 0; r < 180; r++) {
+                let rad = r / 360 * Math.PI * 2 - 0.5 * Math.PI;
+                let x = Math.cos(rad) * RADIUS;
+                let y = Math.sin(rad) * RADIUS;
+
+                ctx.lineTo(x, y)
+            }
+
+            for (let r = 180; r >= 0; r--) {
+                let rad = r / 360 * Math.PI * 2 - 0.5 * Math.PI;
+                let x = Math.cos(rad) * RADIUS;
+                let y = Math.sin(rad) * RADIUS;
+
+                // incorrect
+                // let x2 = Math.cos(-fraction * Math.PI) * x;
+                // correctt
+                // let x2 = Math.cos(rot) * x;
+                // the fraction line refers to the ratio of illuminated
+                //  length and also the area. so a linear interpolation of
+                // of x works the same as rotating based on angle
+                // 0 => x, 0.5 => 0, 1 => -x
+                let x2 = (fraction * -2 + 1) * x;
+
+                ctx.lineTo(x2, y)
+            }
+            ctx.closePath();
+            ctx.stroke();
+            // ctx.fillStyle = '#fff293';
+            // ctx.fillStyle = 'yellow';
+            // ctx.fillStyle = 'white';
+            ctx.fillStyle = '#fff9fe';
+            ctx.fill();
+            
+
+          
+            // info
+            // ctx.fillStyle = '#333'
+            ctx.restore();
+            ctx.fillStyle = '#aaa'
+            ctx.fillText(`${date.toString().substring(0, 15)}`, -40, -40)
+            ctx.fillText(`Fraction: ${fraction.toFixed(2)}`, -40, -30)
+            ctx.fillText(`phase_angle: ${phase_angle.toFixed(2)}`, -40, -20)
+            ctx.fillText(`Mag: ${mag.toFixed(2)}`, -40, -10)
+
+        }     
+
+        var lat = 46.998628;
+        var lon = -121.533743;
+
+        var today = Date.now();
+        
+        const observer = new Astronomy.Observer(lat, lon, 0);
+
+        for (let i = 0 ; i < 30; i++) {
+
+            const date = new Date(today + i * 24 * 60 *  60 * 1000);
+            const illum = Astronomy.Illumination(Astronomy.Body.Moon, date);
+
+            drawMoon(date, illum)
+        }
+
+    </script>
+</body>
+
+</html>

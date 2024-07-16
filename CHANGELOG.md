@@ -1,7 +1,10 @@
 # Logs
 
-14 July 2024
-- Testing astronomy engine lib
+15 Jul 2024
+- Attempted to reproduce moon [fraction vis using astronomy lib](cosmos/moonfraction2.html)
+
+14 Jul 2024
+- [Testing astronomy engine lib](cosmos/test_astronomy_engine.html). Also [nodejs comparison with suncalc3](cosmos/test_astro_vs_suncalc.js).
 
 11 Jul 2024
 - [moon charts](cosmos/mooncharts.html) - strip down to basic 30 day dump. 
