@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CPU Affinity Planner</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .config { margin-bottom: 20px; }
+        .config input, .config select { margin: 5px; padding: 5px; }
+        .config input[type="text"], .config input[type="number"] { width: 80px; }
+        .numa-zone { border: 2px solid #333; margin: 10px; padding: 10px; display: inline-block; }
+        .cpu-core { width: 30px; height: 15px; border: 1px solid #ccc; display: inline-block; margin: 1px; text-align: center; line-height: 15px; font-size: 8px; cursor: pointer; vertical-align: top; }
+        .cpu-pair { display: inline-block; margin: 2px; }
+        .ht-core { margin-top: 0; }
+        .offline { background-color: #ff6b6b; }
+        .reserved { background-color: #ffd93d; }
+        .legend { margin: 20px 0; }
+        .legend span { display: inline-block; width: 20px; height: 20px; margin: 0 5px; vertical-align: middle; }
+        .app-config { margin: 10px 0; padding: 10px; border: 1px solid #ddd; }
+    </style>
+</head>
+<body>
+    <h1>CPU Affinity Planner</h1>
+
+    <div class="config">
+        <label>Logical Cores: <input type="number" id="cores" value="256" min="1"></label>
+        <label>Sockets: <input type="number" id="sockets" value="2" min="1"></label>
+        <label>NUMA Zones: <input type="number" id="numa" value="4" min="1"></label>
+        <button onclick="generateLayout()">Generate</button>
+    </div>
+
+    <div class="app-config">
+        <h3>Applications</h3>
+        <div>
+            <label>App:
+                <select id="appName">
+                    <option value="irq">IRQ</option>
+                    <option value="custom">Custom</option>
+                    <option value="nginx">Nginx</option>
+                    <option value="squid">Squid</option>
+                    <option value="redis">Redis</option>
+                    <option value="mysql">MySQL</option>
+                </select>
+                <input type="text" id="customApp" placeholder="custom name" style="display:none;">
+            </label>
+            <label>Cores: <input type="number" id="appCores" placeholder="64"></label><br>
+            <label>Strategy:
+                <select id="appStrategy">
+                    <option value="balance">Balance across NUMA</option>
+                    <option value="fit">Fit within one NUMA</option>
+                </select>
+            </label>
+            <label>NUMA Zones: <input type="text" id="numaZones" placeholder="all (or 0-3, 0,2, etc)"></label>
+            <label id="startingNumaLabel">Starting NUMA: <input type="number" id="startingNuma" value="0" min="0"></label><br>
+            <label>Allocation:
+                <select id="allocOrder">
+                    <option value="start">From start</option>
+                    <option value="end">From end</option>
+                </select>
+            </label>
+            <label><input type="checkbox" id="useSiblings" checked> Use HT siblings</label><br>
+            <button onclick="assignApp()">Assign</button>
+        </div>
+        <div style="margin-top: 10px;">
+            <button onclick="clearAll()">Clear All</button>
+        </div>
+        <div id="appList" style="margin-top: 10px;"></div>
+    </div>
+
+    <div class="legend">
+        <span style="background-color: #fff; border: 1px solid #ccc;"></span> Available
+        <span class="offline"></span> Offline
+        <span class="reserved"></span> Reserved
+    </div>
+
+    <div id="visualization"></div>
+
+    <script src="cpu-affinity-planner.js"></script>
+    <script>
+        let visualizer = new CpuNumaVisualizer();
+        let appColors = {};
+
+        function getAppColor(appName) {
+            if (!appColors[appName]) {
+                const hue = (Object.keys(appColors).length * 137.5 + 120) % 360; // Start at green (120°)
+                appColors[appName] = `hsl(${hue}, 70%, 70%)`;
+            }
+            return appColors[appName];
+        }
+
+        document.getElementById('appName').onchange = function() {
+            const customInput = document.getElementById('customApp');
+            customInput.style.display = this.value === 'custom' ? 'inline' : 'none';
+        };
+
+        document.getElementById('appStrategy').onchange = function() {
+            const numaZones = document.getElementById('numaZones').parentElement;
+            const startingNuma = document.getElementById('startingNumaLabel');
+            
+            if (this.value === 'balance') {
+                numaZones.style.display = 'inline';
+                startingNuma.style.display = 'none';
+            } else {
+                numaZones.style.display = 'none';
+                startingNuma.style.display = 'inline';
+            }
+        };
+
+        function generateLayout() {
+            const cores = parseInt(document.getElementById('cores').value);
+            const sockets = parseInt(document.getElementById('sockets').value);
+            const numa = parseInt(document.getElementById('numa').value);
+
+            visualizer.generateLayout(cores, sockets, numa);
+            renderVisualization();
+            updateAppList();
+        }
+
+        function renderVisualization() {
+            const viz = document.getElementById('visualization');
+            viz.innerHTML = '';
+
+            visualizer.getNumaZones().forEach((zone, numaId) => {
+                const availableCores = zone.filter(cpu => cpu.status === 'available' && !cpu.app).length;
+                
+                const numaDiv = document.createElement('div');
+                numaDiv.className = 'numa-zone';
+                numaDiv.innerHTML = `<h4>NUMA ${numaId} (${availableCores} available)</h4>`;
+
+                // Group physical cores with their HT siblings
+                const physicalCores = zone.filter(cpu => !cpu.isHT);
+
+                physicalCores.forEach(physCore => {
+                    const htCore = zone.find(cpu => cpu.isHT && cpu.sibling === physCore.id);
+
+                    const pairDiv = document.createElement('div');
+                    pairDiv.className = 'cpu-pair';
+
+                    // Physical core
+                    const physDiv = document.createElement('div');
+                    physDiv.className = `cpu-core ${physCore.status}`;
+                    if (physCore.app) physDiv.style.backgroundColor = getAppColor(physCore.app);
+                    physDiv.textContent = physCore.id;
+                    physDiv.onclick = () => toggleCpuStatus(physCore.id);
+                    pairDiv.appendChild(physDiv);
+
+                    // HT sibling
+                    if (htCore) {
+                        const htDiv = document.createElement('div');
+                        htDiv.className = `cpu-core ht-core ${htCore.status}`;
+                        if (htCore.app) htDiv.style.backgroundColor = getAppColor(htCore.app);
+                        htDiv.textContent = htCore.id;
+                        htDiv.onclick = () => toggleCpuStatus(htCore.id);
+                        pairDiv.appendChild(htDiv);
+                    }
+
+                    numaDiv.appendChild(pairDiv);
+                });
+
+                viz.appendChild(numaDiv);
+            });
+        }
+
+        function toggleCpuStatus(cpuId) {
+            visualizer.toggleCpuStatus(cpuId);
+            renderVisualization();
+        }
+
+        function assignApp() {
+            let appName = document.getElementById('appName').value;
+            if (appName === 'custom') {
+                appName = document.getElementById('customApp').value || 'custom';
+            }
+            const appCores = parseInt(document.getElementById('appCores').value) || 0;
+            const strategy = document.getElementById('appStrategy').value;
+            const allocOrder = document.getElementById('allocOrder').value;
+            const useSiblings = document.getElementById('useSiblings').checked;
+            const startingNuma = parseInt(document.getElementById('startingNuma').value) || 0;
+            const numaZoneList = visualizer.parseNumaZoneList(document.getElementById('numaZones').value);
+
+            visualizer.assignApp(appName, appCores, strategy, allocOrder, useSiblings, startingNuma, numaZoneList);
+            renderVisualization();
+            updateAppList();
+        }
+
+        function clearAll() {
+            visualizer.clearAll();
+            renderVisualization();
+            updateAppList();
+        }
+
+        function updateAppList() {
+            const appList = document.getElementById('appList');
+            appList.innerHTML = '<h4>Assigned Applications:</h4>';
+
+            Object.entries(visualizer.getAssignedApps()).forEach(([app, cores]) => {
+                const coreList = visualizer.getAppCoreList(app);
+                const div = document.createElement('div');
+                div.innerHTML = `<span style="display:inline-block;width:20px;height:20px;background-color:${getAppColor(app)};margin-right:5px;vertical-align:middle;"></span>${app}: ${cores} cores (${coreList}) <button onclick="removeApp('${app}')">Remove</button>`;
+                appList.appendChild(div);
+            });
+        }
+
+        function removeApp(appName) {
+            visualizer.removeApp(appName);
+            renderVisualization();
+            updateAppList();
+        }
+
+        generateLayout();
+        document.getElementById('appStrategy').onchange();
+    </script>
+</body>
+</html>

@@ -1,5 +1,8 @@
 # Logs
 
+13 Oct 2025
+- Add [CPU/Numa Affinity planner / visualizer](cpu-affinity-planner/index.html)
+
 15 Jul 2024
 - Attempted to reproduce moon [fraction vis using astronomy lib](cosmos/moonfraction2.html)
 
