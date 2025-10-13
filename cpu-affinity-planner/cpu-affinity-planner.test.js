@@ -151,7 +151,7 @@ test("assignApp fit strategy respects starting NUMA zone", () => {
 test("parseNumaZoneList handles various formats", () => {
     const visualizer = new CpuNumaVisualizer();
     visualizer.generateLayout(16, 2, 4);
-    
+
     expect(visualizer.parseNumaZoneList("0-3")).toEqual([0, 1, 2, 3]);
     expect(visualizer.parseNumaZoneList("0,2")).toEqual([0, 2]);
     expect(visualizer.parseNumaZoneList("1,2,3")).toEqual([1, 2, 3]);
@@ -162,13 +162,13 @@ test("parseNumaZoneList handles various formats", () => {
 test("assignApp balance respects NUMA zone list", () => {
     const visualizer = new CpuNumaVisualizer();
     visualizer.generateLayout(16, 2, 4);
-    
+
     // Balance across zones 0 and 2 only
     visualizer.assignApp('nginx', 4, 'balance', 'start', false, 0, [0, 2]);
-    
+
     const assignedCpus = visualizer.getCpuData().filter(cpu => cpu.app === 'nginx');
     expect(assignedCpus).toHaveLength(4);
-    
+
     // Should only use NUMA zones 0 and 2
     const numaIds = [...new Set(assignedCpus.map(cpu => cpu.numa))];
     expect(numaIds.sort()).toEqual([0, 2]);
@@ -181,6 +181,54 @@ test("compressCoreList creates ranges correctly", () => {
     expect(visualizer.compressCoreList([0, 32, 64, 96, 128, 160, 192, 224])).toBe('0,32,64,96,128,160,192,224');
     expect(visualizer.compressCoreList([0, 1, 32, 33, 64, 65, 96, 97])).toBe('0-1,32-33,64-65,96-97');
     expect(visualizer.compressCoreList([])).toBe('');
+});
+
+test("serializeAssignments creates correct format", () => {
+    const visualizer = new CpuNumaVisualizer();
+    visualizer.generateLayout(16, 2, 4);
+
+    visualizer.assignApp('nginx', 2, 'fit', 'start', false, 0);
+
+    const serialized = visualizer.serializeAssignments();
+    const config = JSON.parse(serialized);
+
+    expect(config.cores).toBe(16);
+    expect(config.sockets).toBe(2);
+    expect(config.numa).toBe(4);
+    expect(config.assignments.nginx).toBe('0-1');
+});
+
+test("deserializeAssignments restores configuration", () => {
+    const visualizer = new CpuNumaVisualizer();
+    visualizer.generateLayout(8, 2, 2);
+
+    const config = {
+        cores: 8,
+        sockets: 2,
+        numa: 2,
+        assignments: {
+            nginx: '0-1',
+            redis: '2'
+        }
+    };
+
+    const success = visualizer.deserializeAssignments(JSON.stringify(config));
+    expect(success).toBe(true);
+
+    const nginxCores = visualizer.getCpuData().filter(cpu => cpu.app === 'nginx');
+    const redisCores = visualizer.getCpuData().filter(cpu => cpu.app === 'redis');
+
+    expect(nginxCores.map(cpu => cpu.id).sort()).toEqual([0, 1]);
+    expect(redisCores.map(cpu => cpu.id)).toEqual([2]);
+});
+
+test("expandCoreList handles compressed ranges", () => {
+    const visualizer = new CpuNumaVisualizer();
+
+    expect(visualizer.expandCoreList('0-3')).toEqual([0, 1, 2, 3]);
+    expect(visualizer.expandCoreList('0,2,4')).toEqual([0, 2, 4]);
+    expect(visualizer.expandCoreList('0-1,3-4')).toEqual([0, 1, 3, 4]);
+    expect(visualizer.expandCoreList('')).toEqual([]);
 });
 
 test("removeApp clears specific app assignment", () => {

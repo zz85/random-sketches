@@ -228,12 +228,80 @@ class CpuNumaVisualizer {
         return this.compressCoreList(cores);
     }
 
+    getAppNumaList(appName) {
+        const numaZones = [...new Set(this.cpuData.filter(cpu => cpu.app === appName).map(cpu => cpu.numa))];
+        return this.compressCoreList(numaZones.sort((a, b) => a - b));
+    }
+
+    serializeAssignments() {
+        const config = {
+            cores: this.cpuData.length,
+            sockets: Math.max(...this.cpuData.map(cpu => cpu.socket)) + 1,
+            numa: this.numaZones.length,
+            assignments: {}
+        };
+
+        Object.keys(this.assignedApps).forEach(app => {
+            const coreIds = this.cpuData.filter(cpu => cpu.app === app).map(cpu => cpu.id);
+            config.assignments[app] = this.compressCoreList(coreIds);
+        });
+
+        return JSON.stringify(config);
+    }
+
+    deserializeAssignments(serializedData) {
+        try {
+            const config = JSON.parse(serializedData);
+
+            // Regenerate layout if system config differs
+            if (config.cores !== this.cpuData.length || config.numa !== this.numaZones.length) {
+                this.generateLayout(config.cores, config.sockets, config.numa);
+            } else {
+                this.clearAll();
+            }
+
+            Object.entries(config.assignments).forEach(([app, compressedCores]) => {
+                const coreIds = this.expandCoreList(compressedCores);
+                coreIds.forEach(coreId => {
+                    const cpu = this.cpuData[coreId];
+                    if (cpu && cpu.status === 'available') {
+                        cpu.app = app;
+                    }
+                });
+                this.assignedApps[app] = coreIds.length;
+            });
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    expandCoreList(compressedList) {
+        if (!compressedList) return [];
+
+        const cores = [];
+        const ranges = compressedList.split(',');
+
+        for (const range of ranges) {
+            if (range.includes('-')) {
+                const [start, end] = range.split('-').map(n => parseInt(n));
+                for (let i = start; i <= end; i++) {
+                    cores.push(i);
+                }
+            } else {
+                cores.push(parseInt(range));
+            }
+        }
+
+        return cores;
+    }
+
     parseNumaZoneList(zoneListStr) {
         if (!zoneListStr || zoneListStr.trim() === '') return null;
-        
+
         const zones = [];
         const parts = zoneListStr.split(',');
-        
+
         for (const part of parts) {
             const trimmed = part.trim();
             if (trimmed.includes('-')) {
@@ -245,7 +313,7 @@ class CpuNumaVisualizer {
                 zones.push(parseInt(trimmed));
             }
         }
-        
+
         return zones.filter(z => z >= 0 && z < this.numaZones.length);
     }
 }

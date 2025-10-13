@@ -75,3 +75,12 @@ $ set appCores placeholder to 64, rearrange app drop down to have IRQ first then
 $  capitalize App names in dropdown. Also would be nice to show remaining available CPU cores in each Numa
 zone every update
 
+ For each application, other than listing cpu lists, also add the numa list to the labels
+
+numa list can be compressed using the same function for compressing cpu lists
+
+Find a way to serialize and deserialize Assigned applications. Either use a text box or copy contents to clipboard
+
+everytime an update is made, update the configuration box, that way you can remove the "Save" button. also, save logical cores and numa zones into the json. applications should use compressed lists. Make sure y
+ou add serialization and deserialization logic to tests
+

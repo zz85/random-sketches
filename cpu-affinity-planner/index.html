@@ -65,6 +65,11 @@
         <div style="margin-top: 10px;">
             <button onclick="clearAll()">Clear All</button>
         </div>
+        <div style="margin-top: 10px;">
+            <label>Save/Load Configuration:</label><br>
+            <textarea id="configData" rows="3" cols="80" placeholder="Configuration data will appear here"></textarea><br>
+            <button onclick="loadConfig()">Load</button>
+        </div>
         <div id="appList" style="margin-top: 10px;"></div>
     </div>
 
@@ -97,7 +102,7 @@
         document.getElementById('appStrategy').onchange = function() {
             const numaZones = document.getElementById('numaZones').parentElement;
             const startingNuma = document.getElementById('startingNumaLabel');
-            
+
             if (this.value === 'balance') {
                 numaZones.style.display = 'inline';
                 startingNuma.style.display = 'none';
@@ -123,7 +128,7 @@
 
             visualizer.getNumaZones().forEach((zone, numaId) => {
                 const availableCores = zone.filter(cpu => cpu.status === 'available' && !cpu.app).length;
-                
+
                 const numaDiv = document.createElement('div');
                 numaDiv.className = 'numa-zone';
                 numaDiv.innerHTML = `<h4>NUMA ${numaId} (${availableCores} available)</h4>`;
@@ -196,16 +201,33 @@
 
             Object.entries(visualizer.getAssignedApps()).forEach(([app, cores]) => {
                 const coreList = visualizer.getAppCoreList(app);
+                const numaList = visualizer.getAppNumaList(app);
                 const div = document.createElement('div');
-                div.innerHTML = `<span style="display:inline-block;width:20px;height:20px;background-color:${getAppColor(app)};margin-right:5px;vertical-align:middle;"></span>${app}: ${cores} cores (${coreList}) <button onclick="removeApp('${app}')">Remove</button>`;
+                div.innerHTML = `<span style="display:inline-block;width:20px;height:20px;background-color:${getAppColor(app)};margin-right:5px;vertical-align:middle;"></span>${app}: ${cores} cores (${coreList}) NUMA: ${numaList} <button onclick="removeApp('${app}')">Remove</button>`;
                 appList.appendChild(div);
             });
+
+            updateConfigBox();
+        }
+
+        function updateConfigBox() {
+            document.getElementById('configData').value = visualizer.serializeAssignments();
         }
 
         function removeApp(appName) {
             visualizer.removeApp(appName);
             renderVisualization();
             updateAppList();
+        }
+
+        function loadConfig() {
+            const configData = document.getElementById('configData').value;
+            if (visualizer.deserializeAssignments(configData)) {
+                renderVisualization();
+                updateAppList();
+            } else {
+                alert('Invalid configuration data');
+            }
         }
 
         generateLayout();
