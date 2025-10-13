@@ -84,3 +84,4 @@ Find a way to serialize and deserialize Assigned applications. Either use a text
 everytime an update is made, update the configuration box, that way you can remove the "Save" button. also, save logical cores and numa zones into the json. applications should use compressed lists. Make sure y
 ou add serialization and deserialization logic to tests
 
+could you associate what strategy is with the application assignments (show in labels and also see if those can be serialized or deseralized)

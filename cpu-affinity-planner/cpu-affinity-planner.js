@@ -116,7 +116,13 @@ class CpuNumaVisualizer {
             }
         }
 
-        this.assignedApps[appName] = appCores;
+        this.assignedApps[appName] = {
+            cores: appCores,
+            strategy: strategy,
+            useSiblings: useSiblings,
+            startingNuma: startingNuma,
+            numaZoneList: numaZoneList
+        };
         return true;
     }
 
@@ -167,7 +173,13 @@ class CpuNumaVisualizer {
             }
         }
 
-        this.assignedApps[appName] = appCores;
+        this.assignedApps[appName] = {
+            cores: appCores,
+            strategy: strategy,
+            useSiblings: true,
+            startingNuma: startingNuma,
+            numaZoneList: numaZoneList
+        };
         return true;
     }
 
@@ -243,7 +255,14 @@ class CpuNumaVisualizer {
 
         Object.keys(this.assignedApps).forEach(app => {
             const coreIds = this.cpuData.filter(cpu => cpu.app === app).map(cpu => cpu.id);
-            config.assignments[app] = this.compressCoreList(coreIds);
+            const appInfo = this.assignedApps[app];
+            config.assignments[app] = {
+                cores: this.compressCoreList(coreIds),
+                strategy: appInfo.strategy,
+                useSiblings: appInfo.useSiblings,
+                startingNuma: appInfo.startingNuma,
+                numaZoneList: appInfo.numaZoneList
+            };
         });
 
         return JSON.stringify(config);
@@ -260,15 +279,27 @@ class CpuNumaVisualizer {
                 this.clearAll();
             }
 
-            Object.entries(config.assignments).forEach(([app, compressedCores]) => {
-                const coreIds = this.expandCoreList(compressedCores);
+            Object.entries(config.assignments).forEach(([app, appData]) => {
+                const coreIds = typeof appData === 'string' ?
+                    this.expandCoreList(appData) :
+                    this.expandCoreList(appData.cores);
+
                 coreIds.forEach(coreId => {
                     const cpu = this.cpuData[coreId];
                     if (cpu && cpu.status === 'available') {
                         cpu.app = app;
                     }
                 });
-                this.assignedApps[app] = coreIds.length;
+
+                this.assignedApps[app] = typeof appData === 'string' ?
+                    { cores: coreIds.length } :
+                    {
+                        cores: coreIds.length,
+                        strategy: appData.strategy || 'balance',
+                        useSiblings: appData.useSiblings || false,
+                        startingNuma: appData.startingNuma || 0,
+                        numaZoneList: appData.numaZoneList || null
+                    };
             });
             return true;
         } catch (e) {

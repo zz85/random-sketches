@@ -76,7 +76,7 @@ test("assignApp assigns IRQ cores", () => {
 
     const irqAssigned = visualizer.getCpuData().filter(cpu => cpu.app === 'irq');
     expect(irqAssigned).toHaveLength(4);
-    expect(visualizer.getAssignedApps().irq).toBe(4);
+    expect(visualizer.getAssignedApps().irq.cores).toBe(4);
 });
 
 test("clearAll resets available cores", () => {
@@ -195,7 +195,9 @@ test("serializeAssignments creates correct format", () => {
     expect(config.cores).toBe(16);
     expect(config.sockets).toBe(2);
     expect(config.numa).toBe(4);
-    expect(config.assignments.nginx).toBe('0-1');
+    expect(config.assignments.nginx.cores).toBe('0-1');
+    expect(config.assignments.nginx.strategy).toBe('fit');
+    expect(config.assignments.nginx.useSiblings).toBe(false);
 });
 
 test("deserializeAssignments restores configuration", () => {
@@ -246,5 +248,5 @@ test("removeApp clears specific app assignment", () => {
     expect(nginxCpus).toHaveLength(0);
     expect(redisCpus).toHaveLength(1);
     expect(visualizer.getAssignedApps().nginx).toBeUndefined();
-    expect(visualizer.getAssignedApps().redis).toBe(1);
+    expect(visualizer.getAssignedApps().redis.cores).toBe(1);
 });

@@ -199,11 +199,17 @@
             const appList = document.getElementById('appList');
             appList.innerHTML = '<h4>Assigned Applications:</h4>';
 
-            Object.entries(visualizer.getAssignedApps()).forEach(([app, cores]) => {
+            Object.entries(visualizer.getAssignedApps()).forEach(([app, appInfo]) => {
+                const cores = typeof appInfo === 'number' ? appInfo : appInfo.cores;
+                const strategy = typeof appInfo === 'object' ? appInfo.strategy : 'unknown';
+                const useSiblings = typeof appInfo === 'object' ? appInfo.useSiblings : false;
+
                 const coreList = visualizer.getAppCoreList(app);
                 const numaList = visualizer.getAppNumaList(app);
+                const strategyText = `${strategy}${useSiblings ? '+HT' : ''}`;
+
                 const div = document.createElement('div');
-                div.innerHTML = `<span style="display:inline-block;width:20px;height:20px;background-color:${getAppColor(app)};margin-right:5px;vertical-align:middle;"></span>${app}: ${cores} cores (${coreList}) NUMA: ${numaList} <button onclick="removeApp('${app}')">Remove</button>`;
+                div.innerHTML = `<span style="display:inline-block;width:20px;height:20px;background-color:${getAppColor(app)};margin-right:5px;vertical-align:middle;"></span>${app}: ${cores} cores (${coreList}) NUMA: ${numaList} [${strategyText}] <button onclick="removeApp('${app}')">Remove</button>`;
                 appList.appendChild(div);
             });
 
