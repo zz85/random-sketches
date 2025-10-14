@@ -9,6 +9,8 @@
         .config { margin-bottom: 20px; }
         .config input, .config select { margin: 5px; padding: 5px; }
         .config input[type="text"], .config input[type="number"] { width: 80px; }
+        .config input#appCores, .config input#numaZones { width: 60px; }
+        .config button { padding: 8px 16px; font-size: 14px; }
         .numa-zone { border: 2px solid #333; margin: 10px; padding: 10px; display: inline-block; }
         .cpu-core { width: 30px; height: 15px; border: 1px solid #ccc; display: inline-block; margin: 1px; text-align: center; line-height: 15px; font-size: 8px; cursor: pointer; vertical-align: top; }
         .cpu-pair { display: inline-block; margin: 2px; }
@@ -35,23 +37,23 @@
         <div>
             <label>App:
                 <select id="appName">
-                    <option value="irq">IRQ</option>
-                    <option value="custom">Custom</option>
-                    <option value="nginx">Nginx</option>
-                    <option value="squid">Squid</option>
-                    <option value="redis">Redis</option>
-                    <option value="mysql">MySQL</option>
+                    <option value="Irq">IRQ</option>
+                    <option value="Custom">Custom</option>
+                    <option value="Nginx">Nginx</option>
+                    <option value="Squid">Squid</option>
+                    <option value="Redis">Redis</option>
+                    <option value="Mysql">MySQL</option>
                 </select>
-                <input type="text" id="customApp" placeholder="custom name" style="display:none;">
+                <input type="text" id="customApp" placeholder="App name" style="display:none;">
             </label>
-            <label>Cores: <input type="number" id="appCores" placeholder="64"></label><br>
+            <label>Cores: <input type="number" id="appCores" style="width: 50px;" placeholder="64"></label><br>
             <label>Strategy:
                 <select id="appStrategy">
                     <option value="balance">Balance across NUMA</option>
                     <option value="fit">Fit within one NUMA</option>
                 </select>
             </label>
-            <label>NUMA Zones: <input type="text" id="numaZones" placeholder="all (or 0-3, 0,2, etc)"></label>
+            <label>NUMA Zones: <input type="text" id="numaZones" class="config" placeholder="all (or 0-3, 0,2, etc)"></label>
             <label id="startingNumaLabel">Starting NUMA: <input type="number" id="startingNuma" value="0" min="0"></label><br>
             <label>Allocation:
                 <select id="allocOrder">
@@ -96,7 +98,7 @@
 
         document.getElementById('appName').onchange = function() {
             const customInput = document.getElementById('customApp');
-            customInput.style.display = this.value === 'custom' ? 'inline' : 'none';
+            customInput.style.display = this.value === 'Custom' ? 'inline' : 'none';
         };
 
         document.getElementById('appStrategy').onchange = function() {
@@ -174,8 +176,8 @@
 
         function assignApp() {
             let appName = document.getElementById('appName').value;
-            if (appName === 'custom') {
-                appName = document.getElementById('customApp').value || 'custom';
+            if (appName === 'Custom') {
+                appName = document.getElementById('customApp').value || 'Custom';
             }
             const appCores = parseInt(document.getElementById('appCores').value) || 0;
             const strategy = document.getElementById('appStrategy').value;
@@ -214,6 +216,22 @@
             });
 
             updateConfigBox();
+            updateAvailableCores();
+        }
+
+        function updateAvailableCores() {
+            const availableCores = visualizer.getCpuData().filter(cpu => cpu.status === 'available' && !cpu.app).length;
+            const availableCoreList = visualizer.compressCoreList(
+                visualizer.getCpuData().filter(cpu => cpu.status === 'available' && !cpu.app).map(cpu => cpu.id)
+            );
+            const availableNumaList = visualizer.compressCoreList(
+                [...new Set(visualizer.getCpuData().filter(cpu => cpu.status === 'available' && !cpu.app).map(cpu => cpu.numa))]
+            );
+
+            const appList = document.getElementById('appList');
+            const availableDiv = document.createElement('div');
+            availableDiv.innerHTML = `<span style="display:inline-block;width:20px;height:20px;background-color:#fff;border:1px solid #ccc;margin-right:5px;vertical-align:middle;"></span>Available: ${availableCores} cores (${availableCoreList}) NUMA: ${availableNumaList}`;
+            appList.appendChild(availableDiv);
         }
 
         function updateConfigBox() {

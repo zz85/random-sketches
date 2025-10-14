@@ -1,6 +1,6 @@
 # Random experiments
 
-- [CPU/Numa Affinity planner / visualizer](cpu-affinity-planner/index.html)
+- [CPU/Numa Affinity planner / visualizer](cpu-affinity-planner/)
 - [moon fraction](cosmos/moonfraction.html) - Visualization of moon in it's different phases
 - [sun path ar 2d](cosmos/sunpath_three_ar_2d.html) - Heads up display using AR passthrough style
   - [sun path AR](cosmos/sunpath_three_ar.html) - AR visualization of sun path with three.js
