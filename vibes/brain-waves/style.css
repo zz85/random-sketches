@@ -1,0 +1,530 @@
+/* ─── BrainWave - Dark Theme ─────────────────────────── */
+:root {
+  --bg: #0a0a0f;
+  --surface: #12121a;
+  --surface2: #1a1a28;
+  --border: #2a2a3a;
+  --text: #e0e0f0;
+  --text-dim: #8888aa;
+  --accent: #6c5ce7;
+  --accent-glow: rgba(108, 92, 231, 0.3);
+  --radius: 12px;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  line-height: 1.5;
+}
+
+#app {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 24px 20px 40px;
+}
+
+/* ─── Header ─────────────────────────────────────────── */
+header {
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+header h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  background: linear-gradient(135deg, var(--accent), #a29bfe, #fd79a8);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.subtitle {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  margin-top: 2px;
+}
+
+/* ─── Visualizer ─────────────────────────────────────── */
+#visualizer-container {
+  position: relative;
+  width: 100%;
+  height: 160px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+
+#visualizer {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+#status-overlay {
+  position: absolute;
+  top: 12px;
+  left: 16px;
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  pointer-events: none;
+}
+
+#status-text {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--accent);
+  text-shadow: 0 0 12px var(--accent-glow);
+}
+
+#freq-display {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+}
+
+/* ─── Master Controls ────────────────────────────────── */
+#master-controls {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 16px 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.btn-primary {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.btn-primary:hover {
+  background: var(--accent);
+  color: var(--bg);
+  box-shadow: 0 0 24px var(--accent-glow);
+}
+
+.btn-primary.playing {
+  background: var(--accent);
+  color: var(--bg);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 8px var(--accent-glow); }
+  50% { box-shadow: 0 0 28px var(--accent-glow); }
+}
+
+.volume-control, #timer-section {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 160px;
+}
+
+.volume-control label, #timer-section label {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+#volume-value, .sound-value, .wave-value {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  min-width: 40px;
+}
+
+#timer-select {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+#timer-display {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.85rem;
+  color: var(--accent);
+  min-width: 50px;
+}
+
+/* ─── Range Inputs ───────────────────────────────────── */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  background: var(--surface2);
+  border-radius: 3px;
+  outline: none;
+  cursor: pointer;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg);
+  box-shadow: 0 0 8px var(--accent-glow);
+  cursor: pointer;
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg);
+  box-shadow: 0 0 8px var(--accent-glow);
+  cursor: pointer;
+}
+
+/* ─── Tabs ───────────────────────────────────────────── */
+#tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0;
+}
+
+.tab {
+  flex: 1;
+  padding: 10px 8px;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s;
+  font-weight: 500;
+}
+
+.tab:hover {
+  color: var(--text);
+}
+
+.tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.tab-content {
+  display: none;
+}
+
+.tab-content.active {
+  display: block;
+  animation: fadeIn 0.25s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ─── Mode Cards ─────────────────────────────────────── */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.mode-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: left;
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mode-card:hover {
+  border-color: var(--accent);
+  background: var(--surface2);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+}
+
+.mode-card.selected {
+  border-color: var(--accent);
+  background: var(--surface2);
+  box-shadow: 0 0 20px var(--accent-glow), inset 0 0 20px rgba(108, 92, 231, 0.05);
+}
+
+.mode-icon {
+  font-size: 1.8rem;
+  line-height: 1;
+  margin-bottom: 4px;
+}
+
+.mode-card h3 {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.mode-card p {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
+.mode-tag {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 0.68rem;
+  padding: 3px 8px;
+  background: var(--accent-glow);
+  color: var(--accent);
+  border-radius: 20px;
+  width: fit-content;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+}
+
+/* ─── Brainwave Controls ─────────────────────────────── */
+.brainwave-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.wave-band {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  transition: border-color 0.2s;
+}
+
+.wave-band.active-band {
+  border-color: var(--accent);
+  box-shadow: 0 0 12px var(--accent-glow);
+}
+
+.wave-header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.wave-name {
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.wave-range {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+}
+
+.wave-desc {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  margin-left: auto;
+}
+
+.wave-band .wave-slider {
+  margin-bottom: 6px;
+}
+
+/* ─── Tone Type Selector ─────────────────────────────── */
+.tone-type-selector {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+}
+
+.tone-type-selector > label {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  display: block;
+  margin-bottom: 10px;
+}
+
+.radio-group {
+  display: flex;
+  gap: 24px;
+  margin-bottom: 16px;
+}
+
+.radio-group label {
+  font-size: 0.85rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+input[type="radio"] {
+  accent-color: var(--accent);
+}
+
+.carrier-freq {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.carrier-freq label {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+#carrier-value {
+  color: var(--accent);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+}
+
+/* ─── Sound Layers ───────────────────────────────────── */
+.sound-layers {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sound-layer {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 20px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.sound-name {
+  font-size: 0.85rem;
+  font-weight: 500;
+  min-width: 110px;
+}
+
+.sound-slider {
+  flex: 1;
+}
+
+/* ─── Custom Tab ─────────────────────────────────────── */
+.custom-info {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  margin-bottom: 16px;
+}
+
+#custom-summary {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+}
+
+#custom-summary p {
+  font-size: 0.85rem;
+  margin-bottom: 6px;
+  color: var(--text-dim);
+}
+
+#custom-summary strong {
+  color: var(--text);
+}
+
+/* ─── Footer ─────────────────────────────────────────── */
+footer {
+  margin-top: 32px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  text-align: center;
+}
+
+footer p {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+}
+
+/* ─── Responsive ─────────────────────────────────────── */
+@media (max-width: 600px) {
+  #app {
+    padding: 16px 12px 32px;
+  }
+
+  header h1 {
+    font-size: 1.5rem;
+  }
+
+  #master-controls {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .btn-primary {
+    align-self: center;
+  }
+
+  .volume-control, #timer-section {
+    justify-content: center;
+  }
+
+  .card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .wave-header {
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .wave-desc {
+    margin-left: 0;
+  }
+
+  .sound-layer {
+    flex-wrap: wrap;
+  }
+
+  .sound-name {
+    min-width: 100%;
+  }
+}

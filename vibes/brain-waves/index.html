@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BrainWave - Neural Audio Engine</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1>BrainWave</h1>
+      <p class="subtitle">Neural Audio Engine</p>
+    </header>
+
+    <!-- Visualizer -->
+    <div id="visualizer-container">
+      <canvas id="visualizer"></canvas>
+      <div id="status-overlay">
+        <span id="status-text">Ready</span>
+        <span id="freq-display"></span>
+      </div>
+    </div>
+
+    <!-- Master Controls -->
+    <div id="master-controls">
+      <button id="btn-play" class="btn-primary" aria-label="Play">
+        <svg id="icon-play" viewBox="0 0 24 24" width="28" height="28"><polygon points="6,3 20,12 6,21" fill="currentColor"/></svg>
+        <svg id="icon-pause" viewBox="0 0 24 24" width="28" height="28" style="display:none"><rect x="5" y="3" width="4" height="18" fill="currentColor"/><rect x="15" y="3" width="4" height="18" fill="currentColor"/></svg>
+      </button>
+      <div class="volume-control">
+        <label for="master-volume">Volume</label>
+        <input type="range" id="master-volume" min="0" max="100" value="50">
+        <span id="volume-value">50%</span>
+      </div>
+      <div id="timer-section">
+        <label for="timer-select">Timer</label>
+        <select id="timer-select">
+          <option value="0">No timer</option>
+          <option value="5">5 min</option>
+          <option value="15">15 min</option>
+          <option value="25">25 min (Pomodoro)</option>
+          <option value="30">30 min</option>
+          <option value="45">45 min</option>
+          <option value="60">60 min</option>
+          <option value="90">90 min</option>
+          <option value="120">120 min</option>
+        </select>
+        <span id="timer-display"></span>
+      </div>
+    </div>
+
+    <!-- Tab Navigation -->
+    <nav id="tabs">
+      <button class="tab active" data-tab="modes">Study Modes</button>
+      <button class="tab" data-tab="brainwaves">Brainwaves</button>
+      <button class="tab" data-tab="sounds">Sound Layer</button>
+      <button class="tab" data-tab="custom">Custom Mix</button>
+    </nav>
+
+    <!-- Tab: Study Modes -->
+    <section id="tab-modes" class="tab-content active">
+      <div class="card-grid">
+        <button class="mode-card" data-mode="deep-focus">
+          <div class="mode-icon">&#9673;</div>
+          <h3>Deep Focus</h3>
+          <p>Beta waves (14-18 Hz) + brown noise. Intense concentration for demanding tasks.</p>
+          <span class="mode-tag">Beta 16Hz</span>
+        </button>
+        <button class="mode-card" data-mode="study">
+          <div class="mode-icon">&#9733;</div>
+          <h3>Study</h3>
+          <p>Low Beta (13-15 Hz) + pink noise. Sustained attention for learning and reading.</p>
+          <span class="mode-tag">Beta 14Hz</span>
+        </button>
+        <button class="mode-card" data-mode="flow-state">
+          <div class="mode-icon">&#8734;</div>
+          <h3>Flow State</h3>
+          <p>Alpha-Theta border (8-10 Hz). Creative problem-solving and effortless productivity.</p>
+          <span class="mode-tag">Alpha 10Hz</span>
+        </button>
+        <button class="mode-card" data-mode="creativity">
+          <div class="mode-icon">&#10047;</div>
+          <h3>Creativity</h3>
+          <p>Theta waves (6 Hz) + gentle ambient. Divergent thinking and imagination.</p>
+          <span class="mode-tag">Theta 6Hz</span>
+        </button>
+        <button class="mode-card" data-mode="relaxation">
+          <div class="mode-icon">&#9836;</div>
+          <h3>Relaxation</h3>
+          <p>Alpha waves (10 Hz) + pink noise. Calm, restful awareness.</p>
+          <span class="mode-tag">Alpha 10Hz</span>
+        </button>
+        <button class="mode-card" data-mode="meditation">
+          <div class="mode-icon">&#9775;</div>
+          <h3>Meditation</h3>
+          <p>Theta waves (5 Hz). Deep meditative state and mindfulness.</p>
+          <span class="mode-tag">Theta 5Hz</span>
+        </button>
+        <button class="mode-card" data-mode="power-nap">
+          <div class="mode-icon">&#9790;</div>
+          <h3>Power Nap</h3>
+          <p>Theta to Delta transition (4-2 Hz). Quick rejuvenating rest.</p>
+          <span class="mode-tag">Theta-Delta</span>
+        </button>
+        <button class="mode-card" data-mode="sleep">
+          <div class="mode-icon">&#9788;</div>
+          <h3>Deep Sleep</h3>
+          <p>Delta waves (2 Hz) + brown noise. Restorative deep sleep induction.</p>
+          <span class="mode-tag">Delta 2Hz</span>
+        </button>
+        <button class="mode-card" data-mode="peak-performance">
+          <div class="mode-icon">&#9889;</div>
+          <h3>Peak Performance</h3>
+          <p>Gamma waves (40 Hz). Heightened perception and cognitive processing.</p>
+          <span class="mode-tag">Gamma 40Hz</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- Tab: Brainwaves -->
+    <section id="tab-brainwaves" class="tab-content">
+      <div class="brainwave-controls">
+        <div class="wave-band" data-wave="delta">
+          <div class="wave-header">
+            <span class="wave-name">Delta</span>
+            <span class="wave-range">0.5 - 4 Hz</span>
+            <span class="wave-desc">Deep sleep, healing</span>
+          </div>
+          <input type="range" class="wave-slider" min="0.5" max="4" step="0.1" value="2">
+          <span class="wave-value">2.0 Hz</span>
+        </div>
+        <div class="wave-band" data-wave="theta">
+          <div class="wave-header">
+            <span class="wave-name">Theta</span>
+            <span class="wave-range">4 - 8 Hz</span>
+            <span class="wave-desc">Meditation, creativity</span>
+          </div>
+          <input type="range" class="wave-slider" min="4" max="8" step="0.1" value="6">
+          <span class="wave-value">6.0 Hz</span>
+        </div>
+        <div class="wave-band" data-wave="alpha">
+          <div class="wave-header">
+            <span class="wave-name">Alpha</span>
+            <span class="wave-range">8 - 13 Hz</span>
+            <span class="wave-desc">Relaxation, calm focus</span>
+          </div>
+          <input type="range" class="wave-slider" min="8" max="13" step="0.1" value="10">
+          <span class="wave-value">10.0 Hz</span>
+        </div>
+        <div class="wave-band" data-wave="beta">
+          <div class="wave-header">
+            <span class="wave-name">Beta</span>
+            <span class="wave-range">13 - 30 Hz</span>
+            <span class="wave-desc">Focus, alertness</span>
+          </div>
+          <input type="range" class="wave-slider" min="13" max="30" step="0.1" value="16">
+          <span class="wave-value">16.0 Hz</span>
+        </div>
+        <div class="wave-band" data-wave="gamma">
+          <div class="wave-header">
+            <span class="wave-name">Gamma</span>
+            <span class="wave-range">30 - 100 Hz</span>
+            <span class="wave-desc">Peak cognition</span>
+          </div>
+          <input type="range" class="wave-slider" min="30" max="100" step="1" value="40">
+          <span class="wave-value">40.0 Hz</span>
+        </div>
+      </div>
+      <div class="tone-type-selector">
+        <label>Entrainment method:</label>
+        <div class="radio-group">
+          <label><input type="radio" name="tone-type" value="binaural" checked> Binaural Beats</label>
+          <label><input type="radio" name="tone-type" value="isochronic"> Isochronic Tones</label>
+        </div>
+        <div class="carrier-freq">
+          <label for="carrier-freq">Carrier frequency: <span id="carrier-value">200</span> Hz</label>
+          <input type="range" id="carrier-freq" min="80" max="500" value="200" step="1">
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab: Sound Layer -->
+    <section id="tab-sounds" class="tab-content">
+      <div class="sound-layers">
+        <div class="sound-layer" data-sound="white">
+          <span class="sound-name">White Noise</span>
+          <input type="range" class="sound-slider" min="0" max="100" value="0">
+          <span class="sound-value">0%</span>
+        </div>
+        <div class="sound-layer" data-sound="pink">
+          <span class="sound-name">Pink Noise</span>
+          <input type="range" class="sound-slider" min="0" max="100" value="0">
+          <span class="sound-value">0%</span>
+        </div>
+        <div class="sound-layer" data-sound="brown">
+          <span class="sound-name">Brown Noise</span>
+          <input type="range" class="sound-slider" min="0" max="100" value="0">
+          <span class="sound-value">0%</span>
+        </div>
+        <div class="sound-layer" data-sound="rain">
+          <span class="sound-name">Rain</span>
+          <input type="range" class="sound-slider" min="0" max="100" value="0">
+          <span class="sound-value">0%</span>
+        </div>
+        <div class="sound-layer" data-sound="ocean">
+          <span class="sound-name">Ocean Waves</span>
+          <input type="range" class="sound-slider" min="0" max="100" value="0">
+          <span class="sound-value">0%</span>
+        </div>
+        <div class="sound-layer" data-sound="wind">
+          <span class="sound-name">Wind</span>
+          <input type="range" class="sound-slider" min="0" max="100" value="0">
+          <span class="sound-value">0%</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab: Custom Mix -->
+    <section id="tab-custom" class="tab-content">
+      <p class="custom-info">Use the Brainwaves and Sound Layer tabs to dial in your exact mix, then play.</p>
+      <div class="custom-summary" id="custom-summary">
+        <p>No custom settings yet. Adjust sliders in other tabs.</p>
+      </div>
+    </section>
+
+    <footer>
+      <p>Use headphones for binaural beats. Not a medical device. For wellness and productivity only.</p>
+    </footer>
+  </div>
+
+  <script src="audio-engine.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
