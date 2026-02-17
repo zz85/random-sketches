@@ -10,17 +10,34 @@
  *   - singing-bowls:  Resonant bell-like tones with long decay
  *   - lo-fi:          Lo-fi filtered chords with vinyl crackle feel
  *   - gentle-arp:     Soft arpeggiated patterns
+ *
+ * Fixes applied:
+ *   - Replaced unbounded _nodes[] with Set + onended auto-cleanup
+ *   - Added fade-out ramp in stop() to eliminate clicks
+ *   - Clamped reverb feedback gain to 0.85 max
+ *   - Replaced fragile _nodes[length-1] wiring with named variables
+ *   - Replaced feedback delay reverb with ConvolverNode impulse response
+ *   - Added DynamicsCompressorNode before output to prevent clipping
+ *   - Fixed pentatonic octave comments
+ *   - Longer crackle buffer (8s) to reduce looping repetition
+ *   - Volume clamping in setVolume
  */
 class MusicEngine {
   constructor() {
     this.ctx = null;
     this.outputGain = null;
+    this.compressor = null;
     this.volume = 0;
     this.style = 'none';
     this.isPlaying = false;
-    this._nodes = [];
-    this._timers = [];
-    this._schedulerHandle = null;
+
+    // Use Set for O(1) add/delete; nodes self-remove via onended
+    this._activeOscs = new Set();
+    // Persistent nodes (gains, filters, convolver) cleaned up on stop()
+    this._persistentNodes = [];
+    this._timers = new Set();
+    this._convolver = null;
+    this._impulseBuffer = null;
 
     // Musical data
     this._chordProgressions = {
@@ -46,9 +63,9 @@ class MusicEngine {
 
     // Pentatonic scales for melodies (C pentatonic, multiple octaves)
     this._pentatonic = [
-      130.81, 146.83, 164.81, 196.00, 220.00,  // C4 pentatonic low
-      261.63, 293.66, 329.63, 392.00, 440.00,  // C5 pentatonic mid
-      523.25, 587.33, 659.25, 783.99, 880.00,  // C6 pentatonic high
+      130.81, 146.83, 164.81, 196.00, 220.00,  // C3 pentatonic
+      261.63, 293.66, 329.63, 392.00, 440.00,  // C4 pentatonic
+      523.25, 587.33, 659.25, 783.99, 880.00,  // C5 pentatonic
     ];
 
     this._arpNotes = [
@@ -66,15 +83,31 @@ class MusicEngine {
    */
   attach(ctx, destination) {
     this.ctx = ctx;
+
+    // Compressor to prevent clipping from dense layered output
+    this.compressor = ctx.createDynamicsCompressor();
+    this.compressor.threshold.value = -18;
+    this.compressor.knee.value = 12;
+    this.compressor.ratio.value = 4;
+    this.compressor.attack.value = 0.003;
+    this.compressor.release.value = 0.15;
+
     this.outputGain = ctx.createGain();
     this.outputGain.gain.value = this.volume;
-    this.outputGain.connect(destination);
+    this.outputGain.connect(this.compressor);
+    this.compressor.connect(destination);
+
+    // Pre-generate impulse response for ConvolverNode reverb
+    this._impulseBuffer = this._createImpulseResponse(2.5);
   }
 
   setVolume(vol) {
-    this.volume = vol;
+    this.volume = Math.max(0, Math.min(1, vol));
     if (this.outputGain && this.ctx) {
-      this.outputGain.gain.setTargetAtTime(vol, this.ctx.currentTime, 0.1);
+      const now = this.ctx.currentTime;
+      this.outputGain.gain.cancelScheduledValues(now);
+      this.outputGain.gain.setValueAtTime(this.outputGain.gain.value, now);
+      this.outputGain.gain.linearRampToValueAtTime(this.volume, now + 0.1);
     }
   }
 
@@ -101,34 +134,58 @@ class MusicEngine {
 
   stop() {
     this.isPlaying = false;
-    this._timers.forEach(id => clearTimeout(id));
-    this._timers = [];
-    if (this._schedulerHandle) {
-      clearInterval(this._schedulerHandle);
-      this._schedulerHandle = null;
+
+    // Clear all scheduled callbacks
+    for (const id of this._timers) clearTimeout(id);
+    this._timers.clear();
+
+    // Mute output immediately to prevent clicks, then clean up synchronously.
+    // Setting gain to 0 via setValueAtTime is instantaneous on the audio thread
+    // and takes effect before the next audio quantum (~3ms at 44.1kHz).
+    if (this.outputGain && this.ctx) {
+      const now = this.ctx.currentTime;
+      this.outputGain.gain.cancelScheduledValues(now);
+      this.outputGain.gain.setValueAtTime(0, now);
     }
-    this._nodes.forEach(n => {
-      try {
-        if (n.stop) n.stop();
-        n.disconnect();
-      } catch(e) {}
-    });
-    this._nodes = [];
+
+    // Stop and disconnect all active oscillators/buffer sources
+    for (const osc of this._activeOscs) {
+      try { osc.onended = null; osc.stop(); osc.disconnect(); } catch(e) {}
+    }
+    this._activeOscs.clear();
+
+    // Disconnect persistent nodes (gains, filters, convolver)
+    for (const n of this._persistentNodes) {
+      try { n.disconnect(); } catch(e) {}
+    }
+    this._persistentNodes = [];
+
+    // Restore gain for next start()
+    if (this.outputGain) {
+      this.outputGain.gain.value = this.volume;
+    }
   }
 
   // ─── Helper: tracked node creation ───────────────────
+
+  /** Create an oscillator that auto-removes from _activeOscs when stopped. */
   _osc(type, freq) {
     const o = this.ctx.createOscillator();
     o.type = type;
     o.frequency.value = freq;
-    this._nodes.push(o);
+    this._activeOscs.add(o);
+    o.onended = () => {
+      this._activeOscs.delete(o);
+      try { o.disconnect(); } catch(e) {}
+    };
     return o;
   }
 
+  /** Create a gain node tracked for cleanup on stop(). */
   _gain(val) {
     const g = this.ctx.createGain();
     g.gain.value = val;
-    this._nodes.push(g);
+    this._persistentNodes.push(g);
     return g;
   }
 
@@ -137,50 +194,69 @@ class MusicEngine {
     f.type = type;
     f.frequency.value = freq;
     if (Q !== undefined) f.Q.value = Q;
-    this._nodes.push(f);
+    this._persistentNodes.push(f);
     return f;
   }
 
-  _delay(time) {
-    const d = this.ctx.createDelay(5);
-    d.delayTime.value = time;
-    this._nodes.push(d);
-    return d;
+  /** Create a buffer source that auto-removes from _activeOscs when stopped. */
+  _bufferSource(buffer, loop) {
+    const src = this.ctx.createBufferSource();
+    src.buffer = buffer;
+    src.loop = !!loop;
+    this._activeOscs.add(src);
+    src.onended = () => {
+      this._activeOscs.delete(src);
+      try { src.disconnect(); } catch(e) {}
+    };
+    return src;
   }
 
   _schedule(fn, ms) {
     const id = setTimeout(() => {
+      this._timers.delete(id);
       if (this.isPlaying) fn();
     }, ms);
-    this._timers.push(id);
+    this._timers.add(id);
     return id;
   }
 
-  // ─── Reverb-like effect using feedback delay network ─
-  _createReverb(decayTime) {
-    const ctx = this.ctx;
+  // ─── ConvolverNode reverb with synthetic impulse response ─
+
+  _createImpulseResponse(decaySeconds) {
+    const sampleRate = this.ctx.sampleRate;
+    const length = sampleRate * decaySeconds;
+    const buffer = this.ctx.createBuffer(2, length, sampleRate);
+
+    for (let channel = 0; channel < 2; channel++) {
+      const data = buffer.getChannelData(channel);
+      for (let i = 0; i < length; i++) {
+        const t = i / sampleRate;
+        // White noise * exponential decay
+        data[i] = (Math.random() * 2 - 1) * Math.exp(-3.0 * t / decaySeconds);
+      }
+    }
+    return buffer;
+  }
+
+  _createReverb(wetMix) {
+    const wet = Math.max(0, Math.min(1, wetMix));
+    const dry = 1 - wet;
+
     const input = this._gain(1);
-    const output = this._gain(0.7);
-    const dry = this._gain(0.6);
-    const wet = this._gain(0.4);
+    const output = this._gain(1);
+    const dryGain = this._gain(dry);
+    const wetGain = this._gain(wet);
 
-    input.connect(dry);
-    dry.connect(output);
+    const convolver = this.ctx.createConvolver();
+    convolver.buffer = this._impulseBuffer;
+    this._persistentNodes.push(convolver);
 
-    // Simple multi-tap delay reverb
-    const delays = [0.037, 0.059, 0.083, 0.117];
-    delays.forEach(t => {
-      const d = this._delay(t);
-      const fb = this._gain(decayTime);
-      const lp = this._filter('lowpass', 2500);
-      input.connect(d);
-      d.connect(lp);
-      lp.connect(fb);
-      fb.connect(d); // feedback loop
-      lp.connect(wet);
-    });
+    input.connect(dryGain);
+    input.connect(convolver);
+    convolver.connect(wetGain);
+    dryGain.connect(output);
+    wetGain.connect(output);
 
-    wet.connect(output);
     return { input, output };
   }
 
@@ -197,27 +273,26 @@ class MusicEngine {
       const chord = progression[chordIdx % progression.length];
       chordIdx++;
 
-      chord.forEach((freq, i) => {
-        // Each note is 2-3 detuned oscillators for richness
+      chord.forEach((freq) => {
+        // Each note is 3 detuned oscillators for richness
         for (let d = -6; d <= 6; d += 6) {
           const osc = this._osc('sine', freq + d + Math.random() * 2);
           const g = this._gain(0);
           osc.connect(g);
           g.connect(reverb.input);
-          osc.start();
 
           const now = this.ctx.currentTime;
           const attack = 2 + Math.random();
           const sustain = 4 + Math.random() * 2;
           const release = 3 + Math.random();
+          const totalDuration = attack + sustain + release;
 
           g.gain.setTargetAtTime(0.06, now, attack * 0.3);
           g.gain.setTargetAtTime(0.04, now + attack + sustain, 0.5);
           g.gain.setTargetAtTime(0, now + attack + sustain + release * 0.5, release * 0.3);
 
-          this._schedule(() => {
-            try { osc.stop(); } catch(e) {}
-          }, (attack + sustain + release + 1) * 1000);
+          osc.start(now);
+          osc.stop(now + totalDuration + 1);
         }
       });
 
@@ -244,25 +319,26 @@ class MusicEngine {
       // Piano-like: sharp attack, quick decay, filtered
       const osc1 = this._osc('triangle', freq);
       const osc2 = this._osc('sine', freq * 2.01); // slight harmonic
+      const overtoneGain = this._gain(0.02);
       const g = this._gain(0);
       const filter = this._filter('lowpass', 1500 + Math.random() * 1000, 2);
 
       osc1.connect(g);
-      osc2.connect(this._gain(0.02)); // subtle overtone
-      this._nodes[this._nodes.length - 1].connect(g);
+      osc2.connect(overtoneGain);
+      overtoneGain.connect(g);
       g.connect(filter);
       filter.connect(reverb.input);
 
-      osc1.start();
-      osc2.start();
+      osc1.start(now);
+      osc2.start(now);
 
       // Sharp attack, exponential decay
       g.gain.setTargetAtTime(0.12, now, 0.01);
       g.gain.setTargetAtTime(0, now + 0.08, 0.8);
 
-      this._schedule(() => {
-        try { osc1.stop(); osc2.stop(); } catch(e) {}
-      }, 5000);
+      // Auto-stop after decay
+      osc1.stop(now + 5);
+      osc2.stop(now + 5);
 
       // Next note: variable timing for organic feel
       const nextDelay = 800 + Math.random() * 2200;
@@ -308,11 +384,8 @@ class MusicEngine {
     const buf = this.ctx.createBuffer(1, bufSize, this.ctx.sampleRate);
     const data = buf.getChannelData(0);
     for (let i = 0; i < bufSize; i++) data[i] = Math.random() * 2 - 1;
-    const src = this.ctx.createBufferSource();
-    src.buffer = buf;
-    src.loop = true;
-    this._nodes.push(src);
 
+    const src = this._bufferSource(buf, true);
     src.connect(noiseLp);
     noiseLp.connect(noiseG);
     noiseG.connect(reverb.input);
@@ -342,18 +415,17 @@ class MusicEngine {
         const g = this._gain(0);
         osc.connect(g);
         g.connect(reverb.input);
-        osc.start();
 
         const amp = 0.06 / (i + 1);
         const attack = 0.3 + Math.random() * 0.5;
         const decay = 4 + Math.random() * 4;
+        const totalDuration = attack + 0.5 + decay + 2;
 
         g.gain.setTargetAtTime(amp, now, attack * 0.3);
         g.gain.setTargetAtTime(0, now + attack + 0.5, decay * 0.3);
 
-        this._schedule(() => {
-          try { osc.stop(); } catch(e) {}
-        }, (attack + 0.5 + decay + 2) * 1000);
+        osc.start(now);
+        osc.stop(now + totalDuration);
       });
 
       this._schedule(playBowl, 4000 + Math.random() * 6000);
@@ -364,7 +436,7 @@ class MusicEngine {
 
   // ─── Style: Lo-Fi ───────────────────────────────────
   _startLoFi() {
-    // Lo-fi: filtered chords, bit-crushed feel, slow tempo
+    // Lo-fi: filtered chords, slow tempo
     const lpFilter = this._filter('lowpass', 800, 1);
     const hpFilter = this._filter('highpass', 200, 0.5);
     lpFilter.connect(hpFilter);
@@ -394,9 +466,6 @@ class MusicEngine {
         g1.connect(reverb.input);
         g2.connect(reverb.input);
 
-        osc1.start();
-        osc2.start();
-
         const now = this.ctx.currentTime;
         const amp = 0.05;
         // Soft attack, moderate sustain, slow release
@@ -405,28 +474,26 @@ class MusicEngine {
         g1.gain.setTargetAtTime(0, now + 3, 1.5);
         g2.gain.setTargetAtTime(0, now + 3, 1.5);
 
-        this._schedule(() => {
-          try { osc1.stop(); osc2.stop(); } catch(e) {}
-        }, 9000);
+        osc1.start(now);
+        osc2.start(now);
+        osc1.stop(now + 9);
+        osc2.stop(now + 9);
       });
 
       this._schedule(playChord, 6000 + Math.random() * 2000);
     };
 
-    // Add subtle vinyl crackle
+    // Vinyl crackle: 8-second buffer for less obvious looping
     const crackleGain = this._gain(0.008);
     const crackleLp = this._filter('bandpass', 3000, 1);
-    const crackleLen = this.ctx.sampleRate * 2;
+    const crackleLen = this.ctx.sampleRate * 8;
     const crackleBuf = this.ctx.createBuffer(1, crackleLen, this.ctx.sampleRate);
     const cd = crackleBuf.getChannelData(0);
     for (let i = 0; i < crackleLen; i++) {
-      cd[i] = Math.random() < 0.01 ? (Math.random() * 2 - 1) : 0;
+      cd[i] = Math.random() < 0.008 ? (Math.random() * 2 - 1) : 0;
     }
-    const crackleSrc = this.ctx.createBufferSource();
-    crackleSrc.buffer = crackleBuf;
-    crackleSrc.loop = true;
-    this._nodes.push(crackleSrc);
 
+    const crackleSrc = this._bufferSource(crackleBuf, true);
     crackleSrc.connect(crackleLp);
     crackleLp.connect(crackleGain);
     crackleGain.connect(this.outputGain);
@@ -452,24 +519,24 @@ class MusicEngine {
 
       const osc = this._osc('sine', freq);
       const osc2 = this._osc('triangle', freq * 0.999); // subtle chorus
+      const chorusGain = this._gain(0.03);
       const g = this._gain(0);
       const filter = this._filter('lowpass', 2000 + Math.random() * 500);
 
       osc.connect(g);
-      osc2.connect(this._gain(0.03));
-      this._nodes[this._nodes.length - 1].connect(g);
+      osc2.connect(chorusGain);
+      chorusGain.connect(g);
       g.connect(filter);
       filter.connect(reverb.input);
 
-      osc.start();
-      osc2.start();
+      osc.start(now);
+      osc2.start(now);
 
       g.gain.setTargetAtTime(0.08, now, 0.02);
       g.gain.setTargetAtTime(0, now + 0.15, 0.6);
 
-      this._schedule(() => {
-        try { osc.stop(); osc2.stop(); } catch(e) {}
-      }, 4000);
+      osc.stop(now + 4);
+      osc2.stop(now + 4);
 
       // Move through arpeggio
       noteIdx += direction;

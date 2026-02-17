@@ -104,7 +104,8 @@
     if (!music.ctx) {
       music.attach(engine.getAudioContext(), engine.getMasterGain());
     }
-    if (music.style !== 'none') {
+    // Only start music if it's not already playing (setStyle may have started it)
+    if (music.style !== 'none' && !music.isPlaying) {
       music.start();
     }
     iconPlay.style.display = 'none';
@@ -293,7 +294,9 @@
       btn.classList.add('selected');
 
       music.setStyle(style);
-      if (engine.isPlaying && style !== 'none') {
+      // If the audio engine is playing but music wasn't yet attached, attach and start.
+      // setStyle() already handles restart if music was already playing.
+      if (engine.isPlaying && style !== 'none' && !music.isPlaying) {
         if (!music.ctx) {
           music.attach(engine.getAudioContext(), engine.getMasterGain());
         }
