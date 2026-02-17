@@ -135,6 +135,15 @@
     volumeValue.textContent = v + '%';
   });
 
+  // ─── Beats Volume ─────────────────────────────────────
+  const beatsVolumeSlider = $('#beats-volume');
+  const beatsVolumeValue = $('#beats-volume-value');
+  beatsVolumeSlider.addEventListener('input', () => {
+    const v = parseInt(beatsVolumeSlider.value);
+    engine.setTonesVolume(v / 100);
+    beatsVolumeValue.textContent = v + '%';
+  });
+
   // ─── Mode Cards ──────────────────────────────────────
   $$('.mode-card').forEach(card => {
     card.addEventListener('click', () => {

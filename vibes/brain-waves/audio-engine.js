@@ -24,6 +24,10 @@ class BrainWaveEngine {
     // Noise nodes
     this.noiseNodes = {};
 
+    // Dedicated gain for tones (binaural/isochronic)
+    this.tonesGain = null;
+    this.tonesVolume = 0.5;
+
     // State
     this.carrierFreq = 200;
     this.beatFreq = 10;
@@ -39,6 +43,11 @@ class BrainWaveEngine {
     // Master gain
     this.masterGain = this.ctx.createGain();
     this.masterGain.gain.value = this.volume;
+
+    // Tones sub-gain (binaural/isochronic beats volume)
+    this.tonesGain = this.ctx.createGain();
+    this.tonesGain.gain.value = this.tonesVolume;
+    this.tonesGain.connect(this.masterGain);
 
     // Analyser for visualization
     this.analyser = this.ctx.createAnalyser();
@@ -72,7 +81,7 @@ class BrainWaveEngine {
     this.binauralRight.connect(this.binauralGainR);
     this.binauralGainR.connect(this.merger, 0, 1);
 
-    this.merger.connect(this.masterGain);
+    this.merger.connect(this.tonesGain);
     this.binauralLeft.start();
     this.binauralRight.start();
   }
@@ -116,7 +125,7 @@ class BrainWaveEngine {
     this.isochronicLFOGain.connect(this.isochronicGain.gain);
 
     this.isochronicOsc.connect(this.isochronicGain);
-    this.isochronicGain.connect(this.masterGain);
+    this.isochronicGain.connect(this.tonesGain);
 
     this.isochronicOsc.start();
     this.isochronicLFO.start();
@@ -275,6 +284,13 @@ class BrainWaveEngine {
     this.volume = vol;
     if (this.masterGain) {
       this.masterGain.gain.setTargetAtTime(vol, this.ctx.currentTime, 0.05);
+    }
+  }
+
+  setTonesVolume(vol) {
+    this.tonesVolume = vol;
+    if (this.tonesGain) {
+      this.tonesGain.gain.setTargetAtTime(vol, this.ctx.currentTime, 0.05);
     }
   }
 
