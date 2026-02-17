@@ -5,52 +5,53 @@
   'use strict';
 
   const engine = new BrainWaveEngine();
+  const music = new MusicEngine();
 
   // ─── Mode Presets ────────────────────────────────────
   const MODES = {
     'deep-focus': {
       beatFreq: 16, carrier: 200, toneType: 'binaural',
-      noise: { brown: 0.15 },
+      noise: { brown: 0.15 }, music: 'lo-fi', musicVol: 0.3,
       label: 'Deep Focus', color: '#e74c3c'
     },
     'study': {
       beatFreq: 14, carrier: 200, toneType: 'binaural',
-      noise: { pink: 0.12 },
+      noise: { pink: 0.12 }, music: 'piano-ambient', musicVol: 0.35,
       label: 'Study', color: '#e67e22'
     },
     'flow-state': {
       beatFreq: 10, carrier: 180, toneType: 'binaural',
-      noise: { pink: 0.06 },
+      noise: { pink: 0.06 }, music: 'gentle-arp', musicVol: 0.3,
       label: 'Flow State', color: '#f1c40f'
     },
     'creativity': {
       beatFreq: 6, carrier: 160, toneType: 'binaural',
-      noise: { pink: 0.08 },
+      noise: { pink: 0.08 }, music: 'ambient-pad', musicVol: 0.35,
       label: 'Creativity', color: '#9b59b6'
     },
     'relaxation': {
       beatFreq: 10, carrier: 180, toneType: 'binaural',
-      noise: { pink: 0.1 },
+      noise: { pink: 0.1 }, music: 'piano-ambient', musicVol: 0.3,
       label: 'Relaxation', color: '#2ecc71'
     },
     'meditation': {
       beatFreq: 5, carrier: 150, toneType: 'binaural',
-      noise: {},
+      noise: {}, music: 'singing-bowls', musicVol: 0.4,
       label: 'Meditation', color: '#1abc9c'
     },
     'power-nap': {
       beatFreq: 3, carrier: 140, toneType: 'binaural',
-      noise: { brown: 0.08 },
+      noise: { brown: 0.08 }, music: 'space-drone', musicVol: 0.25,
       label: 'Power Nap', color: '#3498db'
     },
     'sleep': {
       beatFreq: 2, carrier: 120, toneType: 'binaural',
-      noise: { brown: 0.12 },
+      noise: { brown: 0.12 }, music: 'space-drone', musicVol: 0.2,
       label: 'Deep Sleep', color: '#2c3e50'
     },
     'peak-performance': {
       beatFreq: 40, carrier: 300, toneType: 'binaural',
-      noise: {},
+      noise: {}, music: 'lo-fi', musicVol: 0.3,
       label: 'Peak Performance', color: '#e74c3c'
     }
   };
@@ -99,6 +100,13 @@
 
   function startPlaying() {
     engine.play();
+    // Attach music engine to the audio context if not yet done
+    if (!music.ctx) {
+      music.attach(engine.getAudioContext(), engine.getMasterGain());
+    }
+    if (music.style !== 'none') {
+      music.start();
+    }
     iconPlay.style.display = 'none';
     iconPause.style.display = 'block';
     btnPlay.classList.add('playing');
@@ -109,6 +117,7 @@
 
   function stopAll() {
     engine.stop();
+    music.stop();
     iconPlay.style.display = 'block';
     iconPause.style.display = 'none';
     btnPlay.classList.remove('playing');
@@ -150,6 +159,16 @@
       Object.entries(preset.noise).forEach(([type, vol]) => {
         engine.setNoiseVolume(type, vol);
       });
+
+      // Apply music preset
+      if (preset.music) {
+        music.setStyle(preset.music);
+        music.setVolume(preset.musicVol || 0.3);
+        syncMusicUI(preset.music, preset.musicVol || 0.3);
+      } else {
+        music.setStyle('none');
+        syncMusicUI('none', 0);
+      }
 
       // Sync UI
       syncUIFromEngine(preset);
@@ -257,6 +276,42 @@
     });
   });
 
+  // ─── Music Style Buttons ────────────────────────────
+  $$('.music-style-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const style = btn.dataset.style;
+      $$('.music-style-btn').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+
+      music.setStyle(style);
+      if (engine.isPlaying && style !== 'none') {
+        if (!music.ctx) {
+          music.attach(engine.getAudioContext(), engine.getMasterGain());
+        }
+        music.start();
+      }
+      updateCustomSummary();
+    });
+  });
+
+  // ─── Music Volume ─────────────────────────────────
+  const musicVolumeSlider = $('#music-volume');
+  const musicVolumeValue = $('#music-volume-value');
+  musicVolumeSlider.addEventListener('input', () => {
+    const v = parseInt(musicVolumeSlider.value);
+    music.setVolume(v / 100);
+    musicVolumeValue.textContent = v + '%';
+    updateCustomSummary();
+  });
+
+  function syncMusicUI(style, vol) {
+    $$('.music-style-btn').forEach(b => {
+      b.classList.toggle('selected', b.dataset.style === style);
+    });
+    musicVolumeSlider.value = Math.round(vol * 100);
+    musicVolumeValue.textContent = Math.round(vol * 100) + '%';
+  }
+
   // ─── Custom Summary ─────────────────────────────────
   function updateCustomSummary() {
     const summary = $('#custom-summary');
@@ -270,6 +325,10 @@
       .map(([t, v]) => `${t} ${Math.round(v * 100)}%`);
     if (activeNoise.length) {
       parts.push(`<strong>Sounds:</strong> ${activeNoise.join(', ')}`);
+    }
+
+    if (music.style !== 'none') {
+      parts.push(`<strong>Music:</strong> ${music.style} (${Math.round(music.volume * 100)}%)`);
     }
 
     summary.innerHTML = parts.map(p => `<p>${p}</p>`).join('');

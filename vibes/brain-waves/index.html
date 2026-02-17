@@ -54,6 +54,7 @@
     <nav id="tabs">
       <button class="tab active" data-tab="modes">Study Modes</button>
       <button class="tab" data-tab="brainwaves">Brainwaves</button>
+      <button class="tab" data-tab="music">Music</button>
       <button class="tab" data-tab="sounds">Sound Layer</button>
       <button class="tab" data-tab="custom">Custom Mix</button>
     </nav>
@@ -180,7 +181,54 @@
       </div>
     </section>
 
-    <!-- Tab: Sound Layer -->
+    <!-- Tab: Music -->
+    <section id="tab-music" class="tab-content">
+      <div class="music-controls">
+        <div class="music-style-grid">
+          <button class="music-style-btn" data-style="none">
+            <span class="ms-icon">&#10005;</span>
+            <span class="ms-label">Off</span>
+          </button>
+          <button class="music-style-btn" data-style="ambient-pad">
+            <span class="ms-icon">&#9729;</span>
+            <span class="ms-label">Ambient Pads</span>
+            <span class="ms-desc">Evolving polyphonic chord pads</span>
+          </button>
+          <button class="music-style-btn" data-style="piano-ambient">
+            <span class="ms-icon">&#9835;</span>
+            <span class="ms-label">Piano Ambient</span>
+            <span class="ms-desc">Gentle pentatonic piano melody</span>
+          </button>
+          <button class="music-style-btn" data-style="space-drone">
+            <span class="ms-icon">&#10026;</span>
+            <span class="ms-label">Space Drone</span>
+            <span class="ms-desc">Deep evolving harmonic drone</span>
+          </button>
+          <button class="music-style-btn" data-style="singing-bowls">
+            <span class="ms-icon">&#9765;</span>
+            <span class="ms-label">Singing Bowls</span>
+            <span class="ms-desc">Resonant bell-like tones</span>
+          </button>
+          <button class="music-style-btn" data-style="lo-fi">
+            <span class="ms-icon">&#9836;</span>
+            <span class="ms-label">Lo-Fi</span>
+            <span class="ms-desc">Warm filtered chords with vinyl feel</span>
+          </button>
+          <button class="music-style-btn" data-style="gentle-arp">
+            <span class="ms-icon">&#9839;</span>
+            <span class="ms-label">Gentle Arpeggio</span>
+            <span class="ms-desc">Soft arpeggiated patterns</span>
+          </button>
+        </div>
+        <div class="music-volume-control">
+          <label for="music-volume">Music Volume</label>
+          <input type="range" id="music-volume" min="0" max="100" value="40">
+          <span id="music-volume-value">40%</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab: Sound Layer (moved after Music) -->
     <section id="tab-sounds" class="tab-content">
       <div class="sound-layers">
         <div class="sound-layer" data-sound="white">
@@ -230,6 +278,7 @@
   </div>
 
   <script src="audio-engine.js"></script>
+  <script src="music-engine.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

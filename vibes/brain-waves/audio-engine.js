@@ -300,6 +300,17 @@ class BrainWaveEngine {
     }
   }
 
+  /** Expose context and master gain so the MusicEngine can attach. */
+  getAudioContext() {
+    this.init();
+    return this.ctx;
+  }
+
+  getMasterGain() {
+    this.init();
+    return this.masterGain;
+  }
+
   play() {
     this.init();
     if (this.ctx.state === 'suspended') {
