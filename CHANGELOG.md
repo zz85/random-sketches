@@ -1,5 +1,11 @@
 # Logs
 
+17 Feb 2026
+- Add [BrainWave - Neural Audio Engine](vibes/brain-waves/) - Web Audio app for brainwave entrainment with binaural beats, isochronic tones, and 9 study/focus mode presets
+- Procedural ambient music engine with 10 generative styles (ambient pads, piano, space drone, singing bowls, lo-fi, arpeggios, dark pad, cinematic lo-fi, cinematic arpeggio, shimmer)
+- Independent volume controls for master, beats, and music layers
+- Real-time waveform/frequency visualizer, session timer, 6 ambient noise generators
+
 13 Oct 2025
 - Add [CPU/Numa Affinity planner / visualizer](cpu-affinity-planner/index.html)
 

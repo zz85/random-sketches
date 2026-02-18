@@ -1,5 +1,6 @@
 # Random experiments
 
+- [BrainWave - Neural Audio Engine](vibes/brain-waves/) - Brainwave entrainment app with binaural beats, study/focus modes, and procedural ambient music
 - [CPU/Numa Affinity planner / visualizer](cpu-affinity-planner/)
 - [moon fraction](cosmos/moonfraction.html) - Visualization of moon in it's different phases
 - [sun path ar 2d](cosmos/sunpath_three_ar_2d.html) - Heads up display using AR passthrough style
