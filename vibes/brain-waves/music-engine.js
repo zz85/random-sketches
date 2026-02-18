@@ -4,12 +4,16 @@
  * No external audio files required.
  *
  * Styles:
- *   - ambient-pad:    Evolving polyphonic pads with slow chord changes
+ *   - ambient-pad:    Evolving polyphonic pads with slow chord changes (ethereal)
  *   - piano-ambient:  Gentle pentatonic piano-like melody
  *   - space-drone:    Deep evolving drone with overtones
  *   - singing-bowls:  Resonant bell-like tones with long decay
- *   - lo-fi:          Lo-fi filtered chords with vinyl crackle feel
- *   - gentle-arp:     Soft arpeggiated patterns
+ *   - lo-fi:          Lo-fi filtered chords with vinyl crackle (calm C major)
+ *   - gentle-arp:     Soft arpeggiated patterns (C major)
+ *   - dark-pad:       Moody pads using Cm dreamy progression
+ *   - cinematic-lofi: Lo-fi with 8-chord Am cinematic progression
+ *   - cinematic-arp:  Arpeggios across 6 Am-key chord shapes
+ *   - shimmer:        Drifting triangle shimmer over ethereal pads
  *
  * Fixes applied:
  *   - Replaced unbounded _nodes[] with Set + onended auto-cleanup
@@ -41,22 +45,36 @@ class MusicEngine {
 
     // Musical data
     this._chordProgressions = {
+      // Am: i-VI-III-VII-v-iv-i-V — 8-chord cinematic minor cycle
+      cinematic: [
+        [220.00, 261.63, 329.63],  // Am
+        [174.61, 220.00, 261.63],  // F
+        [261.63, 329.63, 392.00],  // C
+        [196.00, 246.94, 293.66],  // G
+        [164.81, 196.00, 246.94],  // Em
+        [146.83, 174.61, 220.00],  // Dm
+        [220.00, 261.63, 329.63],  // Am
+        [164.81, 207.65, 246.94],  // E (dominant)
+      ],
+      // C major: I-vi-IV-V — classic bright pop/ambient
       calm: [
         [261.63, 329.63, 392.00],  // C maj
         [220.00, 277.18, 329.63],  // A min
         [174.61, 220.00, 261.63],  // F maj
         [196.00, 246.94, 293.66],  // G maj
       ],
+      // C minor: i-VII-VI-VII — dark, introspective
       dreamy: [
         [261.63, 311.13, 392.00],  // Cm
         [233.08, 293.66, 349.23],  // Bb
         [207.65, 261.63, 311.13],  // Ab
         [233.08, 293.66, 349.23],  // Bb
       ],
+      // Extended voicings — floating, ambiguous tonality
       ethereal: [
         [261.63, 329.63, 415.30],  // Cmaj7 partial
         [293.66, 369.99, 440.00],  // Dm7 partial
-        [246.94, 311.13, 392.00],  // Bm partial (dreamy)
+        [246.94, 311.13, 392.00],  // Bm partial
         [220.00, 277.18, 349.23],  // Am add partial
       ],
     };
@@ -73,6 +91,16 @@ class MusicEngine {
       220.00, 261.63, 329.63, 440.00,  // Am arpeggio
       174.61, 220.00, 261.63, 349.23,  // F major arpeggio
       196.00, 246.94, 293.66, 392.00,  // G major arpeggio
+    ];
+
+    // Am-key arpeggios for cinematic styles
+    this._cinematicArpNotes = [
+      220.00, 261.63, 329.63, 440.00,  // Am arpeggio
+      174.61, 220.00, 261.63, 349.23,  // F major arpeggio
+      261.63, 329.63, 392.00, 523.25,  // C major arpeggio
+      196.00, 246.94, 293.66, 392.00,  // G major arpeggio
+      164.81, 196.00, 246.94, 329.63,  // Em arpeggio
+      146.83, 174.61, 220.00, 293.66,  // Dm arpeggio
     ];
   }
 
@@ -129,6 +157,10 @@ class MusicEngine {
       case 'singing-bowls': this._startSingingBowls(); break;
       case 'lo-fi': this._startLoFi(); break;
       case 'gentle-arp': this._startGentleArp(); break;
+      case 'dark-pad': this._startDarkPad(); break;
+      case 'cinematic-lofi': this._startCinematicLoFi(); break;
+      case 'cinematic-arp': this._startCinematicArp(); break;
+      case 'shimmer': this._startShimmerStyle(); break;
     }
   }
 
@@ -555,5 +587,225 @@ class MusicEngine {
     };
 
     playNote();
+  }
+
+  // ─── Shimmer: drifting triangle oscillator layer ────
+  _addShimmer(destination) {
+    const shimmerOsc = this._osc('triangle', 2000);
+    const shimmerGain = this._gain(0.008);
+    shimmerOsc.connect(shimmerGain);
+    shimmerGain.connect(destination);
+    shimmerOsc.start();
+
+    const drift = () => {
+      if (!this.isPlaying) return;
+      const target = 2000 + (Math.random() * 100 - 50);
+      const now = this.ctx.currentTime;
+      shimmerOsc.frequency.linearRampToValueAtTime(target, now + 1.5);
+      this._schedule(drift, 3000);
+    };
+    drift();
+  }
+
+  // ─── Style: Dark Pad (dreamy Cm progression) ────────
+  _startDarkPad() {
+    const reverb = this._createReverb(0.6);
+    reverb.output.connect(this.outputGain);
+
+    const progression = this._chordProgressions.dreamy;
+    let chordIdx = 0;
+
+    const playChord = () => {
+      if (!this.isPlaying) return;
+      const chord = progression[chordIdx % progression.length];
+      chordIdx++;
+
+      chord.forEach((freq) => {
+        for (let d = -6; d <= 6; d += 6) {
+          const osc = this._osc('sine', freq + d + Math.random() * 2);
+          const g = this._gain(0);
+          osc.connect(g);
+          g.connect(reverb.input);
+
+          const now = this.ctx.currentTime;
+          const attack = 2 + Math.random();
+          const sustain = 4 + Math.random() * 2;
+          const release = 3 + Math.random();
+          const totalDuration = attack + sustain + release;
+
+          g.gain.setTargetAtTime(0.06, now, attack * 0.3);
+          g.gain.setTargetAtTime(0.04, now + attack + sustain, 0.5);
+          g.gain.setTargetAtTime(0, now + attack + sustain + release * 0.5, release * 0.3);
+
+          osc.start(now);
+          osc.stop(now + totalDuration + 1);
+        }
+      });
+
+      this._schedule(playChord, 8000 + Math.random() * 4000);
+    };
+
+    playChord();
+  }
+
+  // ─── Style: Cinematic Lo-Fi (Am 8-chord + crackle) ──
+  _startCinematicLoFi() {
+    const lpFilter = this._filter('lowpass', 800, 1);
+    const hpFilter = this._filter('highpass', 200, 0.5);
+    lpFilter.connect(hpFilter);
+    hpFilter.connect(this.outputGain);
+
+    const reverb = this._createReverb(0.45);
+    reverb.output.connect(lpFilter);
+
+    const progression = this._chordProgressions.cinematic;
+    let chordIdx = 0;
+
+    const playChord = () => {
+      if (!this.isPlaying) return;
+      const chord = progression[chordIdx % progression.length];
+      chordIdx++;
+
+      chord.forEach(freq => {
+        const f = freq / 2;
+        const osc1 = this._osc('triangle', f);
+        const osc2 = this._osc('sawtooth', f * 1.002);
+        const g1 = this._gain(0);
+        const g2 = this._gain(0);
+
+        osc1.connect(g1);
+        osc2.connect(g2);
+        g1.connect(reverb.input);
+        g2.connect(reverb.input);
+
+        const now = this.ctx.currentTime;
+        const amp = 0.05;
+        g1.gain.setTargetAtTime(amp, now, 0.3);
+        g2.gain.setTargetAtTime(amp * 0.3, now, 0.3);
+        g1.gain.setTargetAtTime(0, now + 3, 1.5);
+        g2.gain.setTargetAtTime(0, now + 3, 1.5);
+
+        osc1.start(now);
+        osc2.start(now);
+        osc1.stop(now + 9);
+        osc2.stop(now + 9);
+      });
+
+      this._schedule(playChord, 6000 + Math.random() * 2000);
+    };
+
+    // Vinyl crackle
+    const crackleGain = this._gain(0.008);
+    const crackleLp = this._filter('bandpass', 3000, 1);
+    const crackleLen = this.ctx.sampleRate * 8;
+    const crackleBuf = this.ctx.createBuffer(1, crackleLen, this.ctx.sampleRate);
+    const cd = crackleBuf.getChannelData(0);
+    for (let i = 0; i < crackleLen; i++) {
+      cd[i] = Math.random() < 0.008 ? (Math.random() * 2 - 1) : 0;
+    }
+    const crackleSrc = this._bufferSource(crackleBuf, true);
+    crackleSrc.connect(crackleLp);
+    crackleLp.connect(crackleGain);
+    crackleGain.connect(this.outputGain);
+    crackleSrc.start();
+
+    playChord();
+  }
+
+  // ─── Style: Cinematic Arpeggio (Am-key, 6 groups) ───
+  _startCinematicArp() {
+    const reverb = this._createReverb(0.55);
+    reverb.output.connect(this.outputGain);
+
+    const notes = this._cinematicArpNotes;
+    const numGroups = Math.floor(notes.length / 4);
+    let noteIdx = 0;
+    let direction = 1;
+
+    const playNote = () => {
+      if (!this.isPlaying) return;
+
+      const freq = notes[noteIdx];
+      const now = this.ctx.currentTime;
+
+      const osc = this._osc('sine', freq);
+      const osc2 = this._osc('triangle', freq * 0.999);
+      const chorusGain = this._gain(0.03);
+      const g = this._gain(0);
+      const filter = this._filter('lowpass', 2000 + Math.random() * 500);
+
+      osc.connect(g);
+      osc2.connect(chorusGain);
+      chorusGain.connect(g);
+      g.connect(filter);
+      filter.connect(reverb.input);
+
+      osc.start(now);
+      osc2.start(now);
+
+      g.gain.setTargetAtTime(0.08, now, 0.02);
+      g.gain.setTargetAtTime(0, now + 0.15, 0.6);
+
+      osc.stop(now + 4);
+      osc2.stop(now + 4);
+
+      noteIdx += direction;
+      if (noteIdx >= notes.length - 1) direction = -1;
+      if (noteIdx <= 0) {
+        direction = 1;
+        if (Math.random() < 0.3) {
+          const group = Math.floor(Math.random() * numGroups) * 4;
+          noteIdx = group;
+        }
+      }
+
+      const tempo = 400 + Math.random() * 200;
+      this._schedule(playNote, tempo);
+    };
+
+    playNote();
+  }
+
+  // ─── Style: Shimmer (triangle shimmer + ethereal pads)
+  _startShimmerStyle() {
+    const reverb = this._createReverb(0.6);
+    reverb.output.connect(this.outputGain);
+
+    // Shimmer layer through the reverb
+    this._addShimmer(reverb.input);
+
+    // Gentle ethereal pad underneath
+    const progression = this._chordProgressions.ethereal;
+    let chordIdx = 0;
+
+    const playChord = () => {
+      if (!this.isPlaying) return;
+      const chord = progression[chordIdx % progression.length];
+      chordIdx++;
+
+      chord.forEach((freq) => {
+        const osc = this._osc('sine', freq);
+        const g = this._gain(0);
+        osc.connect(g);
+        g.connect(reverb.input);
+
+        const now = this.ctx.currentTime;
+        const attack = 3 + Math.random();
+        const sustain = 5 + Math.random() * 2;
+        const release = 4 + Math.random();
+        const totalDuration = attack + sustain + release;
+
+        g.gain.setTargetAtTime(0.03, now, attack * 0.3);
+        g.gain.setTargetAtTime(0.02, now + attack + sustain, 0.5);
+        g.gain.setTargetAtTime(0, now + attack + sustain + release * 0.5, release * 0.3);
+
+        osc.start(now);
+        osc.stop(now + totalDuration + 1);
+      });
+
+      this._schedule(playChord, 10000 + Math.random() * 5000);
+    };
+
+    playChord();
   }
 }
