@@ -1,0 +1,839 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Night Sky Pointer</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    :root {
+      --primary: #00D4FF;
+      --secondary: #FF6B35;
+      --ui-bg: rgba(10, 10, 20, 0.85);
+      --text-primary: #FFFFFF;
+      --text-secondary: #A0A0B0;
+      --success: #00FF88;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family: "SF Pro Display", -apple-system, BlinkMacSystemFont, sans-serif;
+      background: #000;
+      color: var(--text-primary);
+    }
+
+    #camera-view {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      z-index: 1;
+    }
+
+    #canvas-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 2;
+      pointer-events: none;
+    }
+
+    .celestial-marker {
+      position: absolute;
+      transform: translate(-50%, -50%);
+      pointer-events: auto;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      transition: transform 0.1s ease;
+    }
+
+    .celestial-marker:active {
+      transform: translate(-50%, -50%) scale(1.2);
+    }
+
+    .marker-dot {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: bold;
+      box-shadow: 0 0 20px currentColor;
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    .marker-star { background: #fff; color: #000; }
+    .marker-planet { background: var(--secondary); color: #fff; }
+    .marker-moon { background: #F5F5DC; color: #333; }
+    .marker-sun { background: #FFD700; color: #333; }
+
+    .marker-label {
+      margin-top: 4px;
+      padding: 4px 8px;
+      background: var(--ui-bg);
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+    }
+
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.15); opacity: 0.8; }
+    }
+
+    #top-bar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      padding: 16px;
+      padding-top: max(16px, env(safe-area-inset-top));
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      z-index: 10;
+    }
+
+    .status-box {
+      background: var(--ui-bg);
+      padding: 8px 12px;
+      border-radius: 8px;
+      backdrop-filter: blur(10px);
+    }
+
+    #compass-display {
+      font-size: 18px;
+      font-weight: bold;
+      min-width: 80px;
+    }
+
+    #location-display {
+      font-size: 12px;
+      color: var(--text-secondary);
+      text-align: right;
+    }
+
+    #location-display .city {
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    #bottom-bar {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      padding: 16px;
+      padding-bottom: max(16px, env(safe-area-inset-bottom));
+      display: flex;
+      justify-content: center;
+      gap: 16px;
+      z-index: 10;
+    }
+
+    .control-btn {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: var(--ui-bg);
+      border: none;
+      color: var(--text-primary);
+      font-size: 20px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(10px);
+      transition: background 0.2s;
+    }
+
+    .control-btn:active {
+      background: var(--primary);
+    }
+
+    .control-btn.active {
+      background: var(--primary);
+      color: #000;
+    }
+
+    #filter-panel {
+      position: fixed;
+      bottom: 80px;
+      left: 16px;
+      right: 16px;
+      background: var(--ui-bg);
+      padding: 16px;
+      border-radius: 12px;
+      backdrop-filter: blur(10px);
+      z-index: 9;
+      display: none;
+    }
+
+    #filter-panel.visible {
+      display: block;
+      animation: slideUp 0.3s ease-out;
+    }
+
+    @keyframes slideUp {
+      from { transform: translateY(20px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+
+    .filter-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 0;
+    }
+
+    .filter-label {
+      font-size: 14px;
+    }
+
+    .toggle {
+      width: 50px;
+      height: 28px;
+      background: #333;
+      border-radius: 14px;
+      position: relative;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .toggle.on { background: var(--primary); }
+
+    .toggle::after {
+      content: '';
+      position: absolute;
+      width: 24px;
+      height: 24px;
+      background: #fff;
+      border-radius: 50%;
+      top: 2px;
+      left: 2px;
+      transition: transform 0.2s;
+    }
+
+    .toggle.on::after { transform: translateX(22px); }
+
+    #detail-panel {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: var(--ui-bg);
+      padding: 20px;
+      padding-bottom: max(24px, env(safe-area-inset-bottom));
+      border-radius: 20px 20px 0 0;
+      z-index: 20;
+      transform: translateY(100%);
+      transition: transform 0.3s ease-out;
+    }
+
+    #detail-panel.visible {
+      transform: translateY(0);
+    }
+
+    #detail-panel .close-btn {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: #333;
+      border: none;
+      color: #fff;
+      font-size: 18px;
+      cursor: pointer;
+    }
+
+    #detail-panel h2 {
+      font-size: 24px;
+      margin-bottom: 4px;
+    }
+
+    #detail-panel .type {
+      color: var(--text-secondary);
+      font-size: 14px;
+      margin-bottom: 16px;
+    }
+
+    .detail-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 8px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .detail-label {
+      color: var(--text-secondary);
+      font-size: 14px;
+    }
+
+    .detail-value {
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    #permission-screen {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: linear-gradient(135deg, #0a0a14 0%, #1a1a2e 100%);
+      z-index: 100;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 32px;
+      text-align: center;
+    }
+
+    #permission-screen.hidden { display: none; }
+
+    #permission-screen h1 {
+      font-size: 28px;
+      margin-bottom: 16px;
+      background: linear-gradient(90deg, var(--primary), var(--success));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    #permission-screen p {
+      color: var(--text-secondary);
+      margin-bottom: 32px;
+      line-height: 1.6;
+      max-width: 300px;
+    }
+
+    #permission-screen .icon {
+      font-size: 64px;
+      margin-bottom: 24px;
+    }
+
+    #enable-btn {
+      padding: 16px 48px;
+      font-size: 18px;
+      font-weight: 600;
+      background: var(--primary);
+      color: #000;
+      border: none;
+      border-radius: 30px;
+      cursor: pointer;
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+
+    #enable-btn:active {
+      transform: scale(0.95);
+    }
+
+    #enable-btn:disabled {
+      background: #333;
+      color: #666;
+    }
+
+    #message-overlay {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: var(--ui-bg);
+      padding: 20px 32px;
+      border-radius: 12px;
+      z-index: 50;
+      text-align: center;
+      display: none;
+    }
+
+    #message-overlay.visible { display: block; }
+  </style>
+</head>
+<body>
+  <video id="camera-view" autoplay playsinline muted></video>
+  <canvas id="canvas-overlay"></canvas>
+
+  <div id="top-bar">
+    <div class="status-box">
+      <div id="compass-display">--°</div>
+    </div>
+    <div class="status-box">
+      <div id="location-display">
+        <span class="city">Locating...</span>
+        <div id="time-display">--:--</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="bottom-bar">
+    <button class="control-btn" id="calibrate-btn" title="Calibrate">⟲</button>
+    <button class="control-btn active" id="filter-btn" title="Filters">☰</button>
+    <button class="control-btn" id="info-btn" title="Info">ℹ</button>
+  </div>
+
+  <div id="filter-panel">
+    <div class="filter-row">
+      <span class="filter-label">⭐ Stars</span>
+      <div class="toggle on" data-filter="stars"></div>
+    </div>
+    <div class="filter-row">
+      <span class="filter-label">🌙 Moon</span>
+      <div class="toggle on" data-filter="moon"></div>
+    </div>
+    <div class="filter-row">
+      <span class="filter-label">🪐 Planets</span>
+      <div class="toggle on" data-filter="planets"></div>
+    </div>
+  </div>
+
+  <div id="detail-panel">
+    <button class="close-btn" id="close-detail">×</button>
+    <h2 id="detail-name">Object</h2>
+    <div class="type" id="detail-type">Type</div>
+    <div class="detail-row">
+      <span class="detail-label">Magnitude</span>
+      <span class="detail-value" id="detail-mag">--</span>
+    </div>
+    <div class="detail-row">
+      <span class="detail-label">Altitude</span>
+      <span class="detail-value" id="detail-alt">--</span>
+    </div>
+    <div class="detail-row">
+      <span class="detail-label">Azimuth</span>
+      <span class="detail-value" id="detail-az">--</span>
+    </div>
+    <div class="detail-row">
+      <span class="detail-label">Distance</span>
+      <span class="detail-value" id="detail-dist">--</span>
+    </div>
+  </div>
+
+  <div id="permission-screen">
+    <div class="icon">🌟</div>
+    <h1>Night Sky Pointer</h1>
+    <p>Point your device at the night sky to identify stars, planets, and constellations.</p>
+    <button id="enable-btn">Enable Camera & Motion</button>
+  </div>
+
+  <div id="message-overlay">
+    <div id="message-text">Message</div>
+  </div>
+
+  <script>
+    const state = {
+      lat: null,
+      lng: null,
+      heading: 0,
+      pitch: 0,
+      roll: 0,
+      orientation: {},
+      permissionsGranted: false,
+      filters: { stars: true, moon: true, planets: true },
+      selectedObject: null,
+      city: 'Unknown'
+    };
+
+    const stars = [
+      { name: 'Sirius', ra: 101.3, dec: -16.7, mag: -1.46 },
+      { name: 'Canopus', ra: 95.99, dec: -52.7, mag: -0.74 },
+      { name: 'Arcturus', ra: 213.9, dec: 19.18, mag: -0.05 },
+      { name: 'Vega', ra: 279.2, dec: 38.78, mag: 0.03 },
+      { name: 'Capella', ra: 79.17, dec: 45.99, mag: 0.08 },
+      { name: 'Rigel', ra: 78.63, dec: -8.2, mag: 0.13 },
+      { name: 'Procyon', ra: 114.8, dec: 5.22, mag: 0.34 },
+      { name: 'Betelgeuse', ra: 88.79, dec: 7.41, mag: 0.42 },
+      { name: 'Altair', ra: 297.7, dec: 8.87, mag: 0.76 },
+      { name: 'Aldebaran', ra: 68.98, dec: 16.51, mag: 0.85 },
+      { name: 'Spica', ra: 201.3, dec: -11.16, mag: 0.97 },
+      { name: 'Antares', ra: 247.35, dec: -26.43, mag: 1.05 },
+      { name: 'Pollux', ra: 116.33, dec: 28.03, mag: 1.14 },
+      { name: 'Fomalhaut', ra: 344.28, dec: -29.62, mag: 1.16 },
+      { name: 'Deneb', ra: 310.36, dec: 45.28, mag: 1.25 },
+      { name: 'Regulus', ra: 152.09, dec: 11.97, mag: 1.35 },
+      { name: 'Castor', ra: 113.65, dec: 31.88, mag: 1.58 },
+      { name: 'Bellatrix', ra: 81.28, dec: 6.35, mag: 1.64 },
+      { name: 'Alnulam', ra: 95.99, dec: -1.2, mag: 1.69 },
+      { name: 'Polaris', ra: 37.95, dec: 89.26, mag: 1.97 }
+    ];
+
+    const planets = [
+      { name: 'Mercury', symbol: '☿', color: '#B0B0B0', dist: '77-222M km' },
+      { name: 'Venus', symbol: '♀', color: '#E6C87A', dist: '38-261M km' },
+      { name: 'Mars', symbol: '♂', color: '#FF6B35', dist: '55-401M km' },
+      { name: 'Jupiter', symbol: '♃', color: '#D4A574', dist: '588-968M km' },
+      { name: 'Saturn', symbol: '♄', color: '#E8D5A3', dist: '1.2-1.7B km' }
+    ];
+
+    function jd(date) {
+      return (date.getTime() / 86400000) + 2440587.5;
+    }
+
+    function toRad(deg) { return deg * Math.PI / 180; }
+    function toDeg(rad) { return rad * 180 / Math.PI; }
+
+    function sunPosition(jd) {
+      const n = jd - 2451545.0;
+      const L = (280.46 + 0.9856474 * n) % 360;
+      const g = (357.528 + 0.9856003 * n) % 360;
+      const lambda = L + 1.915 * Math.sin(toRad(g)) + 0.02 * Math.sin(toRad(2 * g));
+      const epsilon = 23.439 - 0.0000004 * n;
+      const alpha = toDeg(Math.atan2(Math.cos(toRad(epsilon)) * Math.sin(toRad(lambda)), Math.cos(toRad(lambda))));
+      const delta = toDeg(Math.asin(Math.sin(toRad(epsilon)) * Math.sin(toRad(lambda))));
+      return { ra: (alpha + 360) % 360, dec: delta };
+    }
+
+    function moonPosition(jd, lat, lng) {
+      const D = jd - 2451545.0;
+      const L = 218.32 + 13.176396 * D;
+      const M = 134.9 + 13.064396 * D;
+      const F = 93.27 + 12.031 * D;
+      const lambda = L + 6.29 * Math.sin(toRad(M));
+      const beta = 5.13 * Math.sin(toRad(F));
+      const epsilon = 23.439 - 0.0000004 * D;
+      const ra = toDeg(Math.atan2(
+        Math.sin(toRad(lambda)) * Math.cos(toRad(epsilon)) - Math.tan(toRad(beta)) * Math.sin(toRad(epsilon)),
+        Math.cos(toRad(lambda))
+      ));
+      const dec = toDeg(Math.asin(
+        Math.sin(toRad(beta)) * Math.cos(toRad(epsilon)) + Math.cos(toRad(beta)) * Math.sin(toRad(epsilon)) * Math.sin(toRad(lambda))
+      ));
+      const dist = 385001 - 20905 * Math.cos(toRad(M));
+      return { ra: (ra + 360) % 360, dec, dist, phase: (1 - Math.cos(toRad(D * 13.176396))) / 2 };
+    }
+
+    function planetPosition(name, jd) {
+      const D = jd - 2451545.0;
+      const angles = {
+        Mercury: { a: 0.387, e: 0.205, i: 7.0, L: 252.25, N: 48.33, w: 77.46 },
+        Venus: { a: 0.723, e: 0.007, i: 3.39, L: 181.98, N: 76.68, w: 131.53 },
+        Mars: { a: 1.524, e: 0.093, i: 1.85, L: 355.45, N: 49.58, w: 336.04 },
+        Jupiter: { a: 5.203, e: 0.048, i: 1.3, L: 34.4, N: 100.56, w: 14.75 },
+        Saturn: { a: 9.537, e: 0.054, i: 2.48, L: 49.9, N: 113.71, w: 92.43 }
+      };
+      const p = angles[name];
+      const M = (p.L + 0.9856 * D) % 360;
+      const E = M + p.e * toDeg(Math.sin(toRad(M))) * (1 + p.e * Math.cos(toRad(M)));
+      const x = p.a * (Math.cos(toRad(E)) - p.e);
+      const y = p.a * Math.sqrt(1 - p.e * p.e) * Math.sin(toRad(E));
+      const r = Math.sqrt(x * x + y * y);
+      const v = toDeg(Math.atan2(y, x));
+      const lambda = v + p.w;
+      const N = p.N;
+      const i = p.i;
+      const x_equat = r * (Math.cos(toRad(N)) * Math.cos(toRad(lambda)) + Math.sin(toRad(N)) * Math.sin(toRad(lambda)) * Math.cos(toRad(i)));
+      const y_equat = r * (Math.sin(toRad(N)) * Math.cos(toRad(lambda)) - Math.cos(toRad(N)) * Math.sin(toRad(lambda)) * Math.cos(toRad(i)));
+      const z_equat = r * (Math.sin(toRad(lambda)) * Math.sin(toRad(i)));
+      const ra = (toDeg(Math.atan2(y_equat, x_equat)) + 360) % 360;
+      const dec = toDeg(Math.asin(z_equat / r));
+      return { ra, dec, dist: r * 149597870 };
+    }
+
+    function localSiderealTime(jd, lng) {
+      const T = (jd - 2451545.0) / 36525;
+      let lst = 280.46061837 + 360.98564736629 * (jd - 2451545.0) + 0.000387933 * T * T - T * T * T / 38710000;
+      lst = (lst + lng) % 360;
+      return lst;
+    }
+
+    function raDecToAltAz(ra, dec, lat, lng, jd) {
+      const lst = localSiderealTime(jd, lng);
+      const ha = lst - ra;
+      const haRad = toRad(ha);
+      const decRad = toRad(dec);
+      const latRad = toRad(lat);
+      const alt = toDeg(Math.asin(Math.sin(latRad) * Math.sin(decRad) + Math.cos(latRad) * Math.cos(decRad) * Math.cos(haRad)));
+      const az = toDeg(Math.atan2(
+        Math.sin(haRad),
+        Math.cos(haRad) * Math.sin(latRad) - Math.tan(decRad) * Math.cos(latRad)
+      ));
+      return { alt, az: (az + 180 + 360) % 360 };
+    }
+
+    function getScreenPosition(alt, az, heading, pitch, fov = 60) {
+      const azDiff = ((az - heading + 540) % 360) - 180;
+      const x = window.innerWidth / 2 + (azDiff / fov) * window.innerWidth;
+      const y = window.innerHeight / 2 - ((alt - pitch) / fov) * window.innerHeight;
+      return { x, y, visible: alt > 0 && Math.abs(azDiff) < fov / 2 + 10 };
+    }
+
+    function getCompassDirection(heading) {
+      const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+      const idx = Math.round(heading / 45) % 8;
+      return `${dirs[idx]} ${Math.round(heading)}°`;
+    }
+
+    function updateTimeDisplay() {
+      const now = new Date();
+      const h = now.getHours();
+      const m = now.getMinutes();
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      const h12 = h % 12 || 12;
+      document.getElementById('time-display').textContent = `${h12}:${m.toString().padStart(2, '0')} ${ampm}`;
+    }
+
+    async function initCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment' },
+          audio: false
+        });
+        document.getElementById('camera-view').srcObject = stream;
+      } catch (err) {
+        console.warn('Camera error:', err);
+        showMessage('Camera unavailable - showing star map');
+      }
+    }
+
+    async function requestPermissions() {
+      if (typeof DeviceOrientationEvent !== 'undefined' && 
+          typeof DeviceOrientationEvent.requestPermission === 'function') {
+        try {
+          const perm = await DeviceOrientationEvent.requestPermission();
+          if (perm !== 'granted') {
+            showMessage('Motion permission required');
+            return false;
+          }
+        } catch (err) {
+          console.error('Permission error:', err);
+          return false;
+        }
+      }
+
+      try {
+        const position = await new Promise((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true });
+        });
+        state.lat = position.coords.latitude;
+        state.lng = position.coords.longitude;
+        
+        try {
+          const resp = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${state.lat}&lon=${state.lng}&format=json`);
+          const data = await resp.json();
+          state.city = data.address?.city || data.address?.town || data.address?.village || 'Unknown';
+        } catch (e) {
+          state.city = `${state.lat.toFixed(1)}°, ${state.lng.toFixed(1)}°`;
+        }
+        
+        document.querySelector('#location-display .city').textContent = state.city;
+        state.permissionsGranted = true;
+        return true;
+      } catch (err) {
+        console.error('Location error:', err);
+        state.lat = 37.7749;
+        state.lng = -122.4194;
+        state.city = 'San Francisco (default)';
+        document.querySelector('#location-display .city').textContent = state.city;
+        return true;
+      }
+    }
+
+    function handleOrientation(event) {
+      const alpha = event.alpha || 0;
+      const beta = event.beta || 0;
+      const gamma = event.gamma || 0;
+      
+      state.heading = (360 - alpha + 360) % 360;
+      state.pitch = beta;
+      state.roll = gamma;
+      
+      document.getElementById('compass-display').textContent = getCompassDirection(state.heading);
+    }
+
+    function render() {
+      const canvas = document.getElementById('canvas-overlay');
+      const ctx = canvas.getContext('2d');
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      if (!state.permissionsGranted || state.lat === null) return;
+
+      const now = new Date();
+      const jd = jd(now);
+
+      const objects = [];
+
+      if (state.filters.moon) {
+        const moon = moonPosition(jd, state.lat, state.lng);
+        const moonAltAz = raDecToAltAz(moon.ra, moon.dec, state.lat, state.lng, jd);
+        const pos = getScreenPosition(moonAltAz.alt, moonAltAz.az, state.heading, state.pitch);
+        if (pos.visible) {
+          objects.push({
+            type: 'moon',
+            name: 'Moon',
+            symbol: '🌙',
+            alt: moonAltAz.alt,
+            az: moonAltAz.az,
+            mag: -12.7,
+            dist: `${Math.round(moon.dist / 1000)} km`,
+            x: pos.x,
+            y: pos.y,
+            phase: moon.phase
+          });
+        }
+      }
+
+      const sun = sunPosition(jd);
+      const sunAltAz = raDecToAltAz(sun.ra, sun.dec, state.lat, state.lng, jd);
+      const isDaytime = sunAltAz.alt > 0;
+
+      if (state.filters.planets) {
+        for (const planet of planets) {
+          const p = planetPosition(planet.name, jd);
+          const altAz = raDecToAltAz(p.ra, p.dec, state.lat, state.lng, jd);
+          const pos = getScreenPosition(altAz.alt, altAz.az, state.heading, state.pitch);
+          if (pos.visible) {
+            objects.push({
+              type: 'planet',
+              name: planet.name,
+              symbol: planet.symbol,
+              color: planet.color,
+              alt: altAz.alt,
+              az: altAz.az,
+              mag: planet.name === 'Venus' ? -4.4 : planet.name === 'Jupiter' ? -2.5 : planet.name === 'Mars' ? -2 : planet.name === 'Mercury' ? -1 : 0.5,
+              dist: planet.dist,
+              x: pos.x,
+              y: pos.y
+            });
+          }
+        }
+      }
+
+      if (state.filters.stars) {
+        for (const star of stars) {
+          const altAz = raDecToAltAz(star.ra, star.dec, state.lat, state.lng, jd);
+          const pos = getScreenPosition(altAz.alt, altAz.az, state.heading, state.pitch);
+          if (pos.visible) {
+            objects.push({
+              type: 'star',
+              name: star.name,
+              symbol: '⭐',
+              alt: altAz.alt,
+              az: altAz.az,
+              mag: star.mag,
+              dist: 'Light years',
+              x: pos.x,
+              y: pos.y
+            });
+          }
+        }
+      }
+
+      renderMarkers(objects);
+      requestAnimationFrame(render);
+    }
+
+    function renderMarkers(objects) {
+      const existing = document.querySelectorAll('.celestial-marker');
+      existing.forEach(el => el.remove());
+
+      for (const obj of objects) {
+        const marker = document.createElement('div');
+        marker.className = 'celestial-marker';
+        marker.style.left = obj.x + 'px';
+        marker.style.top = obj.y + 'px';
+
+        let markerClass = 'marker-star';
+        if (obj.type === 'planet') markerClass = 'marker-planet';
+        if (obj.type === 'moon') markerClass = 'marker-moon';
+
+        marker.innerHTML = `
+          <div class="marker-dot ${markerClass}" style="color: ${obj.color || '#fff'}">${obj.symbol}</div>
+          <div class="marker-label">${obj.name}</div>
+        `;
+
+        marker.addEventListener('click', () => showDetail(obj));
+        document.getElementById('canvas-overlay').parentElement.appendChild(marker);
+      }
+    }
+
+    function showDetail(obj) {
+      state.selectedObject = obj;
+      document.getElementById('detail-name').textContent = obj.name;
+      document.getElementById('detail-type').textContent = obj.type.charAt(0).toUpperCase() + obj.type.slice(1);
+      document.getElementById('detail-mag').textContent = obj.mag !== undefined ? obj.mag.toFixed(1) : '--';
+      document.getElementById('detail-alt').textContent = obj.alt !== undefined ? obj.alt.toFixed(1) + '°' : '--';
+      document.getElementById('detail-az').textContent = obj.az !== undefined ? obj.az.toFixed(1) + '°' : '--';
+      document.getElementById('detail-dist').textContent = obj.dist || '--';
+      document.getElementById('detail-panel').classList.add('visible');
+    }
+
+    function showMessage(text) {
+      document.getElementById('message-text').textContent = text;
+      document.getElementById('message-overlay').classList.add('visible');
+      setTimeout(() => {
+        document.getElementById('message-overlay').classList.remove('visible');
+      }, 3000);
+    }
+
+    function init() {
+      document.getElementById('enable-btn').addEventListener('click', async () => {
+        const btn = document.getElementById('enable-btn');
+        btn.disabled = true;
+        btn.textContent = 'Enabling...';
+        
+        const success = await requestPermissions();
+        if (success) {
+          await initCamera();
+          document.getElementById('permission-screen').classList.add('hidden');
+          window.addEventListener('deviceorientation', handleOrientation);
+          render();
+          updateTimeDisplay();
+          setInterval(updateTimeDisplay, 1000);
+        } else {
+          btn.disabled = false;
+          btn.textContent = 'Try Again';
+        }
+      });
+
+      document.getElementById('calibrate-btn').addEventListener('click', () => {
+        showMessage('Move device in figure-8 pattern to calibrate');
+      });
+
+      document.getElementById('filter-btn').addEventListener('click', () => {
+        document.getElementById('filter-panel').classList.toggle('visible');
+      });
+
+      document.getElementById('filter-panel').querySelectorAll('.toggle').forEach(toggle => {
+        toggle.addEventListener('click', () => {
+          toggle.classList.toggle('on');
+          const filter = toggle.dataset.filter;
+          state.filters[filter] = toggle.classList.contains('on');
+        });
+      });
+
+      document.getElementById('close-detail').addEventListener('click', () => {
+        document.getElementById('detail-panel').classList.remove('visible');
+      });
+
+      document.getElementById('info-btn').addEventListener('click', () => {
+        showMessage('Point at the sky to discover celestial objects');
+      });
+    }
+
+    document.addEventListener('DOMContentLoaded', init);
+  </script>
+</body>
+</html>
