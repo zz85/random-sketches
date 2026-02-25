@@ -1,0 +1,1386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Night Sky AR</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #000;
+      overflow: hidden;
+      width: 100vw;
+      height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif;
+    }
+
+    #camera {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      object-fit: cover;
+      z-index: 0;
+    }
+
+    #sky-canvas {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      z-index: 1;
+      pointer-events: none;
+    }
+
+    #ui-overlay {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      z-index: 2;
+      pointer-events: none;
+    }
+
+    /* Status bar */
+    #status-bar {
+      position: absolute;
+      top: env(safe-area-inset-top, 10px);
+      left: 0; right: 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 16px;
+      background: linear-gradient(to bottom, rgba(0,0,0,0.6), transparent);
+      color: #fff;
+      font-size: 13px;
+      pointer-events: auto;
+    }
+
+    #app-title {
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      color: #a8d8ff;
+    }
+
+    #coords-display {
+      font-size: 11px;
+      color: rgba(255,255,255,0.6);
+      text-align: right;
+      line-height: 1.4;
+    }
+
+    /* Crosshair */
+    #crosshair {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: 48px; height: 48px;
+    }
+
+    #crosshair::before, #crosshair::after {
+      content: '';
+      position: absolute;
+      background: rgba(255,255,255,0.5);
+    }
+
+    #crosshair::before {
+      width: 1px; height: 100%;
+      left: 50%; top: 0;
+    }
+
+    #crosshair::after {
+      width: 100%; height: 1px;
+      top: 50%; left: 0;
+    }
+
+    .crosshair-ring {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: 32px; height: 32px;
+      border: 1px solid rgba(255,255,255,0.4);
+      border-radius: 50%;
+    }
+
+    /* Info panel - shown when object is near crosshair */
+    #info-panel {
+      position: absolute;
+      bottom: calc(env(safe-area-inset-bottom, 0px) + 100px);
+      left: 16px; right: 16px;
+      background: rgba(0, 8, 20, 0.82);
+      border: 1px solid rgba(100, 180, 255, 0.25);
+      border-radius: 16px;
+      padding: 14px 18px;
+      color: #fff;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      transition: opacity 0.3s, transform 0.3s;
+      opacity: 0;
+      transform: translateY(8px);
+    }
+
+    #info-panel.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    #info-name {
+      font-size: 20px;
+      font-weight: 700;
+      color: #a8d8ff;
+      margin-bottom: 2px;
+    }
+
+    #info-type {
+      font-size: 12px;
+      color: rgba(168, 216, 255, 0.6);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 8px;
+    }
+
+    #info-details {
+      font-size: 13px;
+      color: rgba(255,255,255,0.8);
+      line-height: 1.6;
+    }
+
+    #info-details span {
+      color: rgba(255,255,255,0.45);
+    }
+
+    /* Bottom controls */
+    #bottom-bar {
+      position: absolute;
+      bottom: env(safe-area-inset-bottom, 10px);
+      left: 0; right: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 12px 24px;
+      gap: 20px;
+      background: linear-gradient(to top, rgba(0,0,0,0.5), transparent);
+      pointer-events: auto;
+    }
+
+    .ctrl-btn {
+      background: rgba(255,255,255,0.12);
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 50px;
+      color: #fff;
+      font-size: 12px;
+      padding: 8px 16px;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+      letter-spacing: 0.3px;
+    }
+
+    .ctrl-btn.active {
+      background: rgba(100, 180, 255, 0.25);
+      border-color: rgba(100, 180, 255, 0.5);
+      color: #a8d8ff;
+    }
+
+    /* Permission / loading screens */
+    #permission-screen, #loading-screen {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      background: #000a1a;
+      z-index: 100;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 32px;
+      color: #fff;
+    }
+
+    .screen-icon {
+      font-size: 64px;
+      margin-bottom: 24px;
+    }
+
+    .screen-title {
+      font-size: 24px;
+      font-weight: 700;
+      color: #a8d8ff;
+      margin-bottom: 12px;
+    }
+
+    .screen-body {
+      font-size: 15px;
+      color: rgba(255,255,255,0.6);
+      line-height: 1.6;
+      margin-bottom: 32px;
+      max-width: 320px;
+    }
+
+    .screen-btn {
+      background: rgba(100, 180, 255, 0.2);
+      border: 1px solid rgba(100, 180, 255, 0.4);
+      border-radius: 50px;
+      color: #a8d8ff;
+      font-size: 16px;
+      padding: 14px 32px;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .stars-bg {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      overflow: hidden;
+      z-index: -1;
+    }
+
+    .star-dot {
+      position: absolute;
+      background: #fff;
+      border-radius: 50%;
+      animation: twinkle var(--dur) ease-in-out infinite;
+      opacity: var(--base-opacity);
+    }
+
+    @keyframes twinkle {
+      0%, 100% { opacity: var(--base-opacity); }
+      50% { opacity: calc(var(--base-opacity) * 0.3); }
+    }
+
+    #compass-ring {
+      position: absolute;
+      bottom: calc(env(safe-area-inset-bottom, 0px) + 80px);
+      right: 16px;
+      width: 56px; height: 56px;
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      color: rgba(255,255,255,0.5);
+    }
+
+    #compass-needle {
+      position: absolute;
+      width: 2px;
+      height: 20px;
+      background: linear-gradient(to bottom, #ff4444 50%, rgba(255,255,255,0.4) 50%);
+      border-radius: 1px;
+      transform-origin: 50% 50%;
+      transition: transform 0.3s ease;
+    }
+
+    #north-label {
+      position: absolute;
+      top: 4px;
+      font-size: 9px;
+      font-weight: 700;
+      color: #ff6666;
+      letter-spacing: 0.5px;
+    }
+
+    /* Night mode dim */
+    #night-filter {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      background: rgba(60, 0, 0, 0.35);
+      z-index: 3;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.5s;
+    }
+
+    #night-filter.active { opacity: 1; }
+
+    /* Orientation warning */
+    #orient-warning {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0,0,0,0.7);
+      border: 1px solid rgba(255,200,0,0.4);
+      border-radius: 12px;
+      padding: 12px 20px;
+      color: rgba(255,200,0,0.9);
+      font-size: 13px;
+      text-align: center;
+      max-width: 260px;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+
+<!-- Loading screen -->
+<div id="loading-screen">
+  <div class="stars-bg" id="loading-stars"></div>
+  <div class="screen-icon">✦</div>
+  <div class="screen-title">Night Sky AR</div>
+  <div class="screen-body">Loading celestial calculations...</div>
+</div>
+
+<!-- Permission screen -->
+<div id="permission-screen" style="display:none">
+  <div class="stars-bg" id="perm-stars"></div>
+  <div class="screen-icon">🔭</div>
+  <div class="screen-title">Night Sky AR</div>
+  <div class="screen-body">
+    Point your phone at the sky to identify stars, planets, and the Moon.<br><br>
+    This app needs access to your <strong>camera</strong>, <strong>location</strong>, and <strong>motion sensors</strong>.
+  </div>
+  <button class="screen-btn" id="start-btn">Start Exploring</button>
+</div>
+
+<!-- Camera feed -->
+<video id="camera" autoplay muted playsinline></video>
+
+<!-- Night mode red filter -->
+<div id="night-filter"></div>
+
+<!-- AR Canvas overlay -->
+<canvas id="sky-canvas"></canvas>
+
+<!-- UI layer -->
+<div id="ui-overlay">
+  <!-- Top status bar -->
+  <div id="status-bar">
+    <div id="app-title">✦ Night Sky</div>
+    <div id="coords-display">
+      <div id="location-text">Acquiring location...</div>
+      <div id="time-text"></div>
+    </div>
+  </div>
+
+  <!-- Crosshair -->
+  <div id="crosshair">
+    <div class="crosshair-ring"></div>
+  </div>
+
+  <!-- Info panel -->
+  <div id="info-panel">
+    <div id="info-name">–</div>
+    <div id="info-type">–</div>
+    <div id="info-details"></div>
+  </div>
+
+  <!-- Orientation warning -->
+  <div id="orient-warning">
+    Point your camera toward the sky
+  </div>
+
+  <!-- Compass -->
+  <div id="compass-ring">
+    <div id="north-label">N</div>
+    <div id="compass-needle"></div>
+  </div>
+
+  <!-- Bottom controls -->
+  <div id="bottom-bar">
+    <button class="ctrl-btn active" id="btn-stars">Stars</button>
+    <button class="ctrl-btn active" id="btn-planets">Planets</button>
+    <button class="ctrl-btn active" id="btn-moon">Moon</button>
+    <button class="ctrl-btn" id="btn-night">Night</button>
+  </div>
+</div>
+
+<script>
+// =============================================================================
+// ASTRONOMY ENGINE - Pure JS celestial calculations
+// Based on Jean Meeus "Astronomical Algorithms" + simplified VSOP87
+// =============================================================================
+
+const Astro = (() => {
+  const DEG = Math.PI / 180;
+  const RAD = 180 / Math.PI;
+
+  function toRad(d) { return d * DEG; }
+  function toDeg(r) { return r * RAD; }
+  function norm360(a) { return ((a % 360) + 360) % 360; }
+  function norm24(h)  { return ((h % 24)  + 24)  % 24; }
+
+  // Julian Day Number from Date
+  function jd(date) {
+    const y = date.getUTCFullYear();
+    const m = date.getUTCMonth() + 1;
+    const d = date.getUTCDate() +
+              date.getUTCHours() / 24 +
+              date.getUTCMinutes() / 1440 +
+              date.getUTCSeconds() / 86400;
+    let Y = y, M = m;
+    if (M <= 2) { Y -= 1; M += 12; }
+    const A = Math.floor(Y / 100);
+    const B = 2 - A + Math.floor(A / 4);
+    return Math.floor(365.25 * (Y + 4716)) + Math.floor(30.6001 * (M + 1)) + d + B - 1524.5;
+  }
+
+  // Julian centuries from J2000.0
+  function T(date) { return (jd(date) - 2451545.0) / 36525; }
+
+  // Greenwich Mean Sidereal Time (degrees)
+  function gmst(date) {
+    const t = T(date);
+    let theta = 280.46061837 + 360.98564736629 * (jd(date) - 2451545.0) +
+                0.000387933 * t * t - t * t * t / 38710000;
+    return norm360(theta);
+  }
+
+  // Local Sidereal Time (degrees)
+  function lst(date, lonDeg) {
+    return norm360(gmst(date) + lonDeg);
+  }
+
+  // Convert RA/Dec to Altitude/Azimuth
+  // ra: hours, dec: degrees, lat/lon: degrees
+  function raDecToAltAz(ra, dec, lat, lon, date) {
+    const localST = lst(date, lon);
+    const ha = norm360(localST - ra * 15); // Hour Angle in degrees
+
+    const sinAlt = Math.sin(toRad(dec)) * Math.sin(toRad(lat)) +
+                   Math.cos(toRad(dec)) * Math.cos(toRad(lat)) * Math.cos(toRad(ha));
+    const alt = toDeg(Math.asin(sinAlt));
+
+    const cosAz = (Math.sin(toRad(dec)) - sinAlt * Math.sin(toRad(lat))) /
+                  (Math.cos(toRad(Math.max(-89.9, Math.min(89.9, alt)))) * Math.cos(toRad(lat)));
+    let az = toDeg(Math.acos(Math.max(-1, Math.min(1, cosAz))));
+    if (Math.sin(toRad(ha)) > 0) az = 360 - az;
+
+    return { alt, az };
+  }
+
+  // ---- SUN ----
+  function sunPosition(date) {
+    const t = T(date);
+    const L0 = norm360(280.46646 + 36000.76983 * t);
+    const M  = norm360(357.52911 + 35999.05029 * t - 0.0001537 * t * t);
+    const Mrad = toRad(M);
+    const C = (1.914602 - 0.004817 * t - 0.000014 * t * t) * Math.sin(Mrad)
+            + (0.019993 - 0.000101 * t) * Math.sin(2 * Mrad)
+            + 0.000289 * Math.sin(3 * Mrad);
+    const sunLon = L0 + C;
+    const apparent = sunLon - 0.00569 - 0.00478 * Math.sin(toRad(125.04 - 1934.136 * t));
+    const obliq = 23.439291111 - 0.013004167 * t;
+    const ra = toDeg(Math.atan2(
+      Math.cos(toRad(obliq)) * Math.sin(toRad(apparent)),
+      Math.cos(toRad(apparent))
+    )) / 15;
+    const dec = toDeg(Math.asin(Math.sin(toRad(obliq)) * Math.sin(toRad(apparent))));
+    return { ra: norm24(ra), dec };
+  }
+
+  // ---- MOON ----
+  function moonPosition(date) {
+    const t = T(date);
+    // Fundamental arguments (Meeus Ch. 47)
+    const Lp = norm360(218.3164477 + 481267.88123421 * t);
+    const D  = norm360(297.8501921 + 445267.1114034  * t);
+    const M  = norm360(357.5291092 +  35999.0502909  * t);
+    const Mp = norm360(134.9633964 + 477198.8675055  * t);
+    const F  = norm360(93.2720950  + 483202.0175233  * t);
+
+    const Lpr = toRad(Lp); const Dr = toRad(D);
+    const Mr = toRad(M);   const Mpr = toRad(Mp); const Fr = toRad(F);
+
+    // Longitude perturbations (top terms)
+    let sumL = 6288774 * Math.sin(Mpr)
+             + 1274027 * Math.sin(2*Dr - Mpr)
+             +  658314 * Math.sin(2*Dr)
+             +  213618 * Math.sin(2*Mpr)
+             -  185116 * Math.sin(Mr)
+             -  114332 * Math.sin(2*Fr)
+             +   58793 * Math.sin(2*Dr - 2*Mpr)
+             +   57066 * Math.sin(2*Dr - Mr - Mpr)
+             +   53322 * Math.sin(2*Dr + Mpr)
+             +   45758 * Math.sin(2*Dr - Mr)
+             -   40923 * Math.sin(Mr - Mpr)
+             -   34720 * Math.sin(Dr)
+             -   30383 * Math.sin(Mr + Mpr);
+
+    // Latitude perturbations
+    let sumB = 5128122 * Math.sin(Fr)
+             +  280602 * Math.sin(Mpr + Fr)
+             +  277693 * Math.sin(Mpr - Fr)
+             +  173237 * Math.sin(2*Dr - Fr)
+             +   55413 * Math.sin(2*Dr - Mpr + Fr)
+             +   46271 * Math.sin(2*Dr - Mpr - Fr)
+             +   32573 * Math.sin(2*Dr + Fr)
+             +   17198 * Math.sin(2*Mpr + Fr);
+
+    const lambda = norm360(Lp + sumL / 1000000);
+    const beta   = sumB / 1000000;
+
+    // Nutation (approx)
+    const omega = norm360(125.04452 - 1934.136261 * t);
+    const dpsi = -17.20 / 3600 * Math.sin(toRad(omega)) - 1.32 / 3600 * Math.sin(2 * toRad(Lp));
+    const eps  = 23.439291111 - 0.013004167 * t + 0.00256 * Math.cos(toRad(omega));
+
+    const lambdaApp = lambda + dpsi;
+
+    // RA/Dec
+    const sinLat = Math.sin(toRad(beta));
+    const cosLat = Math.cos(toRad(beta));
+    const sinLon = Math.sin(toRad(lambdaApp));
+    const cosLon = Math.cos(toRad(lambdaApp));
+    const sinEps = Math.sin(toRad(eps));
+    const cosEps = Math.cos(toRad(eps));
+
+    const ra = norm24(toDeg(Math.atan2(sinLon * cosEps - sinLat / cosLat * sinEps, cosLon)) / 15);
+    const dec = toDeg(Math.asin(sinLat * cosEps + cosLat * sinEps * sinLon));
+
+    // Moon phase (0=new, 0.5=full)
+    const sunPos = sunPosition(date);
+    // Sun ecliptic longitude (approx from RA)
+    const sunLambda = sunPos.ra * 15; // hours -> degrees
+    const elongation = norm360(lambda - sunLambda);
+    const phase = (1 - Math.cos(toRad(elongation))) / 2; // 0=new, 0.5=full, 1=new
+
+    return { ra, dec, phase, phaseDeg: elongation };
+  }
+
+  function moonPhaseName(phase) {
+    const p = phase;
+    if (p < 0.03 || p > 0.97) return 'New Moon';
+    if (p < 0.22) return 'Waxing Crescent';
+    if (p < 0.28) return 'First Quarter';
+    if (p < 0.47) return 'Waxing Gibbous';
+    if (p < 0.53) return 'Full Moon';
+    if (p < 0.72) return 'Waning Gibbous';
+    if (p < 0.78) return 'Last Quarter';
+    return 'Waning Crescent';
+  }
+
+  // ---- PLANETS (low-precision, sufficient for identification) ----
+  // Using simplified Keplerian elements from NASA JPL approximations
+  // Returns {ra (hours), dec (deg)}
+  function planetElements(name, t) {
+    // [a, e, I, L, longPeri, longNode] at J2000.0 + rates per century
+    // From JPL "Keplerian Elements for Approximate Positions of Major Planets"
+    const data = {
+      Mercury: { a0:0.38709927, da:0.00000037, e0:0.20563593, de:0.00001906, I0:7.00497902,  dI:-0.00594749,  L0:252.25032350, dL:149472.67411175, w0:77.45779628,  dw:0.16047689,  O0:48.33076593,  dO:-0.12534081 },
+      Venus:   { a0:0.72333566, da:0.00000390, e0:0.00677672, de:-0.00004107,I0:3.39467605,  dI:-0.00078890,  L0:181.97909950, dL:58517.81538729,  w0:131.60246718, dw:0.00268329,  O0:76.67984255,  dO:-0.27769418 },
+      Mars:    { a0:1.52371034, da:0.00001847, e0:0.09339410, de:0.00007882, I0:1.84969142,  dI:-0.00813131,  L0:-4.55343205,  dL:19140.30268499,  w0:-23.94362959, dw:0.44441088,  O0:49.55953891,  dO:-0.29257343 },
+      Jupiter: { a0:5.20288700, da:-0.00011607,e0:0.04838624, de:-0.00013253,I0:1.30439695, dI:-0.00183714,  L0:34.39644051,  dL:3034.74612775,   w0:14.72847983,  dw:0.21252668,  O0:100.47390909, dO:0.20469106 },
+      Saturn:  { a0:9.53667594, da:-0.00125060,e0:0.05386179, de:-0.00050991,I0:2.48599187, dI:0.00193609,   L0:49.95424423,  dL:1222.49362201,   w0:92.59887831,  dw:-0.41897216, O0:113.66242448, dO:-0.28867794 },
+      Uranus:  { a0:19.18916464,da:-0.00196176,e0:0.04725744, de:-0.00004397,I0:0.77263783, dI:-0.00242939,  L0:313.23810451, dL:428.48202785,    w0:170.95427630, dw:0.40805281,  O0:74.01692503,  dO:0.04240589 },
+      Neptune: { a0:30.06992276,da:0.00026291, e0:0.00859048, de:0.00005105, I0:1.77004347, dI:0.00035372,   L0:-55.12002969, dL:218.45945325,    w0:44.96476227,  dw:-0.32241464, O0:131.78422574, dO:-0.00508664 },
+    };
+
+    const p = data[name];
+    if (!p) return null;
+
+    const a = p.a0 + p.da * t;
+    const e = p.e0 + p.de * t;
+    const I = p.I0 + p.dI * t;
+    const L = norm360(p.L0 + p.dL * t);
+    const w = p.w0 + p.dw * t;
+    const O = p.O0 + p.dO * t;
+
+    // Argument of perihelion
+    const omega = w - O;
+    // Mean anomaly
+    const M = norm360(L - w);
+    const Mrad = toRad(M);
+
+    // Eccentric anomaly (solve Kepler's equation iteratively)
+    let E = M + toDeg(e) * Math.sin(Mrad);
+    for (let i = 0; i < 10; i++) {
+      const dE = (M - (E - toDeg(e) * Math.sin(toRad(E)))) / (1 - e * Math.cos(toRad(E)));
+      E += dE;
+      if (Math.abs(dE) < 1e-6) break;
+    }
+
+    // Heliocentric coordinates in orbital plane
+    const xp = a * (Math.cos(toRad(E)) - e);
+    const yp = a * Math.sqrt(1 - e * e) * Math.sin(toRad(E));
+
+    // Rotate to ecliptic
+    const Or = toRad(O); const omegar = toRad(omega); const Ir = toRad(I);
+    const cosO = Math.cos(Or); const sinO = Math.sin(Or);
+    const cosW = Math.cos(omegar); const sinW = Math.sin(omegar);
+    const cosI = Math.cos(Ir); const sinI = Math.sin(Ir);
+
+    const xecl = (cosO * cosW - sinO * sinW * cosI) * xp + (-cosO * sinW - sinO * cosW * cosI) * yp;
+    const yecl = (sinO * cosW + cosO * sinW * cosI) * xp + (-sinO * sinW + cosO * cosW * cosI) * yp;
+    const zecl = (sinW * sinI) * xp + (cosW * sinI) * yp;
+
+    return { x: xecl, y: yecl, z: zecl };
+  }
+
+  function planetRaDec(name, date) {
+    const t = T(date);
+
+    // Earth heliocentric
+    const earth = planetElements('dummy_earth', t) || (() => {
+      const ep = {
+        a0:1.00000261, da:0.00000562, e0:0.01671123, de:-0.00004392,
+        I0:-0.00001531, dI:-0.01294668, L0:100.46457166, dL:35999.37244981,
+        w0:102.93768193, dw:0.32327364, O0:0, dO:0
+      };
+      const a = ep.a0 + ep.da * t;
+      const e = ep.e0 + ep.de * t;
+      const I = ep.I0 + ep.dI * t;
+      const L = norm360(ep.L0 + ep.dL * t);
+      const w = ep.w0 + ep.dw * t;
+      const O = 0;
+      const omega = w - O;
+      const M = norm360(L - w);
+      let E = M + toDeg(e) * Math.sin(toRad(M));
+      for (let i = 0; i < 10; i++) {
+        const dE = (M - (E - toDeg(e) * Math.sin(toRad(E)))) / (1 - e * Math.cos(toRad(E)));
+        E += dE;
+        if (Math.abs(dE) < 1e-6) break;
+      }
+      const xp = a * (Math.cos(toRad(E)) - e);
+      const yp = a * Math.sqrt(1 - e * e) * Math.sin(toRad(E));
+      return { x: xp, y: yp, z: 0 };
+    })();
+
+    // Earth heliocentric properly
+    const ep = {
+      a0:1.00000261, da:0.00000562, e0:0.01671123, de:-0.00004392,
+      I0:-0.00001531, dI:-0.01294668, L0:100.46457166, dL:35999.37244981,
+      w0:102.93768193, dw:0.32327364, O0:0, dO:0
+    };
+    const a = ep.a0 + ep.da * t;
+    const e = ep.e0 + ep.de * t;
+    const L = norm360(ep.L0 + ep.dL * t);
+    const w = ep.w0 + ep.dw * t;
+    const M = norm360(L - w);
+    let E = M + toDeg(e) * Math.sin(toRad(M));
+    for (let i = 0; i < 10; i++) {
+      const dE = (M - (E - toDeg(e) * Math.sin(toRad(E)))) / (1 - e * Math.cos(toRad(E)));
+      E += dE;
+      if (Math.abs(dE) < 1e-6) break;
+    }
+    const earthX = a * (Math.cos(toRad(E)) - e);
+    const earthY = a * Math.sqrt(1 - e * e) * Math.sin(toRad(E));
+    const earthZ = 0;
+
+    const p = planetElements(name, t);
+    if (!p) return null;
+
+    // Geocentric
+    const dx = p.x - earthX;
+    const dy = p.y - earthY;
+    const dz = p.z - earthZ;
+
+    // Ecliptic to equatorial
+    const eps = toRad(23.439291111 - 0.013004167 * t);
+    const xeq = dx;
+    const yeq = dy * Math.cos(eps) - dz * Math.sin(eps);
+    const zeq = dy * Math.sin(eps) + dz * Math.cos(eps);
+
+    const ra = norm24(toDeg(Math.atan2(yeq, xeq)) / 15);
+    const dec = toDeg(Math.atan2(zeq, Math.sqrt(xeq * xeq + yeq * yeq)));
+
+    return { ra, dec };
+  }
+
+  // ---- BRIGHT STARS ----
+  // Catalog: [name, ra (hours), dec (deg), magnitude, constellation]
+  const STARS = [
+    ['Sirius',      6.7525,  -16.7161,  -1.46, 'Canis Major'],
+    ['Canopus',     6.3992,  -52.6958,  -0.72, 'Carina'],
+    ['Arcturus',   14.2611,   19.1822,  -0.04, 'Boötes'],
+    ['Vega',       18.6156,   38.7836,   0.03, 'Lyra'],
+    ['Capella',     5.2781,   45.9980,   0.08, 'Auriga'],
+    ['Rigel',       5.2422,   -8.2017,   0.13, 'Orion'],
+    ['Procyon',     7.6553,    5.2250,   0.34, 'Canis Minor'],
+    ['Achernar',    1.6285,  -57.2367,   0.46, 'Eridanus'],
+    ['Betelgeuse',  5.9194,    7.4069,   0.50, 'Orion'],
+    ['Hadar',      14.0639,  -60.3731,   0.60, 'Centaurus'],
+    ['Altair',     19.8460,    8.8683,   0.76, 'Aquila'],
+    ['Acrux',      12.4433,  -63.0992,   0.77, 'Crux'],
+    ['Aldebaran',   4.5986,   16.5093,   0.85, 'Taurus'],
+    ['Spica',      13.4199,  -11.1614,   0.97, 'Virgo'],
+    ['Antares',    16.4901,  -26.4320,   1.06, 'Scorpius'],
+    ['Pollux',      7.7553,   28.0261,   1.14, 'Gemini'],
+    ['Fomalhaut',  22.9608,  -29.6224,   1.16, 'Piscis Austrinus'],
+    ['Mimosa',     12.7953,  -59.6886,   1.25, 'Crux'],
+    ['Deneb',      20.6906,   45.2803,   1.25, 'Cygnus'],
+    ['Regulus',    10.1395,   11.9672,   1.36, 'Leo'],
+    ['Castor',      7.5767,   31.8883,   1.58, 'Gemini'],
+    ['Bellatrix',   5.4186,    6.3497,   1.64, 'Orion'],
+    ['Elnath',      5.4381,   28.6078,   1.65, 'Taurus'],
+    ['Miaplacidus', 9.2199,  -69.7172,   1.68, 'Carina'],
+    ['Alnilam',     5.6036,   -1.2019,   1.70, 'Orion'],
+    ['Alnitak',     5.6795,   -1.9425,   1.74, 'Orion'],
+    ['Mintaka',     5.5336,   -0.2994,   2.23, 'Orion'],
+    ['Alioth',     12.9004,   55.9598,   1.77, 'Ursa Major'],
+    ['Dubhe',      11.0621,   61.7511,   1.79, 'Ursa Major'],
+    ['Mirfak',      3.4053,   49.8612,   1.79, 'Perseus'],
+    ['Wezen',       7.1397,  -26.3932,   1.83, 'Canis Major'],
+    ['Kaus Australis',18.4028,-34.3847,  1.85, 'Sagittarius'],
+    ['Avior',       8.3753,  -59.5094,   1.86, 'Carina'],
+    ['Alkaid',     13.7924,   49.3133,   1.86, 'Ursa Major'],
+    ['Sargas',     17.6219,  -42.9978,   1.87, 'Scorpius'],
+    ['Menkent',    14.1114,  -36.3700,   2.06, 'Centaurus'],
+    ['Atria',      16.8111,  -69.0272,   1.91, 'Triangulum Australe'],
+    ['Alhena',      6.6286,   16.3994,   1.93, 'Gemini'],
+    ['Peacock',    20.4274,  -56.7350,   1.94, 'Pavo'],
+    ['Mirzam',      6.3783,  -17.9559,   1.98, 'Canis Major'],
+    ['Alphard',     9.4597,   -8.6585,   1.99, 'Hydra'],
+    ['Polaris',     2.5303,   89.2641,   1.98, 'Ursa Minor'],
+    ['Hamal',       2.1197,   23.4620,   2.00, 'Aries'],
+    ['Diphda',      0.7265,  -17.9867,   2.04, 'Cetus'],
+    ['Nunki',      18.9211,  -26.2968,   2.05, 'Sagittarius'],
+    ['Denebola',   11.8175,   14.5722,   2.14, 'Leo'],
+    ['Zubenelgenubi',14.8500,-16.0417,   2.75, 'Libra'],
+    ['Alpheratz',   0.1397,   29.0903,   2.06, 'Andromeda'],
+    ['Murzim',      6.3783,  -17.9559,   1.98, 'Canis Major'],
+    ['Saiph',       5.7953,   -9.6700,   2.06, 'Orion'],
+    ['Mirach',      1.1622,   35.6203,   2.07, 'Andromeda'],
+    ['Schedar',     0.6753,   56.5372,   2.23, 'Cassiopeia'],
+    ['Caph',        0.1528,   59.1497,   2.27, 'Cassiopeia'],
+    ['Navi',        0.9453,   60.7167,   2.47, 'Cassiopeia'],
+    ['Ruchbah',     1.4306,   60.2353,   2.68, 'Cassiopeia'],
+    ['Segin',       1.9064,   63.6700,   3.35, 'Cassiopeia'],
+  ];
+
+  return {
+    sunPosition,
+    moonPosition,
+    moonPhaseName,
+    planetRaDec,
+    raDecToAltAz,
+    STARS,
+    T,
+    jd,
+    lst
+  };
+})();
+
+// =============================================================================
+// APP STATE
+// =============================================================================
+const state = {
+  lat: null,
+  lon: null,
+  // Device orientation
+  alpha: 0,   // compass heading (0=N, 90=E)
+  beta: 90,   // tilt front/back (0=flat, 90=upright)
+  gamma: 0,   // tilt left/right
+  // Derived pointing direction
+  azimuth: 0, // where we're pointing (degrees, 0=N)
+  altitude: 0,// elevation angle above horizon
+  // Toggles
+  showStars: true,
+  showPlanets: true,
+  showMoon: true,
+  nightMode: false,
+  // Camera
+  cameraReady: false,
+  // Permissions
+  orientationPermission: false,
+  // iOS orientation workaround
+  useCompass: false,
+  compassHeading: 0,
+};
+
+// Cached celestial objects
+let celestialObjects = [];
+let lastCalcTime = 0;
+const CALC_INTERVAL = 10000; // recalculate every 10s
+
+// =============================================================================
+// DOM
+// =============================================================================
+const loadingScreen  = document.getElementById('loading-screen');
+const permScreen     = document.getElementById('permission-screen');
+const startBtn       = document.getElementById('start-btn');
+const camera         = document.getElementById('camera');
+const canvas         = document.getElementById('sky-canvas');
+const ctx            = canvas.getContext('2d');
+const infoPanel      = document.getElementById('info-panel');
+const infoName       = document.getElementById('info-name');
+const infoType       = document.getElementById('info-type');
+const infoDetails    = document.getElementById('info-details');
+const locationText   = document.getElementById('location-text');
+const timeText       = document.getElementById('time-text');
+const compassNeedle  = document.getElementById('compass-needle');
+const nightFilter    = document.getElementById('night-filter');
+const orientWarning  = document.getElementById('orient-warning');
+
+// =============================================================================
+// GENERATE DECORATIVE STARS FOR LOADING/PERMISSION SCREENS
+// =============================================================================
+function generateScreenStars(containerId) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  for (let i = 0; i < 80; i++) {
+    const s = document.createElement('div');
+    s.className = 'star-dot';
+    const size = Math.random() < 0.8 ? 1 : 2;
+    const opacity = 0.2 + Math.random() * 0.6;
+    s.style.cssText = `
+      width: ${size}px; height: ${size}px;
+      left: ${Math.random() * 100}%;
+      top: ${Math.random() * 100}%;
+      --base-opacity: ${opacity};
+      --dur: ${2 + Math.random() * 4}s;
+      animation-delay: ${Math.random() * 4}s;
+    `;
+    container.appendChild(s);
+  }
+}
+
+generateScreenStars('loading-stars');
+generateScreenStars('perm-stars');
+
+// =============================================================================
+// CANVAS SIZING
+// =============================================================================
+function resizeCanvas() {
+  canvas.width  = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+// =============================================================================
+// GEOLOCATION
+// =============================================================================
+function startGeolocation() {
+  if (!navigator.geolocation) {
+    locationText.textContent = 'Location unavailable';
+    return;
+  }
+  navigator.geolocation.watchPosition(pos => {
+    state.lat = pos.coords.latitude;
+    state.lon = pos.coords.longitude;
+    const latStr = (state.lat >= 0 ? '' : '-') + Math.abs(state.lat).toFixed(2) + '°N';
+    const lonStr = (state.lon >= 0 ? '' : '-') + Math.abs(state.lon).toFixed(2) + '°E';
+    locationText.textContent = `${latStr} ${lonStr}`;
+  }, err => {
+    locationText.textContent = 'Location denied';
+  }, { enableHighAccuracy: true, maximumAge: 30000 });
+}
+
+// =============================================================================
+// DEVICE ORIENTATION
+// =============================================================================
+function handleOrientation(event) {
+  // iOS: event.webkitCompassHeading gives true compass heading
+  if (event.webkitCompassHeading !== undefined && event.webkitCompassHeading !== null) {
+    state.useCompass = true;
+    state.compassHeading = event.webkitCompassHeading; // 0=N, 90=E
+  } else if (event.alpha !== null) {
+    // Android: alpha is rotation from N, but clockwise = east
+    state.compassHeading = 360 - event.alpha;
+  }
+
+  state.beta  = event.beta  ?? 90;
+  state.gamma = event.gamma ?? 0;
+
+  // Compute pointing direction
+  // beta: 0=flat face up, 90=upright portrait, 180=flat face down
+  // when held upright (portrait) pointing at sky: beta ~= 90, gamma ~= 0
+  // altitude = how much above horizon = 90 - beta (when portrait)
+  // When landscape, it's different; use gamma for landscape adjustment
+
+  // Portrait mode altitude: 90 - beta (clamped)
+  // Tilt correction for landscape:
+  const betaRad  = event.beta  * Math.PI / 180;
+  const gammaRad = event.gamma * Math.PI / 180;
+
+  // Vector pointing out of camera (in device coordinates)
+  // Camera points in -z direction when face down, we want the direction when tilted
+  // Simple approximation: altitude = 90 - beta when portrait
+  let altitude = 90 - state.beta;
+  // Apply gamma correction (landscape tilt)
+  altitude += Math.sin(gammaRad) * 0; // simplified - beta/gamma already handle it
+
+  state.azimuth = state.compassHeading;
+  state.altitude = Math.max(-90, Math.min(90, altitude));
+}
+
+async function requestOrientationPermission() {
+  if (typeof DeviceOrientationEvent !== 'undefined' &&
+      typeof DeviceOrientationEvent.requestPermission === 'function') {
+    // iOS 13+
+    try {
+      const result = await DeviceOrientationEvent.requestPermission();
+      if (result === 'granted') {
+        window.addEventListener('deviceorientation', handleOrientation, true);
+        state.orientationPermission = true;
+      }
+    } catch(e) {
+      console.warn('Orientation permission error:', e);
+    }
+  } else {
+    // Non-iOS or older
+    window.addEventListener('deviceorientation', handleOrientation, true);
+    state.orientationPermission = true;
+  }
+}
+
+// =============================================================================
+// CAMERA
+// =============================================================================
+async function startCamera() {
+  try {
+    const constraints = {
+      video: {
+        facingMode: 'environment',
+        width:  { ideal: window.innerWidth },
+        height: { ideal: window.innerHeight },
+      }
+    };
+    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+    camera.srcObject = stream;
+    camera.play();
+    state.cameraReady = true;
+  } catch (e) {
+    console.warn('Camera error:', e);
+    // Continue without camera - show dark background
+    camera.style.display = 'none';
+    document.body.style.background = '#000a1a';
+  }
+}
+
+// =============================================================================
+// CELESTIAL CALCULATIONS
+// =============================================================================
+function computeCelestialObjects() {
+  const now = new Date();
+  if (!state.lat || !state.lon) return;
+
+  const objects = [];
+
+  // --- Moon ---
+  if (state.showMoon) {
+    const moon = Astro.moonPosition(now);
+    const altaz = Astro.raDecToAltAz(moon.ra, moon.dec, state.lat, state.lon, now);
+    objects.push({
+      type: 'moon',
+      name: 'Moon',
+      ra: moon.ra, dec: moon.dec,
+      alt: altaz.alt, az: altaz.az,
+      mag: -12.7,
+      phase: moon.phase,
+      phaseDeg: moon.phaseDeg,
+      detail: `Phase: ${Astro.moonPhaseName(moon.phase)} (${Math.round(moon.phase * 100)}% illuminated)`,
+      color: '#ffffcc',
+      size: 14,
+    });
+  }
+
+  // --- Planets ---
+  if (state.showPlanets) {
+    const planets = [
+      { name: 'Mercury', color: '#c8b8a0', size: 5 },
+      { name: 'Venus',   color: '#fffacd', size: 7 },
+      { name: 'Mars',    color: '#ff6040', size: 6 },
+      { name: 'Jupiter', color: '#ffd090', size: 9 },
+      { name: 'Saturn',  color: '#e8d4a0', size: 8 },
+      { name: 'Uranus',  color: '#90e0e8', size: 5 },
+      { name: 'Neptune', color: '#6080ff', size: 5 },
+    ];
+
+    for (const p of planets) {
+      const pos = Astro.planetRaDec(p.name, now);
+      if (!pos) continue;
+      const altaz = Astro.raDecToAltAz(pos.ra, pos.dec, state.lat, state.lon, now);
+      objects.push({
+        type: 'planet',
+        name: p.name,
+        ra: pos.ra, dec: pos.dec,
+        alt: altaz.alt, az: altaz.az,
+        mag: 1,
+        color: p.color,
+        size: p.size,
+        detail: `Planet in ${getConstellation(pos.ra, pos.dec)}`,
+      });
+    }
+  }
+
+  // --- Stars ---
+  if (state.showStars) {
+    for (const [name, ra, dec, mag, con] of Astro.STARS) {
+      // Only show brighter stars
+      if (mag > 2.5) continue;
+      const altaz = Astro.raDecToAltAz(ra, dec, state.lat, state.lon, now);
+      if (altaz.alt < -10) continue; // below horizon (with small buffer)
+      objects.push({
+        type: 'star',
+        name,
+        ra, dec,
+        alt: altaz.alt, az: altaz.az,
+        mag,
+        color: starColor(mag),
+        size: Math.max(2, 5 - mag * 1.5),
+        detail: `Constellation: ${con} | Magnitude: ${mag.toFixed(1)}`,
+        constellation: con,
+      });
+    }
+  }
+
+  celestialObjects = objects;
+  lastCalcTime = Date.now();
+}
+
+function starColor(mag) {
+  // Very rough color approximation (most stars look white/blue-white)
+  if (mag < 0) return '#a0c8ff'; // bluish (very bright)
+  if (mag < 1) return '#c8d8ff';
+  if (mag < 2) return '#e8eeff';
+  return '#ffffff';
+}
+
+function getConstellation(ra, dec) {
+  // Simplified - find closest star
+  let closest = 'Unknown';
+  let minDist = Infinity;
+  for (const [name, sra, sdec, , con] of Astro.STARS) {
+    const d = Math.sqrt(Math.pow(ra - sra, 2) + Math.pow(dec - sdec, 2));
+    if (d < minDist) { minDist = d; closest = con; }
+  }
+  return closest;
+}
+
+// =============================================================================
+// AR PROJECTION
+// =============================================================================
+// Convert alt/az of a celestial object to screen coordinates
+// based on where the device is pointing
+function altAzToScreen(objAlt, objAz) {
+  const w = canvas.width;
+  const h = canvas.height;
+
+  // Angular difference from center of view
+  let dAz = objAz - state.azimuth;
+  // Normalize to [-180, 180]
+  while (dAz > 180)  dAz -= 360;
+  while (dAz < -180) dAz += 360;
+
+  const dAlt = objAlt - state.altitude;
+
+  // Field of view - approximate for typical phone camera
+  const fovH = 60; // degrees horizontal FOV
+  const fovV = fovH * (h / w); // vertical FOV (portrait)
+
+  // Scale: pixels per degree
+  const pxPerDegH = w / fovH;
+  const pxPerDegV = h / fovV;
+
+  const x = w / 2 + dAz  * pxPerDegH;
+  const y = h / 2 - dAlt * pxPerDegV; // invert Y (up = negative y on screen)
+
+  return { x, y, inView: Math.abs(dAz) < fovH * 0.75 && Math.abs(dAlt) < fovV * 0.75 };
+}
+
+// =============================================================================
+// RENDERING
+// =============================================================================
+let nearestObject = null;
+let nearestDist   = Infinity;
+
+function drawMoonSymbol(ctx, x, y, size, phase) {
+  // Draw a circle representing the moon with phase shading
+  ctx.save();
+  ctx.shadowColor = '#ffffaa';
+  ctx.shadowBlur = 20;
+  ctx.beginPath();
+  ctx.arc(x, y, size, 0, Math.PI * 2);
+  ctx.fillStyle = '#f5f0dc';
+  ctx.fill();
+  ctx.restore();
+
+  // Phase shadow
+  const p = phase; // 0=new, 0.5=full, 1=new again
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(x, y, size, 0, Math.PI * 2);
+  ctx.clip();
+
+  // Illumination fraction
+  const illum = (1 - Math.cos(p * Math.PI * 2)) / 2; // 0 at new, 1 at full
+  // Simplified: shade the dark part
+  const shadowX = x + size * 2 * (0.5 - illum);
+  ctx.beginPath();
+  ctx.arc(shadowX, y, size * 1.2, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(0,5,15,0.85)';
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawStar(ctx, x, y, size, color, glow) {
+  if (glow) {
+    ctx.save();
+    ctx.shadowColor = color;
+    ctx.shadowBlur = size * 4;
+  }
+  ctx.beginPath();
+  ctx.arc(x, y, size, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+  if (glow) ctx.restore();
+}
+
+function drawLabel(ctx, text, x, y, highlighted) {
+  const fontSize = highlighted ? 14 : 12;
+  ctx.font = `${highlighted ? '600' : '400'} ${fontSize}px -apple-system, sans-serif`;
+  const metrics = ctx.measureText(text);
+  const pw = metrics.width + 10;
+  const ph = fontSize + 8;
+  const px = x + 14;
+  const py = y - ph / 2;
+
+  // Label background
+  ctx.fillStyle = highlighted
+    ? 'rgba(0, 30, 60, 0.85)'
+    : 'rgba(0, 0, 0, 0.55)';
+  ctx.strokeStyle = highlighted
+    ? 'rgba(100, 180, 255, 0.6)'
+    : 'rgba(255,255,255,0.15)';
+  ctx.lineWidth = highlighted ? 1.5 : 0.5;
+  roundRect(ctx, px - 5, py, pw, ph, 6);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = highlighted ? '#a8d8ff' : 'rgba(255,255,255,0.85)';
+  ctx.fillText(text, px, py + ph - (ph - fontSize) / 2 - 2);
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+function drawHighlightRing(ctx, x, y, size) {
+  const t = Date.now() / 1000;
+  const pulse = 1 + 0.15 * Math.sin(t * 3);
+
+  ctx.save();
+  ctx.strokeStyle = 'rgba(100, 200, 255, 0.8)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(x, y, (size + 8) * pulse, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.strokeStyle = 'rgba(100, 200, 255, 0.3)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.arc(x, y, (size + 16) * pulse, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function render() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Recalculate if needed
+  if (state.lat && state.lon && (Date.now() - lastCalcTime > CALC_INTERVAL || celestialObjects.length === 0)) {
+    computeCelestialObjects();
+  }
+
+  // Find nearest object to crosshair
+  nearestObject = null;
+  nearestDist   = Infinity;
+  const cx = canvas.width / 2;
+  const cy = canvas.height / 2;
+
+  for (const obj of celestialObjects) {
+    if (obj.alt < 0) continue; // below horizon
+
+    const screen = altAzToScreen(obj.alt, obj.az);
+    if (!screen.inView) continue;
+
+    const dist = Math.sqrt(Math.pow(screen.x - cx, 2) + Math.pow(screen.y - cy, 2));
+    if (dist < nearestDist) {
+      nearestDist   = dist;
+      nearestObject = { ...obj, screenX: screen.x, screenY: screen.y };
+    }
+  }
+
+  // Draw objects
+  for (const obj of celestialObjects) {
+    if (obj.alt < 0) continue;
+
+    const screen = altAzToScreen(obj.alt, obj.az);
+    if (!screen.inView) continue;
+
+    const isNearest = nearestObject && obj.name === nearestObject.name && nearestDist < 80;
+
+    if (obj.type === 'moon') {
+      drawMoonSymbol(ctx, screen.x, screen.y, obj.size, obj.phase);
+      if (isNearest) drawHighlightRing(ctx, screen.x, screen.y, obj.size);
+      drawLabel(ctx, 'Moon', screen.x, screen.y, isNearest);
+    } else if (obj.type === 'planet') {
+      // Planet glow
+      ctx.save();
+      ctx.shadowColor = obj.color;
+      ctx.shadowBlur = isNearest ? 20 : 10;
+      ctx.beginPath();
+      ctx.arc(screen.x, screen.y, obj.size, 0, Math.PI * 2);
+      ctx.fillStyle = obj.color;
+      ctx.fill();
+      ctx.restore();
+      if (isNearest) drawHighlightRing(ctx, screen.x, screen.y, obj.size);
+      drawLabel(ctx, obj.name, screen.x, screen.y, isNearest);
+    } else {
+      // Star
+      drawStar(ctx, screen.x, screen.y, obj.size, obj.color, isNearest);
+      if (isNearest) drawHighlightRing(ctx, screen.x, screen.y, obj.size);
+      // Only label bright stars or nearest
+      if (obj.mag < 1.5 || isNearest) {
+        drawLabel(ctx, obj.name, screen.x, screen.y, isNearest);
+      }
+    }
+  }
+
+  // Update info panel
+  if (nearestObject && nearestDist < 80) {
+    infoName.textContent = nearestObject.name;
+    infoType.textContent = nearestObject.type === 'moon' ? 'Natural Satellite' :
+                           nearestObject.type === 'planet' ? 'Planet' :
+                           `Star · ${nearestObject.constellation || ''}`;
+    let details = '';
+    if (nearestObject.type === 'moon') {
+      details = `<span>Phase:</span> ${Astro.moonPhaseName(nearestObject.phase)}<br>
+                 <span>Illuminated:</span> ${Math.round(nearestObject.phase * 100)}%<br>
+                 <span>Altitude:</span> ${nearestObject.alt.toFixed(1)}° &nbsp; <span>Azimuth:</span> ${nearestObject.az.toFixed(1)}°`;
+    } else if (nearestObject.type === 'planet') {
+      details = `<span>Type:</span> Solar System Planet<br>
+                 <span>Altitude:</span> ${nearestObject.alt.toFixed(1)}° &nbsp; <span>Azimuth:</span> ${nearestObject.az.toFixed(1)}°<br>
+                 <span>RA:</span> ${nearestObject.ra.toFixed(2)}h &nbsp; <span>Dec:</span> ${nearestObject.dec.toFixed(1)}°`;
+    } else {
+      details = `<span>Constellation:</span> ${nearestObject.constellation}<br>
+                 <span>Magnitude:</span> ${nearestObject.mag.toFixed(1)}<br>
+                 <span>Altitude:</span> ${nearestObject.alt.toFixed(1)}° &nbsp; <span>Azimuth:</span> ${nearestObject.az.toFixed(1)}°`;
+    }
+    infoDetails.innerHTML = details;
+    infoPanel.classList.add('visible');
+  } else {
+    infoPanel.classList.remove('visible');
+  }
+
+  // Update compass
+  compassNeedle.style.transform = `rotate(${-state.azimuth}deg)`;
+
+  // Show orientation warning if pointing too far down
+  if (state.altitude < -20) {
+    orientWarning.style.display = 'block';
+  } else {
+    orientWarning.style.display = 'none';
+  }
+
+  requestAnimationFrame(render);
+}
+
+// =============================================================================
+// TIME DISPLAY
+// =============================================================================
+function updateTime() {
+  const now = new Date();
+  const h = String(now.getHours()).padStart(2, '0');
+  const m = String(now.getMinutes()).padStart(2, '0');
+  const s = String(now.getSeconds()).padStart(2, '0');
+  timeText.textContent = `${h}:${m}:${s} local`;
+}
+setInterval(updateTime, 1000);
+updateTime();
+
+// =============================================================================
+// CONTROLS
+// =============================================================================
+document.getElementById('btn-stars').addEventListener('click', function() {
+  state.showStars = !state.showStars;
+  this.classList.toggle('active', state.showStars);
+  lastCalcTime = 0;
+});
+
+document.getElementById('btn-planets').addEventListener('click', function() {
+  state.showPlanets = !state.showPlanets;
+  this.classList.toggle('active', state.showPlanets);
+  lastCalcTime = 0;
+});
+
+document.getElementById('btn-moon').addEventListener('click', function() {
+  state.showMoon = !state.showMoon;
+  this.classList.toggle('active', state.showMoon);
+  lastCalcTime = 0;
+});
+
+document.getElementById('btn-night').addEventListener('click', function() {
+  state.nightMode = !state.nightMode;
+  this.classList.toggle('active', state.nightMode);
+  nightFilter.classList.toggle('active', state.nightMode);
+});
+
+// =============================================================================
+// STARTUP FLOW
+// =============================================================================
+startBtn.addEventListener('click', async () => {
+  permScreen.style.display = 'none';
+
+  // Request all permissions concurrently
+  await Promise.all([
+    startCamera(),
+    requestOrientationPermission(),
+  ]);
+  startGeolocation();
+
+  // Start rendering
+  render();
+  computeCelestialObjects();
+});
+
+// Show permission screen after brief loading delay
+setTimeout(() => {
+  loadingScreen.style.display = 'none';
+  permScreen.style.display = 'flex';
+}, 1200);
+
+// =============================================================================
+// DEMO MODE - simulate orientation on desktop
+// =============================================================================
+(function setupDesktopDemo() {
+  let isTouch = 'ontouchstart' in window;
+  if (isTouch) return; // skip on mobile - use real sensors
+
+  let isDragging = false, lastX = 0, lastY = 0;
+
+  canvas.style.pointerEvents = 'auto';
+
+  canvas.addEventListener('mousedown', e => {
+    isDragging = true;
+    lastX = e.clientX;
+    lastY = e.clientY;
+  });
+
+  canvas.addEventListener('mousemove', e => {
+    if (!isDragging) return;
+    const dx = e.clientX - lastX;
+    const dy = e.clientY - lastY;
+    state.azimuth  = (state.azimuth  - dx * 0.3 + 360) % 360;
+    state.altitude = Math.max(-90, Math.min(90, state.altitude + dy * 0.3));
+    lastX = e.clientX;
+    lastY = e.clientY;
+  });
+
+  canvas.addEventListener('mouseup', () => { isDragging = false; });
+  canvas.addEventListener('mouseleave', () => { isDragging = false; });
+
+  // Set a nice default pointing angle for desktop
+  state.azimuth  = 180;
+  state.altitude = 45;
+})();
+</script>
+</body>
+</html>

@@ -1,5 +1,6 @@
 # Random experiments
 
+- [Night Sky AR](vibes/night-sky/) - AR camera overlay that identifies stars, planets, and the Moon by pointing your phone at the sky
 - [BrainWave - Neural Audio Engine](vibes/brain-waves/) - Brainwave entrainment app with binaural beats, study/focus modes, and procedural ambient music
 - [CPU/Numa Affinity planner / visualizer](cpu-affinity-planner/)
 - [moon fraction](cosmos/moonfraction.html) - Visualization of moon in it's different phases
