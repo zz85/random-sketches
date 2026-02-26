@@ -1,0 +1,796 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Peak Viewer</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;background:#000;
+  font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',Roboto,sans-serif;
+  touch-action:none;-webkit-user-select:none;user-select:none}
+#camera{position:fixed;top:0;left:0;width:100%;height:100%;object-fit:cover;z-index:1}
+#canvas{position:fixed;top:0;left:0;width:100%;height:100%;z-index:2}
+
+/* ── Splash ── */
+#splash{position:fixed;top:0;left:0;width:100%;height:100%;z-index:10;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  background:linear-gradient(160deg,#080e1a 0%,#0f1d36 35%,#162848 65%,#0d1a2e 100%);
+  color:#fff;transition:opacity .6s ease}
+#splash.hidden{opacity:0;pointer-events:none}
+#splash svg{width:75%;max-width:380px;margin-bottom:36px;opacity:.25}
+#splash h1{font-size:28px;font-weight:200;letter-spacing:6px;text-transform:uppercase;margin-bottom:4px}
+#splash .sub{font-size:12px;color:rgba(255,255,255,.4);letter-spacing:3px;margin-bottom:48px}
+#startBtn{padding:15px 44px;font-size:14px;font-weight:600;letter-spacing:2px;text-transform:uppercase;
+  color:#fff;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.25);border-radius:28px;
+  cursor:pointer;transition:all .2s;-webkit-tap-highlight-color:transparent}
+#startBtn:active{background:rgba(255,255,255,.18);transform:scale(.97)}
+#status{margin-top:20px;font-size:11px;color:rgba(255,255,255,.4);text-align:center;min-height:36px;
+  padding:0 32px;line-height:1.5}
+
+/* ── Controls ── */
+#controls{position:fixed;bottom:0;right:0;padding:16px;padding-bottom:calc(68px + env(safe-area-inset-bottom,0px));
+  z-index:4;display:none;flex-direction:column;gap:10px}
+#controls.vis{display:flex}
+.cb{width:40px;height:40px;border-radius:20px;background:rgba(0,0,0,.35);
+  -webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);
+  border:1px solid rgba(255,255,255,.18);color:#fff;font-size:16px;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;
+  -webkit-tap-highlight-color:transparent}
+.cb:active{background:rgba(255,255,255,.15)}
+
+/* ── Settings ── */
+#settings{position:fixed;bottom:0;left:0;width:100%;z-index:5;
+  padding:20px 20px calc(68px + env(safe-area-inset-bottom,0px));
+  background:linear-gradient(transparent,rgba(0,0,0,.8) 30%);
+  display:none;flex-direction:column;gap:14px}
+#settings.vis{display:flex}
+.sr{display:flex;align-items:center;justify-content:space-between;
+  color:rgba(255,255,255,.75);font-size:12px}
+.sr input[type=range]{width:120px;accent-color:#6af}
+.sr .v{min-width:50px;text-align:right}
+
+/* ── Info panel ── */
+#info{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:6;
+  background:rgba(8,14,26,.92);-webkit-backdrop-filter:blur(24px);backdrop-filter:blur(24px);
+  border:1px solid rgba(255,255,255,.15);border-radius:14px;padding:22px;
+  color:#fff;min-width:250px;display:none}
+#info.vis{display:block}
+#info h3{font-size:17px;font-weight:600;margin-bottom:14px}
+.ir{display:flex;justify-content:space-between;padding:5px 0;
+  border-bottom:1px solid rgba(255,255,255,.07);font-size:12px}
+.il{color:rgba(255,255,255,.45)}
+#infoClose{margin-top:14px;width:100%;padding:9px;
+  background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);
+  border-radius:8px;color:#fff;font-size:13px;cursor:pointer}
+
+/* ── Panorama strip ── */
+#pano{position:fixed;bottom:env(safe-area-inset-bottom,0px);left:0;width:100%;z-index:3;
+  height:52px}
+</style>
+</head>
+<body>
+<video id="camera" autoplay playsinline muted></video>
+<canvas id="canvas"></canvas>
+<canvas id="pano"></canvas>
+
+<div id="splash">
+  <svg viewBox="0 0 400 100" xmlns="http://www.w3.org/2000/svg">
+    <path d="M0,100 L30,65 L55,78 L90,38 L120,55 L160,18 L195,48 L230,28 L265,52 L300,35 L340,62 L375,44 L400,100Z"
+      fill="none" stroke="rgba(255,255,255,.5)" stroke-width="1.2" stroke-linejoin="round"/>
+    <path d="M160,18 L155,19 L160,5 L165,19Z" fill="rgba(255,255,255,.4)"/>
+  </svg>
+  <h1>Peak Viewer</h1>
+  <p class="sub">Pacific Northwest</p>
+  <button id="startBtn">Start AR View</button>
+  <div id="status"></div>
+</div>
+
+<div id="controls">
+  <button class="cb" id="btnSettings" title="Settings">&#9881;</button>
+  <button class="cb" id="btnLocate" title="Relocate">&#9678;</button>
+</div>
+
+<div id="settings">
+  <div class="sr"><span>Max Distance</span><span><input type="range" id="rDist" min="10" max="200" value="160"><span class="v" id="vDist">160 mi</span></span></div>
+  <div class="sr"><span>Label Size</span><span><input type="range" id="rLabel" min="8" max="20" value="12"><span class="v" id="vLabel">12 px</span></span></div>
+  <div class="sr"><span>Min Prominence</span><span><input type="range" id="rProm" min="0" max="2000" step="50" value="300"><span class="v" id="vProm">300 m</span></span></div>
+</div>
+
+<div id="info">
+  <h3 id="iName"></h3>
+  <div class="ir"><span class="il">Elevation</span><span id="iElev"></span></div>
+  <div class="ir"><span class="il">Prominence</span><span id="iProm"></span></div>
+  <div class="ir"><span class="il">Distance</span><span id="iDist"></span></div>
+  <div class="ir"><span class="il">Bearing</span><span id="iBear"></span></div>
+  <div class="ir"><span class="il">Elev. angle</span><span id="iAng"></span></div>
+  <div class="ir"><span class="il">Range</span><span id="iRng"></span></div>
+  <button id="infoClose">Close</button>
+</div>
+
+<script>
+/* ================================================================
+   POLYFILLS
+   ================================================================ */
+if(typeof CanvasRenderingContext2D!=='undefined'&&
+   !CanvasRenderingContext2D.prototype.roundRect){
+  CanvasRenderingContext2D.prototype.roundRect=function(x,y,w,h,r){
+    if(typeof r==='number')r=[r,r,r,r];
+    const[tl,tr,br,bl]=r;
+    this.moveTo(x+tl,y);this.lineTo(x+w-tr,y);
+    this.quadraticCurveTo(x+w,y,x+w,y+tr);
+    this.lineTo(x+w,y+h-br);
+    this.quadraticCurveTo(x+w,y+h,x+w-br,y+h);
+    this.lineTo(x+bl,y+h);
+    this.quadraticCurveTo(x,y+h,x,y+h-bl);
+    this.lineTo(x,y+tl);
+    this.quadraticCurveTo(x,y,x+tl,y);
+    this.closePath();return this;
+  };
+}
+
+/* ================================================================
+   PEAK DATABASE  —  Pacific Northwest
+   Coordinates: decimal degrees (WGS84)
+   ele/prom: metres
+   ================================================================ */
+const PEAKS=[
+// ── Cascade Volcanoes ──
+{n:"Mount Rainier",     lat:46.8523,lon:-121.7603,ele:4392,prom:4027,rng:"Cascades",ty:"v"},
+{n:"Mount Baker",       lat:48.7768,lon:-121.8145,ele:3286,prom:2743,rng:"Cascades",ty:"v"},
+{n:"Glacier Peak",      lat:48.1120,lon:-121.1140,ele:3213,prom:2120,rng:"Cascades",ty:"v"},
+{n:"Mount Adams",       lat:46.2024,lon:-121.4909,ele:3742,prom:2438,rng:"Cascades",ty:"v"},
+{n:"Mount St. Helens",  lat:46.1912,lon:-122.1944,ele:2549,prom:1521,rng:"Cascades",ty:"v"},
+// ── North Cascades High Peaks ──
+{n:"Bonanza Peak",      lat:48.1570,lon:-120.6530,ele:2899,prom:775, rng:"Cascades",ty:"a"},
+{n:"Mount Stuart",      lat:47.4751,lon:-120.9023,ele:2870,prom:1650,rng:"Cascades",ty:"a"},
+{n:"Mount Fernow",      lat:48.0760,lon:-120.7050,ele:2788,prom:555, rng:"Cascades",ty:"a"},
+{n:"Mount Shuksan",     lat:48.8296,lon:-121.6002,ele:2782,prom:530, rng:"Cascades",ty:"a"},
+{n:"Jack Mountain",     lat:48.8144,lon:-120.8881,ele:2766,prom:1021,rng:"Cascades",ty:"a"},
+{n:"Mount Buckner",     lat:48.5200,lon:-121.0600,ele:2756,prom:566, rng:"Cascades",ty:"a"},
+{n:"Eldorado Peak",     lat:48.5100,lon:-121.1500,ele:2706,prom:414, rng:"Cascades",ty:"a"},
+{n:"Dome Peak",         lat:48.3100,lon:-121.0100,ele:2634,prom:714, rng:"Cascades",ty:"a"},
+{n:"Mount Formidable",  lat:48.4300,lon:-121.0900,ele:2627,prom:397, rng:"Cascades",ty:"a"},
+{n:"Forbidden Peak",    lat:48.5100,lon:-121.1100,ele:2578,prom:366, rng:"Cascades",ty:"a"},
+{n:"Mount Challenger",  lat:48.8400,lon:-121.4400,ele:2502,prom:362, rng:"Cascades",ty:"a"},
+{n:"Mount Daniel",      lat:47.5460,lon:-121.1790,ele:2426,prom:810, rng:"Cascades",ty:"a"},
+{n:"Sloan Peak",        lat:48.1870,lon:-121.3280,ele:2388,prom:774, rng:"Cascades",ty:"a"},
+{n:"Mount Hinman",      lat:47.5370,lon:-121.2410,ele:2284,prom:400, rng:"Cascades",ty:"a"},
+{n:"Clark Mountain",    lat:48.3600,lon:-120.6900,ele:2580,prom:450, rng:"Cascades",ty:"a"},
+// ── Cascade Foothills & Closer Peaks ──
+{n:"Mount Pugh",        lat:48.1750,lon:-121.3750,ele:2195,prom:650, rng:"Cascades",ty:"a"},
+{n:"Three Fingers",     lat:48.1547,lon:-121.6903,ele:2089,prom:817, rng:"Cascades",ty:"a"},
+{n:"Whitehorse Mtn",    lat:48.1200,lon:-121.6000,ele:2087,prom:875, rng:"Cascades",ty:"a"},
+{n:"Vesper Peak",       lat:48.0710,lon:-121.4110,ele:1987,prom:370, rng:"Cascades",ty:"a"},
+{n:"Big Four Mountain", lat:48.0650,lon:-121.5100,ele:1870,prom:435, rng:"Cascades",ty:"a"},
+{n:"Baring Mountain",   lat:47.7700,lon:-121.4800,ele:1867,prom:370, rng:"Cascades",ty:"a"},
+{n:"Gunn Peak",         lat:47.8200,lon:-121.4600,ele:1848,prom:400, rng:"Cascades",ty:"a"},
+{n:"Mount Index",       lat:47.8200,lon:-121.5700,ele:1782,prom:550, rng:"Cascades",ty:"a"},
+{n:"Mount Dickerman",   lat:48.0570,lon:-121.4720,ele:1764,prom:375, rng:"Cascades",ty:"a"},
+{n:"Granite Peak",      lat:47.8100,lon:-121.5200,ele:1728,prom:360, rng:"Cascades",ty:"a"},
+{n:"Monte Cristo Peak", lat:48.0530,lon:-121.3750,ele:2176,prom:410, rng:"Cascades",ty:"a"},
+{n:"Kyes Peak",         lat:48.0800,lon:-121.3600,ele:2280,prom:400, rng:"Cascades",ty:"a"},
+{n:"Columbia Peak",     lat:48.0900,lon:-121.3400,ele:2172,prom:370, rng:"Cascades",ty:"a"},
+{n:"Mount Pilchuck",    lat:48.0653,lon:-121.8134,ele:1623,prom:800, rng:"Cascades",ty:"a"},
+{n:"Mount Persis",      lat:47.8000,lon:-121.5900,ele:1611,prom:400, rng:"Cascades",ty:"a"},
+{n:"Bandera Mountain",  lat:47.3820,lon:-121.5740,ele:1580,prom:370, rng:"Cascades",ty:"a"},
+{n:"McClellan Butte",   lat:47.3900,lon:-121.6100,ele:1528,prom:350, rng:"Cascades",ty:"a"},
+{n:"Mailbox Peak",      lat:47.4670,lon:-121.6750,ele:1476,prom:450, rng:"Foothills",ty:"f"},
+{n:"Mount Si",          lat:47.4879,lon:-121.7234,ele:1270,prom:925, rng:"Foothills",ty:"f"},
+{n:"Rattlesnake Mtn",   lat:47.4356,lon:-121.7718,ele:1072,prom:430, rng:"Foothills",ty:"f"},
+{n:"Tiger Mountain",    lat:47.4706,lon:-121.9917,ele:916, prom:580, rng:"Foothills",ty:"f"},
+{n:"Squak Mountain",    lat:47.4880,lon:-122.0400,ele:617, prom:350, rng:"Foothills",ty:"f"},
+{n:"Cougar Mountain",   lat:47.5200,lon:-122.1000,ele:486, prom:310, rng:"Foothills",ty:"f"},
+{n:"Granite Mountain",  lat:47.3978,lon:-121.4867,ele:1706,prom:400, rng:"Cascades",ty:"a"},
+{n:"Kendall Peak",      lat:47.4200,lon:-121.4100,ele:1640,prom:360, rng:"Cascades",ty:"a"},
+// ── Olympic Mountains ──
+{n:"Mount Olympus",     lat:47.8013,lon:-123.7108,ele:2432,prom:2370,rng:"Olympics",ty:"a"},
+{n:"Mount Deception",   lat:47.7580,lon:-123.2280,ele:2374,prom:485, rng:"Olympics",ty:"a"},
+{n:"Mount Constance",   lat:47.7509,lon:-123.2427,ele:2363,prom:1624,rng:"Olympics",ty:"a"},
+{n:"Mount Mystery",     lat:47.7900,lon:-123.2300,ele:2328,prom:305, rng:"Olympics",ty:"a"},
+{n:"Mount Anderson",    lat:47.7300,lon:-123.4200,ele:2234,prom:728, rng:"Olympics",ty:"a"},
+{n:"Inner Constance",   lat:47.7400,lon:-123.2300,ele:2242,prom:345, rng:"Olympics",ty:"a"},
+{n:"Mount Townsend",    lat:47.8600,lon:-123.0400,ele:2162,prom:940, rng:"Olympics",ty:"a"},
+{n:"The Brothers",      lat:47.7194,lon:-123.2441,ele:2093,prom:1399,rng:"Olympics",ty:"a"},
+{n:"Buckhorn Mountain", lat:47.8700,lon:-123.1300,ele:2068,prom:440, rng:"Olympics",ty:"a"},
+{n:"Mount Stone",       lat:47.8800,lon:-123.2000,ele:2016,prom:424, rng:"Olympics",ty:"a"},
+{n:"Mount Washington",  lat:47.5300,lon:-123.2100,ele:1906,prom:455, rng:"Olympics",ty:"a"},
+{n:"Mount Ellinor",     lat:47.5100,lon:-123.2400,ele:1812,prom:652, rng:"Olympics",ty:"a"},
+{n:"Mount Jupiter",     lat:47.7100,lon:-123.0500,ele:1738,prom:1038,rng:"Olympics",ty:"a"},
+{n:"Mount Pershing",    lat:47.7300,lon:-123.3400,ele:2139,prom:370, rng:"Olympics",ty:"a"},
+{n:"Mount Walker",      lat:47.7400,lon:-122.9400,ele:855, prom:735, rng:"Olympics",ty:"f"},
+];
+
+/* ================================================================
+   MATH  UTILITIES
+   ================================================================ */
+const DEG=Math.PI/180, RAD=180/Math.PI, R_EARTH=6371000;
+const REFRACTION=0.86;                // standard atmospheric refraction
+
+function hav(lat1,lon1,lat2,lon2){
+  const dLat=(lat2-lat1)*DEG,dLon=(lon2-lon1)*DEG;
+  const a=Math.sin(dLat/2)**2+Math.cos(lat1*DEG)*Math.cos(lat2*DEG)*Math.sin(dLon/2)**2;
+  return R_EARTH*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+function bear(lat1,lon1,lat2,lon2){
+  const dL=(lon2-lon1)*DEG;
+  const y=Math.sin(dL)*Math.cos(lat2*DEG);
+  const x=Math.cos(lat1*DEG)*Math.sin(lat2*DEG)-Math.sin(lat1*DEG)*Math.cos(lat2*DEG)*Math.cos(dL);
+  return(Math.atan2(y,x)*RAD+360)%360;
+}
+function curvDrop(d){return d*d/(2*R_EARTH)*REFRACTION}
+function elevAng(dist,vElev,pElev){
+  return Math.atan2(pElev-vElev-curvDrop(dist),dist)*RAD;
+}
+function aDiff(a,b){let d=a-b;while(d>180)d-=360;while(d<-180)d+=360;return d;}
+function smoothAng(cur,tgt,f){
+  let d=tgt-cur;while(d>180)d-=360;while(d<-180)d+=360;
+  return(cur+d*f+360)%360;
+}
+function m2ft(m){return Math.round(m*3.28084)}
+function cardinal(d){
+  const c=['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+  return c[Math.round(d/22.5)%16];
+}
+
+/* ================================================================
+   PROCEDURAL  MOUNTAIN  PROFILE  GENERATOR
+   ================================================================ */
+function hashStr(s){let h=0;for(let i=0;i<s.length;i++){h=((h<<5)-h)+s.charCodeAt(i);h|=0}return Math.abs(h)}
+function prng(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);
+  t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+
+function genProfile(name,nPts){
+  nPts=nPts||50;
+  const seed=hashStr(name),rng=prng(seed);
+  const rv=[];for(let i=0;i<300;i++)rv.push(rng());
+  function lerp(a,b,t){return a+(b-a)*t}
+  function ss(t){return t*t*(3-2*t)}
+  function noise(x,s){const i=Math.floor(x*s),f=ss((x*s)%1);
+    return lerp(rv[Math.abs(i)%300],rv[Math.abs(i+1)%300],f)}
+
+  const pts=[];
+  const centre=0.42+rv[0]*.16;
+  const asym=0.75+rv[1]*.5;
+
+  for(let i=0;i<=nPts;i++){
+    const t=i/nPts;
+    const sig=t<centre?0.28*asym:0.28/asym;
+    const dt=(t-centre)/sig;
+    let h=Math.exp(-dt*dt*1.3);
+
+    // shoulder sub-peak
+    if(rv[2]>0.35){
+      const sc=centre+(rv[3]-.5)*.28;
+      const sw=.13+rv[4]*.12;
+      const sh=.35+rv[5]*.4;
+      const sd=(t-sc)/sw;
+      h=Math.max(h,Math.exp(-sd*sd*2)*sh);
+    }
+    // second smaller sub-peak on the other side
+    if(rv[6]>0.6){
+      const sc2=centre-(rv[7]-.5)*.22;
+      const sw2=.1+rv[8]*.08;
+      const sh2=.25+rv[9]*.2;
+      const sd2=(t-sc2)/sw2;
+      h=Math.max(h,Math.exp(-sd2*sd2*2.5)*sh2);
+    }
+
+    const n=(noise(t,4)-.5)*.16+(noise(t,9)-.5)*.09+(noise(t,21)-.5)*.04;
+    h=Math.max(0,h+h*n);
+    h*=Math.min(t*5,(1-t)*5,1);
+    pts.push(h);
+  }
+  const mx=Math.max(...pts);
+  return mx>0?pts.map(v=>v/mx):pts;
+}
+
+/* ================================================================
+   APPLICATION
+   ================================================================ */
+const A={
+  // view state
+  heading:0,rawHeading:0,pitch:0,rawPitch:0,
+  vLat:47.6062,vLon:-122.3321,vElev:50,
+  hasOri:false,hasCam:false,hasLoc:false,isManual:false,
+  // peak data
+  allPeaks:[],visPeaks:[],profiles:{},
+  // settings
+  maxDist:160,labelSz:12,minProm:300,
+  // UI
+  settingsOpen:false,selPeak:null,
+  // manual drag (default: looking south toward Rainier from Seattle)
+  mH:180,mP:0,
+  // canvas
+  W:0,H:0,hFOV:55,vFOV:70,
+
+  /* ── INIT ── */
+  init(){
+    this.cv=document.getElementById('canvas');
+    this.cx=this.cv.getContext('2d');
+    this.pv=document.getElementById('pano');
+    this.px=this.pv.getContext('2d');
+    this.vid=document.getElementById('camera');
+    this.splash=document.getElementById('splash');
+    this.resize();
+    window.addEventListener('resize',()=>this.resize());
+    window.addEventListener('orientationchange',()=>setTimeout(()=>this.resize(),200));
+    this.wireUI();
+    document.getElementById('startBtn').onclick=()=>this.start();
+  },
+
+  resize(){
+    const dpr=window.devicePixelRatio||1;
+    this.W=window.innerWidth;this.H=window.innerHeight;
+    this.cv.width=this.W*dpr;this.cv.height=this.H*dpr;
+    this.cv.style.width=this.W+'px';this.cv.style.height=this.H+'px';
+    this.cx.setTransform(dpr,0,0,dpr,0,0);
+    // panorama strip
+    const pH=52;
+    this.pv.width=this.W*dpr;this.pv.height=pH*dpr;
+    this.pv.style.width=this.W+'px';this.pv.style.height=pH+'px';
+    this.px.setTransform(dpr,0,0,dpr,0,0);
+    this.pH=pH;
+    // FOV
+    if(this.W>this.H){this.hFOV=70;this.vFOV=55}
+    else{this.hFOV=55;this.vFOV=70}
+  },
+
+  wireUI(){
+    const $=id=>document.getElementById(id);
+    $('btnSettings').onclick=()=>{
+      this.settingsOpen=!this.settingsOpen;
+      $('settings').classList.toggle('vis',this.settingsOpen);
+    };
+    $('btnLocate').onclick=()=>this.locate();
+    $('infoClose').onclick=()=>{$('info').classList.remove('vis');this.selPeak=null};
+    // sliders
+    const bind=(rid,vid,prop,fmt,cb)=>{
+      const r=$(rid);r.oninput=()=>{
+        this[prop]=+r.value;$(vid).textContent=fmt(r.value);if(cb)cb();
+      };
+    };
+    bind('rDist','vDist','maxDist',v=>v+' mi',()=>this.compute());
+    bind('rLabel','vLabel','labelSz',v=>v+' px');
+    bind('rProm','vProm','minProm',v=>v+' m',()=>this.compute());
+    // touch / mouse
+    this.wireTouch();
+  },
+
+  wireTouch(){
+    let sx=0,sy=0,sh=0,sp=0,dragging=false;
+    const start=(x,y)=>{
+      if(!dragging)this.checkTap(x,y);
+      if(this.isManual){sx=x;sy=y;sh=this.mH;sp=this.mP;dragging=true}
+    };
+    const move=(x,y)=>{
+      if(this.isManual&&dragging){
+        this.mH=(sh-(x-sx)*.3+360)%360;
+        this.mP=Math.max(-30,Math.min(30,sp+(y-sy)*.2));
+      }
+    };
+    const end=()=>{dragging=false};
+    this.cv.addEventListener('touchstart',e=>{
+      if(e.touches.length===1)start(e.touches[0].clientX,e.touches[0].clientY)},{passive:true});
+    this.cv.addEventListener('touchmove',e=>{
+      if(e.touches.length===1){e.preventDefault();move(e.touches[0].clientX,e.touches[0].clientY)}},{passive:false});
+    this.cv.addEventListener('touchend',end);
+    this.cv.addEventListener('mousedown',e=>start(e.clientX,e.clientY));
+    this.cv.addEventListener('mousemove',e=>move(e.clientX,e.clientY));
+    window.addEventListener('mouseup',end);
+  },
+
+  checkTap(tx,ty){
+    for(let i=this.visPeaks.length-1;i>=0;i--){
+      const p=this.visPeaks[i];
+      if(p._lx===undefined)continue;
+      if(Math.abs(tx-p._lx)<p._lw/2+14&&Math.abs(ty-p._ly)<p._lh/2+14){
+        this.showInfo(p);return;
+      }
+    }
+  },
+
+  showInfo(p){
+    this.selPeak=p;
+    const $=id=>document.getElementById(id);
+    $('iName').textContent=p.n;
+    $('iElev').textContent=m2ft(p.ele).toLocaleString()+' ft  ('+Math.round(p.ele)+' m)';
+    $('iProm').textContent=m2ft(p.prom).toLocaleString()+' ft  ('+Math.round(p.prom)+' m)';
+    $('iDist').textContent=p.dMi.toFixed(1)+' mi  ('+(p.d/1000).toFixed(1)+' km)';
+    $('iBear').textContent=Math.round(p.b)+'° '+cardinal(p.b);
+    $('iAng').textContent=p.ea.toFixed(2)+'°';
+    $('iRng').textContent=p.rng;
+    $('info').classList.add('vis');
+  },
+
+  /* ── START (permissions) ── */
+  async start(){
+    const st=document.getElementById('status');
+    try{
+      // camera
+      st.textContent='Requesting camera access\u2026';
+      try{
+        const s=await navigator.mediaDevices.getUserMedia({
+          video:{facingMode:'environment',width:{ideal:1920},height:{ideal:1080}}});
+        this.vid.srcObject=s;await this.vid.play();this.hasCam=true;
+      }catch(e){
+        console.warn('Camera unavailable:',e);
+        st.textContent='No camera \u2014 using compass mode';
+        await new Promise(r=>setTimeout(r,800));
+      }
+      // orientation
+      st.textContent='Requesting orientation\u2026';
+      try{
+        if(typeof DeviceOrientationEvent!=='undefined'&&
+           typeof DeviceOrientationEvent.requestPermission==='function'){
+          const perm=await DeviceOrientationEvent.requestPermission();
+          if(perm==='granted')this.bindOri();else throw new Error('denied');
+        }else this.bindOri();
+      }catch(e){
+        console.warn('Orientation unavailable:',e);
+        this.isManual=true;
+        st.textContent='No compass \u2014 drag to look around';
+        await new Promise(r=>setTimeout(r,800));
+      }
+      // location
+      st.textContent='Getting location\u2026';
+      await this.locate();
+      // compute
+      this.compute();
+      // profiles
+      this.allPeaks.forEach(p=>{
+        if(!this.profiles[p.n])this.profiles[p.n]=genProfile(p.n)});
+      // go
+      this.splash.classList.add('hidden');
+      document.getElementById('controls').classList.add('vis');
+      this.loop();
+    }catch(e){st.textContent='Error: '+e.message}
+  },
+
+  bindOri(){
+    const handler=e=>{
+      this.hasOri=true;
+      if(e.webkitCompassHeading!==undefined){
+        this.rawHeading=e.webkitCompassHeading;
+      }else if(e.alpha!==null){
+        this.rawHeading=(360-e.alpha)%360;
+      }
+      if(e.beta!==null)this.rawPitch=Math.max(-60,Math.min(60,90-e.beta));
+    };
+    window.addEventListener('deviceorientation',handler,true);
+    window.addEventListener('deviceorientationabsolute',e=>{
+      if(e.alpha!==null)this.rawHeading=(360-e.alpha)%360;
+    },true);
+  },
+
+  async locate(){
+    return new Promise(res=>{
+      if(!('geolocation' in navigator)){res();return}
+      navigator.geolocation.getCurrentPosition(p=>{
+        this.vLat=p.coords.latitude;this.vLon=p.coords.longitude;
+        this.vElev=p.coords.altitude||50;this.hasLoc=true;
+        this.compute();res();
+      },()=>res(),{enableHighAccuracy:true,timeout:10000});
+    });
+  },
+
+  /* ── COMPUTE PEAK DATA ── */
+  compute(){
+    const maxM=this.maxDist*1609.34;
+    this.allPeaks=PEAKS.map(p=>{
+      const d=hav(this.vLat,this.vLon,p.lat,p.lon);
+      const b_=bear(this.vLat,this.vLon,p.lat,p.lon);
+      const ea=elevAng(d,this.vElev,p.ele);
+      const pw=p.prom*3;
+      const aw=Math.max(Math.atan2(pw,d)*RAD,0.4);
+      const ah=Math.max(Math.atan2(p.prom,d)*RAD,0.15);
+      return{...p,d,dMi:d/1609.34,b:b_,ea,aw,ah};
+    });
+    this.visPeaks=this.allPeaks
+      .filter(p=>p.d<=maxM&&p.prom>=this.minProm)
+      .sort((a,b)=>b.d-a.d);       // far→near (painter)
+  },
+
+  /* ── RENDER LOOP ── */
+  loop(){this.render();requestAnimationFrame(()=>this.loop())},
+
+  render(){
+    const cx=this.cx,W=this.W,H=this.H;
+    cx.clearRect(0,0,W,H);
+
+    // smooth heading / pitch
+    if(this.isManual){
+      this.heading=smoothAng(this.heading,this.mH,0.15);
+      this.pitch+=(this.mP-this.pitch)*0.15;
+    }else{
+      this.heading=smoothAng(this.heading,this.rawHeading,0.18);
+      this.pitch+=(this.rawPitch-this.pitch)*0.18;
+    }
+
+    // sky background if no camera
+    if(!this.hasCam) this.drawSky(cx,W,H);
+
+    const h=this.heading,p=this.pitch;
+    const ppdH=W/this.hFOV, ppdV=H/this.vFOV;
+    const halfH=this.hFOV/2+10;
+
+    // ── draw mountains (far → near) ──
+    for(const pk of this.visPeaks){
+      const bd=aDiff(pk.b,h);
+      if(Math.abs(bd)>halfH+pk.aw)continue;
+      const sx=W/2+bd*ppdH;
+      const sy=H/2-(pk.ea-p)*ppdV;
+      this.drawMtn(cx,pk,sx,sy,ppdH,ppdV);
+    }
+    // ── draw labels (near → far, on top) ──
+    for(let i=this.visPeaks.length-1;i>=0;i--){
+      const pk=this.visPeaks[i];
+      const bd=aDiff(pk.b,h);
+      if(Math.abs(bd)>halfH+5)continue;
+      const sx=W/2+bd*ppdH;
+      const sy=H/2-(pk.ea-p)*ppdV;
+      this.drawLbl(cx,pk,sx,sy,ppdH,ppdV);
+    }
+    // ── HUD ──
+    this.drawCompass(cx,W,H,h);
+    this.drawHorizon(cx,W,H,p,ppdV);
+    if(this.isManual){
+      cx.fillStyle='rgba(255,255,255,.35)';
+      cx.font='11px -apple-system,sans-serif';cx.textAlign='center';
+      cx.fillText('Drag to look around',W/2,H-68);
+    }
+    // panorama
+    this.drawPano(h);
+  },
+
+  /* ── SKY BACKGROUND ── */
+  drawSky(cx,W,H){
+    const g=cx.createLinearGradient(0,0,0,H);
+    g.addColorStop(0,'#060c18');g.addColorStop(.35,'#0f1d36');
+    g.addColorStop(.65,'#172440');g.addColorStop(1,'#1e2d4a');
+    cx.fillStyle=g;cx.fillRect(0,0,W,H);
+  },
+
+  /* ── MOUNTAIN SILHOUETTE ── */
+  drawMtn(cx,pk,cX,cY,ppdH,ppdV){
+    const prof=this.profiles[pk.n];if(!prof)return;
+    const N=prof.length;
+    const hwPx=pk.aw*ppdH/2;
+    const hPx=pk.ah*ppdV;
+    const maxM=this.maxDist*1609.34;
+    const df=Math.min(pk.d/maxM,1);       // distance factor 0…1
+
+    // colour
+    let r,g,b,a;
+    if(pk.rng==='Olympics'){r=38+df*65;g=52+df*72;b=88+df*82}
+    else if(pk.rng==='Foothills'){r=35+df*60;g=50+df*65;b=55+df*70}
+    else{r=28+df*72;g=38+df*76;b=58+df*82}
+    a=.88-df*.5;
+    if(this.hasCam)a*=.65;
+
+    // path
+    cx.save();cx.beginPath();cx.moveTo(cX-hwPx,cY);
+    for(let i=0;i<N;i++){
+      const t=i/(N-1);
+      cx.lineTo(cX-hwPx+t*hwPx*2, cY-prof[i]*hPx);
+    }
+    cx.lineTo(cX+hwPx,cY);cx.closePath();
+
+    // fill gradient
+    const grd=cx.createLinearGradient(cX,cY-hPx,cX,cY);
+    grd.addColorStop(0,`rgba(${r+35|0},${g+35|0},${b+35|0},${a})`);
+    grd.addColorStop(.35,`rgba(${r|0},${g|0},${b|0},${a})`);
+    grd.addColorStop(1,`rgba(${Math.max(0,r-20)|0},${Math.max(0,g-18)|0},${Math.max(0,b-12)|0},${a*.75})`);
+    cx.fillStyle=grd;cx.fill();
+
+    // snow cap
+    if(pk.ele>1800){
+      const sl=0.6+(pk.ele-1800)/6000*.25;
+      cx.save();cx.beginPath();cx.moveTo(cX-hwPx,cY);
+      for(let i=0;i<N;i++){
+        const t=i/(N-1);cx.lineTo(cX-hwPx+t*hwPx*2,cY-prof[i]*hPx);
+      }
+      cx.lineTo(cX+hwPx,cY);cx.closePath();cx.clip();
+      const sg=cx.createLinearGradient(cX,cY-hPx,cX,cY-hPx*sl);
+      sg.addColorStop(0,`rgba(230,238,255,${a*.55})`);
+      sg.addColorStop(1,'rgba(230,238,255,0)');
+      cx.fillStyle=sg;cx.fillRect(cX-hwPx,cY-hPx,hwPx*2,hPx);
+      cx.restore();
+    }
+
+    // ridge outline
+    cx.beginPath();
+    for(let i=0;i<N;i++){
+      const t=i/(N-1);
+      const x=cX-hwPx+t*hwPx*2,y=cY-prof[i]*hPx;
+      i===0?cx.moveTo(x,y):cx.lineTo(x,y);
+    }
+    cx.strokeStyle=`rgba(${r+65|0},${g+65|0},${b+65|0},${a*.4})`;
+    cx.lineWidth=.8;cx.stroke();cx.restore();
+  },
+
+  /* ── LABEL ── */
+  drawLbl(cx,pk,cX,cY,ppdH,ppdV){
+    const hPx=pk.ah*ppdV;
+    const topY=cY-hPx;
+    const imp=pk.prom/Math.sqrt(Math.max(pk.d/1000,1));
+    if(imp<8)return;
+
+    const fs=this.labelSz, ds=fs-2;
+    cx.save();
+    // name
+    cx.font=`600 ${fs}px -apple-system,BlinkMacSystemFont,sans-serif`;
+    const nW=cx.measureText(pk.n).width;
+    // detail
+    const det=`${m2ft(pk.ele).toLocaleString()} ft \u00b7 ${pk.dMi.toFixed(1)} mi`;
+    cx.font=`${ds}px -apple-system,BlinkMacSystemFont,sans-serif`;
+    const dW=cx.measureText(det).width;
+
+    const bw=Math.max(nW,dW)+14;
+    const bh=fs+ds+12;
+    const bx=cX-bw/2, by=topY-bh-18;
+
+    // store for tap detection
+    pk._lx=cX;pk._ly=by+bh/2;pk._lw=bw;pk._lh=bh;
+
+    // connector
+    cx.beginPath();cx.moveTo(cX,topY-2);cx.lineTo(cX,by+bh);
+    cx.strokeStyle='rgba(255,255,255,.35)';cx.lineWidth=.6;cx.stroke();
+
+    // dot
+    cx.beginPath();cx.arc(cX,topY-2,2.5,0,Math.PI*2);
+    cx.fillStyle=pk.rng==='Olympics'?'rgba(140,180,255,.9)':
+                 pk.ty==='v'?'rgba(255,160,120,.9)':'rgba(255,255,255,.8)';
+    cx.fill();
+
+    // background
+    cx.fillStyle='rgba(0,0,0,.42)';
+    cx.beginPath();cx.roundRect(bx,by,bw,bh,4);cx.fill();
+    // highlight for selected
+    if(this.selPeak&&this.selPeak.n===pk.n){
+      cx.strokeStyle='rgba(100,170,255,.6)';cx.lineWidth=1;
+      cx.beginPath();cx.roundRect(bx,by,bw,bh,4);cx.stroke();
+    }
+
+    // text
+    cx.shadowColor='rgba(0,0,0,.5)';cx.shadowBlur=3;
+    cx.textAlign='center';cx.textBaseline='top';
+    cx.fillStyle='#fff';
+    cx.font=`600 ${fs}px -apple-system,BlinkMacSystemFont,sans-serif`;
+    cx.fillText(pk.n,cX,by+4);
+    cx.fillStyle='rgba(255,255,255,.65)';
+    cx.font=`${ds}px -apple-system,BlinkMacSystemFont,sans-serif`;
+    cx.fillText(det,cX,by+fs+6);
+    cx.restore();
+  },
+
+  /* ── COMPASS STRIP ── */
+  drawCompass(cx,W,H,heading){
+    const safeT=parseInt(getComputedStyle(document.documentElement)
+      .getPropertyValue('--sat'))||44;
+    const y=safeT,sh=28;
+    cx.fillStyle='rgba(0,0,0,.35)';cx.fillRect(0,y,W,sh);
+    const dirs=[
+      {d:0,l:'N'},{d:45,l:'NE'},{d:90,l:'E'},{d:135,l:'SE'},
+      {d:180,l:'S'},{d:225,l:'SW'},{d:270,l:'W'},{d:315,l:'NW'}];
+    const ppd=W/this.hFOV;
+    for(let deg=0;deg<360;deg+=15){
+      const diff=aDiff(deg,heading);
+      if(Math.abs(diff)>this.hFOV/2+8)continue;
+      const x=W/2+diff*ppd;
+      const dir=dirs.find(d=>d.d===deg);
+      if(dir){
+        cx.fillStyle=deg===0?'#f55':'rgba(255,255,255,.8)';
+        cx.font='bold 10px -apple-system,sans-serif';
+        cx.textAlign='center';cx.textBaseline='middle';
+        cx.fillText(dir.l,x,y+sh/2);
+      }else{
+        cx.beginPath();cx.moveTo(x,y+sh-4);cx.lineTo(x,y+sh);
+        cx.strokeStyle='rgba(255,255,255,.25)';cx.lineWidth=1;cx.stroke();
+      }
+    }
+    // pointer
+    cx.beginPath();cx.moveTo(W/2,y+sh);cx.lineTo(W/2-4,y+sh+5);cx.lineTo(W/2+4,y+sh+5);
+    cx.closePath();cx.fillStyle='#fff';cx.fill();
+    // heading
+    cx.fillStyle='#fff';cx.font='bold 13px -apple-system,sans-serif';
+    cx.textAlign='center';cx.textBaseline='bottom';
+    cx.fillText(Math.round(heading)+'\u00b0',W/2,y-2);
+    // peak count + location source
+    cx.fillStyle='rgba(255,255,255,.35)';cx.font='10px -apple-system,sans-serif';
+    cx.textAlign='right';cx.textBaseline='middle';
+    const loc=this.hasLoc?'GPS':'Seattle (default)';
+    cx.fillText(this.visPeaks.length+' peaks \u00b7 '+loc,W-12,y+sh/2);
+  },
+
+  /* ── HORIZON ── */
+  drawHorizon(cx,W,H,pitch,ppdV){
+    const hY=H/2+pitch*ppdV;
+    cx.save();cx.beginPath();cx.moveTo(0,hY);cx.lineTo(W,hY);
+    cx.strokeStyle='rgba(255,255,255,.12)';cx.lineWidth=.5;
+    cx.setLineDash([8,8]);cx.stroke();cx.setLineDash([]);cx.restore();
+  },
+
+  /* ── PANORAMA STRIP ── */
+  drawPano(heading){
+    const cx=this.px,W=this.W,H=this.pH;
+    cx.clearRect(0,0,W,H);
+    cx.fillStyle='rgba(0,0,0,.55)';cx.fillRect(0,0,W,H);
+
+    const ppd=W/360;
+    // draw all peaks as simplified silhouettes
+    const sorted=[...this.visPeaks].sort((a,b)=>b.d-a.d);
+    for(const pk of sorted){
+      const prof=this.profiles[pk.n];if(!prof)continue;
+      const maxM=this.maxDist*1609.34;
+      const df=Math.min(pk.d/maxM,1);
+      const aw=Math.max(pk.aw,1)*ppd;    // angular width → pixels
+      const ah=Math.min(pk.prom/150,H-8); // height scaled by prominence
+      const px_=((pk.b/360)*W+W)%W;
+
+      let r,g,b;
+      if(pk.rng==='Olympics'){r=50;g=65;b=100}
+      else if(pk.rng==='Foothills'){r=50;g=60;b=65}
+      else{r=40;g=52;b=75}
+      const a=.6-df*.3;
+
+      cx.beginPath();
+      const N=prof.length,hw=aw;
+      cx.moveTo(px_-hw,H);
+      for(let i=0;i<N;i++){
+        const t=i/(N-1);
+        cx.lineTo(px_-hw+t*hw*2, H-prof[i]*ah);
+      }
+      cx.lineTo(px_+hw,H);cx.closePath();
+      cx.fillStyle=`rgba(${r},${g},${b},${a})`;cx.fill();
+    }
+
+    // FOV indicator
+    const fovW=(this.hFOV/360)*W;
+    const fovX=((heading/360)*W)%W;
+    cx.fillStyle='rgba(100,170,255,.12)';
+    const fovL=fovX-fovW/2, fovR=fovX+fovW/2;
+    if(fovL<0){
+      cx.fillRect(0,0,fovR,H);                          // right portion
+      cx.fillRect(W+fovL,0,-fovL,H);                    // wrapped left
+    }else if(fovR>W){
+      cx.fillRect(fovL,0,W-fovL,H);                     // left portion
+      cx.fillRect(0,0,fovR-W,H);                        // wrapped right
+    }else{
+      cx.fillRect(fovL,0,fovW,H);
+    }
+    // FOV borders
+    cx.strokeStyle='rgba(100,170,255,.4)';cx.lineWidth=1;
+    const lx=((fovL)%W+W)%W, rx=((fovR)%W+W)%W;
+    cx.beginPath();cx.moveTo(lx,0);cx.lineTo(lx,H);cx.stroke();
+    cx.beginPath();cx.moveTo(rx,0);cx.lineTo(rx,H);cx.stroke();
+
+    // cardinal labels
+    cx.fillStyle='rgba(255,255,255,.3)';cx.font='9px -apple-system,sans-serif';
+    cx.textAlign='center';cx.textBaseline='top';
+    const cards=[{d:0,l:'N'},{d:90,l:'E'},{d:180,l:'S'},{d:270,l:'W'}];
+    for(const c of cards){
+      const x=(c.d/360)*W;
+      cx.fillStyle=c.d===0?'rgba(255,100,100,.5)':'rgba(255,255,255,.3)';
+      cx.fillText(c.l,x,2);
+    }
+  },
+};
+
+document.addEventListener('DOMContentLoaded',()=>A.init());
+
+// set CSS var for safe area
+document.documentElement.style.setProperty('--sat','44');
+try{
+  const div=document.createElement('div');
+  div.style.paddingTop='env(safe-area-inset-top)';
+  document.body.appendChild(div);
+  const v=parseInt(getComputedStyle(div).paddingTop);
+  if(v>0)document.documentElement.style.setProperty('--sat',v+'');
+  document.body.removeChild(div);
+}catch(e){}
+</script>
+</body>
+</html>

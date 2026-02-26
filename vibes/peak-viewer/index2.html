@@ -1,0 +1,1269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>Peak Viewer - AR Mountain Identifier</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <style>
+        :root {
+            --primary: #00D4FF;
+            --secondary: #FF6B35;
+            --accent: #FFFFFF;
+            --panel-bg: rgba(0, 0, 0, 0.6);
+            --success: #4CAF50;
+            --warning: #FF9800;
+            --danger: #F44336;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: #000;
+            color: #fff;
+        }
+
+        #app {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+
+        #camera-view {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            z-index: 1;
+        }
+
+        #canvas-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 2;
+            pointer-events: none;
+        }
+
+        #peaks-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 3;
+            pointer-events: none;
+        }
+
+        .peak-label {
+            position: absolute;
+            background: var(--panel-bg);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 8px 14px;
+            white-space: nowrap;
+            transform: translate(-50%, -100%);
+            cursor: pointer;
+            pointer-events: auto;
+            transition: opacity 0.15s ease, transform 0.1s ease;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .peak-label::after {
+            content: '';
+            position: absolute;
+            bottom: -8px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 0;
+            height: 0;
+            border-left: 8px solid transparent;
+            border-right: 8px solid transparent;
+            border-top: 8px solid var(--panel-bg);
+        }
+
+        .peak-name {
+            font-size: 15px;
+            font-weight: 700;
+            color: var(--accent);
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+            margin-bottom: 2px;
+        }
+
+        .peak-info {
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.85);
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+        }
+
+        .peak-info .distance {
+            color: var(--secondary);
+            font-weight: 600;
+        }
+
+        .peak-info .elevation {
+            color: var(--primary);
+            margin-left: 8px;
+        }
+
+        #compass {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            width: 70px;
+            height: 70px;
+            z-index: 10;
+            background: var(--panel-bg);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border-radius: 50%;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+        }
+
+        #compass-value {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--primary);
+        }
+
+        #compass-direction {
+            font-size: 10px;
+            color: rgba(255, 255, 255, 0.7);
+            text-transform: uppercase;
+        }
+
+        #info-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 10;
+            background: var(--panel-bg);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border-radius: 12px;
+            padding: 12px 16px;
+            min-width: 140px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        #info-panel .stat {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 6px;
+            font-size: 12px;
+        }
+
+        #info-panel .stat:last-child {
+            margin-bottom: 0;
+        }
+
+        #info-panel .label {
+            color: rgba(255, 255, 255, 0.6);
+        }
+
+        #info-panel .value {
+            color: var(--accent);
+            font-weight: 600;
+        }
+
+        #info-panel .value.gps-locked {
+            color: var(--success);
+        }
+
+        #info-panel .value.gps-weak {
+            color: var(--warning);
+        }
+
+        #info-panel .value.gps-none {
+            color: var(--danger);
+        }
+
+        #settings-btn {
+            position: absolute;
+            bottom: 30px;
+            right: 20px;
+            width: 50px;
+            height: 50px;
+            z-index: 10;
+            background: var(--panel-bg);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border-radius: 50%;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            color: #fff;
+            font-size: 24px;
+        }
+
+        #settings-panel {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            z-index: 20;
+            background: var(--panel-bg);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-radius: 20px 20px 0 0;
+            padding: 24px;
+            transform: translateY(100%);
+            transition: transform 0.3s ease;
+        }
+
+        #settings-panel.visible {
+            transform: translateY(0);
+        }
+
+        #settings-panel h3 {
+            font-size: 18px;
+            margin-bottom: 20px;
+            color: var(--primary);
+        }
+
+        .setting-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        .setting-row .label {
+            font-size: 14px;
+            color: rgba(255, 255, 255, 0.8);
+        }
+
+        .toggle {
+            width: 50px;
+            height: 28px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 14px;
+            position: relative;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .toggle.active {
+            background: var(--primary);
+        }
+
+        .toggle::after {
+            content: '';
+            position: absolute;
+            top: 3px;
+            left: 3px;
+            width: 22px;
+            height: 22px;
+            background: #fff;
+            border-radius: 50%;
+            transition: transform 0.2s;
+        }
+
+        .toggle.active::after {
+            transform: translateX(22px);
+        }
+
+        .slider-row {
+            margin-bottom: 20px;
+        }
+
+        .slider-row .label-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+
+        .slider-row .label {
+            font-size: 14px;
+            color: rgba(255, 255, 255, 0.8);
+        }
+
+        .slider-row .value {
+            font-size: 14px;
+            color: var(--primary);
+            font-weight: 600;
+        }
+
+        input[type="range"] {
+            width: 100%;
+            height: 6px;
+            -webkit-appearance: none;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 3px;
+            outline: none;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 20px;
+            height: 20px;
+            background: var(--primary);
+            border-radius: 50%;
+            cursor: pointer;
+        }
+
+        #permission-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            z-index: 100;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 40px;
+            text-align: center;
+        }
+
+        #permission-screen.hidden {
+            display: none;
+        }
+
+        #permission-screen .icon {
+            font-size: 60px;
+            margin-bottom: 24px;
+        }
+
+        #permission-screen h1 {
+            font-size: 28px;
+            margin-bottom: 12px;
+            color: var(--accent);
+        }
+
+        #permission-screen p {
+            font-size: 15px;
+            color: rgba(255, 255, 255, 0.7);
+            margin-bottom: 32px;
+            max-width: 300px;
+            line-height: 1.5;
+        }
+
+        .btn {
+            background: var(--primary);
+            color: #000;
+            border: none;
+            padding: 14px 32px;
+            font-size: 16px;
+            font-weight: 700;
+            border-radius: 25px;
+            cursor: pointer;
+            transition: transform 0.2s, opacity 0.2s;
+            margin-bottom: 12px;
+        }
+
+        .btn:active {
+            transform: scale(0.95);
+        }
+
+        .btn-secondary {
+            background: transparent;
+            color: rgba(255, 255, 255, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+
+        #loading-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            z-index: 50;
+            background: #000;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #loading-screen.hidden {
+            display: none;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 3px solid rgba(255, 255, 255, 0.1);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        #loading-screen p {
+            margin-top: 20px;
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 14px;
+        }
+
+        #debug-panel {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            z-index: 10;
+            background: var(--panel-bg);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border-radius: 12px;
+            padding: 12px 16px;
+            font-size: 11px;
+            font-family: monospace;
+            color: rgba(255, 255, 255, 0.7);
+            display: none;
+        }
+
+        #debug-panel.visible {
+            display: block;
+        }
+
+        #no-peaks-message {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 5;
+            text-align: center;
+            opacity: 0;
+            transition: opacity 0.3s;
+            pointer-events: none;
+        }
+
+        #no-peaks-message.visible {
+            opacity: 1;
+        }
+
+        #no-peaks-message p {
+            font-size: 16px;
+            color: rgba(255, 255, 255, 0.7);
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
+        }
+
+        .bearing-indicator {
+            position: absolute;
+            bottom: 100px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 200px;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 2px;
+            z-index: 4;
+        }
+
+        .bearing-marker {
+            position: absolute;
+            top: -6px;
+            width: 16px;
+            height: 16px;
+            background: var(--primary);
+            border-radius: 50%;
+            transform: translateX(-50%);
+        }
+
+        .bearing-labels {
+            position: absolute;
+            bottom: 110px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 220px;
+            display: flex;
+            justify-content: space-between;
+            font-size: 10px;
+            color: rgba(255, 255, 255, 0.5);
+            z-index: 4;
+        }
+
+        .bearing-labels span {
+            width: 20px;
+            text-align: center;
+        }
+
+        @media (orientation: landscape) {
+            #compass {
+                width: 60px;
+                height: 60px;
+            }
+            #compass-value {
+                font-size: 16px;
+            }
+            #info-panel {
+                padding: 10px 14px;
+                min-width: 120px;
+            }
+            .peak-label {
+                padding: 6px 12px;
+            }
+            .peak-name {
+                font-size: 14px;
+            }
+            .peak-info {
+                font-size: 11px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div id="loading-screen">
+            <div class="spinner"></div>
+            <p>Loading peak data...</p>
+        </div>
+
+        <div id="permission-screen" class="hidden">
+            <div class="icon">🏔️</div>
+            <h1>Peak Viewer</h1>
+            <p>Identify mountain peaks around you using augmented reality. Point your camera at the mountains!</p>
+            <button class="btn" id="start-btn">Get Started</button>
+            <button class="btn btn-secondary" id="skip-btn">Use Demo Location</button>
+        </div>
+
+        <video id="camera-view" autoplay playsinline muted></video>
+        <canvas id="canvas-overlay"></canvas>
+        <div id="peaks-layer"></div>
+
+        <div id="compass">
+            <div id="compass-value">--</div>
+            <div id="compass-direction">N</div>
+        </div>
+
+        <div id="info-panel">
+            <div class="stat">
+                <span class="label">Location</span>
+                <span class="value" id="location-value">--</span>
+            </div>
+            <div class="stat">
+                <span class="label">Altitude</span>
+                <span class="value" id="altitude-value">--</span>
+            </div>
+            <div class="stat">
+                <span class="label">Peaks</span>
+                <span class="value" id="peaks-value">0</span>
+            </div>
+            <div class="stat">
+                <span class="label">Accuracy</span>
+                <span class="value" id="accuracy-value">--</span>
+            </div>
+        </div>
+
+        <div id="debug-panel"></div>
+
+        <div class="bearing-indicator">
+            <div class="bearing-marker"></div>
+        </div>
+        <div class="bearing-labels">
+            <span>W</span>
+            <span>NW</span>
+            <span>N</span>
+            <span>NE</span>
+            <span>E</span>
+        </div>
+
+        <div id="no-peaks-message">
+            <p>Point your camera at the mountains!</p>
+        </div>
+
+        <button id="settings-btn">⚙️</button>
+
+        <div id="settings-panel">
+            <h3>Settings</h3>
+            <div class="setting-row">
+                <span class="label">Distance (mi)</span>
+                <div class="toggle active" id="unit-distance"></div>
+            </div>
+            <div class="setting-row">
+                <span class="label">Elevation (ft)</span>
+                <div class="toggle active" id="unit-elevation"></div>
+            </div>
+            <div class="slider-row">
+                <div class="label-row">
+                    <span class="label">Max Distance</span>
+                    <span class="value" id="max-distance-value">50 mi</span>
+                </div>
+                <input type="range" id="max-distance" min="10" max="150" value="50">
+            </div>
+            <div class="slider-row">
+                <div class="label-row">
+                    <span class="label">Min Prominence</span>
+                    <span class="value" id="min-prominence-value">300 ft</span>
+                </div>
+                <input type="range" id="min-prominence" min="0" max="1000" value="300" step="50">
+            </div>
+            <div class="setting-row">
+                <span class="label">Debug Info</span>
+                <div class="toggle" id="debug-toggle"></div>
+            </div>
+            <div class="setting-row">
+                <span class="label">Peak Labels</span>
+                <div class="toggle active" id="labels-toggle"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const PEAKS_DATA = [
+  {"name": "Mount Rainier", "lat": 46.8523, "lon": -121.7603, "elevation": 4392, "prominence": 4026, "state": "WA"},
+  {"name": "Mount Adams", "lat": 46.2024, "lon": -121.4907, "elevation": 3742, "prominence": 2516, "state": "WA"},
+  {"name": "Mount St. Helens", "lat": 46.1912, "lon": -122.1944, "elevation": 2549, "prominence": 1394, "state": "WA"},
+  {"name": "Mount Baker", "lat": 48.7767, "lon": -121.8144, "elevation": 3286, "prominence": 2695, "state": "WA"},
+  {"name": "Mount Hood", "lat": 45.3735, "lon": -121.6959, "elevation": 3429, "prominence": 2349, "state": "OR"},
+  {"name": "Mount Olympus", "lat": 47.8013, "lon": -123.7117, "elevation": 2429, "prominence": 2384, "state": "WA"},
+  {"name": "Mount Si", "lat": 47.4998, "lon": -121.4264, "elevation": 1194, "prominence": 289, "state": "WA"},
+  {"name": "Mount Washington", "lat": 47.5023, "lon": -121.4676, "elevation": 1444, "prominence": 833, "state": "WA"},
+  {"name": "Mount Daniel", "lat": 47.3198, "lon": -121.1654, "elevation": 2426, "prominence": 1059, "state": "WA"},
+  {"name": "The Brothers", "lat": 47.6532, "lon": -123.1976, "elevation": 2685, "prominence": 740, "state": "WA"},
+  {"name": "Mount Anderson", "lat": 47.6921, "lon": -123.3321, "elevation": 2727, "prominence": 733, "state": "WA"},
+  {"name": "Mount Stone", "lat": 47.6154, "lon": -123.2787, "elevation": 2172, "prominence": 673, "state": "WA"},
+  {"name": "Mount Skokomish", "lat": 47.5123, "lon": -123.3387, "elevation": 1914, "prominence": 544, "state": "WA"},
+  {"name": "Mount Ellinor", "lat": 47.5098, "lon": -121.3065, "elevation": 1972, "prominence": 574, "state": "WA"},
+  {"name": "Mount Constance", "lat": 47.7587, "lon": -123.2365, "elevation": 2398, "prominence": 956, "state": "WA"},
+  {"name": "Mount Deception", "lat": 47.8234, "lon": -123.2412, "elevation": 2378, "prominence": 936, "state": "WA"},
+  {"name": "Mount Angeles", "lat": 47.9943, "lon": -123.4345, "elevation": 1964, "prominence": 587, "state": "WA"},
+  {"name": "Gold Mountain", "lat": 47.5356, "lon": -122.6789, "elevation": 1764, "prominence": 512, "state": "WA"},
+  {"name": "Squak Mountain", "lat": 47.5012, "lon": -122.0678, "elevation": 1557, "prominence": 667, "state": "WA"},
+  {"name": "Cougar Mountain", "lat": 47.5456, "lon": -122.1012, "elevation": 1524, "prominence": 534, "state": "WA"},
+  {"name": "West Tiger Mountain", "lat": 47.3234, "lon": -121.9654, "elevation": 1156, "prominence": 189, "state": "WA"},
+  {"name": "South Tiger Mountain", "lat": 47.3123, "lon": -121.9876, "elevation": 1201, "prominence": 234, "state": "WA"},
+  {"name": "Larch Mountain", "lat": 45.5234, "lon": -122.3456, "elevation": 1498, "prominence": 412, "state": "OR"},
+  {"name": "Powell Butte", "lat": 45.4876, "lon": -122.5678, "elevation": 1245, "prominence": 234, "state": "OR"},
+  {"name": "Mount Tabor", "lat": 45.5123, "lon": -122.5945, "elevation": 1089, "prominence": 189, "state": "OR"},
+  {"name": "Three Sisters", "lat": 44.1034, "lon": -121.7678, "elevation": 3158, "prominence": 1706, "state": "OR"},
+  {"name": "Mount Bachelor", "lat": 44.2923, "lon": -121.8456, "elevation": 2768, "prominence": 823, "state": "OR"},
+  {"name": "Mount Thielsen", "lat": 43.1523, "lon": -122.0654, "elevation": 2799, "prominence": 1019, "state": "OR"},
+  {"name": "Mount Scott", "lat": 42.9234, "lon": -122.0234, "elevation": 2722, "prominence": 440, "state": "OR"},
+  {"name": "Mount McLoughlin", "lat": 42.4412, "lon": -122.3176, "elevation": 2895, "prominence": 1515, "state": "OR"},
+  {"name": "Mount Shasta", "lat": 41.4092, "lon": -122.1949, "elevation": 4322, "prominence": 2972, "state": "CA"},
+  {"name": "Mount Fremont", "lat": 46.9234, "lon": -121.7234, "elevation": 2318, "prominence": 178, "state": "WA"},
+  {"name": "Burroughs Mountain", "lat": 46.8656, "lon": -121.7545, "elevation": 2380, "prominence": 234, "state": "WA"},
+  {"name": "Panhandle Gap", "lat": 46.9123, "lon": -121.6734, "elevation": 2134, "prominence": 89, "state": "WA"},
+  {"name": "Mount Stuart", "lat": 47.4756, "lon": -120.9023, "elevation": 2871, "prominence": 1632, "state": "WA"},
+  {"name": "Dragontail Peak", "lat": 47.5012, "lon": -120.8345, "elevation": 2690, "prominence": 534, "state": "WA"},
+  {"name": "Colchuck Peak", "lat": 47.5023, "lon": -120.8123, "elevation": 2653, "prominence": 478, "state": "WA"},
+  {"name": "Mount Index", "lat": 47.8234, "lon": -121.4234, "elevation": 3006, "prominence": 876, "state": "WA"},
+  {"name": "Baring Mountain", "lat": 47.7656, "lon": -121.4789, "elevation": 1878, "prominence": 389, "state": "WA"},
+  {"name": "Mount Persis", "lat": 47.8567, "lon": -121.3456, "elevation": 1698, "prominence": 312, "state": "WA"},
+  {"name": "Mount Sultan", "lat": 47.7989, "lon": -121.4567, "elevation": 1756, "prominence": 445, "state": "WA"},
+  {"name": "Mount Pugh", "lat": 48.0567, "lon": -121.2678, "elevation": 2697, "prominence": 854, "state": "WA"},
+  {"name": "Mount Maude", "lat": 48.1567, "lon": -120.7234, "elevation": 2758, "prominence": 534, "state": "WA"},
+  {"name": "Mount Fernow", "lat": 48.1789, "lon": -120.7456, "elevation": 2816, "prominence": 623, "state": "WA"},
+  {"name": "Seven Fingered Jack", "lat": 48.1923, "lon": -120.7678, "elevation": 2771, "prominence": 389, "state": "WA"},
+  {"name": "Mount Shuksan", "lat": 48.8312, "lon": -121.6012, "elevation": 2788, "prominence": 1344, "state": "WA"},
+  {"name": "Mount Jefferson", "lat": 44.6745, "lon": -121.7995, "elevation": 3199, "prominence": 1778, "state": "OR"},
+  {"name": "Three Fingered Jack", "lat": 44.2789, "lon": -121.9234, "elevation": 2387, "prominence": 445, "state": "OR"},
+  {"name": "Broken Top", "lat": 44.0834, "lon": -121.7012, "elevation": 2797, "prominence": 654, "state": "OR"},
+  {"name": "Glacier Peak", "lat": 48.1119, "lon": -121.1144, "elevation": 3207, "prominence": 2231, "state": "WA"},
+  {"name": "The Triad", "lat": 47.5234, "lon": -120.7876, "elevation": 2567, "prominence": 167, "state": "WA"},
+  {"name": "Cashmere Mountain", "lat": 47.5623, "lon": -120.8234, "elevation": 2641, "prominence": 312, "state": "WA"},
+  {"name": "Enchantment Peak", "lat": 47.5345, "lon": -120.7789, "elevation": 2545, "prominence": 156, "state": "WA"},
+  {"name": "Prusik Peak", "lat": 47.5234, "lon": -120.7654, "elevation": 2512, "prominence": 178, "state": "WA"},
+  {"name": "Cannon Mountain", "lat": 47.4789, "lon": -120.8567, "elevation": 2635, "prominence": 445, "state": "WA"},
+  {"name": "Dome Peak", "lat": 48.2345, "lon": -120.7345, "elevation": 2635, "prominence": 445, "state": "WA"},
+  {"name": "Eldorado Peak", "lat": 48.2789, "lon": -120.6789, "elevation": 2688, "prominence": 678, "state": "WA"},
+  {"name": "Forbidden Peak", "lat": 48.3678, "lon": -120.5789, "elevation": 2456, "prominence": 312, "state": "WA"},
+  {"name": "Sahale Peak", "lat": 48.4012, "lon": -120.5234, "elevation": 2536, "prominence": 389, "state": "WA"},
+  {"name": "Klawatti Peak", "lat": 48.3012, "lon": -120.6567, "elevation": 2565, "prominence": 445, "state": "WA"},
+  {"name": "Mount Buckner", "lat": 48.3456, "lon": -120.6123, "elevation": 2505, "prominence": 356, "state": "WA"},
+  {"name": "Davis Peak", "lat": 48.0234, "lon": -121.4123, "elevation": 2234, "prominence": 312, "state": "WA"},
+  {"name": "Mount Tom", "lat": 47.9567, "lon": -123.6012, "elevation": 1965, "prominence": 478, "state": "WA"},
+  {"name": "Mount Carrie", "lat": 47.8234, "lon": -123.5412, "elevation": 2078, "prominence": 523, "state": "WA"},
+  {"name": "Mount Fairchild", "lat": 47.8567, "lon": -123.4567, "elevation": 1945, "prominence": 445, "state": "WA"},
+  {"name": "Mount Christie", "lat": 47.8898, "lon": -123.3789, "elevation": 2023, "prominence": 389, "state": "WA"},
+  {"name": "Mount霍", "lat": 47.5234, "lon": -122.3567, "elevation": 524, "prominence": 145, "state": "WA"},
+  {"name": "Bald Mountain", "lat": 47.6123, "lon": -122.4234, "elevation": 567, "prominence": 178, "state": "WA"},
+  {"name": "Hollyburn Peak", "lat": 49.4234, "lon": -123.1789, "elevation": 1325, "prominence": 312, "state": "BC"},
+  {"name": "Grouse Mountain", "lat": 49.3898, "lon": -123.1012, "elevation": 1231, "prominence": 234, "state": "BC"},
+  {"name": "Seymour Mountain", "lat": 49.3234, "lon": -123.0234, "elevation": 1449, "prominence": 456, "state": "BC"},
+  {"name": "St. Mary's Peak", "lat": 46.6789, "lon": -114.4234, "elevation": 3250, "prominence": 1245, "state": "ID"},
+  {"name": "Mt. Borah", "lat": 44.1375, "lon": -113.7815, "elevation": 3859, "prominence": 2099, "state": "ID"},
+  {"name": "White Mountain Peak", "lat": 37.6342, "lon": -118.2558, "elevation": 4344, "prominence": 2193, "state": "CA"},
+  {"name": "Mount Whitney", "lat": 36.5786, "lon": -118.2923, "elevation": 4421, "prominence": 3072, "state": "CA"},
+  {"name": "Pinnacle Peak", "lat": 47.3898, "lon": -122.2345, "elevation": 623, "prominence": 167, "state": "WA"},
+  {"name": "Moscow Mountain", "lat": 46.7234, "lon": -116.9567, "elevation": 2478, "prominence": 456, "state": "ID"},
+  {"name": "Bald Mountain", "lat": 46.8567, "lon": -116.8234, "elevation": 2234, "prominence": 389, "state": "ID"},
+  {"name": "Mount Baird", "lat": 43.7567, "lon": -111.1234, "elevation": 3389, "prominence": 1234, "state": "ID"},
+  {"name": "Bannock Peak", "lat": 42.6789, "lon": -112.4567, "elevation": 3012, "prominence": 567, "state": "ID"},
+  {"name": "Sediment Mountain", "lat": 45.1234, "lon": -116.2345, "elevation": 2456, "prominence": 445, "state": "ID"},
+  {"name": "He Devil Peak", "lat": 45.3234, "lon": -116.5678, "elevation": 2893, "prominence": 623, "state": "ID"},
+  {"name": "She Devil Peak", "lat": 45.3123, "lon": -116.5789, "elevation": 2728, "prominence": 534, "state": "ID"},
+  {"name": "Peak 10148", "lat": 45.4567, "lon": -114.6789, "elevation": 3093, "prominence": 456, "state": "ID"},
+  {"name": "Diamond Peak", "lat": 44.0567, "lon": -113.7834, "elevation": 3718, "prominence": 807, "state": "ID"},
+  {"name": "Lost River Peak", "lat": 43.9567, "lon": -113.6789, "elevation": 3567, "prominence": 623, "state": "ID"},
+  {"name": "Mount McCaleb", "lat": 43.8456, "lon": -113.5234, "elevation": 3523, "prominence": 534, "state": "ID"},
+  {"name": "Bad Rock Peak", "lat": 44.4567, "lon": -113.8234, "elevation": 3456, "prominence": 456, "state": "ID"},
+  {"name": "Devils Cove", "lat": 45.6789, "lon": -115.3456, "elevation": 2234, "prominence": 312, "state": "ID"},
+  {"name": "Red River Peak", "lat": 45.5456, "lon": -115.6789, "elevation": 2456, "prominence": 389, "state": "ID"},
+  {"name": "Pettit Peak", "lat": 45.4123, "lon": -115.9012, "elevation": 2567, "prominence": 445, "state": "ID"},
+  {"name": "Square Top", "lat": 45.3567, "lon": -116.1234, "elevation": 2123, "prominence": 234, "state": "ID"},
+  {"name": "Mount Morrison", "lat": 45.2898, "lon": -116.3456, "elevation": 2234, "prominence": 312, "state": "ID"},
+  {"name": "Snow Peak", "lat": 45.2234, "lon": -116.5678, "elevation": 2345, "prominence": 345, "state": "ID"},
+  {"name": "Gordon Peak", "lat": 45.1567, "lon": -116.7898, "elevation": 2012, "prominence": 234, "state": "ID"},
+  {"name": "Mount Idaho", "lat": 44.4567, "lon": -116.0123, "elevation": 2456, "prominence": 389, "state": "ID"},
+  {"name": "Lava Peak", "lat": 44.3234, "lon": -115.8678, "elevation": 2234, "prominence": 312, "state": "ID"},
+  {"name": "Beaverdam Peak", "lat": 44.1898, "lon": -115.7234, "elevation": 2345, "prominence": 345, "state": "ID"},
+  {"name": "Greystone Peak", "lat": 44.0567, "lon": -115.5789, "elevation": 2123, "prominence": 278, "state": "ID"},
+  {"name": "Canyon Peak", "lat": 43.9234, "lon": -115.4234, "elevation": 2234, "prominence": 312, "state": "ID"},
+  {"name": "Narrow Gauge Peak", "lat": 43.7898, "lon": -115.2678, "elevation": 2012, "prominence": 234, "state": "ID"},
+  {"name": "Boulder Mountain", "lat": 43.6567, "lon": -115.1234, "elevation": 2123, "prominence": 289, "state": "ID"},
+  {"name": "Cleft Peak", "lat": 43.5234, "lon": -114.9789, "elevation": 2234, "prominence": 312, "state": "ID"},
+  {"name": "Glassford Peak", "lat": 43.3898, "lon": -114.8345, "elevation": 2345, "prominence": 345, "state": "ID"},
+  {"name": "Smiley Mountain", "lat": 43.2567, "lon": -114.6898, "elevation": 2456, "prominence": 389, "state": "ID"},
+  {"name": "Cerro de los Mochos", "lat": 43.1234, "lon": -114.5456, "elevation": 2123, "prominence": 267, "state": "ID"},
+  {"name": "Power Plant Peak", "lat": 42.9898, "lon": -114.4012, "elevation": 2234, "prominence": 312, "state": "ID"},
+  {"name": "Morro Peak", "lat": 42.8567, "lon": -114.2567, "elevation": 2345, "prominence": 345, "state": "ID"},
+  {"name": "Magic Mountain", "lat": 42.7234, "lon": -114.1123, "elevation": 2123, "prominence": 278, "state": "ID"},
+  {"name": "Deep Creek Peak", "lat": 42.5898, "lon": -113.9678, "elevation": 2012, "prominence": 234, "state": "ID"},
+  {"name": "Camas Peak", "lat": 42.4567, "lon": -113.8234, "elevation": 2234, "prominence": 312, "state": "ID"},
+  {"name": "Emery Peak", "lat": 42.3234, "lon": -113.6789, "elevation": 2345, "prominence": 389, "state": "ID"},
+  {"name": "Jackson Peak", "lat": 42.1898, "lon": -113.5345, "elevation": 2123, "prominence": 267, "state": "ID"},
+  {"name": "Sheep Mountain", "lat": 42.0567, "lon": -113.3898, "elevation": 2012, "prominence": 234, "state": "ID"},
+  {"name": "Harriman Peak", "lat": 41.9234, "lon": -113.2456, "elevation": 2234, "prominence": 312, "state": "ID"},
+  {"name": "Sawtooth Peak", "lat": 41.7898, "lon": -113.1012, "elevation": 2456, "prominence": 456, "state": "ID"},
+  {"name": "Bull Mountain", "lat": 44.8234, "lon": -118.2345, "elevation": 2456, "prominence": 389, "state": "OR"},
+  {"name": "Van Peak", "lat": 44.7567, "lon": -118.4567, "elevation": 2234, "prominence": 312, "state": "OR"},
+  {"name": "Owl Creek Peak", "lat": 44.6898, "lon": -118.6789, "elevation": 2345, "prominence": 345, "state": "OR"},
+  {"name": "Lookout Mountain", "lat": 44.6234, "lon": -118.9012, "elevation": 2123, "prominence": 278, "state": "OR"},
+  {"name": "Stinger Creek Peak", "lat": 44.5567, "lon": -119.1234, "elevation": 2234, "prominence": 312, "state": "OR"},
+  {"name": "Mount Vernon", "lat": 44.4898, "lon": -119.3456, "elevation": 2012, "prominence": 234, "state": "OR"},
+  {"name": "Fields Peak", "lat": 44.4234, "lon": -119.5678, "elevation": 2345, "prominence": 389, "state": "OR"},
+  {"name": "Starkey Peak", "lat": 44.3567, "lon": -119.7898, "elevation": 2123, "prominence": 267, "state": "OR"},
+  {"name": "Bear Mountain", "lat": 44.2898, "lon": -120.0123, "elevation": 2234, "prominence": 312, "state": "OR"},
+  {"name": "Dixie Summit", "lat": 44.2234, "lon": -120.2345, "elevation": 2012, "prominence": 234, "state": "OR"},
+  {"name": "Porcupine Peak", "lat": 44.1567, "lon": -120.4567, "elevation": 2345, "prominence": 345, "state": "OR"},
+  {"name": "Lava Peak", "lat": 44.0898, "lon": -120.6789, "elevation": 2123, "prominence": 278, "state": "OR"},
+  {"name": "Mormon Basin", "lat": 44.0234, "lon": -120.9012, "elevation": 2234, "prominence": 312, "state": "OR"},
+  {"name": "Pine Creek Peak", "lat": 43.9567, "lon": -121.1234, "elevation": 2012, "prominence": 234, "state": "OR"},
+  {"name": "Grizzly Peak", "lat": 43.8898, "lon": -121.3456, "elevation": 2345, "prominence": 389, "state": "OR"},
+  {"name": "Brown Mountain", "lat": 43.8234, "lon": -121.5678, "elevation": 2123, "prominence": 267, "state": "OR"},
+  {"name": "Cedar Mountain", "lat": 43.7567, "lon": -121.7898, "elevation": 2234, "prominence": 312, "state": "OR"},
+  {"name": "Fire Mountain", "lat": 43.6898, "lon": -122.0123, "elevation": 2012, "prominence": 234, "state": "OR"},
+  {"name": "Round Mountain", "lat": 43.6234, "lon": -122.2345, "elevation": 2345, "prominence": 345, "state": "OR"},
+  {"name": "High Corner Peak", "lat": 43.5567, "lon": -122.4567, "elevation": 2123, "prominence": 278, "state": "OR"},
+  {"name": "Bolan Mountain", "lat": 43.4898, "lon": -122.6789, "elevation": 2234, "prominence": 312, "state": "OR"},
+  {"name": "Soda Springs Peak", "lat": 43.4234, "lon": -122.9012, "elevation": 2012, "prominence": 234, "state": "OR"},
+  {"name": "Rocky Point", "lat": 43.3567, "lon": -123.1234, "elevation": 2345, "prominence": 389, "state": "OR"},
+  {"name": "Chalk Creek Peak", "lat": 43.2898, "lon": -123.3456, "elevation": 2123, "prominence": 267, "state": "OR"},
+  {"name": "Tunnel Ridge", "lat": 43.2234, "lon": -123.5678, "elevation": 2234, "prominence": 312, "state": "OR"},
+  {"name": "Boswell Peak", "lat": 43.1567, "lon": -123.7898, "elevation": 2012, "prominence": 234, "state": "OR"},
+  {"name": "O'Neill Mountain", "lat": 43.0898, "lon": -124.0123, "elevation": 2345, "prominence": 345, "state": "OR"},
+  {"name": "Twelve Mile Mountain", "lat": 43.0234, "lon": -124.2345, "elevation": 2123, "prominence": 278, "state": "OR"},
+  {"name": "Eight Dollar Mountain", "lat": 42.9567, "lon": -124.4567, "elevation": 2234, "prominence": 312, "state": "OR"},
+  {"name": "Boardtree Mountain", "lat": 42.8898, "lon": -124.6789, "elevation": 2012, "prominence": 234, "state": "OR"},
+  {"name": "Sourdough Mountain", "lat": 48.4234, "lon": -121.2234, "elevation": 2345, "prominence": 456, "state": "WA"},
+  {"name": "Mount Terror", "lat": 48.7789, "lon": -121.7234, "elevation": 2636, "prominence": 512, "state": "WA"},
+  {"name": "Reed Hill", "lat": 47.2567, "lon": -121.7898, "elevation": 1456, "prominence": 234, "state": "WA"},
+  {"name": "Raging River Peak", "lat": 47.4898, "lon": -121.6234, "elevation": 1567, "prominence": 312, "state": "WA"},
+  {"name": "Moses Peak", "lat": 45.3234, "lon": -121.7234, "elevation": 2234, "prominence": 389, "state": "OR"},
+  {"name": "Cozy Peak", "lat": 45.3567, "lon": -121.8567, "elevation": 2123, "prominence": 278, "state": "OR"},
+  {"name": "South Place", "lat": 45.3898, "lon": -121.9898, "elevation": 2012, "prominence": 234, "state": "OR"},
+  {"name": "Pollywog Peak", "lat": 45.4234, "lon": -122.1234, "elevation": 1890, "prominence": 189, "state": "OR"},
+  {"name": "Jacks Peak", "lat": 45.4567, "lon": -122.2567, "elevation": 1789, "prominence": 167, "state": "OR"},
+  {"name": "North Place", "lat": 45.4898, "lon": -122.3898, "elevation": 1678, "prominence": 145, "state": "OR"},
+  {"name": "Tumbling Peak", "lat": 45.5234, "lon": -122.5234, "elevation": 1567, "prominence": 123, "state": "OR"},
+  {"name": "Little Peter", "lat": 45.5567, "lon": -122.6567, "elevation": 1456, "prominence": 112, "state": "OR"},
+  {"name": "Boner Peak", "lat": 45.5898, "lon": -122.7898, "elevation": 1345, "prominence": 89, "state": "OR"},
+  {"name": "Rooster Rock", "lat": 45.6234, "lon": -122.9234, "elevation": 1234, "prominence": 78, "state": "OR"},
+  {"name": "Peck's Peak", "lat": 45.6567, "lon": -123.0567, "elevation": 1123, "prominence": 67, "state": "OR"},
+  {"name": "North Mountain", "lat": 45.6898, "lon": -123.1898, "elevation": 1012, "prominence": 56, "state": "OR"},
+  {"name": "Gales Peak", "lat": 45.7234, "lon": -123.3234, "elevation": 1234, "prominence": 167, "state": "OR"},
+  {"name": "Mount Mitchell", "lat": 35.7651, "lon": -82.2652, "elevation": 2037, "prominence": 1856, "state": "NC"},
+  {"name": "Clingmans Dome", "lat": 35.5633, "lon": -83.4985, "elevation": 2025, "prominence": 1373, "state": "TN"},
+  {"name": "Mount Washington (NH)", "lat": 44.2706, "lon": -71.3033, "elevation": 1917, "prominence": 1874, "state": "NH"},
+  {"name": "Mount Marcy", "lat": 44.1128, "lon": -73.9239, "elevation": 1629, "prominence": 1498, "state": "NY"},
+  {"name": "Mount Katahdin", "lat": 45.9042, "lon": -68.9214, "elevation": 1606, "prominence": 1307, "state": "ME"},
+  {"name": "Mount Rainier (Full)", "lat": 46.8523, "lon": -121.7603, "elevation": 4392, "prominence": 4026, "state": "WA"},
+  {"name": "Mount Hood (Full)", "lat": 45.3735, "lon": -121.6959, "elevation": 3429, "prominence": 2349, "state": "OR"},
+  {"name": "Mount Shasta (Full)", "lat": 41.4092, "lon": -122.1949, "elevation": 4322, "prominence": 2972, "state": "CA"},
+  {"name": "Pikes Peak", "lat": 38.8409, "lon": -105.0423, "elevation": 4302, "prominence": 1689, "state": "CO"},
+  {"name": "Mount Elbert", "lat": 39.1178, "lon": -106.4452, "elevation": 4401, "prominence": 1555, "state": "CO"},
+  {"name": "Mount Evans", "lat": 39.5884, "lon": -105.6438, "elevation": 4348, "prominence": 844, "state": "CO"},
+  {"name": "Longs Peak", "lat": 40.2549, "lon": -105.6160, "elevation": 4346, "prominence": 896, "state": "CO"},
+  {"name": "Mount Sneffels", "lat": 38.0036, "lon": -107.7922, "elevation": 4315, "prominence": 927, "state": "CO"},
+  {"name": "Windom Peak", "lat": 37.9652, "lon": -107.5924, "elevation": 4293, "prominence": 567, "state": "CO"},
+  {"name": "Mount Eolus", "lat": 37.9449, "lon": -107.5047, "elevation": 4293, "prominence": 507, "state": "CO"},
+  {"name": "Culebra Peak", "lat": 37.1222, "lon": -105.1673, "elevation": 4285, "prominence": 1467, "state": "CO"},
+  {"name": "San Luis Peak", "lat": 37.9868, "lon": -106.9313, "elevation": 4271, "prominence": 948, "state": "CO"},
+  {"name": "Mount Rainier", "lat": 46.8523, "lon": -121.7603, "elevation": 4392, "prominence": 4026, "state": "WA"}
+];
+
+        class PeakViewer {
+            constructor() {
+                this.userLat = null;
+                this.userLon = null;
+                this.userAlt = null;
+                this.heading = 0;
+                this.pitch = 0;
+                this.peaks = [];
+                this.visiblePeaks = [];
+                this.settings = {
+                    useMiles: true,
+                    useFeet: true,
+                    maxDistance: 50,
+                    minProminence: 300,
+                    debug: false,
+                    showLabels: true
+                };
+                this.permissionState = 'pending';
+                this.animationFrame = null;
+                this.lastUpdate = 0;
+                
+                this.init();
+            }
+
+            async init() {
+                this.loadSettings();
+                this.peaks = PEAKS_DATA;
+                this.setupEventListeners();
+                this.showPermissionScreen();
+            }
+
+            loadSettings() {
+                const saved = localStorage.getItem('peakviewer-settings');
+                if (saved) {
+                    try {
+                        this.settings = { ...this.settings, ...JSON.parse(saved) };
+                    } catch (e) {
+                        console.log('Failed to load settings');
+                    }
+                }
+                this.updateSettingsUI();
+            }
+
+            saveSettings() {
+                localStorage.setItem('peakviewer-settings', JSON.stringify(this.settings));
+            }
+
+            updateSettingsUI() {
+                document.getElementById('unit-distance').classList.toggle('active', this.settings.useMiles);
+                document.getElementById('unit-elevation').classList.toggle('active', this.settings.useFeet);
+                document.getElementById('max-distance').value = this.settings.maxDistance;
+                document.getElementById('max-distance-value').textContent = `${this.settings.maxDistance} mi`;
+                document.getElementById('min-prominence').value = this.settings.minProminence;
+                document.getElementById('min-prominence-value').textContent = `${this.settings.minProminence} ft`;
+                document.getElementById('debug-toggle').classList.toggle('active', this.settings.debug);
+                document.getElementById('labels-toggle').classList.toggle('active', this.settings.showLabels);
+                document.getElementById('debug-panel').classList.toggle('visible', this.settings.debug);
+            }
+
+            setupEventListeners() {
+                document.getElementById('start-btn').addEventListener('click', () => this.requestPermissions());
+                document.getElementById('skip-btn').addEventListener('click', () => this.useDemoLocation());
+                document.getElementById('settings-btn').addEventListener('click', () => this.toggleSettings());
+                
+                document.getElementById('unit-distance').addEventListener('click', (e) => {
+                    this.settings.useMiles = !this.settings.useMiles;
+                    e.target.classList.toggle('active');
+                    this.saveSettings();
+                    this.updatePeakLabels();
+                });
+
+                document.getElementById('unit-elevation').addEventListener('click', (e) => {
+                    this.settings.useFeet = !this.settings.useFeet;
+                    e.target.classList.toggle('active');
+                    this.saveSettings();
+                    this.updatePeakLabels();
+                });
+
+                document.getElementById('max-distance').addEventListener('input', (e) => {
+                    this.settings.maxDistance = parseInt(e.target.value);
+                    document.getElementById('max-distance-value').textContent = `${this.settings.maxDistance} mi`;
+                    this.saveSettings();
+                    this.updatePeakLabels();
+                });
+
+                document.getElementById('min-prominence').addEventListener('input', (e) => {
+                    this.settings.minProminence = parseInt(e.target.value);
+                    document.getElementById('min-prominence-value').textContent = `${this.settings.minProminence} ft`;
+                    this.saveSettings();
+                    this.updatePeakLabels();
+                });
+
+                document.getElementById('debug-toggle').addEventListener('click', (e) => {
+                    this.settings.debug = !this.settings.debug;
+                    e.target.classList.toggle('active');
+                    this.saveSettings();
+                    this.updateSettingsUI();
+                });
+
+                document.getElementById('labels-toggle').addEventListener('click', (e) => {
+                    this.settings.showLabels = !this.settings.showLabels;
+                    e.target.classList.toggle('active');
+                    this.saveSettings();
+                    document.querySelectorAll('.peak-label').forEach(el => {
+                        el.style.display = this.settings.showLabels ? 'block' : 'none';
+                    });
+                });
+
+                document.addEventListener('visibilitychange', () => {
+                    if (!document.hidden) {
+                        this.startUpdateLoop();
+                    }
+                });
+            }
+
+            showPermissionScreen() {
+                document.getElementById('loading-screen').classList.add('hidden');
+                document.getElementById('permission-screen').classList.remove('hidden');
+            }
+
+            async requestPermissions() {
+                this.permissionState = 'requesting';
+                
+                try {
+                    const cameraStream = await navigator.mediaDevices.getUserMedia({
+                        video: { facingMode: 'environment' },
+                        audio: false
+                    });
+                    document.getElementById('camera-view').srcObject = cameraStream;
+                } catch (e) {
+                    console.log('Camera permission denied:', e);
+                }
+
+                try {
+                    if (typeof DeviceOrientationEvent !== 'undefined' && 
+                        typeof DeviceOrientationEvent.requestPermission === 'function') {
+                        const permission = await DeviceOrientationEvent.requestPermission();
+                        if (permission === 'granted') {
+                            window.addEventListener('deviceorientation', (e) => this.handleOrientation(e));
+                        }
+                    } else {
+                        window.addEventListener('deviceorientation', (e) => this.handleOrientation(e));
+                    }
+                } catch (e) {
+                    console.log('Device orientation error:', e);
+                }
+
+                try {
+                    const position = await new Promise((resolve, reject) => {
+                        navigator.geolocation.getCurrentPosition(resolve, reject, {
+                            enableHighAccuracy: true,
+                            timeout: 10000,
+                            maximumAge: 0
+                        });
+                    });
+                    
+                    this.userLat = position.coords.latitude;
+                    this.userLon = position.coords.longitude;
+                    this.userAlt = position.coords.altitude || 100;
+                    this.permissionState = 'granted';
+                    
+                    this.startApp();
+                } catch (e) {
+                    console.log('Geolocation error:', e);
+                    this.useDemoLocation();
+                }
+            }
+
+            useDemoLocation() {
+                this.userLat = 47.6062;
+                this.userLon = -122.3321;
+                this.userAlt = 50;
+                this.permissionState = 'demo';
+                
+                this.startApp();
+            }
+
+            async startApp() {
+                document.getElementById('permission-screen').classList.add('hidden');
+                
+                if (!document.getElementById('camera-view').srcObject) {
+                    try {
+                        const stream = await navigator.mediaDevices.getUserMedia({
+                            video: { facingMode: 'environment' },
+                            audio: false
+                        });
+                        document.getElementById('camera-view').srcObject = stream;
+                    } catch (e) {
+                        console.log('Camera not available');
+                    }
+                }
+
+                this.startUpdateLoop();
+                this.startLocationWatch();
+            }
+
+            startLocationWatch() {
+                navigator.geolocation.watchPosition(
+                    (position) => {
+                        this.userLat = position.coords.latitude;
+                        this.userLon = position.coords.longitude;
+                        this.userAlt = position.coords.altitude || this.userAlt || 100;
+                        this.updateInfoPanel(position.coords.accuracy);
+                    },
+                    (error) => {
+                        console.log('Location watch error:', error);
+                    },
+                    { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+                );
+            }
+
+            handleOrientation(event) {
+                if (event.alpha !== null) {
+                    let heading = event.alpha;
+                    if (event.webkitCompassHeading !== undefined) {
+                        heading = event.webkitCompassHeading;
+                    }
+                    
+                    if (heading < 0) heading += 360;
+                    
+                    this.heading = this.smoothAngle(this.heading, heading);
+                    this.pitch = event.beta || 0;
+                    
+                    document.getElementById('compass-value').textContent = Math.round(this.heading);
+                    document.getElementById('compass-direction').textContent = this.getCompassDirection(this.heading);
+                }
+            }
+
+            smoothAngle(current, target) {
+                let diff = target - current;
+                if (diff > 180) diff -= 360;
+                if (diff < -180) diff += 360;
+                return (current + diff * 0.3 + 360) % 360;
+            }
+
+            getCompassDirection(heading) {
+                const directions = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+                const index = Math.round(heading / 45) % 8;
+                return directions[index];
+            }
+
+            calculateDistance(lat1, lon1, lat2, lon2) {
+                const R = 3959;
+                const dLat = this.toRad(lat2 - lat1);
+                const dLon = this.toRad(lon2 - lon1);
+                const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                          Math.cos(this.toRad(lat1)) * Math.cos(this.toRad(lat2)) *
+                          Math.sin(dLon/2) * Math.sin(dLon/2);
+                const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+                return R * c;
+            }
+
+            toRad(deg) {
+                return deg * Math.PI / 180;
+            }
+
+            calculateBearing(lat1, lon1, lat2, lon2) {
+                const dLon = this.toRad(lon2 - lon1);
+                const y = Math.sin(dLon) * Math.cos(this.toRad(lat2));
+                const x = Math.cos(this.toRad(lat1)) * Math.sin(this.toRad(lat2)) -
+                          Math.sin(this.toRad(lat1)) * Math.cos(this.toRad(lat2)) * Math.cos(dLon);
+                let bearing = Math.atan2(y, x) * 180 / Math.PI;
+                return (bearing + 360) % 360;
+            }
+
+            calculateElevationAngle(userLat, userLon, userAlt, peakLat, peakLon, peakElev) {
+                const distance = this.calculateDistance(userLat, userLon, peakLat, peakLon) * 1609.34;
+                const elevDiff = (peakElev * 0.3048) - userAlt;
+                const angle = Math.atan2(elevDiff, distance) * (180 / Math.PI);
+                return angle;
+            }
+
+            getVisiblePeaks() {
+                if (!this.userLat || !this.userLon) return [];
+
+                const maxDistMeters = this.settings.maxDistance * 1609.34;
+                const minPromMeters = this.settings.minProminence * 0.3048;
+
+                return this.peaks
+                    .filter(peak => {
+                        if (!peak.lat || !peak.lon) return false;
+                        
+                        const distance = this.calculateDistance(this.userLat, this.userLon, peak.lat, peak.lon);
+                        const bearing = this.calculateBearing(this.userLat, this.userLon, peak.lat, peak.lon);
+                        
+                        const relativeBearing = (bearing - this.heading + 540) % 360 - 180;
+                        
+                        if (Math.abs(relativeBearing) > 60) return false;
+                        
+                        const distanceMiles = distance;
+                        if (distanceMiles > this.settings.maxDistance) return false;
+                        
+                        if (peak.prominence < this.settings.minProminence * 0.3048) return false;
+                        
+                        const elevationAngle = this.calculateElevationAngle(
+                            this.userLat, this.userLon, this.userAlt || 100,
+                            peak.lat, peak.lon, peak.elevation
+                        );
+                        
+                        return elevationAngle > -5;
+                    })
+                    .map(peak => ({
+                        ...peak,
+                        distance: this.calculateDistance(this.userLat, this.userLon, peak.lat, peak.lon),
+                        bearing: this.calculateBearing(this.userLat, this.userLon, peak.lat, peak.lon),
+                        elevationAngle: this.calculateElevationAngle(
+                            this.userLat, this.userLon, this.userAlt || 100,
+                            peak.lat, peak.lon, peak.elevation
+                        )
+                    }))
+                    .sort((a, b) => a.distance - b.distance);
+            }
+
+            updatePeakLabels() {
+                const peaks = this.getVisiblePeaks();
+                const layer = document.getElementById('peaks-layer');
+                
+                layer.innerHTML = '';
+
+                if (peaks.length === 0) {
+                    document.getElementById('no-peaks-message').classList.add('visible');
+                    document.getElementById('peaks-value').textContent = '0';
+                    return;
+                }
+
+                document.getElementById('no-peaks-message').classList.remove('visible');
+                document.getElementById('peaks-value').textContent = peaks.length.toString();
+
+                const screenWidth = window.innerWidth;
+                const screenHeight = window.innerHeight;
+                const fov = 60;
+
+                peaks.forEach(peak => {
+                    const relativeBearing = (peak.bearing - this.heading + 540) % 360 - 180;
+                    
+                    const xPercent = 50 + (relativeBearing / fov) * 50;
+                    const yPercent = 50 - (peak.elevationAngle / 30) * 30;
+                    
+                    const x = (xPercent / 100) * screenWidth;
+                    const y = Math.max(80, Math.min(screenHeight - 100, (yPercent / 100) * screenHeight));
+
+                    const label = document.createElement('div');
+                    label.className = 'peak-label';
+                    label.style.left = `${x}px`;
+                    label.style.top = `${y}px`;
+                    
+                    const opacity = Math.min(1, Math.max(0.4, 1 - (peak.distance - 10) / 100));
+                    label.style.opacity = opacity;
+
+                    let distanceText, elevationText;
+                    
+                    if (this.settings.useMiles) {
+                        distanceText = `${peak.distance.toFixed(1)} mi`;
+                    } else {
+                        distanceText = `${(peak.distance * 1.60934).toFixed(1)} km`;
+                    }
+                    
+                    if (this.settings.useFeet) {
+                        elevationText = `${Math.round(peak.elevation * 3.28084).toLocaleString()} ft`;
+                    } else {
+                        elevationText = `${peak.elevation.toLocaleString()} m`;
+                    }
+
+                    label.innerHTML = `
+                        <div class="peak-name">${peak.name} <small>(${peak.state})</small></div>
+                        <div class="peak-info">
+                            <span class="distance">${distanceText}</span>
+                            <span class="elevation">${elevationText}</span>
+                        </div>
+                    `;
+
+                    layer.appendChild(label);
+                });
+            }
+
+            updateInfoPanel(accuracy) {
+                if (this.userLat && this.userLon) {
+                    const latStr = Math.abs(this.userLat).toFixed(4) + (this.userLat >= 0 ? 'N' : 'S');
+                    const lonStr = Math.abs(this.userLon).toFixed(4) + (this.userLon >= 0 ? 'E' : 'W');
+                    document.getElementById('location-value').textContent = `${latStr}, ${lonStr}`;
+                }
+
+                if (this.userAlt) {
+                    let altText;
+                    if (this.settings.useFeet) {
+                        altText = `${Math.round(this.userAlt * 3.28084).toLocaleString()} ft`;
+                    } else {
+                        altText = `${Math.round(this.userAlt).toLocaleString()} m`;
+                    }
+                    document.getElementById('altitude-value').textContent = altText;
+                }
+
+                const accEl = document.getElementById('accuracy-value');
+                if (accuracy !== undefined) {
+                    if (accuracy < 20) {
+                        accEl.textContent = `±${Math.round(accuracy)}m`;
+                        accEl.className = 'value gps-locked';
+                    } else if (accuracy < 100) {
+                        accEl.textContent = `±${Math.round(accuracy)}m`;
+                        accEl.className = 'value gps-weak';
+                    } else {
+                        accEl.textContent = `±${Math.round(accuracy)}m`;
+                        accEl.className = 'value gps-none';
+                    }
+                }
+            }
+
+            updateDebugPanel() {
+                if (!this.settings.debug) return;
+                
+                const peaks = this.getVisiblePeaks();
+                const panel = document.getElementById('debug-panel');
+                panel.innerHTML = `
+                    Lat: ${this.userLat?.toFixed(4) || '--'}<br>
+                    Lon: ${this.userLon?.toFixed(4) || '--'}<br>
+                    Alt: ${this.userAlt?.toFixed(0) || '--'}m<br>
+                    Heading: ${this.heading.toFixed(1)}°<br>
+                    Pitch: ${this.pitch.toFixed(1)}°<br>
+                    Visible: ${peaks.length}<br>
+                    FPS: ${this.fps || 0}
+                `;
+            }
+
+            startUpdateLoop() {
+                let lastTime = performance.now();
+                let frameCount = 0;
+
+                const loop = (time) => {
+                    frameCount++;
+                    if (time - lastTime >= 1000) {
+                        this.fps = frameCount;
+                        frameCount = 0;
+                        lastTime = time;
+                    }
+
+                    this.updatePeakLabels();
+                    this.updateDebugPanel();
+
+                    this.animationFrame = requestAnimationFrame(loop);
+                };
+
+                this.animationFrame = requestAnimationFrame(loop);
+            }
+
+            toggleSettings() {
+                document.getElementById('settings-panel').classList.toggle('visible');
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            window.peakViewer = new PeakViewer();
+        });
+    </script>
+</body>
+</html>
