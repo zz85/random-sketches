@@ -196,6 +196,7 @@ precision highp float;
 uniform sampler2D uOriginal;   // crisp text (R channel = ink mask, 0=ink 1=paper)
 uniform sampler2D uBlurred;    // blurred text
 uniform vec2 uResolution;
+uniform float uFontSize;       // font size in pixels (for scale-independent noise)
 
 uniform float uBleed;          // 0..1 bleed spread
 uniform float uRoughness;      // 0..1 edge noise amount
@@ -273,17 +274,21 @@ void main() {
   float orig = 1.0 - texture(uOriginal, uv).r;  // 1 = ink, 0 = paper
   float blurred = 1.0 - texture(uBlurred, uv).r; // blurred ink mask
 
-  // ---- Noise layers ----
+  // ---- Scale-independent noise ----
+  // All noise is sampled relative to font size, centered on the text.
+  // A letter feature at offset d from center maps to d/fontSize,
+  // which stays constant regardless of font size changes.
+  vec2 baseCoord = (uv - 0.5) * uResolution / uFontSize;
+
   // Large-scale bleed noise (paper fiber direction / ink flow)
-  vec2 noiseCoord = uv * uResolution / 4.0;
-  float bleedNoise = fbm(noiseCoord * 0.8, 5);
+  float bleedNoise = fbm(baseCoord * 3.2, 5);
 
   // Medium-scale roughness noise
-  float roughNoise = fbm(noiseCoord * 1.6 + 42.0, 4);
+  float roughNoise = fbm(baseCoord * 6.4 + 42.0, 4);
 
-  // Fine paper fiber texture
-  float fiber = cellNoise(uv * uResolution / 2.8);
-  float fineGrain = vnoise(uv * uResolution / 1.2 + 100.0);
+  // Fine paper fiber texture (higher frequency, still font-relative)
+  float fiber = cellNoise(baseCoord * 11.0);
+  float fineGrain = vnoise(baseCoord * 26.0 + 100.0);
 
   // ---- Ink bleed / spread ----
   // Use blurred mask, modulate threshold with noise for irregular edges
@@ -345,7 +350,7 @@ void main() {
   inkAlpha = clamp(inkAlpha, 0.0, 1.0);
 
   // ---- Micro-spatter: tiny isolated ink dots near edges ----
-  float spatter = vnoise(uv * uResolution * 0.8 + 200.0);
+  float spatter = vnoise(baseCoord * 25.0 + 200.0);
   float spatterMask = smoothstep(0.02, 0.10, blurred) * (1.0 - smoothstep(0.10, 0.25, blurred));
   float spatterDots = step(0.72 - uBleed * 0.15, spatter) * spatterMask * uRoughness;
   inkAlpha = max(inkAlpha, spatterDots * 0.5);
@@ -355,7 +360,7 @@ void main() {
   vec3 paperColor = vec3(0.945, 0.925, 0.890);
 
   // Subtle paper texture variation
-  float paperTex = fbm(uv * uResolution / 6.0 + 500.0, 3);
+  float paperTex = fbm(baseCoord * 2.5 + 500.0, 3);
   paperColor *= 0.96 + paperTex * 0.08;
 
   // Paper grain (visible fiber texture)
@@ -469,7 +474,7 @@ function createFBO(gl, w, h) {
 
   const inkProg = createProgram(gl, VERT_QUAD, FRAG_INK);
   const inkU = getUniforms(gl, inkProg, [
-    'uOriginal', 'uBlurred', 'uResolution',
+    'uOriginal', 'uBlurred', 'uResolution', 'uFontSize',
     'uBleed', 'uRoughness', 'uInkDensity', 'uPaperGrain', 'uEdgePool'
   ]);
 
@@ -608,8 +613,9 @@ function createFBO(gl, w, h) {
     const grainVal = parseFloat(paperGrainSlider.value) / 100;
     const poolVal = parseFloat(edgePoolSlider.value) / 100;
 
-    // Blur radius scales with bleed amount and canvas size
-    const blurRadius = bleedVal * Math.min(W, H) * 0.025 + 1.0;
+    // Blur radius scales with bleed amount and font size (scale-independent)
+    const fontSizePx = parseFloat(fontSizeSlider.value) * dpr;
+    const blurRadius = bleedVal * fontSizePx * 0.08 + 1.0;
 
     // Pass 1 & 2: Blur
     const blurredTex = blurPass(srcTexture, blurRadius);
@@ -628,6 +634,7 @@ function createFBO(gl, w, h) {
     gl.uniform1i(inkU.uBlurred, 1);
 
     gl.uniform2f(inkU.uResolution, W, H);
+    gl.uniform1f(inkU.uFontSize, fontSizePx);
     gl.uniform1f(inkU.uBleed, bleedVal);
     gl.uniform1f(inkU.uRoughness, roughVal);
     gl.uniform1f(inkU.uInkDensity, densityVal);
