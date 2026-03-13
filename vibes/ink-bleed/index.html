@@ -87,6 +87,35 @@
     flex: 1;
   }
 
+  #controls .btn-row {
+    display: flex;
+    gap: 6px;
+    margin-top: 4px;
+  }
+
+  #controls button {
+    flex: 1;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 3px;
+    color: #ccc;
+    padding: 5px 0;
+    font-family: inherit;
+    font-size: 11px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+
+  #controls button:hover {
+    background: rgba(255,255,255,0.14);
+    color: #fff;
+  }
+
+  #controls button.flash {
+    background: rgba(255,255,255,0.25);
+    color: #fff;
+  }
+
   canvas#gl {
     width: 100vw;
     height: 100vh;
@@ -115,35 +144,54 @@
     </select>
   </label>
   <label>
+    <span>render</span>
+    <select id="renderMode">
+      <option value="fill">Fill</option>
+      <option value="stroke">Stroke</option>
+      <option value="both">Fill + Stroke</option>
+    </select>
+  </label>
+  <label>
     <span>size</span>
-    <input type="range" id="fontSize" min="40" max="400" value="180" step="1" />
-    <span class="val" id="fontSizeVal">180</span>
+    <input type="range" id="fontSize" min="40" max="400" value="397" step="1" />
+    <span class="val" id="fontSizeVal">397</span>
+  </label>
+  <label>
+    <span>ink bleed</span>
+    <select id="bleedToggle">
+      <option value="on">On</option>
+      <option value="off">Off</option>
+    </select>
   </label>
   <label>
     <span>bleed</span>
-    <input type="range" id="bleedAmount" min="0" max="100" value="40" step="1" />
-    <span class="val" id="bleedAmountVal">40</span>
+    <input type="range" id="bleedAmount" min="0" max="100" value="14" step="1" />
+    <span class="val" id="bleedAmountVal">14</span>
   </label>
   <label>
     <span>roughness</span>
-    <input type="range" id="roughness" min="0" max="100" value="55" step="1" />
-    <span class="val" id="roughnessVal">55</span>
+    <input type="range" id="roughness" min="0" max="100" value="58" step="1" />
+    <span class="val" id="roughnessVal">58</span>
   </label>
   <label>
     <span>ink density</span>
-    <input type="range" id="inkDensity" min="0" max="100" value="65" step="1" />
-    <span class="val" id="inkDensityVal">65</span>
+    <input type="range" id="inkDensity" min="0" max="100" value="100" step="1" />
+    <span class="val" id="inkDensityVal">100</span>
   </label>
   <label>
     <span>paper grain</span>
-    <input type="range" id="paperGrain" min="0" max="100" value="40" step="1" />
-    <span class="val" id="paperGrainVal">40</span>
+    <input type="range" id="paperGrain" min="0" max="100" value="13" step="1" />
+    <span class="val" id="paperGrainVal">13</span>
   </label>
   <label>
     <span>edge pool</span>
-    <input type="range" id="edgePool" min="0" max="100" value="50" step="1" />
-    <span class="val" id="edgePoolVal">50</span>
+    <input type="range" id="edgePool" min="0" max="100" value="2" step="1" />
+    <span class="val" id="edgePoolVal">2</span>
   </label>
+  <div class="btn-row">
+    <button id="btnCopyLink" title="Copy shareable URL with current settings">Copy Link</button>
+    <button id="btnCopyJSON" title="Copy settings as JSON">Copy JSON</button>
+  </div>
 </div>
 
 <script>
@@ -270,33 +318,61 @@ void main() {
   vec2 uv = vUv;
   vec2 px = 1.0 / uResolution;
 
-  // ---- Sample textures ----
-  float orig = 1.0 - texture(uOriginal, uv).r;  // 1 = ink, 0 = paper
-  float blurred = 1.0 - texture(uBlurred, uv).r; // blurred ink mask
-
-  // ---- Scale-independent noise ----
-  // All noise is sampled relative to font size, centered on the text.
-  // A letter feature at offset d from center maps to d/fontSize,
-  // which stays constant regardless of font size changes.
+  // ---- Scale-independent noise coordinate ----
   vec2 baseCoord = (uv - 0.5) * uResolution / uFontSize;
 
-  // Large-scale bleed noise (paper fiber direction / ink flow)
-  float bleedNoise = fbm(baseCoord * 3.2, 5);
+  // ---- Domain warp: displace blur sample for organic bleed shape ----
+  // This is the key to non-uniform bleed -- instead of thresholding a
+  // smooth Gaussian, we warp *where* we sample it so the bleed boundary
+  // follows an irregular, fibrous path.
 
-  // Medium-scale roughness noise
-  float roughNoise = fbm(baseCoord * 6.4 + 42.0, 4);
+  // Low-freq warp (large-scale ink flow / puddle shapes)
+  float warpNoise1x = fbm(baseCoord * 18.0 + vec2(0.0, 77.7), 4);
+  float warpNoise1y = fbm(baseCoord * 18.0 + vec2(33.3, 0.0), 4);
 
-  // Fine paper fiber texture (higher frequency, still font-relative)
-  float fiber = cellNoise(baseCoord * 11.0);
-  float fineGrain = vnoise(baseCoord * 26.0 + 100.0);
+  // High-freq warp (fine fibrous edges)
+  float warpNoise2x = vnoise(baseCoord * 80.0 + vec2(11.1, 55.5));
+  float warpNoise2y = vnoise(baseCoord * 80.0 + vec2(88.8, 22.2));
+
+  // Anisotropic: slightly more horizontal spread (paper fiber direction)
+  float warpStrength = uBleed * uRoughness * 0.025;
+  vec2 warp = vec2(
+    (warpNoise1x - 0.5) * 1.4 + (warpNoise2x - 0.5) * 0.5,
+    (warpNoise1y - 0.5) * 1.0 + (warpNoise2y - 0.5) * 0.4
+  ) * warpStrength;
+
+  vec2 warpedUv = uv + warp;
+
+  // ---- Sample textures ----
+  float orig = 1.0 - texture(uOriginal, uv).r;           // crisp: 1=ink 0=paper
+  float blurred = 1.0 - texture(uBlurred, warpedUv).r;   // warped blur sample
+  float blurStraight = 1.0 - texture(uBlurred, uv).r;    // unwarped for edge detect
+
+  // ---- Noise layers ----
+  // Large-scale bleed variation (one side of letter bleeds more)
+  float bleedLow = fbm(baseCoord * 12.0 + 300.0, 3);
+
+  // Medium-scale roughness
+  float bleedMid = fbm(baseCoord * 36.0, 5);
+
+  // Fine fibrous edge noise
+  float bleedFine = vnoise(baseCoord * 100.0 + 42.0);
+
+  // Paper fiber texture
+  float fiber = cellNoise(baseCoord * 64.0);
+  float fineGrain = vnoise(baseCoord * 150.0 + 100.0);
 
   // ---- Ink bleed / spread ----
-  // Use blurred mask, modulate threshold with noise for irregular edges
-  float noiseOffset = (bleedNoise - 0.5) * uRoughness * 0.6
-                    + (roughNoise - 0.5) * uRoughness * 0.35;
+  // Multi-scale threshold modulation:
+  //   - low freq: large asymmetric bleed (one side of letter spreads more)
+  //   - mid freq: the main organic roughness
+  //   - fine freq: sharp fibrous detail at the bleed edge
+  float noiseOffset = (bleedLow - 0.5) * uRoughness * 0.35
+                    + (bleedMid - 0.5) * uRoughness * 0.45
+                    + (bleedFine - 0.5) * uRoughness * 0.25;
 
-  float threshold = 0.12 + (1.0 - uBleed) * 0.35;
-  float edgeSoftness = 0.04 + uBleed * 0.06;
+  float threshold = 0.10 + (1.0 - uBleed) * 0.38;
+  float edgeSoftness = 0.02 + uBleed * 0.04;
 
   float bleedMask = smoothstep(
     threshold + noiseOffset - edgeSoftness,
@@ -350,8 +426,8 @@ void main() {
   inkAlpha = clamp(inkAlpha, 0.0, 1.0);
 
   // ---- Micro-spatter: tiny isolated ink dots near edges ----
-  float spatter = vnoise(baseCoord * 25.0 + 200.0);
-  float spatterMask = smoothstep(0.02, 0.10, blurred) * (1.0 - smoothstep(0.10, 0.25, blurred));
+  float spatter = vnoise(baseCoord * 144.0 + 200.0);
+  float spatterMask = smoothstep(0.02, 0.10, blurStraight) * (1.0 - smoothstep(0.10, 0.25, blurStraight));
   float spatterDots = step(0.72 - uBleed * 0.15, spatter) * spatterMask * uRoughness;
   inkAlpha = max(inkAlpha, spatterDots * 0.5);
 
@@ -360,7 +436,7 @@ void main() {
   vec3 paperColor = vec3(0.945, 0.925, 0.890);
 
   // Subtle paper texture variation
-  float paperTex = fbm(baseCoord * 2.5 + 500.0, 3);
+  float paperTex = fbm(baseCoord * 30.0 + 500.0, 3);
   paperColor *= 0.96 + paperTex * 0.08;
 
   // Paper grain (visible fiber texture)
@@ -371,7 +447,7 @@ void main() {
   // Not pure black - slightly warm, with density variation
   vec3 inkColor = vec3(0.04, 0.035, 0.05);
   // Slight color variation in ink
-  inkColor += (roughNoise - 0.5) * 0.02;
+  inkColor += (bleedMid - 0.5) * 0.02;
 
   // ---- Composite ----
   vec3 color = mix(paperColor, inkColor, inkAlpha);
@@ -455,6 +531,8 @@ function createFBO(gl, w, h) {
   // ---- Controls ----
   const textInput = document.getElementById('textInput');
   const fontSelect = document.getElementById('fontSelect');
+  const renderModeSelect = document.getElementById('renderMode');
+  const bleedToggle = document.getElementById('bleedToggle');
   const fontSizeSlider = document.getElementById('fontSize');
   const bleedSlider = document.getElementById('bleedAmount');
   const roughnessSlider = document.getElementById('roughness');
@@ -526,6 +604,7 @@ function createFBO(gl, w, h) {
     const text = textInput.value || ' ';
     const fontFamily = fontSelect.value;
     const fontSize = parseFloat(fontSizeSlider.value) * dpr;
+    const mode = renderModeSelect.value;
 
     ctx.clearRect(0, 0, W, H);
 
@@ -533,8 +612,7 @@ function createFBO(gl, w, h) {
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, W, H);
 
-    // Black text
-    ctx.fillStyle = '#000000';
+    // Text setup
     ctx.font = `bold ${fontSize}px ${fontFamily}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -546,7 +624,19 @@ function createFBO(gl, w, h) {
     const startY = H / 2 - totalHeight / 2 + lineHeight / 2;
 
     for (let i = 0; i < lines.length; i++) {
-      ctx.fillText(lines[i], W / 2, startY + i * lineHeight);
+      const x = W / 2;
+      const y = startY + i * lineHeight;
+
+      if (mode === 'fill' || mode === 'both') {
+        ctx.fillStyle = '#000000';
+        ctx.fillText(lines[i], x, y);
+      }
+      if (mode === 'stroke' || mode === 'both') {
+        ctx.strokeStyle = '#000000';
+        ctx.lineWidth = Math.max(1, fontSize * 0.02);
+        ctx.lineJoin = 'round';
+        ctx.strokeText(lines[i], x, y);
+      }
     }
 
     // Upload to WebGL texture
@@ -612,13 +702,14 @@ function createFBO(gl, w, h) {
     const densityVal = parseFloat(inkDensitySlider.value) / 100;
     const grainVal = parseFloat(paperGrainSlider.value) / 100;
     const poolVal = parseFloat(edgePoolSlider.value) / 100;
+    const bleedOn = bleedToggle.value === 'on';
 
     // Blur radius scales with bleed amount and font size (scale-independent)
     const fontSizePx = parseFloat(fontSizeSlider.value) * dpr;
-    const blurRadius = bleedVal * fontSizePx * 0.08 + 1.0;
+    const blurRadius = bleedOn ? bleedVal * fontSizePx * 0.08 + 1.0 : 0.0;
 
-    // Pass 1 & 2: Blur
-    const blurredTex = blurPass(srcTexture, blurRadius);
+    // Pass 1 & 2: Blur (skip if bleed is off)
+    const blurredTex = bleedOn ? blurPass(srcTexture, blurRadius) : srcTexture;
 
     // Pass 3: Ink composite (render to screen)
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -635,8 +726,8 @@ function createFBO(gl, w, h) {
 
     gl.uniform2f(inkU.uResolution, W, H);
     gl.uniform1f(inkU.uFontSize, fontSizePx);
-    gl.uniform1f(inkU.uBleed, bleedVal);
-    gl.uniform1f(inkU.uRoughness, roughVal);
+    gl.uniform1f(inkU.uBleed, bleedOn ? bleedVal : 0.0);
+    gl.uniform1f(inkU.uRoughness, bleedOn ? roughVal : 0.0);
     gl.uniform1f(inkU.uInkDensity, densityVal);
     gl.uniform1f(inkU.uPaperGrain, grainVal);
     gl.uniform1f(inkU.uEdgePool, poolVal);
@@ -671,8 +762,98 @@ function createFBO(gl, w, h) {
 
   textInput.addEventListener('input', renderSourceText);
   fontSelect.addEventListener('change', renderSourceText);
+  renderModeSelect.addEventListener('change', renderSourceText);
+  bleedToggle.addEventListener('change', () => { needsRedraw = true; });
+
+  // ---- Settings export / import ----
+  const PARAM_MAP = [
+    ['t', textInput],
+    ['f', fontSelect],
+    ['rm', renderModeSelect],
+    ['bt', bleedToggle],
+    ['fs', fontSizeSlider],
+    ['bl', bleedSlider],
+    ['ro', roughnessSlider],
+    ['id', inkDensitySlider],
+    ['pg', paperGrainSlider],
+    ['ep', edgePoolSlider],
+  ];
+
+  function getSettings() {
+    return {
+      text: textInput.value,
+      font: fontSelect.value,
+      renderMode: renderModeSelect.value,
+      inkBleed: bleedToggle.value,
+      fontSize: fontSizeSlider.value,
+      bleed: bleedSlider.value,
+      roughness: roughnessSlider.value,
+      inkDensity: inkDensitySlider.value,
+      paperGrain: paperGrainSlider.value,
+      edgePool: edgePoolSlider.value,
+    };
+  }
+
+  function settingsToParams() {
+    const p = new URLSearchParams();
+    for (const [key, el] of PARAM_MAP) {
+      p.set(key, el.value);
+    }
+    return p.toString();
+  }
+
+  function loadFromParams() {
+    const p = new URLSearchParams(window.location.search);
+    if (p.size === 0) return;
+
+    for (const [key, el] of PARAM_MAP) {
+      const v = p.get(key);
+      if (v == null) continue;
+
+      if (el.tagName === 'SELECT') {
+        // Match by value
+        for (const opt of el.options) {
+          if (opt.value === v) { el.value = v; break; }
+        }
+      } else {
+        el.value = v;
+      }
+    }
+
+    // Sync val displays
+    for (const [s, v] of sliders) {
+      v.textContent = s.value;
+    }
+
+    needsRedraw = true;
+  }
+
+  function flashButton(btn, text) {
+    const orig = btn.textContent;
+    btn.textContent = text;
+    btn.classList.add('flash');
+    setTimeout(() => {
+      btn.textContent = orig;
+      btn.classList.remove('flash');
+    }, 1200);
+  }
+
+  document.getElementById('btnCopyLink').addEventListener('click', () => {
+    const url = window.location.origin + window.location.pathname + '?' + settingsToParams();
+    navigator.clipboard.writeText(url).then(() => {
+      flashButton(document.getElementById('btnCopyLink'), 'Copied!');
+    });
+  });
+
+  document.getElementById('btnCopyJSON').addEventListener('click', () => {
+    const json = JSON.stringify(getSettings(), null, 2);
+    navigator.clipboard.writeText(json).then(() => {
+      flashButton(document.getElementById('btnCopyJSON'), 'Copied!');
+    });
+  });
 
   // ---- Init ----
+  loadFromParams();
   renderSourceText();
   requestAnimationFrame(render);
 })();
