@@ -1,0 +1,1538 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Docking Simulator</title>
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --panel-2: #1c232b;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --text-dim: #8b949e;
+    --accent: #58a6ff;
+    --good: #3fb950;
+    --warn: #d29922;
+    --bad: #f85149;
+    --line-bow: #79c0ff;
+    --line-stern: #ffa657;
+    --line-fwd: #d2a8ff;
+    --line-aft: #7ee787;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 12px;
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+  }
+
+  #canvas-wrap {
+    flex: 1;
+    position: relative;
+    background: #050a14;
+  }
+
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  #hud {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    background: rgba(13,17,23,0.75);
+    backdrop-filter: blur(8px);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-size: 11px;
+    line-height: 1.7;
+    pointer-events: none;
+    min-width: 200px;
+  }
+  #hud .row { display: flex; justify-content: space-between; gap: 16px; }
+  #hud .label { color: var(--text-dim); }
+  #hud .value { color: var(--text); font-variant-numeric: tabular-nums; }
+
+  #legend {
+    position: absolute;
+    bottom: 12px;
+    left: 12px;
+    background: rgba(13,17,23,0.75);
+    backdrop-filter: blur(8px);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-size: 11px;
+    line-height: 1.6;
+    pointer-events: none;
+  }
+  #legend .key {
+    display: inline-block;
+    background: #21262d;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 1px 5px;
+    font-size: 10px;
+    color: var(--accent);
+  }
+
+  #panel {
+    width: 360px;
+    background: var(--panel);
+    border-left: 1px solid var(--border);
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .section {
+    border-bottom: 1px solid var(--border);
+    padding: 14px 16px;
+  }
+
+  .section h3 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-dim);
+    margin-bottom: 10px;
+    font-weight: 600;
+  }
+
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .row:last-child { margin-bottom: 0; }
+  .row label.text {
+    flex: 1;
+    color: var(--text-dim);
+  }
+
+  .seg {
+    display: flex;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    overflow: hidden;
+  }
+  .seg button {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    padding: 6px 10px;
+    font-family: inherit;
+    font-size: 11px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .seg button:hover { background: rgba(88,166,255,0.08); color: var(--text); }
+  .seg button.active {
+    background: var(--accent);
+    color: #050a14;
+    font-weight: 600;
+  }
+
+  input[type=range] {
+    flex: 1;
+    accent-color: var(--accent);
+  }
+
+  .num {
+    width: 48px;
+    text-align: right;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+  }
+
+  button.action {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 12px;
+    border-radius: 5px;
+    font-family: inherit;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  button.action:hover { background: #21262d; border-color: var(--accent); }
+  button.action.full { width: 100%; }
+  button.action.primary {
+    background: var(--accent);
+    color: #050a14;
+    border-color: var(--accent);
+    font-weight: 600;
+  }
+  button.action.primary:hover { background: #79b8ff; }
+
+  .lines-list { display: flex; flex-direction: column; gap: 6px; }
+  .line-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+  }
+  .line-item .swatch {
+    width: 12px;
+    height: 12px;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+  .line-item .name { flex: 1; font-size: 11px; }
+  .line-item .desc { color: var(--text-dim); font-size: 10px; }
+  .line-item .toggle {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 3px 8px;
+    border-radius: 3px;
+    font-family: inherit;
+    font-size: 10px;
+    cursor: pointer;
+    min-width: 56px;
+  }
+  .line-item.attached .toggle {
+    background: var(--good);
+    color: #050a14;
+    border-color: var(--good);
+    font-weight: 600;
+  }
+  .line-item.attached .swatch { box-shadow: 0 0 0 2px rgba(63,185,80,0.4); }
+
+  #tips {
+    padding: 14px 16px;
+    flex: 1;
+    overflow-y: auto;
+    font-size: 11px;
+    line-height: 1.55;
+  }
+  #tips h3 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+  }
+  #tips .difficulty {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+  #tips .difficulty.easy { background: rgba(63,185,80,0.15); color: var(--good); border: 1px solid var(--good); }
+  #tips .difficulty.moderate { background: rgba(210,153,34,0.15); color: var(--warn); border: 1px solid var(--warn); }
+  #tips .difficulty.hard { background: rgba(248,81,73,0.15); color: var(--bad); border: 1px solid var(--bad); }
+  #tips .summary { margin-bottom: 10px; color: var(--text); }
+  #tips ol { padding-left: 18px; margin: 6px 0; }
+  #tips ol li { margin-bottom: 4px; color: var(--text-dim); }
+  #tips ol li b { color: var(--text); }
+  #tips .why { color: var(--text-dim); font-style: italic; margin-top: 6px; padding: 6px 8px; background: var(--panel-2); border-left: 2px solid var(--accent); border-radius: 3px; }
+  #tips .caution { color: var(--bad); margin-top: 6px; padding: 6px 8px; background: rgba(248,81,73,0.08); border-left: 2px solid var(--bad); border-radius: 3px; }
+
+  .compass {
+    width: 80px;
+    height: 80px;
+    margin: 0 auto 8px;
+    position: relative;
+  }
+  .compass svg { width: 100%; height: 100%; display: block; }
+
+  .preset-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+</style>
+</head>
+<body>
+
+<div id="canvas-wrap">
+  <canvas id="cv"></canvas>
+  <div id="hud">
+    <div class="row"><span class="label">speed</span><span class="value" id="hud-speed">0.0 kn</span></div>
+    <div class="row"><span class="label">heading</span><span class="value" id="hud-heading">090°</span></div>
+    <div class="row"><span class="label">throttle</span><span class="value" id="hud-throttle">0%</span></div>
+    <div class="row"><span class="label">helm</span><span class="value" id="hud-helm">midship</span></div>
+    <div class="row"><span class="label">to dock</span><span class="value" id="hud-dist">— m</span></div>
+  </div>
+  <div id="legend">
+    <div><span class="key">W</span>/<span class="key">S</span> throttle &nbsp; <span class="key">A</span>/<span class="key">D</span> helm</div>
+    <div><span class="key">space</span> stop &nbsp; <span class="key">X</span> centre helm &nbsp; <span class="key">R</span> reset</div>
+    <div><span class="key">1-4</span> toggle lines (bow / stern / fwd / aft)</div>
+  </div>
+</div>
+
+<aside id="panel">
+  <div class="section">
+    <h3>Mode</h3>
+    <div class="seg" id="mode-seg">
+      <button data-v="dock" class="active">Docking</button>
+      <button data-v="undock">Undocking</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>Dock side</h3>
+    <div class="seg" id="side-seg">
+      <button data-v="port">Port-to</button>
+      <button data-v="starboard" class="active">Starboard-to</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>Current</h3>
+    <div class="compass">
+      <svg viewBox="-50 -50 100 100">
+        <circle cx="0" cy="0" r="40" fill="none" stroke="#30363d" stroke-width="1"/>
+        <text x="0" y="-42" text-anchor="middle" fill="#8b949e" font-size="9" font-family="monospace">bow</text>
+        <text x="0" y="48" text-anchor="middle" fill="#8b949e" font-size="9" font-family="monospace">stern</text>
+        <text x="-44" y="3" text-anchor="end" fill="#8b949e" font-size="9" font-family="monospace">P</text>
+        <text x="44" y="3" text-anchor="start" fill="#8b949e" font-size="9" font-family="monospace">S</text>
+        <line x1="0" y1="0" x2="0" y2="-30" stroke="#8b949e" stroke-width="1" stroke-dasharray="2 2"/>
+        <g id="current-arrow" transform="rotate(0)">
+          <line x1="0" y1="35" x2="0" y2="-35" stroke="#58a6ff" stroke-width="2"/>
+          <polygon points="0,-35 -5,-27 5,-27" fill="#58a6ff"/>
+        </g>
+      </svg>
+    </div>
+    <div class="row">
+      <label class="text">direction</label>
+      <input type="range" id="cur-angle" min="0" max="359" value="0" step="1">
+      <span class="num" id="cur-angle-v">0°</span>
+    </div>
+    <div class="row">
+      <label class="text">speed (kn)</label>
+      <input type="range" id="cur-speed" min="0" max="30" value="10" step="1">
+      <span class="num" id="cur-speed-v">1.0</span>
+    </div>
+    <div class="row" style="font-size:10px;color:var(--text-dim);">
+      arrow shows where the current is flowing TO, relative to the boat's heading
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>Controls</h3>
+    <div class="row">
+      <label class="text">throttle</label>
+      <input type="range" id="throttle" min="-100" max="100" value="0" step="1">
+      <span class="num" id="throttle-v">0%</span>
+    </div>
+    <div class="row">
+      <label class="text">helm</label>
+      <input type="range" id="helm" min="-100" max="100" value="0" step="1">
+      <span class="num" id="helm-v">0°</span>
+    </div>
+    <div class="row" style="gap: 6px;">
+      <button class="action" id="btn-stop">Stop engine</button>
+      <button class="action" id="btn-centre">Centre helm</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>Lines</h3>
+    <div class="lines-list">
+      <div class="line-item" data-line="bow">
+        <span class="swatch" style="background:var(--line-bow)"></span>
+        <div class="name">Bow line<div class="desc">bow → fwd dock cleat</div></div>
+        <button class="toggle">attach</button>
+      </div>
+      <div class="line-item" data-line="stern">
+        <span class="swatch" style="background:var(--line-stern)"></span>
+        <div class="name">Stern line<div class="desc">stern → aft dock cleat</div></div>
+        <button class="toggle">attach</button>
+      </div>
+      <div class="line-item" data-line="fwdSpring">
+        <span class="swatch" style="background:var(--line-fwd)"></span>
+        <div class="name">Fwd spring<div class="desc">midship → aft dock (stops forward)</div></div>
+        <button class="toggle">attach</button>
+      </div>
+      <div class="line-item" data-line="aftSpring">
+        <span class="swatch" style="background:var(--line-aft)"></span>
+        <div class="name">Aft spring<div class="desc">midship → fwd dock (stops aft)</div></div>
+        <button class="toggle">attach</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>Scenario</h3>
+    <div class="preset-btns">
+      <button class="action" data-preset="following">Following current</button>
+      <button class="action" data-preset="head">Head current</button>
+      <button class="action" data-preset="onto">Cross onto dock</button>
+      <button class="action" data-preset="off">Cross off dock</button>
+      <button class="action" data-preset="slack">Slack water</button>
+      <button class="action" data-preset="random">Random</button>
+    </div>
+    <div class="row" style="margin-top: 10px;">
+      <button class="action full primary" id="btn-reset">Reset scenario</button>
+    </div>
+  </div>
+
+  <div id="tips"></div>
+</aside>
+
+<script>
+// ============================================================================
+// DOCKING SIMULATOR
+// Simplified 2D physics: rigid-body boat + line constraint forces + current
+// ============================================================================
+
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+
+// World/view scale ----------------------------------------------------------
+const PX_PER_M = 8;          // 8 pixels per metre
+const KN_PER_MS = 1.94384;   // knots per m/s
+
+// State ---------------------------------------------------------------------
+const state = {
+  mode: 'dock',                // 'dock' | 'undock'
+  dockSide: 'starboard',       // 'port' | 'starboard'
+  current: { angleDeg: 0, speed: 1.0 },  // angle: 0 = flowing astern→bow direction relative to world; speed in m/s
+
+  boat: {
+    x: 0, y: 0,
+    heading: 0,     // radians, 0 = +x (east). Boat always starts heading east.
+    vx: 0, vy: 0,
+    omega: 0,
+    throttle: 0,    // -1 .. 1  (1 = full ahead)
+    helm: 0,        // -1 .. 1  (negative = port, positive = starboard)
+    length: 11,     // metres
+    beam:    3.4,
+    mass:    5500,  // kg
+    I:       55000, // moment of inertia kg·m²
+  },
+
+  dock: {
+    // Dock is a rectangle parallel to x-axis. Its inner edge faces the boat.
+    cx: 0, cy: 0,           // centre (filled in by reset())
+    length: 30, width: 6,
+    side: 'starboard',      // dockSide; copy
+  },
+
+  lines: {
+    bow:       { attached: false, restLen: 6 },
+    stern:     { attached: false, restLen: 6 },
+    fwdSpring: { attached: false, restLen: 7 },
+    aftSpring: { attached: false, restLen: 7 },
+  },
+
+  particles: [],   // for current visualisation
+  collisionFlash: 0,
+  worldW: 0, worldH: 0,
+};
+
+// Physics constants ---------------------------------------------------------
+const PHYS = {
+  thrustMax: 4500,        // N
+  rudderCoef: 1500,       // rudder effectiveness with prop wash (N at full helm + full thrust)
+  rudderFlowCoef: 600,    // rudder force from forward flow (passive)
+  propWalkCoef: 1200,     // lateral force at stern in reverse
+  dragLinFwd: 80,         // longitudinal drag coefficient (F = c * v|v|)
+  dragLinSide: 1500,      // lateral drag (much higher)
+  dragAng: 80000,         // angular drag
+  lineK: 60000,           // line spring constant N/m
+  lineDamp: 8000,         // line damping
+  fenderK: 200000,        // hard collision pushback
+  fenderDamp: 50000,
+};
+
+// ============================================================================
+// SET-UP / RESET
+// ============================================================================
+
+function resizeCanvas() {
+  const wrap = document.getElementById('canvas-wrap');
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = wrap.clientWidth * dpr;
+  cv.height = wrap.clientHeight * dpr;
+  cv.style.width = wrap.clientWidth + 'px';
+  cv.style.height = wrap.clientHeight + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  state.worldW = wrap.clientWidth;
+  state.worldH = wrap.clientHeight;
+}
+
+function resetScenario() {
+  resizeCanvas();
+  const W = state.worldW, H = state.worldH;
+  const cx = W / 2 / PX_PER_M;   // world centre x in metres
+  const cy = H / 2 / PX_PER_M;
+
+  // Place dock. Boat heads east (+x). Dock parallel to x-axis.
+  // Port-to: dock above the boat (smaller y in screen coords).
+  // Starboard-to: dock below the boat.
+  const dockOffset = state.boat.beam / 2 + state.dock.width / 2;  // gap to inner edge
+  state.dock.length = 30;
+  state.dock.cx = cx;
+  state.dock.side = state.dockSide;
+  if (state.dockSide === 'port') {
+    state.dock.cy = cy - dockOffset;
+  } else {
+    state.dock.cy = cy + dockOffset;
+  }
+
+  if (state.mode === 'dock') {
+    // Boat starts away from the dock, opposite side, slightly behind
+    const back = 18;
+    const offFromDock = 7;
+    state.boat.x = cx - back;
+    state.boat.y = state.dockSide === 'port' ? cy + offFromDock : cy - offFromDock;
+    state.boat.heading = 0;
+    state.boat.vx = 0; state.boat.vy = 0; state.boat.omega = 0;
+    state.boat.throttle = 0; state.boat.helm = 0;
+    // Detach all lines for docking
+    for (const k of Object.keys(state.lines)) state.lines[k].attached = false;
+  } else {
+    // Undocking: boat at dock, all lines on
+    state.boat.x = cx;
+    const inner = state.dock.cy + (state.dockSide === 'port' ? 1 : -1) * (state.dock.width / 2 + state.boat.beam / 2);
+    state.boat.y = inner;
+    state.boat.heading = 0;
+    state.boat.vx = 0; state.boat.vy = 0; state.boat.omega = 0;
+    state.boat.throttle = 0; state.boat.helm = 0;
+    // Attach all lines and set rest length to current cleat-to-cleat distance plus small slack
+    for (const [k, def] of Object.entries(LINE_DEFS)) {
+      const bp = getBoatCleat(def.boat);
+      const dp = getDockCleat(def.dock);
+      state.lines[k].restLen = Math.hypot(bp.x - dp.x, bp.y - dp.y) + 0.3;
+      state.lines[k].attached = true;
+    }
+  }
+
+  // Sliders reflect state
+  document.getElementById('throttle').value = 0;
+  document.getElementById('helm').value = 0;
+  document.getElementById('throttle-v').textContent = '0%';
+  document.getElementById('helm-v').textContent = '0°';
+
+  refreshLineUI();
+  // Particles
+  state.particles = [];
+  for (let i = 0; i < 80; i++) {
+    state.particles.push({
+      x: Math.random() * W, y: Math.random() * H,
+      life: Math.random() * 4,
+    });
+  }
+  updateTips();
+}
+
+// ============================================================================
+// GEOMETRY HELPERS
+// ============================================================================
+
+function boatToWorld(bx, by) {
+  const c = Math.cos(state.boat.heading), s = Math.sin(state.boat.heading);
+  return {
+    x: state.boat.x + bx * c - by * s,
+    y: state.boat.y + bx * s + by * c,
+  };
+}
+
+// Cleat positions in boat frame. by negative = port side (because y is "down" in screen, but starboard is +y after heading=0 east).
+// Actually with heading=0 (boat pointing +x), and screen y down: turning RIGHT (starboard) from +x is +y. So starboard cleats use +by.
+function getBoatCleat(name) {
+  const L = state.boat.length, B = state.boat.beam;
+  const sideSign = state.dockSide === 'port' ? -1 : 1;  // dock-side cleat
+  switch (name) {
+    case 'bow':       return boatToWorld(L/2,  sideSign * B/2 * 0.6);
+    case 'stern':     return boatToWorld(-L/2, sideSign * B/2 * 0.6);
+    case 'midship':   return boatToWorld(0,    sideSign * B/2);
+  }
+}
+
+// Dock cleat positions in world frame
+function getDockCleat(name) {
+  const innerY = state.dock.cy + (state.dockSide === 'port' ? 1 : -1) * (state.dock.width / 2);
+  const halfL = state.dock.length / 2;
+  switch (name) {
+    case 'fwd':     return { x: state.dock.cx + halfL * 0.7, y: innerY };
+    case 'aft':     return { x: state.dock.cx - halfL * 0.7, y: innerY };
+    case 'midship': return { x: state.dock.cx, y: innerY };
+  }
+}
+
+// Each line: which boat cleat to which dock cleat
+const LINE_DEFS = {
+  bow:       { boat: 'bow',     dock: 'fwd', color: '#79c0ff' },
+  stern:     { boat: 'stern',   dock: 'aft', color: '#ffa657' },
+  fwdSpring: { boat: 'midship', dock: 'aft', color: '#d2a8ff' },
+  aftSpring: { boat: 'midship', dock: 'fwd', color: '#7ee787' },
+};
+
+// ============================================================================
+// PHYSICS STEP
+// ============================================================================
+
+function step(dt) {
+  const b = state.boat;
+  const c = Math.cos(b.heading), s = Math.sin(b.heading);
+
+  // Forward unit vector (in world)
+  const fwdX = c, fwdY = s;
+  // Right (starboard) unit vector
+  const rgtX = -s, rgtY = c;
+
+  // Decompose velocity into longitudinal (forward) and lateral (starboard)
+  const vLon = b.vx * fwdX + b.vy * fwdY;
+  const vLat = b.vx * rgtX + b.vy * rgtY;
+
+  // Velocity relative to water (subtract current)
+  const cur = currentVec();
+  const vwX = b.vx - cur.x;
+  const vwY = b.vy - cur.y;
+  const vwLon = vwX * fwdX + vwY * fwdY;
+  const vwLat = vwX * rgtX + vwY * rgtY;
+
+  // Forces accumulator (in world frame) and torque
+  let Fx = 0, Fy = 0, T = 0;
+
+  // 1) ENGINE THRUST -- along boat forward axis
+  const thrust = b.throttle * PHYS.thrustMax;
+  Fx += thrust * fwdX;
+  Fy += thrust * fwdY;
+
+  // 2) RUDDER. Rudder generates lateral force at the stern.
+  //    - In forward thrust: prop wash over rudder is dominant, ~ proportional to thrust.
+  //    - In passive flow (no thrust or reverse): proportional to vwLon (forward speed thru water).
+  //    Helm > 0 = rudder turned to starboard, deflecting flow to starboard => stern pushed to port.
+  //    F_rudder_lateral (in starboard direction) = -helm * (factor). i.e. helm to starboard pushes stern to port (-).
+  let rudderLat = 0;
+  if (thrust > 0) {
+    rudderLat += -b.helm * (thrust / PHYS.thrustMax) * PHYS.rudderCoef;
+  }
+  // Passive flow over rudder (forward speed through water)
+  rudderLat += -b.helm * Math.max(vwLon, 0) * PHYS.rudderFlowCoef * 0.05;
+  // Rudder is also somewhat effective when going backwards through water (less)
+  rudderLat += -b.helm * Math.min(vwLon, 0) * PHYS.rudderFlowCoef * 0.02;
+
+  // Apply rudder force at the stern (length/2 behind centre)
+  const sternArm = -b.length / 2;
+  Fx += rudderLat * rgtX;
+  Fy += rudderLat * rgtY;
+  T  += sternArm * rudderLat;   // torque = r × F (longitudinal arm × lateral force, about centre)
+
+  // 3) PROP WALK -- lateral force at stern in reverse (stern walks to PORT for right-hand prop)
+  if (b.throttle < 0) {
+    const propWalk = b.throttle * PHYS.propWalkCoef;  // negative throttle, negative force => stern to port (-rgt)
+    Fx += propWalk * rgtX;
+    Fy += propWalk * rgtY;
+    T  += sternArm * propWalk;
+  }
+
+  // 4) DRAG (proportional to v|v|, separate longitudinal & lateral)
+  const Flon = -PHYS.dragLinFwd  * vwLon * Math.abs(vwLon);
+  const Flat = -PHYS.dragLinSide * vwLat * Math.abs(vwLat);
+  Fx += Flon * fwdX + Flat * rgtX;
+  Fy += Flon * fwdY + Flat * rgtY;
+  // Angular drag
+  T += -PHYS.dragAng * b.omega * Math.abs(b.omega);
+
+  // 5) LINE FORCES
+  for (const [name, def] of Object.entries(LINE_DEFS)) {
+    const ln = state.lines[name];
+    if (!ln.attached) continue;
+    const bp = getBoatCleat(def.boat);
+    const dp = getDockCleat(def.dock);
+    const dx = bp.x - dp.x, dy = bp.y - dp.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-3) continue;
+    const ux = dx / len, uy = dy / len;
+    const stretch = len - ln.restLen;
+    if (stretch > 0) {
+      // Line is taut and pulling boat toward dock cleat
+      // Velocity of boat cleat = boat vel + omega × r
+      const rx = bp.x - b.x, ry = bp.y - b.y;
+      const vcx = b.vx - b.omega * ry;   // v + ω × r in 2D (omega positive = CCW in screen, but we'll be consistent)
+      const vcy = b.vy + b.omega * rx;
+      const vAlong = vcx * ux + vcy * uy;
+      const tension = PHYS.lineK * stretch + PHYS.lineDamp * Math.max(vAlong, 0);
+      const Fxl = -tension * ux;
+      const Fyl = -tension * uy;
+      Fx += Fxl; Fy += Fyl;
+      // Torque = r × F : in 2D, r × F = rx*Fy - ry*Fx
+      T += rx * Fyl - ry * Fxl;
+    }
+  }
+
+  // 6) FENDER / HARD COLLISION with dock
+  collideWithDock();
+  // (we apply collision as impulses below in collide function via direct vel adjustment)
+
+  // Integrate
+  const ax = Fx / b.mass, ay = Fy / b.mass;
+  const aT = T / b.I;
+  b.vx += ax * dt;
+  b.vy += ay * dt;
+  b.omega += aT * dt;
+  b.x += b.vx * dt;
+  b.y += b.vy * dt;
+  b.heading += b.omega * dt;
+}
+
+function currentVec() {
+  // Current angle is "set" in degrees, with 0 = same direction the boat is initially facing (east).
+  // Actually treat current as world frame: angle 0 means flowing in +x direction (boat's forward when heading=0).
+  const a = state.current.angleDeg * Math.PI / 180;
+  return { x: Math.cos(a) * state.current.speed, y: Math.sin(a) * state.current.speed };
+}
+
+function collideWithDock() {
+  // AABB-style: check the boat's bounding box against the dock rectangle, push out along smallest axis.
+  const b = state.boat;
+  const halfL = b.length / 2, halfB = b.beam / 2;
+  // Get four corners of the boat in world coords
+  const pts = [
+    boatToWorld( halfL,  halfB),
+    boatToWorld( halfL, -halfB),
+    boatToWorld(-halfL,  halfB),
+    boatToWorld(-halfL, -halfB),
+  ];
+  const dxMin = state.dock.cx - state.dock.length/2;
+  const dxMax = state.dock.cx + state.dock.length/2;
+  const dyMin = state.dock.cy - state.dock.width/2;
+  const dyMax = state.dock.cy + state.dock.width/2;
+
+  for (const p of pts) {
+    if (p.x > dxMin && p.x < dxMax && p.y > dyMin && p.y < dyMax) {
+      // Penetration: push out along smallest axis (most likely y, since boat alongside)
+      const penTop = p.y - dyMin;     // how far into top edge
+      const penBot = dyMax - p.y;     // how far into bottom edge
+      const penL = p.x - dxMin;
+      const penR = dxMax - p.x;
+      const minPen = Math.min(penTop, penBot, penL, penR);
+      let nx = 0, ny = 0;
+      if (minPen === penTop) { ny = -1; }
+      else if (minPen === penBot) { ny = 1; }
+      else if (minPen === penL) { nx = -1; }
+      else { nx = 1; }
+      // Move boat out
+      b.x += nx * minPen;
+      b.y += ny * minPen;
+      // Cancel velocity into dock (with small bounce)
+      const vN = b.vx * nx + b.vy * ny;
+      if (vN < 0) {
+        b.vx -= vN * nx * 1.05;
+        b.vy -= vN * ny * 1.05;
+        if (Math.abs(vN) > 0.5) state.collisionFlash = 1;
+      }
+      // Tiny angular damping on contact
+      b.omega *= 0.85;
+    }
+  }
+}
+
+// ============================================================================
+// RENDERING
+// ============================================================================
+
+function m2px(m) { return m * PX_PER_M; }
+function W2P(x, y) { return { x: x * PX_PER_M, y: y * PX_PER_M }; }
+
+function draw() {
+  const W = state.worldW, H = state.worldH;
+  ctx.clearRect(0, 0, W, H);
+
+  // Water gradient
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, '#0a1628');
+  g.addColorStop(1, '#050a14');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+
+  drawCurrentParticles();
+  drawDock();
+  drawLines();
+  drawBoat();
+  drawCurrentArrowOverlay();
+
+  if (state.collisionFlash > 0) {
+    ctx.fillStyle = `rgba(248,81,73,${0.18 * state.collisionFlash})`;
+    ctx.fillRect(0,0,W,H);
+    state.collisionFlash *= 0.85;
+    if (state.collisionFlash < 0.01) state.collisionFlash = 0;
+  }
+}
+
+function drawCurrentParticles() {
+  const cur = currentVec();
+  const speed = Math.hypot(cur.x, cur.y);
+  if (speed < 0.05) return;
+  const dt = 1/60;
+  for (const p of state.particles) {
+    p.x += cur.x * PX_PER_M * dt;
+    p.y += cur.y * PX_PER_M * dt;
+    p.life -= dt;
+    if (p.life < 0 || p.x < -10 || p.x > state.worldW + 10 || p.y < -10 || p.y > state.worldH + 10) {
+      // Respawn upstream
+      const W = state.worldW, H = state.worldH;
+      // Spawn on the upstream side
+      if (cur.x > 0) p.x = -5; else if (cur.x < 0) p.x = W + 5; else p.x = Math.random() * W;
+      if (cur.y > 0) p.y = -5; else if (cur.y < 0) p.y = H + 5; else p.y = Math.random() * H;
+      // Randomise the orthogonal axis
+      if (Math.abs(cur.x) > Math.abs(cur.y)) p.y = Math.random() * H;
+      else p.x = Math.random() * W;
+      p.life = 3 + Math.random() * 2;
+    }
+  }
+  ctx.save();
+  ctx.strokeStyle = `rgba(88,166,255,${0.15 + 0.05 * speed})`;
+  ctx.lineWidth = 1;
+  const tailL = 12 + speed * 4;
+  const ux = cur.x / speed, uy = cur.y / speed;
+  for (const p of state.particles) {
+    ctx.beginPath();
+    ctx.moveTo(p.x - ux * tailL, p.y - uy * tailL);
+    ctx.lineTo(p.x, p.y);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawDock() {
+  const x = m2px(state.dock.cx - state.dock.length/2);
+  const y = m2px(state.dock.cy - state.dock.width/2);
+  const w = m2px(state.dock.length);
+  const h = m2px(state.dock.width);
+  ctx.fillStyle = '#3d2c1f';
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = '#5c4429';
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(x, y, w, h);
+  // Wood planks
+  ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+  ctx.lineWidth = 1;
+  const innerY = state.dock.cy + (state.dockSide === 'port' ? 1 : -1) * (state.dock.width / 2);
+  for (let i = 1; i < 6; i++) {
+    const px = x + (w/6) * i;
+    ctx.beginPath();
+    ctx.moveTo(px, y);
+    ctx.lineTo(px, y + h);
+    ctx.stroke();
+  }
+  // Cleats
+  for (const name of ['fwd', 'midship', 'aft']) {
+    const c = getDockCleat(name);
+    const p = W2P(c.x, c.y);
+    ctx.fillStyle = '#1a1f24';
+    ctx.strokeStyle = '#8b949e';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+}
+
+function drawBoat() {
+  const b = state.boat;
+  const p = W2P(b.x, b.y);
+  ctx.save();
+  ctx.translate(p.x, p.y);
+  ctx.rotate(b.heading);
+  const L = m2px(b.length), B = m2px(b.beam);
+
+  // Hull shape (pointed bow)
+  ctx.beginPath();
+  ctx.moveTo(L/2, 0);                 // bow point
+  ctx.lineTo(L/2 - L*0.18, -B/2);
+  ctx.lineTo(-L/2 + L*0.05, -B/2);
+  ctx.lineTo(-L/2, -B/2 * 0.65);
+  ctx.lineTo(-L/2,  B/2 * 0.65);
+  ctx.lineTo(-L/2 + L*0.05,  B/2);
+  ctx.lineTo(L/2 - L*0.18,  B/2);
+  ctx.closePath();
+  ctx.fillStyle = '#dde2e8';
+  ctx.fill();
+  ctx.strokeStyle = '#1a1f24';
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+
+  // Cockpit (dark patch aft)
+  ctx.fillStyle = '#3a4250';
+  ctx.fillRect(-L/2 + L*0.15, -B/2 * 0.5, L*0.3, B * 0.5);
+
+  // Deck stripe
+  ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(-L/2 + L*0.05, 0); ctx.lineTo(L/2 - L*0.05, 0); ctx.stroke();
+
+  // Rudder (at stern, deflected by helm)
+  ctx.save();
+  ctx.translate(-L/2, 0);
+  ctx.rotate(b.helm * 0.6);  // helm angle to rudder angle (max ~35°)
+  ctx.fillStyle = '#1a1f24';
+  ctx.fillRect(-m2px(0.6), -m2px(0.15), m2px(0.6), m2px(0.3));
+  ctx.restore();
+
+  // Wake / prop wash visualisation
+  if (Math.abs(b.throttle) > 0.05) {
+    const tlen = Math.abs(b.throttle) * L * 0.6;
+    const dir = b.throttle > 0 ? -1 : 1;   // ahead: wake behind (-x in boat frame); reverse: wake forward
+    const startX = b.throttle > 0 ? -L/2 : -L/2; // both come out of stern
+    ctx.save();
+    ctx.translate(startX, 0);
+    const grad = ctx.createLinearGradient(0, 0, dir * tlen, 0);
+    grad.addColorStop(0, 'rgba(255,255,255,0.5)');
+    grad.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(0, -m2px(0.6));
+    ctx.lineTo(dir * tlen, -m2px(1.5));
+    ctx.lineTo(dir * tlen,  m2px(1.5));
+    ctx.lineTo(0,  m2px(0.6));
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // Fenders on dock-side
+  ctx.fillStyle = '#222';
+  const sideY = state.dockSide === 'port' ? -B/2 : B/2;
+  for (const fx of [-L*0.15, 0, L*0.15]) {
+    ctx.beginPath();
+    ctx.arc(fx, sideY, 3, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  // Boat cleats
+  ctx.fillStyle = '#1a1f24';
+  ctx.strokeStyle = '#8b949e';
+  ctx.lineWidth = 1;
+  const sideSign = state.dockSide === 'port' ? -1 : 1;
+  const cleats = [
+    [L/2,  sideSign * B/2 * 0.6],
+    [-L/2, sideSign * B/2 * 0.6],
+    [0,    sideSign * B/2],
+  ];
+  for (const [cx, cy] of cleats) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, 3, 0, Math.PI*2);
+    ctx.fill();
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // Velocity vector
+  const sp = Math.hypot(b.vx, b.vy);
+  if (sp > 0.05) {
+    ctx.strokeStyle = 'rgba(255,255,0,0.5)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y);
+    ctx.lineTo(p.x + b.vx * PX_PER_M * 2, p.y + b.vy * PX_PER_M * 2);
+    ctx.stroke();
+  }
+}
+
+function drawLines() {
+  for (const [name, def] of Object.entries(LINE_DEFS)) {
+    const ln = state.lines[name];
+    if (!ln.attached) continue;
+    const bp = getBoatCleat(def.boat);
+    const dp = getDockCleat(def.dock);
+    const bpx = W2P(bp.x, bp.y);
+    const dpx = W2P(dp.x, dp.y);
+    const len = Math.hypot(bp.x - dp.x, bp.y - dp.y);
+    const stretch = len - ln.restLen;
+    let color = def.color, alpha = 0.6, w = 1.5;
+    if (stretch > 0) {
+      // Loaded: brighter, redder with more load
+      const load = Math.min(1, stretch / 0.3);
+      color = `rgba(255,${Math.round(180*(1-load))},${Math.round(80*(1-load))},1)`;
+      alpha = 1; w = 2.2;
+    } else if (stretch > -0.3) {
+      // Just taut, normal color full opacity
+      alpha = 1;
+    }
+    ctx.strokeStyle = color;
+    ctx.globalAlpha = alpha;
+    ctx.lineWidth = w;
+    // Slight catenary if slack
+    if (stretch < -0.3) {
+      const sag = Math.min(0.6, -stretch * 0.2);
+      const mx = (bpx.x + dpx.x) / 2;
+      const my = (bpx.y + dpx.y) / 2 + sag * PX_PER_M;
+      ctx.beginPath();
+      ctx.moveTo(bpx.x, bpx.y);
+      ctx.quadraticCurveTo(mx, my, dpx.x, dpx.y);
+      ctx.stroke();
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(bpx.x, bpx.y);
+      ctx.lineTo(dpx.x, dpx.y);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawCurrentArrowOverlay() {
+  // Big arrow in upper-right showing world current
+  const cur = currentVec();
+  const sp = Math.hypot(cur.x, cur.y);
+  if (sp < 0.05) return;
+  const cx = state.worldW - 80, cy = 80;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.fillStyle = 'rgba(13,17,23,0.6)';
+  ctx.strokeStyle = '#30363d';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(0,0,42,0,Math.PI*2); ctx.fill(); ctx.stroke();
+
+  ctx.fillStyle = '#8b949e';
+  ctx.font = '10px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(`current ${(sp * KN_PER_MS).toFixed(1)} kn`, 0, -50);
+
+  const ang = Math.atan2(cur.y, cur.x);
+  ctx.rotate(ang);
+  ctx.strokeStyle = '#58a6ff';
+  ctx.fillStyle = '#58a6ff';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(-25, 0);
+  ctx.lineTo(20, 0);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(28, 0);
+  ctx.lineTo(20, -6);
+  ctx.lineTo(20,  6);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+// ============================================================================
+// HUD
+// ============================================================================
+
+function updateHUD() {
+  const b = state.boat;
+  const sp = Math.hypot(b.vx, b.vy);
+  document.getElementById('hud-speed').textContent = (sp * KN_PER_MS).toFixed(1) + ' kn';
+  // Heading: 0 rad = east = 090° compass. Convert to compass.
+  let cmp = (b.heading * 180 / Math.PI + 90 + 360) % 360;
+  document.getElementById('hud-heading').textContent = cmp.toFixed(0).padStart(3, '0') + '°';
+  document.getElementById('hud-throttle').textContent = Math.round(b.throttle * 100) + '%';
+  let helmTxt = 'midship';
+  if (Math.abs(b.helm) > 0.02) {
+    helmTxt = (b.helm < 0 ? 'P' : 'S') + ' ' + Math.round(Math.abs(b.helm) * 35) + '°';
+  }
+  document.getElementById('hud-helm').textContent = helmTxt;
+
+  // Distance: dock-side edge of boat to dock-inner-edge (perpendicular gap)
+  const sideSign = state.dockSide === 'port' ? -1 : 1;
+  const sidePoint = boatToWorld(0, sideSign * b.beam / 2);
+  const innerY = state.dock.cy + (state.dockSide === 'port' ? 1 : -1) * (state.dock.width / 2);
+  const dy = state.dockSide === 'port' ? sidePoint.y - innerY : innerY - sidePoint.y;
+  document.getElementById('hud-dist').textContent = Math.max(0, dy).toFixed(1) + ' m';
+}
+
+// ============================================================================
+// TIPS ENGINE
+// ============================================================================
+
+function classifyCurrent() {
+  // Current angle is in world frame, 0 = +x = east. Boat heading=0 also +x.
+  // Following = current going same way as boat heading. Head = opposite.
+  // Cross from port = current pushing boat from port (north) toward starboard (south); angle ≈ +90° in our frame (since +y is south)
+  const a = state.current.angleDeg;
+  // Convert to angle relative to boat heading. Boat heading=0 since we always start east.
+  // Range -180..180
+  let rel = a;
+  while (rel > 180) rel -= 360;
+  while (rel < -180) rel += 360;
+  const sp = state.current.speed;
+
+  const out = {
+    rel, sp,
+    isFollowing: Math.cos(rel * Math.PI/180) > 0.4 && sp > 0.1,
+    isHead:      Math.cos(rel * Math.PI/180) < -0.4 && sp > 0.1,
+    isSlack:     sp < 0.15,
+  };
+  // Cross direction: +90° = pushing toward starboard. -90° = pushing toward port.
+  // (Because in our frame +y on screen is starboard side when heading=0)
+  const cross = Math.sin(rel * Math.PI/180) * sp;
+  out.crossSpeed = cross;
+  // Onto-dock direction
+  if (state.dockSide === 'starboard') {
+    out.crossOntoDock = cross > 0.15;
+    out.crossOffDock  = cross < -0.15;
+  } else {
+    out.crossOntoDock = cross < -0.15;
+    out.crossOffDock  = cross > 0.15;
+  }
+  return out;
+}
+
+function generateTipsContent() {
+  const c = classifyCurrent();
+  const side = state.dockSide;
+  const propOpp = side === 'starboard' ? 'away from' : 'toward';   // reverse prop walk pushes stern to port
+  const helmTowardDock = side === 'starboard' ? 'port' : 'starboard';
+  const helmAwayDock   = side === 'starboard' ? 'starboard' : 'port';
+
+  let parts = [];
+  let difficulty = 'moderate';
+
+  if (state.mode === 'dock') {
+    // ----- DOCKING -----
+    let summary = `${cap(side)}-side-to docking. `;
+    if (c.isSlack) summary += 'Slack water — straightforward.';
+    else if (c.isFollowing) summary += `Following current ${(c.sp*KN_PER_MS).toFixed(1)} kn — current pushes you forward.`;
+    else if (c.isHead) summary += `Head current ${(c.sp*KN_PER_MS).toFixed(1)} kn — current holds you back, your friend.`;
+    else if (c.crossOntoDock) summary += `Cross current ${(Math.abs(c.crossSpeed)*KN_PER_MS).toFixed(1)} kn pushing you ONTO the dock.`;
+    else if (c.crossOffDock) summary += `Cross current ${(Math.abs(c.crossSpeed)*KN_PER_MS).toFixed(1)} kn pushing you OFF the dock.`;
+
+    // Difficulty
+    if (c.isSlack) difficulty = 'easy';
+    else if (c.isHead) difficulty = 'easy';
+    else if (c.crossOntoDock) difficulty = 'easy';
+    else if (c.isFollowing && side === 'starboard') difficulty = 'hard';
+    else if (c.isFollowing) difficulty = 'moderate';
+    else if (c.crossOffDock) difficulty = 'hard';
+    else difficulty = 'moderate';
+
+    let approach = [];
+    let lineOrder = [];
+    let cautions = [];
+    let why = '';
+
+    if (c.isHead) {
+      approach = [
+        'Approach <b>at angle 30–45°</b> against the current — current is the brake.',
+        'Aim at your spot; the current will hold you back, you only need a touch of throttle to maintain steerage.',
+        'Straighten up alongside as the bow nears the dock.',
+      ];
+      lineOrder = [
+        '<b>Bow line</b> first — current keeps boat behind it, perfect anchor.',
+        '<b>Aft spring</b> next (midship → fwd dock cleat) — locks you against being pushed back.',
+        '<b>Stern line</b>.',
+        '<b>Forward spring</b> last for completeness.',
+      ];
+      why = 'A head current is the easiest condition: it stops the boat for you. The bow line takes all the load and the spring lines tidy the rest.';
+      if (side === 'starboard') cautions.push('Avoid hard reverse: prop walk kicks the stern away from the dock.');
+    }
+    else if (c.isFollowing) {
+      approach = [
+        'Make a <b>shallow approach (10–20°)</b>, dead slow but always faster than the current — below current speed you have no rudder.',
+        'Aim <b>short</b> of your spot; the current carries you on.',
+        'Avoid reverse if you can: braking with the engine throws the stern off the dock.',
+      ];
+      if (side === 'starboard') {
+        lineOrder = [
+          '<b>Forward spring</b> FIRST (midship → aft dock cleat) — only line that matters at first.',
+          'With the spring on, <b>idle ahead, helm to port</b> (away from dock) — boat pivots: bow out, stern in, pinned alongside.',
+          '<b>Stern line</b> next — frees you from holding the helm.',
+          '<b>Bow line</b>, then <b>aft spring</b> to finish.',
+        ];
+        why = 'Following current + starboard-to + stern-to-port prop walk is the worst combination. Reverse is unusable for braking, so the forward spring becomes your brake AND your pivot. Helm to port + ahead-against-spring keeps her glued on.';
+        cautions.push('NEVER put the bow line on first here — current pivots stern off the dock.');
+        cautions.push('NEVER put the stern line on first here — current pivots bow off the dock.');
+        cautions.push('Reverse throws the stern away from the dock. Use it only as a last-resort brake.');
+        difficulty = 'hard';
+      } else {
+        lineOrder = [
+          '<b>Forward spring</b> FIRST (midship → aft dock cleat).',
+          'Idle ahead, <b>helm to starboard</b> (away from dock) to pin her alongside.',
+          '<b>Stern line</b>, then <b>bow line</b>, then <b>aft spring</b>.',
+        ];
+        why = 'A following current always demands the forward spring first — it converts forward push into pinning force.';
+        cautions.push('If you must brake, a brief reverse helps here: prop walk pulls the stern toward the port-side dock.');
+      }
+    }
+    else if (c.crossOntoDock) {
+      approach = [
+        'Approach almost <b>parallel</b> to the dock; the current alone delivers you alongside.',
+        'Plenty of fenders — the current presses you on hard.',
+      ];
+      lineOrder = [
+        '<b>Any midship spring</b> first to stop fore-and-aft drift.',
+        '<b>Bow</b> and <b>stern lines</b> next.',
+        'Add the other spring to finish.',
+      ];
+      why = 'Cross current onto the dock does most of the work. You just need to control fore-and-aft sliding.';
+    }
+    else if (c.crossOffDock) {
+      approach = [
+        'Approach at a <b>steeper angle (30–40°)</b>, head into the cross-current to crab in.',
+        'Get a crew on the dock immediately; the boat will want to drift away.',
+      ];
+      lineOrder = [
+        '<b>Midship/spring</b> first — fastest line you can put on a single cleat to stop drift.',
+        '<b>Bow line</b>, then <b>stern line</b>.',
+        'Add the second spring to lock down.',
+      ];
+      why = 'Off-dock cross current is the hardest condition. Speed of line handling matters more than picking the "right" first line.';
+      cautions.push('Have lines pre-rigged and someone ready on the dock. If you fall off, abort and re-approach.');
+    }
+    else {
+      // Slack
+      approach = [
+        'Approach at <b>15–25°</b>, slow speed.',
+        'Use a brief reverse to stop and tuck the stern in.',
+      ];
+      if (side === 'port') {
+        lineOrder = [
+          '<b>Bow line</b> or <b>midship spring</b> first.',
+          'Then stern, then springs.',
+        ];
+        why = 'Slack water + port-to is the easy classroom case. Reverse prop walk kicks the stern toward the dock — perfect.';
+      } else {
+        lineOrder = [
+          '<b>Bow line</b> or <b>midship spring</b> first.',
+          'Then stern, then the other spring.',
+        ];
+        why = 'Starboard-to in slack water is fine; just be aware reverse will kick the stern out, so use the helm to bring the stern in instead.';
+      }
+    }
+
+    // Compose
+    parts.push(`<div class="summary">${summary}</div>`);
+    parts.push(`<div class="difficulty ${difficulty}">${difficulty}</div>`);
+    parts.push(`<div><b>Approach</b><ol>${approach.map(s => `<li>${s}</li>`).join('')}</ol></div>`);
+    parts.push(`<div><b>Line order</b><ol>${lineOrder.map(s => `<li>${s}</li>`).join('')}</ol></div>`);
+    if (why) parts.push(`<div class="why">${why}</div>`);
+    for (const cau of cautions) parts.push(`<div class="caution">⚠ ${cau}</div>`);
+  }
+  else {
+    // ----- UNDOCKING -----
+    let summary = `${cap(side)}-side-to undocking. `;
+    if (c.isSlack) summary += 'Slack water.';
+    else if (c.isFollowing) summary += `Following current ${(c.sp*KN_PER_MS).toFixed(1)} kn — current pushes you forward off the dock.`;
+    else if (c.isHead) summary += `Head current ${(c.sp*KN_PER_MS).toFixed(1)} kn — current pushes you back.`;
+    else if (c.crossOntoDock) summary += `Cross current pinning you ONTO the dock.`;
+    else if (c.crossOffDock) summary += `Cross current peeling you OFF the dock.`;
+
+    // Difficulty
+    if (c.crossOffDock) difficulty = 'easy';      // current does the work
+    else if (c.isSlack) difficulty = 'easy';
+    else if (c.crossOntoDock) difficulty = 'hard';
+    else if (c.isFollowing) difficulty = 'moderate';
+    else if (c.isHead) difficulty = 'moderate';
+
+    let strategy = [];
+    let lineOrder = [];
+    let cautions = [];
+    let why = '';
+
+    if (c.crossOffDock) {
+      strategy = [
+        'The current is doing the work — you just slip the lines.',
+        'Engine in neutral; let her drift off, then engage ahead and steer away.',
+      ];
+      lineOrder = [
+        'Drop <b>fwd spring</b> and <b>aft spring</b> first.',
+        'Then <b>stern line</b>.',
+        '<b>Bow line</b> last, single it as a slip line if possible.',
+      ];
+      why = 'Current peels you off — take advantage and don\'t fight it.';
+    }
+    else if (c.crossOntoDock) {
+      strategy = [
+        'Spring the bow or stern out against a single line.',
+        'Use prop walk to your advantage if possible.',
+      ];
+      if (side === 'starboard') {
+        lineOrder = [
+          'Drop <b>bow line</b>, <b>stern line</b>, <b>fwd spring</b>.',
+          'Keep ONLY the <b>aft spring</b> on (midship → fwd dock cleat) with a fender at the bow.',
+          '<b>Engine ahead, helm to starboard</b> (toward dock): boat pivots around the spring, <b>stern</b> swings out.',
+          'Once stern is well clear, slip the spring and reverse away.',
+        ];
+        why = 'Stern-out works because reverse + prop walk pulls stern further to port (away from dock) once you back up. Bow-out using ahead-against-fwd-spring would need helm to port, but releasing then needs reverse and prop walk pulls the stern back into the dock.';
+        cautions.push('Big fender at the bow! It takes the load while the stern springs out.');
+      } else {
+        lineOrder = [
+          'Drop bow, stern, aft spring.',
+          'Keep only <b>fwd spring</b> on (midship → aft dock), big fender at the stern.',
+          '<b>Engine reverse, helm centred</b>: boat pivots, <b>bow</b> swings out and prop walk helps push stern toward dock (held by fender).',
+          'Once bow is clear, slip the spring and motor ahead away.',
+        ];
+        why = 'Port-to undocking favours bow-out using a forward spring — prop walk in reverse pulls stern toward dock, fender protects, and the bow opens up.';
+      }
+    }
+    else if (c.isFollowing) {
+      strategy = [
+        'Current pushes you forward off the dock; a stern line or aft spring is the brake.',
+        'Slip lines from forward to aft so the current works for you.',
+      ];
+      lineOrder = [
+        'Drop <b>fwd spring</b> and <b>bow line</b> — current starts taking the bow.',
+        'As bow swings out, slip the <b>stern line</b>.',
+        '<b>Aft spring</b> last, then engine ahead and steer away.',
+      ];
+      why = 'Following current naturally swings the bow off if you free it from the bow line first, while the stern stays on with the aft spring.';
+    }
+    else if (c.isHead) {
+      strategy = [
+        'Current pushes you back; a bow line or fwd spring is the brake.',
+        'Slip lines from aft forward.',
+      ];
+      lineOrder = [
+        'Drop <b>aft spring</b> and <b>stern line</b> — current swings stern out.',
+        'Slip the <b>bow line</b> as stern clears.',
+        '<b>Fwd spring</b> last, then reverse out and turn away.',
+      ];
+      why = 'Head current naturally peels the stern off — let it.';
+    }
+    else {
+      // Slack
+      if (side === 'port') {
+        strategy = [
+          'Spring the bow out using the forward spring + reverse (prop walk helps pin stern).',
+        ];
+        lineOrder = [
+          'Drop bow, stern, aft spring.',
+          'Keep <b>fwd spring</b> on, fender at stern.',
+          '<b>Engine reverse, helm centred</b>: bow swings out.',
+          'Slip the spring once bow is clear; engine ahead, away.',
+        ];
+        why = 'With dock on port and prop walk to port, reverse pulls stern INTO the dock — exactly what the spring + fender want.';
+      } else {
+        strategy = [
+          'Spring the stern out using the aft spring + ahead, then reverse away.',
+        ];
+        lineOrder = [
+          'Drop bow, stern, fwd spring.',
+          'Keep <b>aft spring</b> on, fender at bow.',
+          '<b>Engine ahead, helm to starboard</b> (toward dock): stern swings out.',
+          'Slip the spring once stern is clear; engine reverse, then ahead away once bow is pointing free.',
+        ];
+        why = 'Starboard-to + reverse-to-port prop walk: backing away with stern still near dock would pull stern back IN. Better to spring stern out first, then drive away ahead.';
+      }
+    }
+
+    parts.push(`<div class="summary">${summary}</div>`);
+    parts.push(`<div class="difficulty ${difficulty}">${difficulty}</div>`);
+    parts.push(`<div><b>Strategy</b><ol>${strategy.map(s => `<li>${s}</li>`).join('')}</ol></div>`);
+    parts.push(`<div><b>Line order (release sequence)</b><ol>${lineOrder.map(s => `<li>${s}</li>`).join('')}</ol></div>`);
+    if (why) parts.push(`<div class="why">${why}</div>`);
+    for (const cau of cautions) parts.push(`<div class="caution">⚠ ${cau}</div>`);
+  }
+
+  return `<h3>Tips & best plan</h3>${parts.join('')}`;
+}
+
+function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+
+function updateTips() {
+  document.getElementById('tips').innerHTML = generateTipsContent();
+}
+
+// ============================================================================
+// CONTROLS / UI
+// ============================================================================
+
+function bindSegment(id, key) {
+  const seg = document.getElementById(id);
+  seg.querySelectorAll('button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      seg.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state[key] = btn.dataset.v;
+      resetScenario();
+    });
+  });
+}
+
+bindSegment('mode-seg', 'mode');
+bindSegment('side-seg', 'dockSide');
+
+const curAngle = document.getElementById('cur-angle');
+const curAngleV = document.getElementById('cur-angle-v');
+const curSpeed = document.getElementById('cur-speed');
+const curSpeedV = document.getElementById('cur-speed-v');
+const curArrow = document.getElementById('current-arrow');
+
+function syncCurrent() {
+  state.current.angleDeg = +curAngle.value;
+  state.current.speed = +curSpeed.value / 10;     // 0..3 m/s
+  curAngleV.textContent = curAngle.value + '°';
+  curSpeedV.textContent = (state.current.speed * KN_PER_MS).toFixed(1) + ' kn';
+  // Compass arrow rotates: 0° in our frame = bow (up). +90° = starboard (right).
+  // SVG: 0° rotation has arrow pointing up (it's defined that way). Need to map angleDeg -> compass rotation.
+  // angle 0 (current toward bow) → rotate svg 180° (arrow points up shows current going TO bow direction... let me just map)
+  // Our convention: angle 0 = current flowing in +x direction (east) = boat's forward. So arrow should point up (toward bow).
+  // SVG arrow as defined points UP. So rotation = 0 when angle = 0? Let me check svg: line from (0,35) to (0,-35) and triangle at top. So arrow points UP in svg. UP corresponds to bow in our compass. So when angleDeg=0 (flowing toward bow), arrow points up = no rotation.
+  // angleDeg goes 0..360 in standard math, but in our screen frame +x=right(east)=bow, +y=down(south)=starboard.
+  // angleDeg=90 means current toward +y = toward starboard. Arrow should point right.
+  // SVG rotate(deg): positive = clockwise. So rotate(90) makes UP arrow point RIGHT. Matches.
+  curArrow.setAttribute('transform', `rotate(${curAngle.value})`);
+  updateTips();
+}
+curAngle.addEventListener('input', syncCurrent);
+curSpeed.addEventListener('input', syncCurrent);
+
+const throttleS = document.getElementById('throttle');
+const throttleV = document.getElementById('throttle-v');
+const helmS = document.getElementById('helm');
+const helmV = document.getElementById('helm-v');
+
+function syncControls() {
+  state.boat.throttle = +throttleS.value / 100;
+  state.boat.helm     = +helmS.value / 100;
+  throttleV.textContent = throttleS.value + '%';
+  let h = +helmS.value;
+  helmV.textContent = h === 0 ? '0°' : (h < 0 ? 'P' : 'S') + Math.abs(Math.round(h * 0.35)) + '°';
+}
+throttleS.addEventListener('input', syncControls);
+helmS.addEventListener('input', syncControls);
+
+document.getElementById('btn-stop').addEventListener('click', () => {
+  throttleS.value = 0; syncControls();
+});
+document.getElementById('btn-centre').addEventListener('click', () => {
+  helmS.value = 0; syncControls();
+});
+
+// Lines
+function refreshLineUI() {
+  document.querySelectorAll('.line-item').forEach(el => {
+    const k = el.dataset.line;
+    const ln = state.lines[k];
+    el.classList.toggle('attached', ln.attached);
+    el.querySelector('.toggle').textContent = ln.attached ? 'release' : 'attach';
+  });
+}
+document.querySelectorAll('.line-item .toggle').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const k = btn.closest('.line-item').dataset.line;
+    toggleLine(k);
+  });
+});
+
+function toggleLine(k) {
+  const ln = state.lines[k];
+  if (ln.attached) {
+    ln.attached = false;
+  } else {
+    // Only allow attach if reasonably close to the dock cleat
+    const def = LINE_DEFS[k];
+    const bp = getBoatCleat(def.boat);
+    const dp = getDockCleat(def.dock);
+    const dist = Math.hypot(bp.x - dp.x, bp.y - dp.y);
+    if (dist > 14) {
+      flashTip('Too far to attach — get closer to the dock first.');
+      return;
+    }
+    ln.restLen = Math.max(2, dist + 0.3);
+    ln.attached = true;
+  }
+  refreshLineUI();
+}
+
+let tipFlashTimer = null;
+function flashTip(msg) {
+  const tipsEl = document.getElementById('tips');
+  const div = document.createElement('div');
+  div.className = 'caution';
+  div.textContent = msg;
+  tipsEl.prepend(div);
+  if (tipFlashTimer) clearTimeout(tipFlashTimer);
+  tipFlashTimer = setTimeout(() => div.remove(), 2500);
+}
+
+// Reset
+document.getElementById('btn-reset').addEventListener('click', resetScenario);
+
+// Presets
+document.querySelectorAll('[data-preset]').forEach(btn => {
+  btn.addEventListener('click', () => applyPreset(btn.dataset.preset));
+});
+function applyPreset(p) {
+  switch (p) {
+    case 'following': curAngle.value = 0;   curSpeed.value = 10; break;
+    case 'head':      curAngle.value = 180; curSpeed.value = 10; break;
+    case 'onto':      curAngle.value = state.dockSide === 'port' ? 270 : 90; curSpeed.value = 8; break;
+    case 'off':       curAngle.value = state.dockSide === 'port' ? 90 : 270; curSpeed.value = 8; break;
+    case 'slack':     curAngle.value = 0; curSpeed.value = 0; break;
+    case 'random': {
+      curAngle.value = Math.floor(Math.random() * 360);
+      curSpeed.value = Math.floor(Math.random() * 25) + 3;
+      break;
+    }
+  }
+  syncCurrent();
+  resetScenario();
+}
+
+// Keyboard shortcuts
+const keys = {};
+window.addEventListener('keydown', e => {
+  // Allow keyboard shortcuts even when sliders are focused, but not in text inputs
+  if (e.target.tagName === 'INPUT' && e.target.type !== 'range') return;
+  keys[e.key.toLowerCase()] = true;
+  if (e.key.toLowerCase() === 'r') resetScenario();
+  if (e.key === ' ') { throttleS.value = 0; syncControls(); e.preventDefault(); }
+  if (e.key.toLowerCase() === 'x') { helmS.value = 0; syncControls(); }
+  if (e.key === '1') toggleLine('bow');
+  if (e.key === '2') toggleLine('stern');
+  if (e.key === '3') toggleLine('fwdSpring');
+  if (e.key === '4') toggleLine('aftSpring');
+});
+window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+
+function processHeldKeys(dt) {
+  const t = +throttleS.value, h = +helmS.value;
+  const tStep = 80 * dt, hStep = 100 * dt;
+  let nt = t, nh = h;
+  if (keys['w']) nt = Math.min(100, t + tStep);
+  if (keys['s']) nt = Math.max(-100, t - tStep);
+  if (keys['a']) nh = Math.max(-100, h - hStep);
+  if (keys['d']) nh = Math.min(100,  h + hStep);
+  if (nt !== t) { throttleS.value = nt; }
+  if (nh !== h) { helmS.value = nh; }
+  if (nt !== t || nh !== h) syncControls();
+}
+
+window.addEventListener('resize', resizeCanvas);
+
+// ============================================================================
+// MAIN LOOP
+// ============================================================================
+
+let lastT = performance.now();
+function loop(now) {
+  let dt = (now - lastT) / 1000;
+  lastT = now;
+  if (dt > 0.1) dt = 0.1;
+  // Sub-step physics for line stiffness stability
+  const sub = 4;
+  const sdt = dt / sub;
+  for (let i = 0; i < sub; i++) step(sdt);
+  processHeldKeys(dt);
+  draw();
+  updateHUD();
+  requestAnimationFrame(loop);
+}
+
+// Initialise
+syncCurrent();
+syncControls();
+resetScenario();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
