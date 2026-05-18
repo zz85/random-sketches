@@ -518,7 +518,7 @@
   <div id="legend">
     <div><span class="key">↑</span>/<span class="key">↓</span> throttle &nbsp; <span class="key">←</span>/<span class="key">→</span> helm</div>
     <div><span class="key">space</span> stop &nbsp; <span class="key">X</span> centre helm &nbsp; <span class="key">R</span> reset</div>
-    <div><span class="key">1-4</span> toggle lines (bow / stern / fwd / aft)</div>
+    <div><span class="key">1-4</span> toggle lines (bow / fwd spring / aft spring / stern)</div>
   </div>
 </div>
 
@@ -580,8 +580,8 @@
     </div>
     <div class="row">
       <label class="text">speed (kn)</label>
-      <input type="range" id="cur-speed" min="0" max="30" value="10" step="1">
-      <span class="num" id="cur-speed-v">1.0</span>
+      <input type="range" id="cur-speed" min="0" max="30" value="0" step="1">
+      <span class="num" id="cur-speed-v">0.0</span>
     </div>
     <div class="row" style="font-size:10px;color:var(--text-dim);">
       arrow shows where the current is flowing TO, relative to the boat's heading
@@ -596,11 +596,6 @@
         <div class="name">Bow line<div class="desc">bow → fwd dock cleat</div></div>
         <button class="toggle">attach</button>
       </div>
-      <div class="line-item" data-line="stern">
-        <span class="swatch" style="background:var(--line-stern)"></span>
-        <div class="name">Stern line<div class="desc">stern → aft dock cleat</div></div>
-        <button class="toggle">attach</button>
-      </div>
       <div class="line-item" data-line="fwdSpring">
         <span class="swatch" style="background:var(--line-fwd)"></span>
         <div class="name">Fwd spring<div class="desc">midship → aft dock (stops forward)</div></div>
@@ -609,6 +604,11 @@
       <div class="line-item" data-line="aftSpring">
         <span class="swatch" style="background:var(--line-aft)"></span>
         <div class="name">Aft spring<div class="desc">midship → fwd dock (stops aft)</div></div>
+        <button class="toggle">attach</button>
+      </div>
+      <div class="line-item" data-line="stern">
+        <span class="swatch" style="background:var(--line-stern)"></span>
+        <div class="name">Stern line<div class="desc">stern → aft dock cleat</div></div>
         <button class="toggle">attach</button>
       </div>
     </div>
@@ -635,7 +635,7 @@ const KN_PER_MS = 1.94384;   // knots per m/s
 const state = {
   mode: 'dock',                // 'dock' | 'undock'
   dockSide: 'starboard',       // 'port' | 'starboard'
-  current: { angleDeg: 0, speed: 1.0 },  // angle: 0 = flowing astern→bow direction relative to world; speed in m/s
+  current: { angleDeg: 0, speed: 0 },     // angle: world frame (0 = +x). Default load = slack water.
 
   boat: {
     x: 0, y: 0,
@@ -646,8 +646,8 @@ const state = {
     helm: 0,        // -1 .. 1  (negative = port, positive = starboard)
     length: 11,     // metres
     beam:    3.4,
-    mass:    5500,  // kg
-    I:       55000, // moment of inertia kg·m²
+    mass:    4500,  // kg (lightish 11 m yacht — keeps the boat lively under power)
+    I:       28000, // kg·m² (≈ 0.6 × uniform-rod I, mass concentrated near keel)
   },
 
   dock: {
@@ -665,33 +665,38 @@ const state = {
   },
 
   particles: [],   // for current visualisation
+  contacts: [],    // dock-contact markers for collision/rubbing visualisation
+  hoveredCleat: null,  // which boat cleat is under the mouse (for hover halo)
   collisionFlash: 0,
   worldW: 0, worldH: 0,
 };
 
 // Physics constants ---------------------------------------------------------
 const PHYS = {
-  thrustMax: 4500,        // N
-  rudderCoef: 4000,       // rudder force at full helm + full thrust (N at the stern)
-  rudderFlowCoef: 600,    // rudder force from passive forward flow (rarely dominant)
-  propWalkCoef: 1200,     // lateral force at stern in reverse (right-hand prop walks stern to port)
-  dragLinFwd: 80,         // longitudinal hull drag coefficient (F = c * v|v|)
-  dragLinSide: 1500,      // lateral hull drag
+  thrustMax: 6500,        // N — peak engine thrust at zero boat speed
+  // Rudder modelled as a hydrofoil. Lift force = ½·ρ·v²·A·C_L scales with
+  // the square of water flow past it. For our 11 m yacht with ~0.6 m²
+  // rudder + healthy lift coefficient, the effective coefficient is
+  // (½ · 1025 · 0.6 · ~1.0) ≈ 150 N·s²/m². The flow past the rudder is
+  // dominated by the boat's headway through water; prop wash adds a modest
+  // boost that's only meaningful at very low boat speeds.
+  rudderCoef: 150,
+  propWashKn: 6,          // approx prop-wash speed (m/s) at full forward thrust
+  propWalkCoef: 1400,     // lateral force at stern in reverse
 
-  // ── Yaw damping ──────────────────────────────────────────────────────────
-  // A keelboat is heavily damped in yaw: the keel acts as a vane against the
-  // flow. Almost all of the damping is *linear* in ω; quadratic terms are too
-  // weak at low ω so the boat would spin forever after the helm centres.
-  // The strength scales with forward speed because the keel's vane action
-  // depends on water moving past it.
-  yawLinDamp: 12000,      // N·m·s/rad — viscous baseline (always present)
-  yawSpeedDamp: 15000,    // N·m·s²/(rad·m) — extra per m/s of headway through water
-  yawQuadDamp: 4000,      // small quadratic safety to clamp very high spin rates
+  dragLinFwd: 38,         // longitudinal skin/form drag (F = c · v|v|) — gentle, sailboats glide
+  dragCubicFwd: 5,        // wave-making drag (F = c · v|v|²) — kicks in near hull speed
+  dragLinSide: 1500,      // lateral hull drag (kept high, the keel resists slipping sideways)
+
+  // Yaw damping: keel-as-vane model. The keel resists rotation harder when
+  // there's water flowing past it. Quadratic term clamps high-speed turns
+  // so they don't get unrealistically fast.
+  yawLinDamp: 28000,      // N·m·s/rad   — viscous baseline
+  yawSpeedDamp: 14000,    // N·m·s²/(rad·m) — keel vane scaling with headway
+  yawQuadDamp: 25000,     // N·m·s²/rad²    — high-ω clamp
 
   lineK: 60000,           // line spring constant N/m
   lineDamp: 8000,         // line damping
-  fenderK: 200000,        // hard collision pushback
-  fenderDamp: 50000,
 };
 
 // ============================================================================
@@ -730,13 +735,16 @@ function resetScenario() {
   }
 
   if (state.mode === 'dock') {
-    // Boat starts away from the dock, opposite side, slightly behind
-    const back = 18;
-    const offFromDock = 7;
+    // Boat starts dead in the water, well off the dock — you set up the
+    // entire approach yourself.
+    const back = 42;
+    const offFromDock = 10;
     state.boat.x = cx - back;
     state.boat.y = state.dockSide === 'port' ? cy + offFromDock : cy - offFromDock;
     state.boat.heading = 0;
-    state.boat.vx = 0; state.boat.vy = 0; state.boat.omega = 0;
+    state.boat.vx = 0;
+    state.boat.vy = 0;
+    state.boat.omega = 0;
     state.boat.throttle = 0; state.boat.helm = 0;
     // Detach all lines for docking
     for (const k of Object.keys(state.lines)) state.lines[k].attached = false;
@@ -763,6 +771,7 @@ function resetScenario() {
   refreshLineUI();
   // Particles
   state.particles = [];
+  state.contacts = [];
   for (let i = 0; i < 80; i++) {
     state.particles.push({
       x: Math.random() * W, y: Math.random() * H,
@@ -785,14 +794,15 @@ function boatToWorld(bx, by) {
 }
 
 // Cleat positions in boat frame. by negative = port side (because y is "down" in screen, but starboard is +y after heading=0 east).
-// Actually with heading=0 (boat pointing +x), and screen y down: turning RIGHT (starboard) from +x is +y. So starboard cleats use +by.
+// Each line gets its own cleat so users can click on the boat to attach/release.
 function getBoatCleat(name) {
   const L = state.boat.length, B = state.boat.beam;
   const sideSign = state.dockSide === 'port' ? -1 : 1;  // dock-side cleat
   switch (name) {
-    case 'bow':       return boatToWorld(L/2,  sideSign * B/2 * 0.6);
-    case 'stern':     return boatToWorld(-L/2, sideSign * B/2 * 0.6);
-    case 'midship':   return boatToWorld(0,    sideSign * B/2);
+    case 'bow':    return boatToWorld( L * 0.45,  sideSign * B/2 * 0.7);
+    case 'midfwd': return boatToWorld( L * 0.18,  sideSign * B/2);
+    case 'midaft': return boatToWorld(-L * 0.18,  sideSign * B/2);
+    case 'stern':  return boatToWorld(-L * 0.45,  sideSign * B/2 * 0.7);
   }
 }
 
@@ -809,10 +819,10 @@ function getDockCleat(name) {
 
 // Each line: which boat cleat to which dock cleat
 const LINE_DEFS = {
-  bow:       { boat: 'bow',     dock: 'fwd', color: '#79c0ff' },
-  stern:     { boat: 'stern',   dock: 'aft', color: '#ffa657' },
-  fwdSpring: { boat: 'midship', dock: 'aft', color: '#d2a8ff' },
-  aftSpring: { boat: 'midship', dock: 'fwd', color: '#7ee787' },
+  bow:       { boat: 'bow',    dock: 'fwd', color: '#79c0ff' },
+  fwdSpring: { boat: 'midfwd', dock: 'aft', color: '#d2a8ff' },
+  aftSpring: { boat: 'midaft', dock: 'fwd', color: '#7ee787' },
+  stern:     { boat: 'stern',  dock: 'aft', color: '#ffa657' },
 };
 
 // ============================================================================
@@ -847,19 +857,19 @@ function step(dt) {
   Fx += thrust * fwdX;
   Fy += thrust * fwdY;
 
-  // 2) RUDDER. Rudder generates lateral force at the stern.
-  //    - In forward thrust: prop wash over rudder is dominant, ~ proportional to thrust.
-  //    - In passive flow (no thrust or reverse): proportional to vwLon (forward speed thru water).
-  //    Helm > 0 = rudder turned to starboard, deflecting flow to starboard => stern pushed to port.
-  //    F_rudder_lateral (in starboard direction) = -helm * (factor). i.e. helm to starboard pushes stern to port (-).
-  let rudderLat = 0;
-  if (thrust > 0) {
-    rudderLat += -b.helm * (thrust / PHYS.thrustMax) * PHYS.rudderCoef;
-  }
-  // Passive flow over rudder (forward speed through water)
-  rudderLat += -b.helm * Math.max(vwLon, 0) * PHYS.rudderFlowCoef * 0.05;
-  // Rudder is also somewhat effective when going backwards through water (less)
-  rudderLat += -b.helm * Math.min(vwLon, 0) * PHYS.rudderFlowCoef * 0.02;
+  // 2) RUDDER -- modeled as a hydrofoil. Lift force scales with v² of the
+  //    flow past the rudder. The flow is the boat's headway plus prop-wash
+  //    from forward thrust. (Reverse thrust pulls water in front of the
+  //    rudder, so it adds little usable flow.) The sign convention auto-
+  //    handles forward vs reverse: with forward flow, helm-to-starboard
+  //    pushes the stern to port (boat turns starboard); with reverse flow,
+  //    helm-to-starboard pushes the stern to starboard (the boat steers
+  //    "from the stern" when going astern).
+  const propWashFlow = b.throttle > 0
+    ? PHYS.propWashKn * Math.sqrt(b.throttle)
+    : 0;
+  const rudderFlow = vwLon + propWashFlow;
+  const rudderLat = -b.helm * rudderFlow * Math.abs(rudderFlow) * PHYS.rudderCoef;
 
   // Apply rudder force at the stern (length/2 behind centre)
   const sternArm = -b.length / 2;
@@ -875,8 +885,11 @@ function step(dt) {
     T  += sternArm * propWalk;
   }
 
-  // 4) DRAG (proportional to v|v|, separate longitudinal & lateral)
-  const Flon = -PHYS.dragLinFwd  * vwLon * Math.abs(vwLon);
+  // 4) DRAG -- gentle linear-quadratic at low speeds (sailboats glide), plus
+  //    a cubic wave-making term that limits the boat near hull speed.
+  const va = Math.abs(vwLon);
+  const Flon = -PHYS.dragLinFwd  * vwLon * va
+               -PHYS.dragCubicFwd * vwLon * va * va;
   const Flat = -PHYS.dragLinSide * vwLat * Math.abs(vwLat);
   Fx += Flon * fwdX + Flat * rgtX;
   Fy += Flon * fwdY + Flat * rgtY;
@@ -917,9 +930,14 @@ function step(dt) {
     }
   }
 
-  // 6) FENDER / HARD COLLISION with dock
+  // 6) DOCK COLLISION (impulse + contact tracking, see collideWithDock)
   collideWithDock();
-  // (we apply collision as impulses below in collide function via direct vel adjustment)
+
+  // 7) CONTACT FADE-OUT (decay every substep)
+  for (let i = state.contacts.length - 1; i >= 0; i--) {
+    state.contacts[i].life -= dt;
+    if (state.contacts[i].life <= 0) state.contacts.splice(i, 1);
+  }
 
   // Integrate
   const ax = Fx / b.mass, ay = Fy / b.mass;
@@ -939,49 +957,88 @@ function currentVec() {
   return { x: Math.cos(a) * state.current.speed, y: Math.sin(a) * state.current.speed };
 }
 
-function collideWithDock() {
-  // AABB-style: check the boat's bounding box against the dock rectangle, push out along smallest axis.
+// Hull sample points (boat frame) used both for collision and contact viz.
+function getHullSamplePoints() {
   const b = state.boat;
   const halfL = b.length / 2, halfB = b.beam / 2;
-  // Get four corners of the boat in world coords
-  const pts = [
-    boatToWorld( halfL,  halfB),
-    boatToWorld( halfL, -halfB),
-    boatToWorld(-halfL,  halfB),
-    boatToWorld(-halfL, -halfB),
+  return [
+    [ halfL,         0],                  // bow tip
+    [ halfL * 0.82,  halfB],              // forward starboard
+    [ halfL * 0.82, -halfB],              // forward port
+    [ halfL * 0.4,   halfB],              // mid-fwd starboard
+    [ halfL * 0.4,  -halfB],              // mid-fwd port
+    [ 0,             halfB],              // midship starboard
+    [ 0,            -halfB],              // midship port
+    [-halfL * 0.4,   halfB],              // mid-aft starboard
+    [-halfL * 0.4,  -halfB],              // mid-aft port
+    [-halfL * 0.85,  halfB],              // aft starboard
+    [-halfL * 0.85, -halfB],              // aft port
+    [-halfL,         0],                  // stern
   ];
-  const dxMin = state.dock.cx - state.dock.length/2;
-  const dxMax = state.dock.cx + state.dock.length/2;
-  const dyMin = state.dock.cy - state.dock.width/2;
-  const dyMax = state.dock.cy + state.dock.width/2;
+}
 
-  for (const p of pts) {
-    if (p.x > dxMin && p.x < dxMax && p.y > dyMin && p.y < dyMax) {
-      // Penetration: push out along smallest axis (most likely y, since boat alongside)
-      const penTop = p.y - dyMin;     // how far into top edge
-      const penBot = dyMax - p.y;     // how far into bottom edge
-      const penL = p.x - dxMin;
-      const penR = dxMax - p.x;
-      const minPen = Math.min(penTop, penBot, penL, penR);
-      let nx = 0, ny = 0;
-      if (minPen === penTop) { ny = -1; }
-      else if (minPen === penBot) { ny = 1; }
-      else if (minPen === penL) { nx = -1; }
-      else { nx = 1; }
-      // Move boat out
-      b.x += nx * minPen;
-      b.y += ny * minPen;
-      // Cancel velocity into dock (with small bounce)
-      const vN = b.vx * nx + b.vy * ny;
-      if (vN < 0) {
-        b.vx -= vN * nx * 1.05;
-        b.vy -= vN * ny * 1.05;
-        if (Math.abs(vN) > 0.5) state.collisionFlash = 1;
-      }
-      // Tiny angular damping on contact
-      b.omega *= 0.85;
+function collideWithDock() {
+  const b = state.boat;
+  // Always push the boat AWAY from the dock toward the side it belongs on.
+  // For port-to dock (dock above), push +y (south). For starboard-to (below), push -y.
+  const pushDir = state.dockSide === 'port' ? +1 : -1;
+  const innerEdgeY = state.dockSide === 'port'
+    ? state.dock.cy + state.dock.width / 2
+    : state.dock.cy - state.dock.width / 2;
+  const dxMin = state.dock.cx - state.dock.length / 2;
+  const dxMax = state.dock.cx + state.dock.length / 2;
+
+  // Find the hull point that is most deeply inside the dock
+  let deepest = null;
+  for (const [bx, by] of getHullSamplePoints()) {
+    const wp = boatToWorld(bx, by);
+    if (wp.x < dxMin || wp.x > dxMax) continue;
+    const pen = pushDir === -1
+      ? wp.y - innerEdgeY        // boat should be above (smaller y); pen > 0 means below the edge
+      : innerEdgeY - wp.y;       // boat should be below (larger y);  pen > 0 means above the edge
+    if (pen > 0 && (!deepest || pen > deepest.pen)) {
+      deepest = { wp, pen };
     }
   }
+
+  if (!deepest) return;
+
+  // Resolve penetration by translating the boat out along the push direction
+  b.y += pushDir * deepest.pen;
+  const cp = { x: deepest.wp.x, y: deepest.wp.y + pushDir * deepest.pen };
+
+  // Velocity at contact point: v + ω × r
+  const rx = cp.x - b.x, ry = cp.y - b.y;
+  const vp_x = b.vx - b.omega * ry;
+  const vp_y = b.vy + b.omega * rx;
+
+  // Closing speed along the contact normal (n = (0, pushDir) points away from dock).
+  // closingV positive = boat is moving INTO the dock at the contact point.
+  const closingV = -pushDir * vp_y;
+
+  if (closingV > 0) {
+    // Inelastic-ish impulse with tiny bounce.
+    //   1/m_eff = 1/m + (r × n)² / I        (effective mass at the contact, normal direction)
+    //   r × n in 2D = rx * ny − ry * nx, with n = (0, pushDir): r × n = rx * pushDir
+    const e = 0.05;
+    const rxn = rx * pushDir;
+    const invMeff = 1/b.mass + rxn * rxn / b.I;
+    const j = (1 + e) * closingV / invMeff;
+    b.vy    += j * pushDir / b.mass;
+    b.omega += rxn * j / b.I;
+    if (closingV > 0.4) state.collisionFlash = Math.min(1, closingV / 1.5);
+  }
+
+  // Always record a contact marker while there's penetration: this is what
+  // visualises a hard impact, a steady press, or a slide along the dock.
+  const tangV = Math.abs(vp_x);
+  state.contacts.push({
+    x: cp.x, y: cp.y,
+    impact: Math.min(1, Math.max(0, closingV) / 1.5),
+    rubbing: Math.min(1, tangV / 2),
+    life: 0.45, maxLife: 0.45,
+  });
+  if (state.contacts.length > 80) state.contacts.shift();
 }
 
 // ============================================================================
@@ -1006,6 +1063,7 @@ function draw() {
   drawDock();
   drawLines();
   drawBoat();
+  drawContacts();
   if (state.worldW > 540) drawCurrentArrowOverlay();   // hide on small / mobile (toggle button takes that corner)
 
   if (state.collisionFlash > 0) {
@@ -1136,7 +1194,7 @@ function drawBoat() {
   // Note: in screen coords (y down), positive rotation is CW visually.
   // Helm to starboard (helm > 0) should swing the blade tip toward the boat's
   // starboard side, which for a bow-east boat is +y. So we negate.
-  ctx.rotate(-b.helm * 0.6);
+  ctx.rotate(-b.helm * (Math.PI / 4));   // ±45° max rudder deflection
   const rL = m2px(1.4), rW = m2px(0.42);
   // Tapered blade: wider at the front (boat-side), narrower at the trailing edge
   ctx.beginPath();
@@ -1194,20 +1252,48 @@ function drawBoat() {
     ctx.fill();
   }
 
-  // Boat cleats
-  ctx.fillStyle = '#1a1f24';
-  ctx.strokeStyle = '#8b949e';
-  ctx.lineWidth = 1;
+  // Boat cleats — one per line, colour-coded when attached. They are
+  // clickable on canvas (see canvas pointerdown handler).
   const sideSign = state.dockSide === 'port' ? -1 : 1;
   const cleats = [
-    [L/2,  sideSign * B/2 * 0.6],
-    [-L/2, sideSign * B/2 * 0.6],
-    [0,    sideSign * B/2],
+    { pos: [L * 0.45,  sideSign * B/2 * 0.7], line: 'bow',       cleatName: 'bow' },
+    { pos: [L * 0.18,  sideSign * B/2     ], line: 'fwdSpring',  cleatName: 'midfwd' },
+    { pos: [-L * 0.18, sideSign * B/2     ], line: 'aftSpring',  cleatName: 'midaft' },
+    { pos: [-L * 0.45, sideSign * B/2 * 0.7], line: 'stern',     cleatName: 'stern' },
   ];
-  for (const [cx, cy] of cleats) {
+  for (const cl of cleats) {
+    const ln = state.lines[cl.line];
+    const col = LINE_DEFS[cl.line].color;
+    const isHover = state.hoveredCleat === cl.cleatName;
+
+    // Hover ring — clear visual cue that this is clickable
+    if (isHover) {
+      ctx.fillStyle = col + '40';                  // ~25% alpha
+      ctx.beginPath();
+      ctx.arc(cl.pos[0], cl.pos[1], 11, 0, Math.PI*2);
+      ctx.fill();
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(cl.pos[0], cl.pos[1], 11, 0, Math.PI*2);
+      ctx.stroke();
+    }
+
+    if (ln.attached) {
+      // Coloured halo for an attached cleat
+      ctx.fillStyle = col + '55';                  // ~33% alpha
+      ctx.beginPath();
+      ctx.arc(cl.pos[0], cl.pos[1], 7, 0, Math.PI*2);
+      ctx.fill();
+      ctx.fillStyle = col;
+    } else {
+      ctx.fillStyle = '#1a1f24';
+    }
     ctx.beginPath();
-    ctx.arc(cx, cy, 3, 0, Math.PI*2);
+    ctx.arc(cl.pos[0], cl.pos[1], 3.8, 0, Math.PI*2);
     ctx.fill();
+    ctx.strokeStyle = isHover ? col : '#cdd6e0';
+    ctx.lineWidth = 1.4;
     ctx.stroke();
   }
   ctx.restore();
@@ -1266,6 +1352,38 @@ function drawLines() {
   }
 }
 
+function drawContacts() {
+  if (!state.contacts || state.contacts.length === 0) return;
+  for (const c of state.contacts) {
+    const a = Math.max(0, c.life / c.maxLife);
+    const p = W2P(c.x, c.y);
+
+    // Impact glow — red, scales with closing speed
+    if (c.impact > 0.05) {
+      const r = 6 + 18 * c.impact;
+      const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r);
+      grad.addColorStop(0, `rgba(255, 90, 60, ${a * (0.4 + 0.5 * c.impact)})`);
+      grad.addColorStop(1, `rgba(255, 90, 60, 0)`);
+      ctx.fillStyle = grad;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI*2); ctx.fill();
+    }
+
+    // Rubbing glow — yellow, scales with tangential speed
+    if (c.rubbing > 0.05) {
+      const r = 5 + 10 * c.rubbing;
+      const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r);
+      grad.addColorStop(0, `rgba(255, 200, 90, ${a * (0.3 + 0.5 * c.rubbing)})`);
+      grad.addColorStop(1, `rgba(255, 200, 90, 0)`);
+      ctx.fillStyle = grad;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI*2); ctx.fill();
+    }
+
+    // Always-visible core dot for any contact
+    ctx.fillStyle = `rgba(255, 250, 220, ${a * 0.8})`;
+    ctx.beginPath(); ctx.arc(p.x, p.y, 2.4, 0, Math.PI*2); ctx.fill();
+  }
+}
+
 function drawCurrentArrowOverlay() {
   // Big arrow in upper-right showing world current
   const cur = currentVec();
@@ -1316,7 +1434,7 @@ function updateHUD() {
   document.getElementById('hud-throttle').textContent = Math.round(b.throttle * 100) + '%';
   let helmTxt = 'midship';
   if (Math.abs(b.helm) > 0.02) {
-    helmTxt = (b.helm < 0 ? 'P' : 'S') + ' ' + Math.round(Math.abs(b.helm) * 35) + '°';
+    helmTxt = (b.helm < 0 ? 'P' : 'S') + ' ' + Math.round(Math.abs(b.helm) * 45) + '°';
   }
   document.getElementById('hud-helm').textContent = helmTxt;
 
@@ -1683,7 +1801,7 @@ function updateOverlayUI() {
   // Helm handle: left% goes from 0% (full port) to 100% (full starboard)
   document.getElementById('helm-handle').style.left = (50 + h * 50) + '%';
   let helmTxt = 'midship';
-  if (Math.abs(h) > 0.02) helmTxt = (h < 0 ? 'P' : 'S') + ' ' + Math.round(Math.abs(h) * 35) + '°';
+  if (Math.abs(h) > 0.02) helmTxt = (h < 0 ? 'P' : 'S') + ' ' + Math.round(Math.abs(h) * 45) + '°';
   document.getElementById('helm-label').textContent = helmTxt;
 }
 
@@ -1754,6 +1872,50 @@ document.querySelectorAll('.line-item .toggle').forEach(btn => {
     const k = btn.closest('.line-item').dataset.line;
     toggleLine(k);
   });
+});
+
+// Click on a cleat on the boat to attach/release the matching line.
+// Cursor changes to "pointer" when hovering near a cleat for discoverability.
+const CLEAT_TO_LINE = { bow: 'bow', midfwd: 'fwdSpring', midaft: 'aftSpring', stern: 'stern' };
+const CLEAT_HIT_RADIUS = 2.4;   // metres — generous on touch (~19 px at default zoom)
+
+function nearestCleat(wx, wy) {
+  let best = null, bestDist = Infinity;
+  for (const cleatName of Object.keys(CLEAT_TO_LINE)) {
+    const cp = getBoatCleat(cleatName);
+    const d = Math.hypot(cp.x - wx, cp.y - wy);
+    if (d < bestDist) { bestDist = d; best = cleatName; }
+  }
+  return { cleat: best, dist: bestDist };
+}
+
+cv.addEventListener('pointerdown', (e) => {
+  const rect = cv.getBoundingClientRect();
+  const wx = (e.clientX - rect.left) / PX_PER_M;
+  const wy = (e.clientY - rect.top)  / PX_PER_M;
+  const { cleat, dist } = nearestCleat(wx, wy);
+  if (dist < CLEAT_HIT_RADIUS) {
+    toggleLine(CLEAT_TO_LINE[cleat]);
+    e.preventDefault();
+  }
+});
+
+cv.addEventListener('pointermove', (e) => {
+  // Touch devices don't show a cursor, but we still update the hover state
+  // so the halo on the cleat lights up while a finger is hovering.
+  const rect = cv.getBoundingClientRect();
+  const wx = (e.clientX - rect.left) / PX_PER_M;
+  const wy = (e.clientY - rect.top)  / PX_PER_M;
+  const { cleat, dist } = nearestCleat(wx, wy);
+  const over = dist < CLEAT_HIT_RADIUS;
+  state.hoveredCleat = over ? cleat : null;
+  if (e.pointerType !== 'touch') {
+    cv.style.cursor = over ? 'pointer' : 'default';
+  }
+});
+cv.addEventListener('pointerleave', () => {
+  state.hoveredCleat = null;
+  cv.style.cursor = 'default';
 });
 
 function toggleLine(k) {
@@ -1874,9 +2036,9 @@ window.addEventListener('keydown', e => {
   if (k === ' ') { setThrottle(0); throttleTarget = null; e.preventDefault(); }
   if (k === 'x') { setHelm(0); helmTarget = null; }
   if (k === '1') toggleLine('bow');
-  if (k === '2') toggleLine('stern');
-  if (k === '3') toggleLine('fwdSpring');
-  if (k === '4') toggleLine('aftSpring');
+  if (k === '2') toggleLine('fwdSpring');
+  if (k === '3') toggleLine('aftSpring');
+  if (k === '4') toggleLine('stern');
 });
 window.addEventListener('keyup', e => {
   const k = e.key.toLowerCase();
