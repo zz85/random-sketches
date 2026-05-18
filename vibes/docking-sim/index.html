@@ -32,18 +32,21 @@
     height: 100vh;
     overflow: hidden;
     display: flex;
+    position: relative;
   }
 
   #canvas-wrap {
     flex: 1;
     position: relative;
     background: #050a14;
+    overflow: hidden;
   }
 
   canvas {
     display: block;
     width: 100%;
     height: 100%;
+    touch-action: none;
   }
 
   #hud {
@@ -59,6 +62,7 @@
     line-height: 1.7;
     pointer-events: none;
     min-width: 200px;
+    z-index: 10;
   }
   #hud .row { display: flex; justify-content: space-between; gap: 16px; }
   #hud .label { color: var(--text-dim); }
@@ -76,6 +80,7 @@
     font-size: 11px;
     line-height: 1.6;
     pointer-events: none;
+    z-index: 5;
   }
   #legend .key {
     display: inline-block;
@@ -87,18 +92,193 @@
     color: var(--accent);
   }
 
+  /* ───────── Overlay controls (throttle / helm) ───────── */
+  .ovr-ctrl {
+    position: absolute;
+    background: rgba(13,17,23,0.85);
+    backdrop-filter: blur(10px);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.35);
+    z-index: 20;
+  }
+  .ovr-label {
+    font-size: 11px;
+    color: var(--text);
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+  }
+  .ovr-mini { color: var(--text-dim); font-size: 10px; }
+  .ovr-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px; margin-bottom: 6px;
+  }
+  .ovr-row .ovr-label { flex: 1; }
+  .ovr-track {
+    position: relative;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    touch-action: none;
+    overflow: hidden;
+  }
+  .ovr-track.vertical { width: 48px; height: 200px; margin: 6px auto; }
+  .ovr-track.horizontal { width: 100%; height: 36px; }
+  .ovr-zone-pos, .ovr-zone-neg {
+    position: absolute; left: 0; right: 0; pointer-events: none;
+  }
+  .ovr-zone-pos {
+    top: 0; height: 50%;
+    background: linear-gradient(to bottom, rgba(63,185,80,0.18), rgba(63,185,80,0.02));
+  }
+  .ovr-zone-neg {
+    bottom: 0; height: 50%;
+    background: linear-gradient(to top, rgba(248,81,73,0.18), rgba(248,81,73,0.02));
+  }
+  .ovr-rail {
+    position: absolute; inset: 0;
+    pointer-events: none;
+  }
+  .ovr-track.vertical .ovr-rail::before {
+    content: ''; position: absolute; left: 0; right: 0;
+    top: 50%; height: 0;
+    border-top: 1px dashed rgba(139,148,158,0.55);
+  }
+  .ovr-track.horizontal .ovr-rail::before {
+    content: ''; position: absolute; top: 0; bottom: 0;
+    left: 50%; width: 0;
+    border-left: 1px dashed rgba(139,148,158,0.55);
+  }
+  .ovr-handle {
+    position: absolute;
+    background: var(--accent);
+    border-radius: 4px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+    pointer-events: none;
+  }
+  .ovr-track.vertical .ovr-handle {
+    left: 4px; right: 4px; height: 18px;
+    top: 50%; transform: translateY(-50%);
+    transition: top 0.05s linear;
+  }
+  .ovr-track.horizontal .ovr-handle {
+    top: 4px; bottom: 4px; width: 18px;
+    left: 50%; transform: translateX(-50%);
+    transition: left 0.05s linear;
+  }
+  .ovr-btn {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    width: 100%;
+    height: 28px;
+    border-radius: 5px;
+    font-family: inherit;
+    font-size: 11px;
+    cursor: pointer;
+    margin-top: 8px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .ovr-btn:hover { background: #21262d; color: var(--text); }
+  .ovr-btn:active { background: var(--accent); color: #050a14; }
+
+  #throttle-ctrl { bottom: 16px; right: 16px; width: 70px; }
+  #helm-ctrl {
+    bottom: 16px; left: 50%; transform: translateX(-50%);
+    width: min(360px, calc(100% - 130px));
+  }
+
+  /* ───────── Panel toggle (mobile) ───────── */
+  #panel-toggle {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    z-index: 60;
+    width: 42px;
+    height: 42px;
+    background: rgba(13,17,23,0.85);
+    backdrop-filter: blur(8px);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 18px;
+    cursor: pointer;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #panel-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.4);
+    z-index: 99;
+    display: none;
+  }
+  #panel-backdrop.show { display: block; }
+
+  /* ───────── Toast notifications ───────── */
+  #toast-area {
+    position: absolute;
+    top: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-items: center;
+    z-index: 70;
+    pointer-events: none;
+    max-width: calc(100% - 32px);
+  }
+  .toast {
+    background: rgba(60, 16, 16, 0.92);
+    backdrop-filter: blur(10px);
+    border: 1px solid var(--bad);
+    border-left: 4px solid var(--bad);
+    color: #fdd;
+    padding: 10px 16px;
+    border-radius: 6px;
+    font-size: 12px;
+    line-height: 1.4;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    animation: toast-in 0.18s ease-out;
+    max-width: 480px;
+    text-align: center;
+  }
+  .toast.info {
+    background: rgba(13,17,23,0.92);
+    border-color: var(--accent);
+    border-left-color: var(--accent);
+    color: var(--text);
+  }
+  .toast.fade { animation: toast-out 0.4s ease-in forwards; }
+  @keyframes toast-in {
+    from { opacity: 0; transform: translateY(-8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes toast-out {
+    to { opacity: 0; transform: translateY(-8px); }
+  }
+
   #panel {
     width: 360px;
     background: var(--panel);
     border-left: 1px solid var(--border);
     overflow-y: auto;
-    display: flex;
-    flex-direction: column;
+    overscroll-behavior: contain;
   }
 
   .section {
     border-bottom: 1px solid var(--border);
     padding: 14px 16px;
+    flex-shrink: 0;
   }
 
   .section h3 {
@@ -219,8 +399,6 @@
 
   #tips {
     padding: 14px 16px;
-    flex: 1;
-    overflow-y: auto;
     font-size: 11px;
     line-height: 1.55;
   }
@@ -260,6 +438,37 @@
   .compass svg { width: 100%; height: 100%; display: block; }
 
   .preset-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+
+  /* ───────── Mobile ───────── */
+  @media (max-width: 768px) {
+    #panel-toggle { display: flex; }
+    #panel {
+      position: absolute;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: min(360px, 92%);
+      transform: translateX(100%);
+      transition: transform 0.25s ease;
+      z-index: 100;
+      box-shadow: -4px 0 24px rgba(0,0,0,0.55);
+    }
+    #panel.open { transform: translateX(0); }
+    #legend { display: none; }
+    #hud { font-size: 10px; min-width: 150px; padding: 8px 10px; }
+    #throttle-ctrl { width: 60px; padding: 8px; }
+    .ovr-track.vertical { height: 160px; width: 40px; }
+    #helm-ctrl { width: calc(100% - 60px - 56px); left: 12px; transform: none; }
+    .ovr-btn { height: 32px; }
+    button.action, .seg button, .line-item .toggle {
+      min-height: 36px;
+    }
+  }
+  @media (max-width: 420px) {
+    #helm-ctrl { width: calc(100% - 60px - 32px); left: 12px; }
+    #hud { font-size: 10px; min-width: 130px; }
+    .ovr-track.vertical { height: 140px; }
+  }
 </style>
 </head>
 <body>
@@ -273,14 +482,65 @@
     <div class="row"><span class="label">helm</span><span class="value" id="hud-helm">midship</span></div>
     <div class="row"><span class="label">to dock</span><span class="value" id="hud-dist">— m</span></div>
   </div>
+
+  <button id="panel-toggle" aria-label="Toggle panel">☰</button>
+
+  <div id="toast-area" aria-live="polite"></div>
+
+  <!-- Throttle lever (vertical) -->
+  <div class="ovr-ctrl" id="throttle-ctrl">
+    <div class="ovr-label" id="throttle-label">0%</div>
+    <div class="ovr-track vertical" id="throttle-track">
+      <div class="ovr-zone-pos"></div>
+      <div class="ovr-zone-neg"></div>
+      <div class="ovr-rail">
+        <div class="ovr-handle" id="throttle-handle"></div>
+      </div>
+    </div>
+    <button class="ovr-btn" id="throttle-neutral" title="Neutral (space)">N</button>
+  </div>
+
+  <!-- Helm slider (horizontal) -->
+  <div class="ovr-ctrl" id="helm-ctrl">
+    <div class="ovr-row">
+      <span class="ovr-mini">P</span>
+      <span class="ovr-label" id="helm-label">midship</span>
+      <span class="ovr-mini">S</span>
+    </div>
+    <div class="ovr-track horizontal" id="helm-track">
+      <div class="ovr-rail">
+        <div class="ovr-handle" id="helm-handle"></div>
+      </div>
+    </div>
+    <button class="ovr-btn" id="helm-centre" title="Centre helm (X)">⌖ centre</button>
+  </div>
+
   <div id="legend">
-    <div><span class="key">W</span>/<span class="key">S</span> throttle &nbsp; <span class="key">A</span>/<span class="key">D</span> helm</div>
+    <div><span class="key">↑</span>/<span class="key">↓</span> throttle &nbsp; <span class="key">←</span>/<span class="key">→</span> helm</div>
     <div><span class="key">space</span> stop &nbsp; <span class="key">X</span> centre helm &nbsp; <span class="key">R</span> reset</div>
     <div><span class="key">1-4</span> toggle lines (bow / stern / fwd / aft)</div>
   </div>
 </div>
 
 <aside id="panel">
+  <div class="section">
+    <h3>Scenario</h3>
+    <div class="preset-btns">
+      <button class="action" data-preset="following">Following current</button>
+      <button class="action" data-preset="head">Head current</button>
+      <button class="action" data-preset="onto">Cross onto dock</button>
+      <button class="action" data-preset="off">Cross off dock</button>
+      <button class="action" data-preset="slack">Slack water</button>
+      <button class="action" data-preset="random">Random current</button>
+    </div>
+    <div class="row" style="margin-top: 8px;">
+      <button class="action full" data-preset="randomAll">Randomize everything</button>
+    </div>
+    <div class="row" style="margin-top: 8px;">
+      <button class="action full primary" id="btn-reset">Reset scenario</button>
+    </div>
+  </div>
+
   <div class="section">
     <h3>Mode</h3>
     <div class="seg" id="mode-seg">
@@ -329,24 +589,6 @@
   </div>
 
   <div class="section">
-    <h3>Controls</h3>
-    <div class="row">
-      <label class="text">throttle</label>
-      <input type="range" id="throttle" min="-100" max="100" value="0" step="1">
-      <span class="num" id="throttle-v">0%</span>
-    </div>
-    <div class="row">
-      <label class="text">helm</label>
-      <input type="range" id="helm" min="-100" max="100" value="0" step="1">
-      <span class="num" id="helm-v">0°</span>
-    </div>
-    <div class="row" style="gap: 6px;">
-      <button class="action" id="btn-stop">Stop engine</button>
-      <button class="action" id="btn-centre">Centre helm</button>
-    </div>
-  </div>
-
-  <div class="section">
     <h3>Lines</h3>
     <div class="lines-list">
       <div class="line-item" data-line="bow">
@@ -372,23 +614,9 @@
     </div>
   </div>
 
-  <div class="section">
-    <h3>Scenario</h3>
-    <div class="preset-btns">
-      <button class="action" data-preset="following">Following current</button>
-      <button class="action" data-preset="head">Head current</button>
-      <button class="action" data-preset="onto">Cross onto dock</button>
-      <button class="action" data-preset="off">Cross off dock</button>
-      <button class="action" data-preset="slack">Slack water</button>
-      <button class="action" data-preset="random">Random</button>
-    </div>
-    <div class="row" style="margin-top: 10px;">
-      <button class="action full primary" id="btn-reset">Reset scenario</button>
-    </div>
-  </div>
-
   <div id="tips"></div>
 </aside>
+<div id="panel-backdrop"></div>
 
 <script>
 // ============================================================================
@@ -444,12 +672,22 @@ const state = {
 // Physics constants ---------------------------------------------------------
 const PHYS = {
   thrustMax: 4500,        // N
-  rudderCoef: 1500,       // rudder effectiveness with prop wash (N at full helm + full thrust)
-  rudderFlowCoef: 600,    // rudder force from forward flow (passive)
-  propWalkCoef: 1200,     // lateral force at stern in reverse
-  dragLinFwd: 80,         // longitudinal drag coefficient (F = c * v|v|)
-  dragLinSide: 1500,      // lateral drag (much higher)
-  dragAng: 80000,         // angular drag
+  rudderCoef: 4000,       // rudder force at full helm + full thrust (N at the stern)
+  rudderFlowCoef: 600,    // rudder force from passive forward flow (rarely dominant)
+  propWalkCoef: 1200,     // lateral force at stern in reverse (right-hand prop walks stern to port)
+  dragLinFwd: 80,         // longitudinal hull drag coefficient (F = c * v|v|)
+  dragLinSide: 1500,      // lateral hull drag
+
+  // ── Yaw damping ──────────────────────────────────────────────────────────
+  // A keelboat is heavily damped in yaw: the keel acts as a vane against the
+  // flow. Almost all of the damping is *linear* in ω; quadratic terms are too
+  // weak at low ω so the boat would spin forever after the helm centres.
+  // The strength scales with forward speed because the keel's vane action
+  // depends on water moving past it.
+  yawLinDamp: 12000,      // N·m·s/rad — viscous baseline (always present)
+  yawSpeedDamp: 15000,    // N·m·s²/(rad·m) — extra per m/s of headway through water
+  yawQuadDamp: 4000,      // small quadratic safety to clamp very high spin rates
+
   lineK: 60000,           // line spring constant N/m
   lineDamp: 8000,         // line damping
   fenderK: 200000,        // hard collision pushback
@@ -519,11 +757,8 @@ function resetScenario() {
     }
   }
 
-  // Sliders reflect state
-  document.getElementById('throttle').value = 0;
-  document.getElementById('helm').value = 0;
-  document.getElementById('throttle-v').textContent = '0%';
-  document.getElementById('helm-v').textContent = '0°';
+  // Reset overlay control UI to neutral
+  updateOverlayUI();
 
   refreshLineUI();
   // Particles
@@ -645,8 +880,15 @@ function step(dt) {
   const Flat = -PHYS.dragLinSide * vwLat * Math.abs(vwLat);
   Fx += Flon * fwdX + Flat * rgtX;
   Fy += Flon * fwdY + Flat * rgtY;
-  // Angular drag
-  T += -PHYS.dragAng * b.omega * Math.abs(b.omega);
+  // Yaw (angular) damping — keel-as-vane model.
+  //   • Linear viscous term — exponential decay back to zero rotation.
+  //   • Speed-coupled term — keel works as a vane only when water flows past
+  //     it; the faster you motor, the harder it resists rotation.
+  //   • Tiny quadratic term — clamps unrealistic high-ω runaway.
+  const headway = Math.abs(vwLon);
+  T += -PHYS.yawLinDamp * b.omega;
+  T += -PHYS.yawSpeedDamp * headway * b.omega;
+  T += -PHYS.yawQuadDamp * b.omega * Math.abs(b.omega);
 
   // 5) LINE FORCES
   for (const [name, def] of Object.entries(LINE_DEFS)) {
@@ -764,7 +1006,7 @@ function draw() {
   drawDock();
   drawLines();
   drawBoat();
-  drawCurrentArrowOverlay();
+  if (state.worldW > 540) drawCurrentArrowOverlay();   // hide on small / mobile (toggle button takes that corner)
 
   if (state.collisionFlash > 0) {
     ctx.fillStyle = `rgba(248,81,73,${0.18 * state.collisionFlash})`;
@@ -880,9 +1122,46 @@ function drawBoat() {
   // Rudder (at stern, deflected by helm)
   ctx.save();
   ctx.translate(-L/2, 0);
-  ctx.rotate(b.helm * 0.6);  // helm angle to rudder angle (max ~35°)
-  ctx.fillStyle = '#1a1f24';
-  ctx.fillRect(-m2px(0.6), -m2px(0.15), m2px(0.6), m2px(0.3));
+
+  // Stock / pintle (pivot post sticking down through hull)
+  ctx.fillStyle = '#5c6470';
+  ctx.beginPath();
+  ctx.arc(0, 0, m2px(0.22), 0, Math.PI*2);
+  ctx.fill();
+  ctx.strokeStyle = '#9ba3ad';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Rudder blade — rotates with helm (up to ~34° at full helm)
+  // Note: in screen coords (y down), positive rotation is CW visually.
+  // Helm to starboard (helm > 0) should swing the blade tip toward the boat's
+  // starboard side, which for a bow-east boat is +y. So we negate.
+  ctx.rotate(-b.helm * 0.6);
+  const rL = m2px(1.4), rW = m2px(0.42);
+  // Tapered blade: wider at the front (boat-side), narrower at the trailing edge
+  ctx.beginPath();
+  ctx.moveTo(0,            -rW * 0.5);
+  ctx.lineTo(-rL * 0.95,   -rW * 0.32);
+  ctx.lineTo(-rL,           0);
+  ctx.lineTo(-rL * 0.95,    rW * 0.32);
+  ctx.lineTo(0,             rW * 0.5);
+  ctx.closePath();
+  ctx.fillStyle = '#2a3140';
+  ctx.fill();
+  ctx.strokeStyle = '#9ba3ad';
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+
+  // Centre stripe — neutral grey, lights up orange when deflected
+  const dHelm = Math.abs(b.helm);
+  if (dHelm > 0.02) {
+    ctx.strokeStyle = `rgba(240,136,62,${0.55 + 0.45 * dHelm})`;
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(-m2px(0.12), 0);
+    ctx.lineTo(-rL * 0.92, 0);
+    ctx.stroke();
+  }
   ctx.restore();
 
   // Wake / prop wash visualisation
@@ -1385,27 +1664,81 @@ function syncCurrent() {
 curAngle.addEventListener('input', syncCurrent);
 curSpeed.addEventListener('input', syncCurrent);
 
-const throttleS = document.getElementById('throttle');
-const throttleV = document.getElementById('throttle-v');
-const helmS = document.getElementById('helm');
-const helmV = document.getElementById('helm-v');
-
-function syncControls() {
-  state.boat.throttle = +throttleS.value / 100;
-  state.boat.helm     = +helmS.value / 100;
-  throttleV.textContent = throttleS.value + '%';
-  let h = +helmS.value;
-  helmV.textContent = h === 0 ? '0°' : (h < 0 ? 'P' : 'S') + Math.abs(Math.round(h * 0.35)) + '°';
+// ─── Throttle / Helm overlay controls ────────────────────────────────────────
+function setThrottle(v) {
+  state.boat.throttle = Math.max(-1, Math.min(1, v));
+  updateOverlayUI();
 }
-throttleS.addEventListener('input', syncControls);
-helmS.addEventListener('input', syncControls);
+function setHelm(v) {
+  state.boat.helm = Math.max(-1, Math.min(1, v));
+  updateOverlayUI();
+}
 
-document.getElementById('btn-stop').addEventListener('click', () => {
-  throttleS.value = 0; syncControls();
-});
-document.getElementById('btn-centre').addEventListener('click', () => {
-  helmS.value = 0; syncControls();
-});
+function updateOverlayUI() {
+  const t = state.boat.throttle;
+  const h = state.boat.helm;
+  // Throttle handle: top% goes from 0% (full ahead) to 100% (full astern)
+  document.getElementById('throttle-handle').style.top = (50 - t * 50) + '%';
+  document.getElementById('throttle-label').textContent = Math.round(t * 100) + '%';
+  // Helm handle: left% goes from 0% (full port) to 100% (full starboard)
+  document.getElementById('helm-handle').style.left = (50 + h * 50) + '%';
+  let helmTxt = 'midship';
+  if (Math.abs(h) > 0.02) helmTxt = (h < 0 ? 'P' : 'S') + ' ' + Math.round(Math.abs(h) * 35) + '°';
+  document.getElementById('helm-label').textContent = helmTxt;
+}
+
+// Generic pointer-driven drag for an overlay track
+function makeOverlay(trackId, vertical, onChange) {
+  const track = document.getElementById(trackId);
+  let dragging = false;
+
+  function valueAt(e) {
+    const rect = track.getBoundingClientRect();
+    const inset = 8; // visual padding so handle stays inside
+    if (vertical) {
+      const usable = Math.max(1, rect.height - 2 * inset);
+      const y = e.clientY - rect.top - inset;
+      return Math.max(-1, Math.min(1, 1 - 2 * (y / usable)));
+    } else {
+      const usable = Math.max(1, rect.width - 2 * inset);
+      const x = e.clientX - rect.left - inset;
+      return Math.max(-1, Math.min(1, 2 * (x / usable) - 1));
+    }
+  }
+
+  track.addEventListener('pointerdown', (e) => {
+    dragging = true;
+    track.setPointerCapture && track.setPointerCapture(e.pointerId);
+    onChange(valueAt(e));
+    e.preventDefault();
+  });
+  track.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    onChange(valueAt(e));
+    e.preventDefault();
+  });
+  function end() { dragging = false; }
+  track.addEventListener('pointerup', end);
+  track.addEventListener('pointercancel', end);
+  track.addEventListener('pointerleave', end);
+}
+
+makeOverlay('throttle-track', true,  setThrottle);
+makeOverlay('helm-track',     false, setHelm);
+
+document.getElementById('throttle-neutral').addEventListener('click', () => setThrottle(0));
+document.getElementById('helm-centre').addEventListener('click', () => setHelm(0));
+
+// ─── Panel toggle (mobile) ───────────────────────────────────────────────────
+const panelEl = document.getElementById('panel');
+const backdrop = document.getElementById('panel-backdrop');
+function togglePanel(open) {
+  if (open === undefined) open = !panelEl.classList.contains('open');
+  panelEl.classList.toggle('open', open);
+  backdrop.classList.toggle('show', open);
+}
+document.getElementById('panel-toggle').addEventListener('click', () => togglePanel());
+backdrop.addEventListener('click', () => togglePanel(false));
 
 // Lines
 function refreshLineUI() {
@@ -1443,16 +1776,18 @@ function toggleLine(k) {
   refreshLineUI();
 }
 
-let tipFlashTimer = null;
-function flashTip(msg) {
-  const tipsEl = document.getElementById('tips');
-  const div = document.createElement('div');
-  div.className = 'caution';
-  div.textContent = msg;
-  tipsEl.prepend(div);
-  if (tipFlashTimer) clearTimeout(tipFlashTimer);
-  tipFlashTimer = setTimeout(() => div.remove(), 2500);
+// Top-of-canvas toast notifications (also used as warnings)
+const toastArea = document.getElementById('toast-area');
+function showToast(msg, type) {
+  const el = document.createElement('div');
+  el.className = 'toast' + (type === 'info' ? ' info' : '');
+  el.textContent = msg;
+  toastArea.appendChild(el);
+  setTimeout(() => el.classList.add('fade'), 2200);
+  setTimeout(() => el.remove(), 2700);
 }
+// Backwards-compat alias
+const flashTip = (m) => showToast(m, 'warn');
 
 // Reset
 document.getElementById('btn-reset').addEventListener('click', resetScenario);
@@ -1473,38 +1808,99 @@ function applyPreset(p) {
       curSpeed.value = Math.floor(Math.random() * 25) + 3;
       break;
     }
+    case 'randomAll': {
+      // Randomise mode, dock side, and current
+      const newMode = Math.random() < 0.5 ? 'dock' : 'undock';
+      const newSide = Math.random() < 0.5 ? 'port' : 'starboard';
+      setSegment('mode-seg', 'mode', newMode);
+      setSegment('side-seg', 'dockSide', newSide);
+      curAngle.value = Math.floor(Math.random() * 360);
+      curSpeed.value = Math.floor(Math.random() * 25) + 3;
+      break;
+    }
   }
   syncCurrent();
   resetScenario();
 }
 
+// Programmatically update a segment control + state
+function setSegment(segId, stateKey, value) {
+  const seg = document.getElementById(segId);
+  seg.querySelectorAll('button').forEach(b => {
+    b.classList.toggle('active', b.dataset.v === value);
+  });
+  state[stateKey] = value;
+}
+
 // Keyboard shortcuts
 const keys = {};
+const ARROWS = ['arrowup', 'arrowdown', 'arrowleft', 'arrowright'];
+const ZERO_EPS = 0.02;     // values within this are treated as "at neutral"
+
+// When a movement key is held, we steer toward a target; null = idle.
+// Pressing the opposite of the current direction sets the target to 0
+// so the control brakes back to neutral instead of crossing through.
+let throttleTarget = null;
+let helmTarget = null;
+
+function updateMovementTargets() {
+  const t = state.boat.throttle, h = state.boat.helm;
+  // Throttle (up/down)
+  if (keys['arrowup'] && keys['arrowdown']) throttleTarget = 0;
+  else if (keys['arrowup'])   throttleTarget = (t < -ZERO_EPS) ? 0 : 1;
+  else if (keys['arrowdown']) throttleTarget = (t >  ZERO_EPS) ? 0 : -1;
+  else throttleTarget = null;
+  // Helm (left/right)
+  if (keys['arrowleft'] && keys['arrowright']) helmTarget = 0;
+  else if (keys['arrowleft'])  helmTarget = (h >  ZERO_EPS) ? 0 : -1;
+  else if (keys['arrowright']) helmTarget = (h < -ZERO_EPS) ? 0 :  1;
+  else helmTarget = null;
+}
+
 window.addEventListener('keydown', e => {
-  // Allow keyboard shortcuts even when sliders are focused, but not in text inputs
+  if (e.repeat) return;                                            // ignore OS auto-repeat
+  const k = e.key.toLowerCase();
   if (e.target.tagName === 'INPUT' && e.target.type !== 'range') return;
-  keys[e.key.toLowerCase()] = true;
-  if (e.key.toLowerCase() === 'r') resetScenario();
-  if (e.key === ' ') { throttleS.value = 0; syncControls(); e.preventDefault(); }
-  if (e.key.toLowerCase() === 'x') { helmS.value = 0; syncControls(); }
-  if (e.key === '1') toggleLine('bow');
-  if (e.key === '2') toggleLine('stern');
-  if (e.key === '3') toggleLine('fwdSpring');
-  if (e.key === '4') toggleLine('aftSpring');
+  if (e.target.tagName === 'INPUT' && e.target.type === 'range' && ARROWS.includes(k)) return;
+
+  if (ARROWS.includes(k)) {
+    keys[k] = true;
+    e.preventDefault();
+    updateMovementTargets();
+    return;
+  }
+
+  if (k === 'r') resetScenario();
+  if (k === ' ') { setThrottle(0); throttleTarget = null; e.preventDefault(); }
+  if (k === 'x') { setHelm(0); helmTarget = null; }
+  if (k === '1') toggleLine('bow');
+  if (k === '2') toggleLine('stern');
+  if (k === '3') toggleLine('fwdSpring');
+  if (k === '4') toggleLine('aftSpring');
 });
-window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+window.addEventListener('keyup', e => {
+  const k = e.key.toLowerCase();
+  if (ARROWS.includes(k)) {
+    keys[k] = false;
+    updateMovementTargets();
+  }
+});
 
 function processHeldKeys(dt) {
-  const t = +throttleS.value, h = +helmS.value;
-  const tStep = 80 * dt, hStep = 100 * dt;
-  let nt = t, nh = h;
-  if (keys['w']) nt = Math.min(100, t + tStep);
-  if (keys['s']) nt = Math.max(-100, t - tStep);
-  if (keys['a']) nh = Math.max(-100, h - hStep);
-  if (keys['d']) nh = Math.min(100,  h + hStep);
-  if (nt !== t) { throttleS.value = nt; }
-  if (nh !== h) { helmS.value = nh; }
-  if (nt !== t || nh !== h) syncControls();
+  // Slightly eased response: full deflection in ~0.67 s (throttle), ~0.33 s (helm)
+  const tStep = 1.5 * dt;
+  const hStep = 3.0 * dt;
+
+  if (throttleTarget !== null) {
+    const cur = state.boat.throttle;
+    if (cur < throttleTarget)      setThrottle(Math.min(cur + tStep, throttleTarget));
+    else if (cur > throttleTarget) setThrottle(Math.max(cur - tStep, throttleTarget));
+  }
+  if (helmTarget !== null) {
+    const cur = state.boat.helm;
+    if (cur < helmTarget)      setHelm(Math.min(cur + hStep, helmTarget));
+    else if (cur > helmTarget) setHelm(Math.max(cur - hStep, helmTarget));
+  }
 }
 
 window.addEventListener('resize', resizeCanvas);
@@ -1530,7 +1926,7 @@ function loop(now) {
 
 // Initialise
 syncCurrent();
-syncControls();
+updateOverlayUI();
 resetScenario();
 requestAnimationFrame(loop);
 </script>
