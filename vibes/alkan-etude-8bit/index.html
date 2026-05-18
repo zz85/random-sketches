@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Alkan Étude sans opus — 8-bit MIDI Player</title>
+<style>
+*{margin:0;box-sizing:border-box}
+body{background:#111;color:#0f0;font-family:'Courier New',monospace;display:flex;flex-direction:column;align-items:center;min-height:100vh;padding:20px}
+h1{font-size:1.2em;text-shadow:0 0 10px #0f0;margin-bottom:4px}
+h2{font-size:.8em;color:#0a0;margin-bottom:16px}
+#drop{border:2px dashed #0f0;padding:40px;text-align:center;cursor:pointer;margin:10px 0;width:512px;transition:background .2s}
+#drop.over{background:#0f02}
+#drop input{display:none}
+button{background:#0f0;color:#111;border:none;padding:10px 28px;font-family:inherit;font-size:1em;cursor:pointer;margin:4px}
+button:hover{background:#0c0}
+button:disabled{background:#333;color:#666;cursor:default}
+canvas{margin-top:12px}
+#info{margin-top:8px;font-size:.85em;color:#0a0;max-width:512px;text-align:center}
+#progress{width:512px;height:6px;background:#222;margin-top:8px;border-radius:3px;overflow:hidden}
+#bar{height:100%;width:0;background:#0f0;transition:width .3s linear}
+#debug{margin-top:10px;font-size:.75em;color:#080;max-width:512px;max-height:150px;overflow-y:auto;white-space:pre-wrap;text-align:left;width:512px}
+</style>
+</head>
+<body>
+<h1>🎹 Alkan — Étude sans opus (8-bit MIDI)</h1>
+<h2>Drop a MIDI file to play it as chiptune</h2>
+<div id="drop" onclick="this.querySelector('input').click()">
+  📁 Drag &amp; drop MIDI file here, or click to browse
+  <input type="file" accept=".mid,.midi" onchange="loadFile(this.files[0])">
+</div>
+<div>
+  <button id="playBtn" onclick="startPlayback()" disabled>▶ PLAY</button>
+  <button id="stopBtn" onclick="stopPlayback()" disabled>■ STOP</button>
+</div>
+<div id="progress"><div id="bar"></div></div>
+<canvas id="viz" width="512" height="120"></canvas>
+<div id="info">Load a MIDI file to begin</div>
+<div id="debug"></div>
+
+<script>
+const dbg = s => { const el = document.getElementById('debug'); el.textContent += s + '\n'; el.scrollTop = el.scrollHeight; console.log(s); };
+
+// --- MIDI Parser ---
+function parseMidi(buf) {
+  const d = new DataView(buf);
+  let p = 0;
+  const u8 = () => d.getUint8(p++);
+  const u16 = () => { const v = d.getUint16(p); p += 2; return v; };
+  const u32 = () => { const v = d.getUint32(p); p += 4; return v; };
+  const vlq = () => {
+    let v = 0, b, count = 0;
+    do {
+      if (count++ > 4) throw 'VLQ too long at ' + p;
+      b = d.getUint8(p++);
+      v = (v << 7) | (b & 0x7f);
+    } while (b & 0x80);
+    return v;
+  };
+
+  const magic = u32();
+  if (magic !== 0x4d546864) throw 'Not a MIDI file (magic: 0x' + magic.toString(16) + ')';
+  const hdrLen = u32();
+  const fmt = u16(), nTrk = u16(), division = u16();
+
+  // division could be ticks-per-quarter or SMPTE
+  const tpq = division & 0x8000 ? 480 : division; // fallback if SMPTE
+  dbg(`MIDI fmt=${fmt} tracks=${nTrk} tpq=${tpq} division=0x${division.toString(16)}`);
+
+  // Skip any extra header bytes
+  if (hdrLen > 6) p += (hdrLen - 6);
+
+  const tracks = [];
+  for (let t = 0; t < nTrk; t++) {
+    const trkMagic = u32();
+    if (trkMagic !== 0x4d54726b) {
+      dbg(`Track ${t}: bad magic 0x${trkMagic.toString(16)}, trying to skip...`);
+      const len = u32();
+      p += len;
+      continue;
+    }
+    const len = u32();
+    const end = p + len;
+    const events = [];
+    let running = 0;
+
+    while (p < end) {
+      const delta = vlq();
+      let byte1 = d.getUint8(p);
+
+      if (byte1 === 0xff) {
+        // Meta event
+        p++;
+        const mtype = u8();
+        const mlen = vlq();
+        if (mtype === 0x51 && mlen >= 3) {
+          const tempo = (d.getUint8(p) << 16) | (d.getUint8(p+1) << 8) | d.getUint8(p+2);
+          events.push({ delta, type: 'tempo', tempo });
+        }
+        p += mlen;
+      } else if (byte1 === 0xf0 || byte1 === 0xf7) {
+        // SysEx
+        p++;
+        const slen = vlq();
+        p += slen;
+        events.push({ delta, type: 'skip' });
+      } else {
+        // Channel message
+        let status;
+        if (byte1 & 0x80) {
+          status = byte1;
+          running = status;
+          p++;
+        } else {
+          status = running;
+        }
+        const type = status & 0xf0;
+        const ch = status & 0x0f;
+
+        if (type === 0x90 || type === 0x80) {
+          const note = u8(), vel = u8();
+          events.push({
+            delta,
+            type: (type === 0x90 && vel > 0) ? 'on' : 'off',
+            ch, note, vel
+          });
+        } else if (type === 0xa0 || type === 0xb0 || type === 0xe0) {
+          p += 2;
+          events.push({ delta, type: 'skip' });
+        } else if (type === 0xc0 || type === 0xd0) {
+          p += 1;
+          events.push({ delta, type: 'skip' });
+        } else {
+          // Unknown, skip a byte to avoid infinite loop
+          dbg(`Unknown status 0x${status.toString(16)} at pos ${p}`);
+          p++;
+          events.push({ delta, type: 'skip' });
+        }
+      }
+    }
+    p = end; // ensure we're at track end
+
+    const noteOns = events.filter(e => e.type === 'on').length;
+    const noteOffs = events.filter(e => e.type === 'off').length;
+    dbg(`Track ${t}: ${events.length} events, ${noteOns} note-ons, ${noteOffs} note-offs`);
+    tracks.push(events);
+  }
+  return { fmt, tpq, tracks };
+}
+
+function midiToNotes(midi) {
+  const { tpq, tracks } = midi;
+  const notes = [];
+  const tempoMap = [{ tick: 0, tempo: 500000 }];
+
+  // Collect tempo changes
+  for (const evts of tracks) {
+    let tick = 0;
+    for (const e of evts) {
+      tick += e.delta;
+      if (e.type === 'tempo') tempoMap.push({ tick, tempo: e.tempo });
+    }
+  }
+  tempoMap.sort((a, b) => a.tick - b.tick);
+  // Deduplicate
+  for (let i = tempoMap.length - 1; i > 0; i--) {
+    if (tempoMap[i].tick === tempoMap[i-1].tick) tempoMap.splice(i, 1);
+  }
+  dbg(`Tempo map: ${tempoMap.length} entries, first=${(60e6/tempoMap[0].tempo).toFixed(1)} BPM`);
+
+  function tickToSec(targetTick) {
+    let sec = 0, prevTick = 0, tempo = 500000;
+    for (const tm of tempoMap) {
+      if (tm.tick >= targetTick) break;
+      sec += (tm.tick - prevTick) / tpq * tempo / 1e6;
+      prevTick = tm.tick;
+      tempo = tm.tempo;
+    }
+    sec += (targetTick - prevTick) / tpq * tempo / 1e6;
+    return sec;
+  }
+
+  for (const evts of tracks) {
+    let tick = 0;
+    const active = {};
+    for (const e of evts) {
+      tick += e.delta;
+      if (e.type === 'on') {
+        const key = e.note + ',' + e.ch;
+        if (active[key]) {
+          const s = tickToSec(active[key].tick);
+          const dur = tickToSec(tick) - s;
+          if (dur > 0.001) notes.push({ note: e.note, start: s, dur, ch: e.ch, vel: active[key].vel });
+        }
+        active[key] = { tick, vel: e.vel };
+      } else if (e.type === 'off') {
+        const key = e.note + ',' + e.ch;
+        if (active[key]) {
+          const s = tickToSec(active[key].tick);
+          const dur = tickToSec(tick) - s;
+          if (dur > 0.001) notes.push({ note: e.note, start: s, dur, ch: e.ch, vel: active[key].vel });
+          delete active[key];
+        }
+      }
+    }
+    // Close any still-active notes
+    for (const key in active) {
+      const s = tickToSec(active[key].tick);
+      notes.push({ note: parseInt(key), start: s, dur: 0.1, ch: 0, vel: active[key].vel });
+    }
+  }
+
+  notes.sort((a, b) => a.start - b.start);
+  dbg(`Total notes: ${notes.length}`);
+  if (notes.length > 0) {
+    dbg(`First note: midi=${notes[0].note} t=${notes[0].start.toFixed(3)}s dur=${notes[0].dur.toFixed(3)}s vel=${notes[0].vel}`);
+    const last = notes[notes.length - 1];
+    dbg(`Last note: midi=${last.note} t=${last.start.toFixed(3)}s dur=${last.dur.toFixed(3)}s`);
+  }
+  return notes;
+}
+
+// --- Playback using AudioBufferSourceNode for efficiency ---
+let audioCtx, analyser, playing = false, gainNode, startTime, bufferSource;
+let parsedNotes = null, totalDuration = 0;
+
+function noteToFreq(n) { return 440 * Math.pow(2, (n - 69) / 12); }
+
+// Generate a short waveform buffer for a given type
+function makeWaveBuffer(type, freq, dur, sampleRate) {
+  const len = Math.ceil(dur * sampleRate);
+  const buf = new Float32Array(len);
+  const period = sampleRate / freq;
+  for (let i = 0; i < len; i++) {
+    const phase = (i % period) / period;
+    if (type === 'square') {
+      buf[i] = phase < 0.5 ? 0.5 : -0.5;
+    } else {
+      // triangle
+      buf[i] = phase < 0.5 ? (4 * phase - 1) : (3 - 4 * phase);
+      buf[i] *= 0.5;
+    }
+    // Envelope: quick attack, sustain, quick release
+    const env = i < 100 ? i / 100 : (i > len - 200 ? (len - i) / 200 : 1);
+    buf[i] *= env;
+  }
+  return buf;
+}
+
+function startPlayback() {
+  if (playing || !parsedNotes || parsedNotes.length === 0) return;
+  audioCtx = new AudioContext();
+  analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 1024;
+  gainNode = audioCtx.createGain();
+  gainNode.gain.value = 1.0;
+  gainNode.connect(analyser);
+  analyser.connect(audioCtx.destination);
+
+  const sr = audioCtx.sampleRate;
+  const splitPoint = 60;
+  const totalSamples = Math.ceil((totalDuration + 0.5) * sr);
+
+  dbg(`Pre-rendering ${parsedNotes.length} notes into buffer (${(totalSamples/sr).toFixed(1)}s @ ${sr}Hz)...`);
+  document.getElementById('info').textContent = 'Rendering audio...';
+
+  // Pre-render all notes into a single mix buffer
+  const mix = new Float32Array(totalSamples);
+
+  for (let i = 0; i < parsedNotes.length; i++) {
+    const n = parsedNotes[i];
+    const freq = noteToFreq(n.note);
+    const isBass = n.note < splitPoint;
+    const dur = Math.max(n.dur, 0.03);
+    const vol = (n.vel / 127) * (isBass ? 0.22 : 0.12);
+    const type = isBass ? 'triangle' : 'square';
+
+    const samples = makeWaveBuffer(type, freq, dur, sr);
+    const offset = Math.floor(n.start * sr);
+
+    for (let j = 0; j < samples.length && offset + j < totalSamples; j++) {
+      mix[offset + j] += samples[j] * vol;
+    }
+  }
+
+  // Soft-clip to prevent distortion from overlapping notes
+  for (let i = 0; i < mix.length; i++) {
+    mix[i] = Math.tanh(mix[i]);
+  }
+
+  dbg(`Rendering complete. Peak amplitude: ${Math.max(...mix.slice(0, Math.min(mix.length, 100000)).map(Math.abs)).toFixed(3)}`);
+
+  // Create AudioBuffer and play it with a single source node
+  const audioBuf = audioCtx.createBuffer(1, totalSamples, sr);
+  audioBuf.getChannelData(0).set(mix);
+
+  bufferSource = audioCtx.createBufferSource();
+  bufferSource.buffer = audioBuf;
+  bufferSource.connect(gainNode);
+  bufferSource.start();
+  bufferSource.onended = () => { if (playing) stopPlayback(); };
+
+  playing = true;
+  startTime = Date.now();
+  document.getElementById('playBtn').disabled = true;
+  document.getElementById('stopBtn').disabled = false;
+
+  updateProgress();
+  drawViz();
+  document.getElementById('info').textContent = `Playing ${parsedNotes.length} notes — ${totalDuration.toFixed(1)}s`;
+}
+
+function updateProgress() {
+  if (!playing) return;
+  const elapsed = (Date.now() - startTime) / 1000;
+  document.getElementById('bar').style.width = Math.min(100, elapsed / totalDuration * 100) + '%';
+  if (elapsed < totalDuration + 1) requestAnimationFrame(updateProgress);
+  else stopPlayback();
+}
+
+function stopPlayback() {
+  playing = false;
+  if (bufferSource) { try { bufferSource.stop(); } catch(e) {} bufferSource = null; }
+  if (gainNode) gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
+  if (audioCtx) { audioCtx.close(); audioCtx = null; }
+  document.getElementById('playBtn').disabled = !parsedNotes;
+  document.getElementById('stopBtn').disabled = true;
+  document.getElementById('bar').style.width = '0';
+}
+
+// --- File Loading ---
+function loadFile(file) {
+  if (!file) return;
+  document.getElementById('debug').textContent = '';
+  dbg(`Loading: ${file.name} (${file.size} bytes)`);
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const midi = parseMidi(e.target.result);
+      parsedNotes = midiToNotes(midi);
+      totalDuration = parsedNotes.reduce((m, n) => Math.max(m, n.start + n.dur), 0);
+      document.getElementById('info').textContent =
+        `Loaded: ${file.name} — ${parsedNotes.length} notes, ${totalDuration.toFixed(1)}s`;
+      document.getElementById('playBtn').disabled = false;
+    } catch (err) {
+      dbg('ERROR: ' + err);
+      document.getElementById('info').textContent = 'Error: ' + err;
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+// Drag & drop
+const drop = document.getElementById('drop');
+drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); loadFile(e.dataTransfer.files[0]); });
+
+// Visualizer
+const canvas = document.getElementById('viz');
+const cctx = canvas.getContext('2d');
+function drawViz() {
+  if (!playing) return;
+  requestAnimationFrame(drawViz);
+  const data = new Uint8Array(analyser.frequencyBinCount);
+  analyser.getByteTimeDomainData(data);
+  cctx.fillStyle = '#111';
+  cctx.fillRect(0, 0, 512, 120);
+  cctx.strokeStyle = '#0f0';
+  cctx.lineWidth = 2;
+  cctx.beginPath();
+  for (let i = 0; i < data.length; i++) {
+    const x = i / data.length * 512;
+    const y = data[i] / 255 * 120;
+    i === 0 ? cctx.moveTo(x, y) : cctx.lineTo(x, y);
+  }
+  cctx.stroke();
+}
+</script>
+</body>
+</html>

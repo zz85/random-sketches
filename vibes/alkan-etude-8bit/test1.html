@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Alkan - Le festin d'Ésope (8-bit)</title>
+<style>
+* { margin: 0; box-sizing: border-box; }
+body { background: #111; color: #0f0; font-family: 'Courier New', monospace; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; }
+h1 { font-size: 1.2em; margin-bottom: 4px; text-shadow: 0 0 10px #0f0; }
+h2 { font-size: 0.8em; color: #0a0; margin-bottom: 20px; }
+button { background: #0f0; color: #111; border: none; padding: 12px 32px; font-family: inherit; font-size: 1.1em; cursor: pointer; margin: 6px; }
+button:hover { background: #0c0; }
+button:disabled { background: #333; color: #666; cursor: default; }
+#viz { margin-top: 20px; }
+#status { margin-top: 10px; font-size: 0.9em; color: #0a0; }
+</style>
+</head>
+<body>
+<h1>🎹 Alkan — Étude Op.39 No.12</h1>
+<h2>« Le festin d'Ésope » — 8-bit Chiptune Rendition</h2>
+<div>
+  <button id="playBtn" onclick="play()">▶ PLAY</button>
+  <button id="stopBtn" onclick="stop()" disabled>■ STOP</button>
+</div>
+<canvas id="viz" width="512" height="120"></canvas>
+<div id="status">Click PLAY to start</div>
+<script>
+let ctx, masterGain, analyser, playing = false, scheduled = [];
+const canvas = document.getElementById('viz');
+const cctx = canvas.getContext('2d');
+
+// Note helpers
+const NOTE = (name, octave) => {
+  const semi = {C:0,'C#':1,Db:1,D:2,'D#':3,Eb:3,E:4,F:5,'F#':6,Gb:6,G:7,'G#':8,Ab:8,A:9,'A#':10,Bb:10,B:11};
+  return 440 * Math.pow(2, (semi[name] + (octave - 4) * 12 - 9) / 12);
+};
+
+// Alkan's theme from Le festin d'Ésope (E minor, simplified)
+// Theme: the distinctive 8-bar melody that all 25 variations are based on
+function getScore() {
+  const t = 0.18; // base unit (sixteenth-ish)
+  const n = (name, oct, dur, time) => ({ f: NOTE(name, oct), d: dur * t, t: time * t });
+  const melody = [];
+  const bass = [];
+  let mt = 0, bt = 0;
+
+  // === THEME (8 bars) ===
+  // Bar 1-2: Opening motif
+  const theme = [
+    // Bar 1
+    ['E',5,2],['B',4,1],['E',5,1],['D#',5,2],['E',5,2],
+    // Bar 2
+    ['F#',5,2],['G',5,1],['F#',5,1],['E',5,2],['D#',5,2],
+    // Bar 3
+    ['E',5,2],['B',4,1],['E',5,1],['G',5,2],['F#',5,2],
+    // Bar 4
+    ['E',5,4],['D#',5,4],
+    // Bar 5
+    ['E',5,2],['B',4,1],['E',5,1],['D#',5,2],['E',5,2],
+    // Bar 6
+    ['F#',5,2],['G',5,1],['F#',5,1],['E',5,2],['D#',5,2],
+    // Bar 7
+    ['C',5,2],['B',4,2],['A',4,2],['G#',4,2],
+    // Bar 8
+    ['A',4,2],['B',4,2],['E',4,4],
+  ];
+
+  const bassLine = [
+    // Bar 1-2
+    ['E',3,4],['B',2,4],
+    ['D',3,4],['A',2,4],
+    // Bar 3-4
+    ['E',3,4],['C',3,4],
+    ['B',2,4],['B',2,4],
+    // Bar 5-6
+    ['E',3,4],['B',2,4],
+    ['D',3,4],['A',2,4],
+    // Bar 7-8
+    ['A',2,4],['E',2,4],
+    ['A',2,2],['B',2,2],['E',2,4],
+  ];
+
+  for (const [name, oct, dur] of theme) { melody.push(n(name, oct, dur, mt)); mt += dur; }
+  for (const [name, oct, dur] of bassLine) { bass.push(n(name, oct, dur, bt)); bt += dur; }
+
+  const themeEnd = mt;
+
+  // === VARIATION 1: Rapid scalar passages (the "8-bit" sounding one) ===
+  const var1 = [
+    ['E',5,1],['F#',5,1],['G',5,1],['A',5,1],['B',5,1],['A',5,1],['G',5,1],['F#',5,1],
+    ['E',5,1],['D#',5,1],['E',5,1],['F#',5,1],['G',5,1],['F#',5,1],['E',5,1],['D#',5,1],
+    ['E',5,1],['F#',5,1],['G',5,1],['A',5,1],['B',5,1],['C',6,1],['B',5,1],['A',5,1],
+    ['G',5,1],['F#',5,1],['E',5,1],['D#',5,1],['E',5,2],['D#',5,2],
+    ['E',5,1],['F#',5,1],['G',5,1],['A',5,1],['B',5,1],['A',5,1],['G',5,1],['F#',5,1],
+    ['E',5,1],['D#',5,1],['E',5,1],['F#',5,1],['G',5,1],['F#',5,1],['E',5,1],['D#',5,1],
+    ['C',5,1],['D',5,1],['C',5,1],['B',4,1],['A',4,1],['B',4,1],['A',4,1],['G#',4,1],
+    ['A',4,2],['B',4,2],['E',4,4],
+  ];
+
+  const var1bass = [
+    ['E',3,4],['B',2,4],['D',3,4],['A',2,4],
+    ['E',3,4],['C',3,4],['B',2,4],['B',2,4],
+    ['E',3,4],['B',2,4],['D',3,4],['A',2,4],
+    ['A',2,4],['E',2,4],['A',2,2],['B',2,2],['E',2,4],
+  ];
+
+  for (const [name, oct, dur] of var1) { melody.push(n(name, oct, dur, mt)); mt += dur; }
+  for (const [name, oct, dur] of var1bass) { bass.push(n(name, oct, dur, bt)); bt += dur; }
+
+  // === VARIATION 2: Octave jumps (very chiptune-like) ===
+  const var2 = [
+    ['E',4,1],['E',5,1],['B',3,1],['B',4,1],['E',4,1],['E',5,1],['D#',4,1],['D#',5,1],
+    ['F#',4,1],['F#',5,1],['G',4,1],['G',5,1],['E',4,1],['E',5,1],['D#',4,1],['D#',5,1],
+    ['E',4,1],['E',5,1],['B',3,1],['B',4,1],['G',4,1],['G',5,1],['F#',4,1],['F#',5,1],
+    ['E',4,2],['E',5,2],['D#',4,2],['D#',5,2],
+    ['E',4,1],['E',5,1],['B',3,1],['B',4,1],['E',4,1],['E',5,1],['D#',4,1],['D#',5,1],
+    ['F#',4,1],['F#',5,1],['G',4,1],['G',5,1],['E',4,1],['E',5,1],['D#',4,1],['D#',5,1],
+    ['C',4,1],['C',5,1],['B',3,1],['B',4,1],['A',3,1],['A',4,1],['G#',3,1],['G#',4,1],
+    ['A',3,2],['B',3,2],['E',3,4],
+  ];
+
+  for (const [name, oct, dur] of var2) { melody.push(n(name, oct, dur, mt)); mt += dur; }
+  for (const [name, oct, dur] of var1bass) { bass.push(n(name, oct, dur, bt)); bt += dur; }
+
+  // === VARIATION 3: Arpeggiated chords, fast ===
+  const var3 = [
+    ['E',4,1],['G',4,1],['B',4,1],['E',5,1],['B',4,1],['G',4,1],['E',4,1],['D#',4,1],
+    ['F#',4,1],['A',4,1],['D',5,1],['F#',5,1],['D',5,1],['A',4,1],['F#',4,1],['E',4,1],
+    ['E',4,1],['G',4,1],['B',4,1],['E',5,1],['G',5,1],['E',5,1],['B',4,1],['G',4,1],
+    ['F#',4,1],['A',4,1],['D#',5,1],['F#',5,1],['E',5,4],
+    ['E',4,1],['G',4,1],['B',4,1],['E',5,1],['B',4,1],['G',4,1],['E',4,1],['D#',4,1],
+    ['F#',4,1],['A',4,1],['D',5,1],['F#',5,1],['D',5,1],['A',4,1],['F#',4,1],['E',4,1],
+    ['C',4,1],['E',4,1],['A',4,1],['C',5,1],['B',3,1],['D#',4,1],['G#',4,1],['B',4,1],
+    ['A',3,2],['B',3,2],['E',4,4],
+  ];
+
+  for (const [name, oct, dur] of var3) { melody.push(n(name, oct, dur, mt)); mt += dur; }
+  for (const [name, oct, dur] of var1bass) { bass.push(n(name, oct, dur, bt)); bt += dur; }
+
+  return { melody, bass, duration: mt * t };
+}
+
+function playNote(freq, time, dur, type, gain) {
+  const osc = ctx.createOscillator();
+  const g = ctx.createGain();
+  osc.type = type;
+  osc.frequency.value = freq;
+  g.gain.setValueAtTime(gain, time);
+  g.gain.setValueAtTime(gain, time + dur * 0.7);
+  g.gain.linearRampToValueAtTime(0, time + dur * 0.95);
+  osc.connect(g);
+  g.connect(analyser);
+  osc.start(time);
+  osc.stop(time + dur);
+  scheduled.push(osc);
+}
+
+function play() {
+  if (playing) return;
+  ctx = new AudioContext();
+  analyser = ctx.createAnalyser();
+  analyser.fftSize = 1024;
+  analyser.connect(ctx.destination);
+  playing = true;
+  document.getElementById('playBtn').disabled = true;
+  document.getElementById('stopBtn').disabled = false;
+
+  const { melody, bass, duration } = getScore();
+  const now = ctx.currentTime + 0.1;
+
+  for (const note of melody) playNote(note.f, now + note.t, note.d, 'square', 0.15);
+  for (const note of bass) playNote(note.f, now + note.t, note.d, 'triangle', 0.18);
+
+  // Add a simple pulse noise channel for rhythm
+  for (let i = 0; i < duration; i += 0.18 * 4) {
+    const nOsc = ctx.createOscillator();
+    const nG = ctx.createGain();
+    nOsc.type = 'sawtooth';
+    nOsc.frequency.value = 80;
+    nG.gain.setValueAtTime(0.03, now + i);
+    nG.gain.linearRampToValueAtTime(0, now + i + 0.04);
+    nOsc.connect(nG);
+    nG.connect(analyser);
+    nOsc.start(now + i);
+    nOsc.stop(now + i + 0.05);
+    scheduled.push(nOsc);
+  }
+
+  document.getElementById('status').textContent = 'Playing: Theme → Var.1 (scales) → Var.2 (octaves) → Var.3 (arpeggios)';
+  setTimeout(() => { if (playing) stop(); }, duration * 1000 + 500);
+  drawViz();
+}
+
+function stop() {
+  playing = false;
+  for (const o of scheduled) try { o.stop(); } catch(e) {}
+  scheduled = [];
+  if (ctx) ctx.close();
+  document.getElementById('playBtn').disabled = false;
+  document.getElementById('stopBtn').disabled = true;
+  document.getElementById('status').textContent = 'Stopped';
+}
+
+function drawViz() {
+  if (!playing) return;
+  requestAnimationFrame(drawViz);
+  const data = new Uint8Array(analyser.frequencyBinCount);
+  analyser.getByteTimeDomainData(data);
+  cctx.fillStyle = '#111';
+  cctx.fillRect(0, 0, 512, 120);
+  cctx.strokeStyle = '#0f0';
+  cctx.lineWidth = 2;
+  cctx.beginPath();
+  for (let i = 0; i < data.length; i++) {
+    const x = i / data.length * 512;
+    const y = data[i] / 255 * 120;
+    i === 0 ? cctx.moveTo(x, y) : cctx.lineTo(x, y);
+  }
+  cctx.stroke();
+}
+</script>
+</body>
+</html>
