@@ -628,7 +628,11 @@ const cv = document.getElementById('cv');
 const ctx = cv.getContext('2d');
 
 // World/view scale ----------------------------------------------------------
-const PX_PER_M = 8;          // 8 pixels per metre
+// PX_PER_M and CAMERA_X/Y are recomputed by computeView() so the boat and
+// dock always fit the canvas with margin, regardless of screen size.
+let PX_PER_M = 8;
+let CAMERA_X = 0;
+let CAMERA_Y = 0;
 const KN_PER_MS = 1.94384;   // knots per m/s
 
 // State ---------------------------------------------------------------------
@@ -717,30 +721,25 @@ function resizeCanvas() {
 
 function resetScenario() {
   resizeCanvas();
-  const W = state.worldW, H = state.worldH;
-  const cx = W / 2 / PX_PER_M;   // world centre x in metres
-  const cy = H / 2 / PX_PER_M;
 
-  // Place dock. Boat heads east (+x). Dock parallel to x-axis.
-  // Port-to: dock above the boat (smaller y in screen coords).
-  // Starboard-to: dock below the boat.
-  const dockOffset = state.boat.beam / 2 + state.dock.width / 2;  // gap to inner edge
+  // Place the dock at world origin and the boat at fixed world coordinates
+  // relative to it, so the layout doesn't depend on canvas size. The view
+  // (PX_PER_M + CAMERA_X/Y) is computed afterwards to fit it all on screen.
+  const dockOffset = state.boat.beam / 2 + state.dock.width / 2;  // 4.7 m, centre-to-centre at "alongside"
+  const offFromDock = 10;
   state.dock.length = 30;
-  state.dock.cx = cx;
+  state.dock.cx = 0;
+  state.dock.cy = 0;
   state.dock.side = state.dockSide;
-  if (state.dockSide === 'port') {
-    state.dock.cy = cy - dockOffset;
-  } else {
-    state.dock.cy = cy + dockOffset;
-  }
 
   if (state.mode === 'dock') {
     // Boat starts dead in the water, well off the dock — you set up the
     // entire approach yourself.
     const back = 42;
-    const offFromDock = 10;
-    state.boat.x = cx - back;
-    state.boat.y = state.dockSide === 'port' ? cy + offFromDock : cy - offFromDock;
+    state.boat.x = -back;
+    state.boat.y = state.dockSide === 'port'
+      ? +(dockOffset + offFromDock)   // dock to north (port), boat south
+      : -(dockOffset + offFromDock);  // dock to south (starboard), boat north
     state.boat.heading = 0;
     state.boat.vx = 0;
     state.boat.vy = 0;
@@ -750,9 +749,8 @@ function resetScenario() {
     for (const k of Object.keys(state.lines)) state.lines[k].attached = false;
   } else {
     // Undocking: boat at dock, all lines on
-    state.boat.x = cx;
-    const inner = state.dock.cy + (state.dockSide === 'port' ? 1 : -1) * (state.dock.width / 2 + state.boat.beam / 2);
-    state.boat.y = inner;
+    state.boat.x = 0;
+    state.boat.y = state.dockSide === 'port' ? +dockOffset : -dockOffset;
     state.boat.heading = 0;
     state.boat.vx = 0; state.boat.vy = 0; state.boat.omega = 0;
     state.boat.throttle = 0; state.boat.helm = 0;
@@ -765,6 +763,9 @@ function resetScenario() {
     }
   }
 
+  // Frame the world so both boat and dock are visible
+  computeView();
+
   // Reset overlay control UI to neutral
   updateOverlayUI();
 
@@ -774,11 +775,34 @@ function resetScenario() {
   state.contacts = [];
   for (let i = 0; i < 80; i++) {
     state.particles.push({
-      x: Math.random() * W, y: Math.random() * H,
+      x: Math.random() * state.worldW, y: Math.random() * state.worldH,
       life: Math.random() * 4,
     });
   }
   updateTips();
+}
+
+// Compute the view (zoom + camera position) so that the boat and dock both
+// fit inside the canvas with a comfortable margin. Called on scenario reset
+// and on window resize.
+function computeView() {
+  const W = state.worldW, H = state.worldH;
+  if (!W || !H) return;
+  const b = state.boat, d = state.dock;
+
+  // Bounding box of boat + dock in world coords
+  const minX = Math.min(b.x - b.length / 2, d.cx - d.length / 2);
+  const maxX = Math.max(b.x + b.length / 2, d.cx + d.length / 2);
+  const minY = Math.min(b.y - b.beam   / 2, d.cy - d.width / 2);
+  const maxY = Math.max(b.y + b.beam   / 2, d.cy + d.width / 2);
+
+  const margin = 6;          // metres of breathing room around the scene
+  const reqW = (maxX - minX) + 2 * margin;
+  const reqH = (maxY - minY) + 2 * margin;
+
+  PX_PER_M = Math.min(W / reqW, H / reqH, 10);   // cap at 10 px/m on big screens
+  CAMERA_X = (minX + maxX) / 2;
+  CAMERA_Y = (minY + maxY) / 2;
 }
 
 // ============================================================================
@@ -1046,7 +1070,12 @@ function collideWithDock() {
 // ============================================================================
 
 function m2px(m) { return m * PX_PER_M; }
-function W2P(x, y) { return { x: x * PX_PER_M, y: y * PX_PER_M }; }
+function W2P(x, y) {
+  return {
+    x: (x - CAMERA_X) * PX_PER_M + state.worldW / 2,
+    y: (y - CAMERA_Y) * PX_PER_M + state.worldH / 2,
+  };
+}
 
 function draw() {
   const W = state.worldW, H = state.worldH;
@@ -1891,8 +1920,9 @@ function nearestCleat(wx, wy) {
 
 cv.addEventListener('pointerdown', (e) => {
   const rect = cv.getBoundingClientRect();
-  const wx = (e.clientX - rect.left) / PX_PER_M;
-  const wy = (e.clientY - rect.top)  / PX_PER_M;
+  const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+  const wx = (sx - state.worldW / 2) / PX_PER_M + CAMERA_X;
+  const wy = (sy - state.worldH / 2) / PX_PER_M + CAMERA_Y;
   const { cleat, dist } = nearestCleat(wx, wy);
   if (dist < CLEAT_HIT_RADIUS) {
     toggleLine(CLEAT_TO_LINE[cleat]);
@@ -1901,11 +1931,10 @@ cv.addEventListener('pointerdown', (e) => {
 });
 
 cv.addEventListener('pointermove', (e) => {
-  // Touch devices don't show a cursor, but we still update the hover state
-  // so the halo on the cleat lights up while a finger is hovering.
   const rect = cv.getBoundingClientRect();
-  const wx = (e.clientX - rect.left) / PX_PER_M;
-  const wy = (e.clientY - rect.top)  / PX_PER_M;
+  const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+  const wx = (sx - state.worldW / 2) / PX_PER_M + CAMERA_X;
+  const wy = (sy - state.worldH / 2) / PX_PER_M + CAMERA_Y;
   const { cleat, dist } = nearestCleat(wx, wy);
   const over = dist < CLEAT_HIT_RADIUS;
   state.hoveredCleat = over ? cleat : null;
@@ -2065,7 +2094,10 @@ function processHeldKeys(dt) {
   }
 }
 
-window.addEventListener('resize', resizeCanvas);
+window.addEventListener('resize', () => {
+  resizeCanvas();
+  computeView();
+});
 
 // ============================================================================
 // MAIN LOOP
