@@ -235,6 +235,82 @@
   }
   #overlay .err { color: var(--bad); font-weight: 700; min-height: 20px; }
   .hidden { display: none !important; }
+
+  /* ---- Tabs ---- */
+  #tabs { display: flex; border: 2px solid var(--panel-line); border-radius: 8px; overflow: hidden; }
+  #tabs button {
+    padding: 6px 14px; font-size: 12px; font-weight: 800; letter-spacing: 0.5px;
+    background: var(--bg); color: var(--fg-dim); border: none; cursor: pointer;
+  }
+  #tabs button.active { background: var(--accent); color: #fff; }
+
+  /* ---- Views ---- */
+  #view-dash { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  #view-dash.off, #view-trim.off { display: none; }
+  #view-trim {
+    flex: 1 1 auto; min-height: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: clamp(8px, 2vmin, 18px); padding: 10px;
+  }
+
+  /* ---- Compass ---- */
+  #compass {
+    position: relative;
+    width: min(52vmin, 320px); height: min(52vmin, 320px);
+    flex: 0 0 auto;
+    color: var(--fg);
+  }
+  #compass-dial { position: absolute; inset: 0; }
+  #compass-dial svg { width: 100%; height: 100%; display: block; }
+  #compass-center {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    pointer-events: none;
+  }
+  #compass-hdg { font-size: clamp(40px, 14vmin, 90px); font-weight: 900; font-variant-numeric: tabular-nums; line-height: 0.9; }
+  #compass-hdg-label { font-size: 12px; font-weight: 800; letter-spacing: 2px; color: var(--fg-dim); }
+  #compass-lubber {
+    position: absolute; top: -2px; left: 50%; transform: translateX(-50%);
+    width: 0; height: 0; border-left: 11px solid transparent; border-right: 11px solid transparent;
+    border-top: 16px solid var(--accent);
+  }
+
+  /* ---- Attitude / heel-pitch ---- */
+  #attitude {
+    width: min(52vmin, 320px); height: clamp(90px, 18vmin, 150px);
+    border: 3px solid var(--fg); border-radius: 12px;
+    position: relative; overflow: hidden; flex: 0 0 auto;
+  }
+  #horizon { position: absolute; left: -50%; top: -50%; width: 200%; height: 200%; transform-origin: center center; }
+  #horizon .sky { position: absolute; left: 0; right: 0; top: 0; height: 50%; background: var(--bg); }
+  #horizon .sea { position: absolute; left: 0; right: 0; bottom: 0; height: 50%; background: var(--panel); }
+  #horizon .line { position: absolute; left: 0; right: 0; top: 50%; height: 4px; transform: translateY(-50%); background: var(--fg); }
+  #attitude-marker {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    width: 64%; height: 0; border-top: 4px solid var(--accent); pointer-events: none;
+  }
+  #attitude-marker::before {
+    content: ""; position: absolute; left: 50%; top: 0; transform: translate(-50%, -50%);
+    width: 10px; height: 10px; border-radius: 50%; background: var(--accent);
+  }
+  #trim-nums { display: flex; gap: 4px; width: min(52vmin, 320px); }
+  .trim-stat {
+    flex: 1; text-align: center; padding: 6px 4px;
+    background: var(--panel); border: 2px solid var(--panel-line); border-radius: 10px;
+  }
+  .trim-stat .k { font-size: 11px; font-weight: 800; letter-spacing: 1px; color: var(--fg-dim); }
+  .trim-stat .v { font-size: clamp(26px, 7vmin, 48px); font-weight: 900; font-variant-numeric: tabular-nums; line-height: 1; }
+  .trim-stat.warn .v { color: var(--warn); }
+  .trim-stat.bad .v { color: var(--bad); }
+  #btn-level {
+    width: min(52vmin, 320px); flex: 0 0 auto;
+    font-size: 14px; font-weight: 900; letter-spacing: 0.5px;
+    padding: 12px; border-radius: 10px; border: 2px solid var(--panel-line);
+    background: var(--panel); color: var(--fg); cursor: pointer;
+  }
+  #btn-level:active { transform: scale(0.97); }
+  #trim-note { font-size: 11px; color: var(--fg-dim); text-align: center; max-width: 320px; }
 </style>
 </head>
 <body>
@@ -244,6 +320,10 @@
     <span id="chip-gps" class="chip warn">GPS …</span>
     <span id="chip-acc" class="chip">±– m</span>
     <span id="spacer"></span>
+    <div id="tabs">
+      <button id="tab-dash" class="active">DASH</button>
+      <button id="tab-trim">TRIM</button>
+    </div>
     <span id="chip-wake" class="chip" title="Keep screen awake">☀ –</span>
     <button id="btn-theme" class="iconbtn">NIGHT</button>
   </div>
@@ -261,21 +341,48 @@
     <button id="mob-clear">CLEAR</button>
   </div>
 
-  <div id="hero">
-    <div id="hero-label">SOG</div>
-    <div id="sog">0.0</div>
-    <div id="sog-unit">KNOTS</div>
-    <div id="speedbar"><div id="speedbar-fill"></div></div>
+  <div id="view-dash">
+    <div id="hero">
+      <div id="hero-label">SOG</div>
+      <div id="sog">0.0</div>
+      <div id="sog-unit">KNOTS</div>
+      <div id="speedbar"><div id="speedbar-fill"></div></div>
+    </div>
+
+    <div id="grid">
+      <div class="cell"><div class="k">MAX</div><div class="v"><span id="st-max">0.0</span></div><div class="u" id="st-max-u">kn</div></div>
+      <div class="cell"><div class="k">AVG</div><div class="v"><span id="st-avg">0.0</span></div><div class="u" id="st-avg-u">kn</div></div>
+      <div class="cell"><div class="k">DIST</div><div class="v"><span id="st-dist">0.00</span></div><div class="u" id="st-dist-u">nm</div></div>
+      <div class="cell"><div class="k">TIME</div><div class="v"><span id="st-time">0:00</span></div><div class="u">trip</div></div>
+      <div class="cell"><div class="k">COG</div><div class="v"><span id="st-cog">–</span>°</div><div class="u">course</div></div>
+      <div class="cell"><div class="k">CLOCK</div><div class="v"><span id="st-local">--:--</span></div><div class="u">local</div></div>
+      <div class="cell wide pos-cell"><div class="k">POSITION</div><div class="v coord"><span id="st-pos">– , –</span></div><div class="u" id="st-pos-u">tap to copy</div></div>
+    </div>
   </div>
 
-  <div id="grid">
-    <div class="cell"><div class="k">MAX</div><div class="v"><span id="st-max">0.0</span></div><div class="u" id="st-max-u">kn</div></div>
-    <div class="cell"><div class="k">AVG</div><div class="v"><span id="st-avg">0.0</span></div><div class="u" id="st-avg-u">kn</div></div>
-    <div class="cell"><div class="k">DIST</div><div class="v"><span id="st-dist">0.00</span></div><div class="u" id="st-dist-u">nm</div></div>
-    <div class="cell"><div class="k">TIME</div><div class="v"><span id="st-time">0:00</span></div><div class="u">trip</div></div>
-    <div class="cell"><div class="k">COG</div><div class="v"><span id="st-cog">–</span>°</div><div class="u">course</div></div>
-    <div class="cell"><div class="k">ALT</div><div class="v"><span id="st-alt">–</span></div><div class="u">m</div></div>
-    <div class="cell wide"><div class="k">POSITION</div><div class="v coord"><span id="st-pos">– , –</span></div><div class="u" id="st-pos-u">tap to copy</div></div>
+  <div id="view-trim" class="off">
+    <div id="compass">
+      <div id="compass-lubber"></div>
+      <div id="compass-dial"></div>
+      <div id="compass-center">
+        <span id="compass-hdg">–</span>
+        <span id="compass-hdg-label">COG °T</span>
+      </div>
+    </div>
+    <div id="attitude">
+      <div id="horizon">
+        <div class="sky"></div>
+        <div class="sea"></div>
+        <div class="line"></div>
+      </div>
+      <div id="attitude-marker"></div>
+    </div>
+    <div id="trim-nums">
+      <div class="trim-stat" id="ts-heel"><div class="k">HEEL</div><div class="v"><span id="tv-heel">–</span>°</div></div>
+      <div class="trim-stat" id="ts-pitch"><div class="k">PITCH</div><div class="v"><span id="tv-pitch">–</span>°</div></div>
+    </div>
+    <button id="btn-level">SET LEVEL (ZERO)</button>
+    <div id="trim-note">Mount the tablet, sit level, then tap SET LEVEL. Heel = side-to-side lean, pitch = bow up/down. Enable motion sensors if prompted.</div>
   </div>
 
   <div id="actions">
@@ -329,9 +436,19 @@ const state = {
   cog: null,
   alt: null,
   lastPos: null,       // {lat, lon}
+  gpsTime: null,       // epoch ms from the GPS fix
+  gpsOffset: 0,        // gpsTime - device clock, to tick the clock between fixes
   // MOB
   mob: JSON.parse(localStorage.getItem("sd_mob") || "null"), // {lat, lon, t}
   wakeLock: null,
+  // view
+  view: "dash",
+  // attitude (degrees, smoothed) and zero-offset calibration
+  heel: null,
+  pitch: null,
+  heelZero: parseFloat(localStorage.getItem("sd_heelZero") || "0"),
+  pitchZero: parseFloat(localStorage.getItem("sd_pitchZero") || "0"),
+  orientReady: false,
 };
 
 // ---------- Element refs ----------
@@ -340,12 +457,18 @@ const el = {
   sog: $("sog"), sogUnit: $("sog-unit"), bar: $("speedbar-fill"),
   chipGps: $("chip-gps"), chipAcc: $("chip-acc"), chipWake: $("chip-wake"),
   stMax: $("st-max"), stAvg: $("st-avg"), stDist: $("st-dist"), stTime: $("st-time"),
-  stCog: $("st-cog"), stAlt: $("st-alt"), stPos: $("st-pos"), stPosU: $("st-pos-u"),
+  stCog: $("st-cog"), stPos: $("st-pos"), stPosU: $("st-pos-u"),
+  stLocal: $("st-local"),
   stMaxU: $("st-max-u"), stAvgU: $("st-avg-u"), stDistU: $("st-dist-u"),
   mobBanner: $("mob-banner"), mobArrow: $("mob-arrow"), mobBrg: $("mob-brg"), mobDist: $("mob-dist"),
   btnTrip: $("btn-trip"), btnReset: $("btn-reset"), btnMob: $("btn-mob"),
   btnTheme: $("btn-theme"),
   overlay: $("overlay"), startBtn: $("start-btn"), overlayErr: $("overlay-err"),
+  tabDash: $("tab-dash"), tabTrim: $("tab-trim"),
+  viewDash: $("view-dash"), viewTrim: $("view-trim"),
+  compassDial: $("compass-dial"), compassHdg: $("compass-hdg"), compassHdgLabel: $("compass-hdg-label"),
+  horizon: $("horizon"), tvHeel: $("tv-heel"), tvPitch: $("tv-pitch"),
+  tsHeel: $("ts-heel"), tsPitch: $("ts-pitch"), btnLevel: $("btn-level"),
 };
 
 // ---------- Geometry ----------
@@ -387,6 +510,24 @@ function fmtMobDist(meters) {
   // Always show the most actionable unit for a rescue: meters when close.
   if (meters < 1000) return Math.round(meters) + " m";
   return fmtDist(meters) + " " + UNITS[state.unit].distLabel;
+}
+// Degrees + decimal minutes — the maritime / VHF-radio standard for reading a
+// position over the air (e.g. a mayday): "37°48.451'N 122°16.302'W".
+function toDM(deg, isLat) {
+  const hemi = isLat ? (deg < 0 ? "S" : "N") : (deg < 0 ? "W" : "E");
+  const abs = Math.abs(deg);
+  const d = Math.floor(abs);
+  const m = (abs - d) * 60;
+  const dStr = isLat ? String(d).padStart(2, "0") : String(d).padStart(3, "0");
+  return `${dStr}°${m.toFixed(3).padStart(6, "0")}'${hemi}`;
+}
+function fmtPosDM(lat, lon) {
+  return toDM(lat, true) + " " + toDM(lon, false);
+}
+function pad2(n) { return String(n).padStart(2, "0"); }
+function fmtLocalTime(ms) {
+  const d = new Date(ms);
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
 }
 
 // ---------- Theme ----------
@@ -457,15 +598,20 @@ function startGps() {
 }
 
 function onGpsError(err) {
-  el.overlay.classList.remove("hidden");
-  const msg = {
-    1: "Location permission denied. Enable it for this site in browser settings, then reload.",
-    2: "Position unavailable. Move to open sky and try again.",
-    3: "GPS timed out. Trying again…",
-  }[err.code] || err.message;
-  el.overlayErr.textContent = msg;
-  el.chipGps.className = "chip bad";
-  el.chipGps.textContent = "GPS ✕";
+  // Permission denied is fatal — send the user back to the overlay to fix it.
+  // Everything else (timeout, momentary "unavailable") is transient: the watch
+  // keeps running, so we just flag it on the status chip and stay on the dashboard.
+  if (err.code === 1 /* PERMISSION_DENIED */) {
+    el.overlay.classList.remove("hidden");
+    el.overlayErr.textContent = "Location permission denied. Enable it for this site in browser settings, then reload.";
+    el.chipGps.className = "chip bad";
+    el.chipGps.textContent = "GPS ✕";
+    return;
+  }
+  // Transient: if we've never had a fix, keep the reassuring "acquiring" state;
+  // if we had one, show a brief "no signal" warning but keep the last readings.
+  el.chipGps.className = "chip warn";
+  el.chipGps.textContent = state.lastPos ? "GPS weak" : "GPS …";
 }
 
 function onPosition(pos) {
@@ -483,6 +629,10 @@ function onPosition(pos) {
   el.chipAcc.textContent = "±" + Math.round(acc) + " m";
 
   state.lastPos = { lat: c.latitude, lon: c.longitude };
+  // Track the GPS↔device-clock offset so the displayed clock can tick smoothly
+  // between fixes instead of freezing at the last fix's timestamp.
+  state.gpsTime = now;
+  state.gpsOffset = now - Date.now();
   if (c.altitude != null) state.alt = c.altitude;
 
   // ---- Speed: prefer GPS Doppler speed, fall back to position delta ----
@@ -541,12 +691,14 @@ function render() {
   const avgMs = state.speedSamples ? state.speedSum / state.speedSamples : 0;
   el.stAvg.textContent = fmtSpeed(avgMs, 1);
   el.stDist.textContent = fmtDist(state.distM);
-  el.stCog.textContent = state.cog == null ? "–" : Math.round(state.cog);
-  el.stAlt.textContent = state.alt == null ? "–" : Math.round(state.alt);
+  el.stCog.textContent = state.cog == null ? "–" : pad2(Math.round(state.cog));
 
   if (state.lastPos) {
-    el.stPos.textContent = state.lastPos.lat.toFixed(5) + ", " + state.lastPos.lon.toFixed(5);
+    el.stPos.textContent = fmtPosDM(state.lastPos.lat, state.lastPos.lon);
   }
+
+  // Local clock — disciplined to GPS time when we have a fix, else the device clock.
+  el.stLocal.textContent = fmtLocalTime(Date.now() + (state.gpsTime != null ? (state.gpsOffset || 0) : 0));
 
   // Trip time
   if (state.tripActive) {
@@ -554,6 +706,9 @@ function render() {
   } else {
     el.stTime.textContent = fmtClock(state.tripElapsedBase);
   }
+
+  // Trim view (only worth touching the DOM when it's visible)
+  if (state.view === "trim") renderTrim();
 
   // MOB return guidance
   if (state.mob && state.lastPos) {
@@ -566,6 +721,158 @@ function render() {
     el.mobArrow.style.transform = `rotate(${rel}deg)`;
   }
 }
+
+// ---------- Compass dial (built once, rotated via transform) ----------
+function buildCompassDial() {
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("viewBox", "0 0 200 200");
+  const g = document.createElementNS(NS, "g");
+  g.setAttribute("id", "compass-rot");
+  g.style.transformOrigin = "100px 100px";
+  g.style.transition = "transform 0.25s ease-out";
+
+  const ring = document.createElementNS(NS, "circle");
+  ring.setAttribute("cx", "100"); ring.setAttribute("cy", "100"); ring.setAttribute("r", "96");
+  ring.setAttribute("fill", "none");
+  ring.setAttribute("stroke", "currentColor");
+  ring.setAttribute("stroke-width", "2");
+  ring.setAttribute("opacity", "0.35");
+  g.appendChild(ring);
+
+  const cardinals = { 0: "N", 90: "E", 180: "S", 270: "W" };
+  for (let a = 0; a < 360; a += 10) {
+    const major = a % 30 === 0;
+    const x1 = 100 + 96 * Math.sin(a * Math.PI / 180);
+    const y1 = 100 - 96 * Math.cos(a * Math.PI / 180);
+    const len = major ? 14 : 7;
+    const x2 = 100 + (96 - len) * Math.sin(a * Math.PI / 180);
+    const y2 = 100 - (96 - len) * Math.cos(a * Math.PI / 180);
+    const tick = document.createElementNS(NS, "line");
+    tick.setAttribute("x1", x1); tick.setAttribute("y1", y1);
+    tick.setAttribute("x2", x2); tick.setAttribute("y2", y2);
+    tick.setAttribute("stroke", a === 0 ? "var(--bad)" : "currentColor");
+    tick.setAttribute("stroke-width", a === 0 ? "4" : (major ? "2.5" : "1.2"));
+    tick.setAttribute("opacity", a === 0 ? "1" : (major ? "0.8" : "0.4"));
+    g.appendChild(tick);
+    if (cardinals[a]) {
+      const tx = 100 + 74 * Math.sin(a * Math.PI / 180);
+      const ty = 100 - 74 * Math.cos(a * Math.PI / 180);
+      const txt = document.createElementNS(NS, "text");
+      txt.setAttribute("x", tx); txt.setAttribute("y", ty);
+      txt.setAttribute("text-anchor", "middle");
+      txt.setAttribute("dominant-baseline", "central");
+      txt.setAttribute("font-size", "18");
+      txt.setAttribute("font-weight", "900");
+      txt.setAttribute("fill", a === 0 ? "var(--bad)" : "currentColor");
+      txt.textContent = cardinals[a];
+      g.appendChild(txt);
+    }
+  }
+  svg.appendChild(g);
+  el.compassDial.appendChild(svg);
+  return g;
+}
+
+// ---------- Trim view rendering ----------
+function renderTrim() {
+  // Compass shows COG (course over ground) — what GPS actually gives us; a
+  // magnetometer heading isn't reliably exposed to the browser on most devices.
+  const hdg = state.cog;
+  if (hdg == null) {
+    el.compassHdg.textContent = "–";
+  } else {
+    el.compassHdg.textContent = pad2(Math.round(hdg));
+    // Rotate the card so the current heading sits under the top lubber line.
+    compassRot.style.transform = `rotate(${-hdg}deg)`;
+  }
+
+  // Attitude: rotate the horizon by heel, shift it by pitch.
+  const heel = state.heel, pitch = state.pitch;
+  if (heel == null || pitch == null) {
+    el.tvHeel.textContent = "–";
+    el.tvPitch.textContent = "–";
+  } else {
+    el.tvHeel.textContent = Math.abs(Math.round(heel));
+    el.tvPitch.textContent = (pitch >= 0 ? "+" : "") + Math.round(pitch);
+    // 1° pitch ≈ 1.5% of the box height of vertical shift, clamped.
+    const shift = Math.max(-40, Math.min(40, pitch * 1.5));
+    el.horizon.style.transform = `rotate(${heel}deg) translateY(${shift}%)`;
+    // Color the heel readout as it climbs — gentle warn, then hard over.
+    const a = Math.abs(heel);
+    el.tsHeel.className = "trim-stat" + (a > 25 ? " bad" : a > 15 ? " warn" : "");
+  }
+}
+
+// ---------- Tabs ----------
+function setView(v) {
+  state.view = v;
+  const dash = v === "dash";
+  el.viewDash.classList.toggle("off", !dash);
+  el.viewTrim.classList.toggle("off", dash);
+  el.tabDash.classList.toggle("active", dash);
+  el.tabTrim.classList.toggle("active", !dash);
+  if (!dash) {
+    enableOrientation();
+    render();
+  }
+}
+el.tabDash.addEventListener("click", () => setView("dash"));
+el.tabTrim.addEventListener("click", () => setView("trim"));
+
+// ---------- Device orientation (heel / pitch) ----------
+function onOrientation(e) {
+  // beta = front-back tilt (pitch), gamma = left-right tilt (heel), in degrees.
+  if (e.beta == null || e.gamma == null) return;
+  state.orientReady = true;
+  const rawPitch = e.beta;   // -180..180
+  const rawHeel = e.gamma;   // -90..90
+  const sp = rawPitch - state.pitchZero;
+  const sh = rawHeel - state.heelZero;
+  // Light smoothing to settle sensor noise on the water.
+  const a = 0.25;
+  state.pitch = state.pitch == null ? sp : a * sp + (1 - a) * state.pitch;
+  state.heel  = state.heel  == null ? sh : a * sh + (1 - a) * state.heel;
+  // Repaint the attitude smoothly without spamming the DOM faster than the screen.
+  if (state.view === "trim" && !trimRafPending) {
+    trimRafPending = true;
+    requestAnimationFrame(() => { trimRafPending = false; renderTrim(); });
+  }
+}
+let trimRafPending = false;
+let orientWired = false;
+function enableOrientation() {
+  if (orientWired) return;
+  // iOS 13+ needs an explicit permission request from a user gesture.
+  const DOE = window.DeviceOrientationEvent;
+  if (DOE && typeof DOE.requestPermission === "function") {
+    DOE.requestPermission().then((res) => {
+      if (res === "granted") { window.addEventListener("deviceorientation", onOrientation); orientWired = true; }
+    }).catch(() => {});
+  } else if (DOE) {
+    window.addEventListener("deviceorientation", onOrientation);
+    orientWired = true;
+  }
+}
+el.btnLevel.addEventListener("click", () => {
+  if (!state.orientReady) {
+    enableOrientation();
+    el.btnLevel.textContent = "TILT THE TABLET TO ACTIVATE SENSORS…";
+    setTimeout(() => { el.btnLevel.textContent = "SET LEVEL (ZERO)"; }, 2500);
+    return;
+  }
+  // Capture current raw attitude as the new zero by folding the live deviation
+  // back into the stored offsets.
+  state.heelZero += (state.heel || 0);
+  state.pitchZero += (state.pitch || 0);
+  state.heel = 0; state.pitch = 0;
+  localStorage.setItem("sd_heelZero", String(state.heelZero));
+  localStorage.setItem("sd_pitchZero", String(state.pitchZero));
+  el.btnLevel.textContent = "ZEROED ✓";
+  if (navigator.vibrate) navigator.vibrate(60);
+  setTimeout(() => { el.btnLevel.textContent = "SET LEVEL (ZERO)"; }, 1200);
+  renderTrim();
+});
 
 // ---------- Trip controls ----------
 function setTripButton() {
@@ -626,6 +933,7 @@ el.stPos.parentElement.parentElement.addEventListener("click", () => {
 setInterval(() => { if (state.watchId !== null) render(); }, 1000);
 
 // ---------- Init ----------
+const compassRot = buildCompassDial();
 applyTheme();
 applyUnitLabels();
 setTripButton();
