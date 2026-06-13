@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#ffffff">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Sailing Dashboard</title>
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+  :root {
+    /* Day theme — black on white for bright sunlight */
+    --bg: #ffffff;
+    --fg: #000000;
+    --fg-dim: #555555;
+    --panel: #f0f0f0;
+    --panel-line: #d0d0d0;
+    --hero: #000000;
+    --accent: #0a58ca;
+    --good: #0a7d2c;
+    --warn: #b35900;
+    --bad: #c81e1e;
+    --mob: #d40000;
+    --bar-track: #e0e0e0;
+    --bar-fill: #0a58ca;
+  }
+
+  body.night {
+    --bg: #000000;
+    --fg: #f2f2f2;
+    --fg-dim: #9aa3ad;
+    --panel: #11161c;
+    --panel-line: #2a3139;
+    --hero: #2dd4ff;
+    --accent: #58a6ff;
+    --good: #3fb950;
+    --warn: #e3a008;
+    --bad: #ff5a52;
+    --mob: #ff3b30;
+    --bar-track: #1c232b;
+    --bar-fill: #2dd4ff;
+  }
+
+  html, body {
+    height: 100%;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, 'Segoe UI', Roboto, system-ui, sans-serif;
+    -webkit-user-select: none;
+    user-select: none;
+    transition: background 0.2s, color 0.2s;
+  }
+
+  #app {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+
+  /* ---- Top status bar ---- */
+  #topbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-bottom: 2px solid var(--panel-line);
+    flex: 0 0 auto;
+  }
+  #title { font-weight: 800; font-size: 13px; letter-spacing: 0.5px; opacity: 0.7; }
+  .chip {
+    font-size: 12px; font-weight: 700;
+    padding: 3px 8px; border-radius: 5px;
+    background: var(--panel); border: 1px solid var(--panel-line);
+    white-space: nowrap;
+  }
+  .chip.good { color: var(--good); border-color: var(--good); }
+  .chip.warn { color: var(--warn); border-color: var(--warn); }
+  .chip.bad  { color: var(--bad);  border-color: var(--bad); }
+  #spacer { flex: 1; }
+  .iconbtn {
+    font-size: 12px; font-weight: 800;
+    padding: 6px 10px; border-radius: 6px;
+    background: var(--panel); color: var(--fg);
+    border: 1px solid var(--panel-line);
+    cursor: pointer;
+  }
+  .iconbtn:active { transform: scale(0.95); }
+
+  /* ---- Hero SOG ---- */
+  #hero {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    min-height: 0;
+    padding: 4px;
+  }
+  #hero-label {
+    font-size: clamp(14px, 3.5vmin, 26px);
+    font-weight: 800; letter-spacing: 2px;
+    color: var(--fg-dim);
+  }
+  #sog {
+    font-variant-numeric: tabular-nums;
+    font-weight: 900;
+    line-height: 0.9;
+    color: var(--hero);
+    font-size: clamp(90px, 34vmin, 360px);
+  }
+  #sog-unit {
+    font-size: clamp(16px, 4vmin, 34px);
+    font-weight: 800; letter-spacing: 3px;
+    color: var(--fg-dim);
+    cursor: pointer;
+  }
+  #sog-unit::after { content: " ▸"; opacity: 0.5; font-size: 0.7em; }
+  #speedbar {
+    width: min(88%, 700px);
+    height: clamp(10px, 2.4vmin, 22px);
+    background: var(--bar-track);
+    border-radius: 999px;
+    margin-top: 10px;
+    overflow: hidden;
+  }
+  #speedbar > div {
+    height: 100%;
+    width: 0%;
+    background: var(--bar-fill);
+    border-radius: 999px;
+    transition: width 0.25s ease-out;
+  }
+
+  /* ---- MOB return banner ---- */
+  #mob-banner {
+    display: none;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 14px;
+    background: var(--mob);
+    color: #fff;
+    padding: 8px 14px;
+    font-weight: 900;
+  }
+  #mob-banner.active { display: flex; }
+  #mob-arrow {
+    font-size: 30px; line-height: 1;
+    transition: transform 0.3s ease-out;
+    display: inline-block;
+  }
+  #mob-banner .mob-stat { font-size: clamp(18px, 5vmin, 30px); font-variant-numeric: tabular-nums; }
+  #mob-banner .mob-sub { font-size: 11px; opacity: 0.85; font-weight: 700; letter-spacing: 1px; }
+  #mob-banner .mob-col { display: flex; flex-direction: column; }
+  #mob-clear {
+    margin-left: auto;
+    background: rgba(255,255,255,0.2);
+    border: 1px solid rgba(255,255,255,0.6);
+    color: #fff; font-weight: 800;
+    padding: 8px 12px; border-radius: 6px; cursor: pointer;
+  }
+
+  /* ---- Stats grid ---- */
+  #grid {
+    flex: 0 0 auto;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 2px;
+    background: var(--panel-line);
+    border-top: 2px solid var(--panel-line);
+  }
+  .cell {
+    background: var(--bg);
+    padding: 8px 6px 9px;
+    text-align: center;
+    min-width: 0;
+  }
+  .cell .k { font-size: 11px; font-weight: 800; letter-spacing: 1px; color: var(--fg-dim); }
+  .cell .v {
+    font-size: clamp(20px, 5.2vmin, 40px);
+    font-weight: 900; font-variant-numeric: tabular-nums;
+    line-height: 1.05;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .cell .u { font-size: 11px; font-weight: 700; color: var(--fg-dim); }
+  .cell.wide { grid-column: span 2; }
+  .cell .v.coord { font-size: clamp(14px, 3.4vmin, 24px); }
+
+  @media (orientation: portrait) {
+    #grid { grid-template-columns: repeat(2, 1fr); }
+  }
+
+  /* ---- Bottom action bar ---- */
+  #actions {
+    flex: 0 0 auto;
+    display: flex;
+    gap: 8px;
+    padding: 8px 10px;
+    border-top: 2px solid var(--panel-line);
+  }
+  .btn {
+    flex: 1;
+    font-size: 15px; font-weight: 900; letter-spacing: 0.5px;
+    padding: 14px 8px; border-radius: 10px;
+    border: 2px solid var(--panel-line);
+    background: var(--panel); color: var(--fg);
+    cursor: pointer;
+  }
+  .btn:active { transform: scale(0.97); }
+  .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  #btn-mob { background: var(--mob); color: #fff; border-color: var(--mob); flex: 0 0 38%; }
+  #btn-mob.armed { animation: none; }
+
+  /* ---- Permission / start overlay ---- */
+  #overlay {
+    position: fixed; inset: 0;
+    background: var(--bg); color: var(--fg);
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 18px; text-align: center; padding: 24px;
+    z-index: 50;
+  }
+  #overlay h1 { font-size: 28px; font-weight: 900; }
+  #overlay p { font-size: 15px; color: var(--fg-dim); max-width: 420px; line-height: 1.5; }
+  #overlay button {
+    font-size: 20px; font-weight: 900;
+    padding: 18px 40px; border-radius: 14px;
+    background: var(--accent); color: #fff; border: none;
+    cursor: pointer;
+  }
+  #overlay .err { color: var(--bad); font-weight: 700; min-height: 20px; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="topbar">
+    <span id="title">⛵ SAILING</span>
+    <span id="chip-gps" class="chip warn">GPS …</span>
+    <span id="chip-acc" class="chip">±– m</span>
+    <span id="spacer"></span>
+    <span id="chip-wake" class="chip" title="Keep screen awake">☀ –</span>
+    <button id="btn-theme" class="iconbtn">NIGHT</button>
+  </div>
+
+  <div id="mob-banner">
+    <span id="mob-arrow">↑</span>
+    <div class="mob-col">
+      <span class="mob-sub">RETURN TO MOB · BRG</span>
+      <span class="mob-stat"><span id="mob-brg">–</span>°</span>
+    </div>
+    <div class="mob-col">
+      <span class="mob-sub">DISTANCE</span>
+      <span class="mob-stat"><span id="mob-dist">–</span></span>
+    </div>
+    <button id="mob-clear">CLEAR</button>
+  </div>
+
+  <div id="hero">
+    <div id="hero-label">SOG</div>
+    <div id="sog">0.0</div>
+    <div id="sog-unit">KNOTS</div>
+    <div id="speedbar"><div id="speedbar-fill"></div></div>
+  </div>
+
+  <div id="grid">
+    <div class="cell"><div class="k">MAX</div><div class="v"><span id="st-max">0.0</span></div><div class="u" id="st-max-u">kn</div></div>
+    <div class="cell"><div class="k">AVG</div><div class="v"><span id="st-avg">0.0</span></div><div class="u" id="st-avg-u">kn</div></div>
+    <div class="cell"><div class="k">DIST</div><div class="v"><span id="st-dist">0.00</span></div><div class="u" id="st-dist-u">nm</div></div>
+    <div class="cell"><div class="k">TIME</div><div class="v"><span id="st-time">0:00</span></div><div class="u">trip</div></div>
+    <div class="cell"><div class="k">COG</div><div class="v"><span id="st-cog">–</span>°</div><div class="u">course</div></div>
+    <div class="cell"><div class="k">ALT</div><div class="v"><span id="st-alt">–</span></div><div class="u">m</div></div>
+    <div class="cell wide"><div class="k">POSITION</div><div class="v coord"><span id="st-pos">– , –</span></div><div class="u" id="st-pos-u">tap to copy</div></div>
+  </div>
+
+  <div id="actions">
+    <button id="btn-trip" class="btn primary">START TRIP</button>
+    <button id="btn-reset" class="btn">RESET</button>
+    <button id="btn-mob" class="btn">⚠ MOB</button>
+  </div>
+</div>
+
+<div id="overlay">
+  <h1>⛵ Sailing Dashboard</h1>
+  <p>Live GPS speed, trip log, and a Man-Over-Board marker. Works best outdoors with a clear sky view. Keep this tab in the foreground.</p>
+  <button id="start-btn">START GPS</button>
+  <div class="err" id="overlay-err"></div>
+  <p style="font-size:12px;">Your location never leaves this device. Add to home screen for a fullscreen dashboard.</p>
+</div>
+
+<script>
+"use strict";
+
+// ---------- Constants ----------
+const MS_TO_KN = 1.94384449;
+const UNITS = {
+  kn:  { spd: MS_TO_KN,    spdLabel: "KNOTS", spdShort: "kn",
+         dist: 1 / 1852,   distLabel: "nm" },
+  kmh: { spd: 3.6,         spdLabel: "KM / H", spdShort: "km/h",
+         dist: 1 / 1000,   distLabel: "km" },
+  mph: { spd: 2.2369363,   spdLabel: "MPH",   spdShort: "mph",
+         dist: 1 / 1609.344, distLabel: "mi" },
+};
+const UNIT_ORDER = ["kn", "kmh", "mph"];
+
+// ---------- State ----------
+const state = {
+  unit: localStorage.getItem("sd_unit") || "kn",
+  night: localStorage.getItem("sd_night") === "1",
+  watchId: null,
+  // smoothed speed in m/s
+  sogMs: 0,
+  // trip
+  tripActive: false,
+  tripStart: 0,        // epoch ms of trip start
+  tripElapsedBase: 0,  // accumulated ms from previous run segments
+  distM: 0,            // accumulated meters
+  maxMs: 0,
+  speedSum: 0,         // for avg: sum of sog samples
+  speedSamples: 0,
+  // last fix used for distance integration
+  lastFix: null,       // {lat, lon, t, acc}
+  // current readout
+  cog: null,
+  alt: null,
+  lastPos: null,       // {lat, lon}
+  // MOB
+  mob: JSON.parse(localStorage.getItem("sd_mob") || "null"), // {lat, lon, t}
+  wakeLock: null,
+};
+
+// ---------- Element refs ----------
+const $ = (id) => document.getElementById(id);
+const el = {
+  sog: $("sog"), sogUnit: $("sog-unit"), bar: $("speedbar-fill"),
+  chipGps: $("chip-gps"), chipAcc: $("chip-acc"), chipWake: $("chip-wake"),
+  stMax: $("st-max"), stAvg: $("st-avg"), stDist: $("st-dist"), stTime: $("st-time"),
+  stCog: $("st-cog"), stAlt: $("st-alt"), stPos: $("st-pos"), stPosU: $("st-pos-u"),
+  stMaxU: $("st-max-u"), stAvgU: $("st-avg-u"), stDistU: $("st-dist-u"),
+  mobBanner: $("mob-banner"), mobArrow: $("mob-arrow"), mobBrg: $("mob-brg"), mobDist: $("mob-dist"),
+  btnTrip: $("btn-trip"), btnReset: $("btn-reset"), btnMob: $("btn-mob"),
+  btnTheme: $("btn-theme"),
+  overlay: $("overlay"), startBtn: $("start-btn"), overlayErr: $("overlay-err"),
+};
+
+// ---------- Geometry ----------
+function haversine(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const toRad = Math.PI / 180;
+  const dLat = (lat2 - lat1) * toRad;
+  const dLon = (lon2 - lon1) * toRad;
+  const a = Math.sin(dLat / 2) ** 2 +
+            Math.cos(lat1 * toRad) * Math.cos(lat2 * toRad) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+function bearing(lat1, lon1, lat2, lon2) {
+  const toRad = Math.PI / 180;
+  const y = Math.sin((lon2 - lon1) * toRad) * Math.cos(lat2 * toRad);
+  const x = Math.cos(lat1 * toRad) * Math.sin(lat2 * toRad) -
+            Math.sin(lat1 * toRad) * Math.cos(lat2 * toRad) * Math.cos((lon2 - lon1) * toRad);
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+
+// ---------- Formatting ----------
+function fmtDist(meters) {
+  const u = UNITS[state.unit];
+  const v = meters * u.dist;
+  return v < 10 ? v.toFixed(2) : v.toFixed(1);
+}
+function fmtSpeed(ms, decimals = 1) {
+  return (ms * UNITS[state.unit].spd).toFixed(decimals);
+}
+function fmtClock(msTotal) {
+  const s = Math.floor(msTotal / 1000);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+  return `${m}:${String(sec).padStart(2, "0")}`;
+}
+function fmtMobDist(meters) {
+  // Always show the most actionable unit for a rescue: meters when close.
+  if (meters < 1000) return Math.round(meters) + " m";
+  return fmtDist(meters) + " " + UNITS[state.unit].distLabel;
+}
+
+// ---------- Theme ----------
+function applyTheme() {
+  document.body.classList.toggle("night", state.night);
+  el.btnTheme.textContent = state.night ? "DAY" : "NIGHT";
+  document.querySelector('meta[name="theme-color"]').setAttribute("content", state.night ? "#000000" : "#ffffff");
+}
+el.btnTheme.addEventListener("click", () => {
+  state.night = !state.night;
+  localStorage.setItem("sd_night", state.night ? "1" : "0");
+  applyTheme();
+});
+
+// ---------- Units ----------
+function applyUnitLabels() {
+  const u = UNITS[state.unit];
+  el.sogUnit.textContent = u.spdLabel;
+  el.stMaxU.textContent = u.spdShort;
+  el.stAvgU.textContent = u.spdShort;
+  el.stDistU.textContent = u.distLabel;
+}
+function cycleUnit() {
+  const i = UNIT_ORDER.indexOf(state.unit);
+  state.unit = UNIT_ORDER[(i + 1) % UNIT_ORDER.length];
+  localStorage.setItem("sd_unit", state.unit);
+  applyUnitLabels();
+  render();
+}
+el.sogUnit.addEventListener("click", cycleUnit);
+
+// ---------- Wake Lock ----------
+async function requestWakeLock() {
+  if (!("wakeLock" in navigator)) {
+    el.chipWake.textContent = "☀ n/a";
+    el.chipWake.title = "Wake Lock unsupported — set device sleep to Never";
+    return;
+  }
+  try {
+    state.wakeLock = await navigator.wakeLock.request("screen");
+    el.chipWake.textContent = "☀ ON";
+    el.chipWake.classList.add("good");
+    state.wakeLock.addEventListener("release", () => {
+      el.chipWake.textContent = "☀ off";
+      el.chipWake.classList.remove("good");
+    });
+  } catch (e) {
+    el.chipWake.textContent = "☀ off";
+  }
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && state.watchId !== null) requestWakeLock();
+});
+
+// ---------- GPS ----------
+function startGps() {
+  if (!("geolocation" in navigator)) {
+    el.overlayErr.textContent = "Geolocation not supported by this browser.";
+    return;
+  }
+  el.overlay.classList.add("hidden");
+  requestWakeLock();
+  state.watchId = navigator.geolocation.watchPosition(onPosition, onGpsError, {
+    enableHighAccuracy: true,
+    maximumAge: 0,
+    timeout: 20000,
+  });
+}
+
+function onGpsError(err) {
+  el.overlay.classList.remove("hidden");
+  const msg = {
+    1: "Location permission denied. Enable it for this site in browser settings, then reload.",
+    2: "Position unavailable. Move to open sky and try again.",
+    3: "GPS timed out. Trying again…",
+  }[err.code] || err.message;
+  el.overlayErr.textContent = msg;
+  el.chipGps.className = "chip bad";
+  el.chipGps.textContent = "GPS ✕";
+}
+
+function onPosition(pos) {
+  const c = pos.coords;
+  const now = pos.timestamp || Date.now();
+  const acc = c.accuracy; // meters
+
+  // ---- GPS fix quality chip ----
+  el.chipGps.className = "chip good";
+  el.chipGps.textContent = "GPS ●";
+  let accCls = "good";
+  if (acc > 30) accCls = "bad";
+  else if (acc > 12) accCls = "warn";
+  el.chipAcc.className = "chip " + accCls;
+  el.chipAcc.textContent = "±" + Math.round(acc) + " m";
+
+  state.lastPos = { lat: c.latitude, lon: c.longitude };
+  if (c.altitude != null) state.alt = c.altitude;
+
+  // ---- Speed: prefer GPS Doppler speed, fall back to position delta ----
+  let speedMs = null;
+  if (c.speed != null && !Number.isNaN(c.speed) && c.speed >= 0) {
+    speedMs = c.speed;
+  } else if (state.lastFix) {
+    const dt = (now - state.lastFix.t) / 1000;
+    if (dt > 0.2) {
+      const d = haversine(state.lastFix.lat, state.lastFix.lon, c.latitude, c.longitude);
+      speedMs = d / dt;
+    }
+  }
+  if (speedMs == null) speedMs = 0;
+
+  // Exponential smoothing for a steady readout
+  const alpha = 0.35;
+  state.sogMs = alpha * speedMs + (1 - alpha) * state.sogMs;
+  // Treat tiny speeds as zero (GPS jitter at rest)
+  if (state.sogMs < 0.15) state.sogMs = 0;
+
+  // ---- Course over ground ----
+  if (c.heading != null && !Number.isNaN(c.heading) && speedMs > 0.5) {
+    state.cog = c.heading;
+  } else if (state.lastFix && speedMs > 0.5) {
+    state.cog = bearing(state.lastFix.lat, state.lastFix.lon, c.latitude, c.longitude);
+  }
+
+  // ---- Trip integration ----
+  if (state.tripActive && state.lastFix) {
+    const seg = haversine(state.lastFix.lat, state.lastFix.lon, c.latitude, c.longitude);
+    // Only count movement that exceeds GPS noise — avoids drift padding the log while moored.
+    const noiseFloor = Math.max(2, acc * 0.5);
+    if (seg > noiseFloor && acc < 40) {
+      state.distM += seg;
+    }
+    if (state.sogMs > state.maxMs) state.maxMs = state.sogMs;
+    if (state.sogMs > 0) { state.speedSum += state.sogMs; state.speedSamples++; }
+  }
+
+  state.lastFix = { lat: c.latitude, lon: c.longitude, t: now, acc };
+  render();
+}
+
+// ---------- Render ----------
+function render() {
+  // Hero SOG
+  el.sog.textContent = fmtSpeed(state.sogMs, 1);
+  // Speed bar scaled so a typical cruising boat sits mid-bar; clamps for fast craft.
+  const kn = state.sogMs * MS_TO_KN;
+  const pct = Math.max(0, Math.min(100, (kn / 12) * 100));
+  el.bar.style.width = pct + "%";
+
+  // Trip stats
+  el.stMax.textContent = fmtSpeed(state.maxMs, 1);
+  const avgMs = state.speedSamples ? state.speedSum / state.speedSamples : 0;
+  el.stAvg.textContent = fmtSpeed(avgMs, 1);
+  el.stDist.textContent = fmtDist(state.distM);
+  el.stCog.textContent = state.cog == null ? "–" : Math.round(state.cog);
+  el.stAlt.textContent = state.alt == null ? "–" : Math.round(state.alt);
+
+  if (state.lastPos) {
+    el.stPos.textContent = state.lastPos.lat.toFixed(5) + ", " + state.lastPos.lon.toFixed(5);
+  }
+
+  // Trip time
+  if (state.tripActive) {
+    el.stTime.textContent = fmtClock(state.tripElapsedBase + (Date.now() - state.tripStart));
+  } else {
+    el.stTime.textContent = fmtClock(state.tripElapsedBase);
+  }
+
+  // MOB return guidance
+  if (state.mob && state.lastPos) {
+    const d = haversine(state.lastPos.lat, state.lastPos.lon, state.mob.lat, state.mob.lon);
+    const brg = bearing(state.lastPos.lat, state.lastPos.lon, state.mob.lat, state.mob.lon);
+    el.mobBrg.textContent = Math.round(brg);
+    el.mobDist.textContent = fmtMobDist(d);
+    // Arrow points relative to current course when moving, else absolute (north-up).
+    const rel = state.cog == null ? brg : (brg - state.cog + 360) % 360;
+    el.mobArrow.style.transform = `rotate(${rel}deg)`;
+  }
+}
+
+// ---------- Trip controls ----------
+function setTripButton() {
+  el.btnTrip.textContent = state.tripActive ? "PAUSE TRIP" : (state.tripElapsedBase > 0 ? "RESUME" : "START TRIP");
+}
+el.btnTrip.addEventListener("click", () => {
+  if (state.tripActive) {
+    state.tripElapsedBase += Date.now() - state.tripStart;
+    state.tripActive = false;
+  } else {
+    state.tripStart = Date.now();
+    state.tripActive = true;
+    state.lastFix = null; // don't count the gap while paused as distance
+  }
+  setTripButton();
+});
+el.btnReset.addEventListener("click", () => {
+  if (!confirm("Reset trip stats?")) return;
+  state.tripActive = false;
+  state.tripStart = 0;
+  state.tripElapsedBase = 0;
+  state.distM = 0;
+  state.maxMs = 0;
+  state.speedSum = 0;
+  state.speedSamples = 0;
+  setTripButton();
+  render();
+});
+
+// ---------- MOB ----------
+function dropMob() {
+  if (!state.lastPos) { alert("No GPS fix yet."); return; }
+  state.mob = { lat: state.lastPos.lat, lon: state.lastPos.lon, t: Date.now() };
+  localStorage.setItem("sd_mob", JSON.stringify(state.mob));
+  el.mobBanner.classList.add("active");
+  if (navigator.vibrate) navigator.vibrate([200, 80, 200]);
+  render();
+}
+function clearMob() {
+  if (!confirm("Clear the MOB marker?")) return;
+  state.mob = null;
+  localStorage.removeItem("sd_mob");
+  el.mobBanner.classList.remove("active");
+}
+el.btnMob.addEventListener("click", dropMob);
+$("mob-clear").addEventListener("click", clearMob);
+
+// ---------- Position copy ----------
+el.stPos.parentElement.parentElement.addEventListener("click", () => {
+  if (!state.lastPos) return;
+  const txt = state.lastPos.lat.toFixed(6) + ", " + state.lastPos.lon.toFixed(6);
+  if (navigator.clipboard) navigator.clipboard.writeText(txt).catch(() => {});
+  el.stPosU.textContent = "copied ✓";
+  setTimeout(() => { el.stPosU.textContent = "tap to copy"; }, 1500);
+});
+
+// ---------- Tick (keeps clock + MOB live between GPS fixes) ----------
+setInterval(() => { if (state.watchId !== null) render(); }, 1000);
+
+// ---------- Init ----------
+applyTheme();
+applyUnitLabels();
+setTripButton();
+if (state.mob) el.mobBanner.classList.add("active");
+el.startBtn.addEventListener("click", startGps);
+</script>
+</body>
+</html>
