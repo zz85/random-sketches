@@ -554,6 +554,7 @@
       <button class="map-btn" id="map-btn-zout" title="Zoom out">&minus;</button>
       <button class="map-btn" id="map-btn-wp" title="Cycle / center on waypoints">&#9873;</button>
       <button class="map-btn" id="map-btn-paste" title="Paste GPS / Add waypoint">&#128204;</button>
+      <button class="map-btn" id="map-btn-cleartrack" title="Clear GPS track trail">&#129529;</button>
     </div>
     <div class="map-ctrl map-ctrl-bl">
       <div id="map-scale">-- NM</div>
@@ -714,7 +715,7 @@ const el = {
   mapCanvas: $("map-canvas"),
   mapScale: $("map-scale"), mapBtnMode: $("map-btn-mode"), mapBtnTilt: $("map-btn-tilt"),
   mapBtnCenter: $("map-btn-center"), mapBtnZin: $("map-btn-zin"), mapBtnZout: $("map-btn-zout"),
-  mapBtnPaste: $("map-btn-paste"), mapBtnWp: $("map-btn-wp"),
+  mapBtnPaste: $("map-btn-paste"), mapBtnWp: $("map-btn-wp"), mapBtnClearTrack: $("map-btn-cleartrack"),
   mapSogVal: $("map-sog-val"), mapSogUnit: $("map-sog-unit"), mapCogVal: $("map-cog-val"),
   mapNavpill: $("map-navpill"), npArrow: $("np-arrow"), npName: $("np-name"),
   npDist: $("np-dist"), npBrg: $("np-brg"), npEta: $("np-eta"),
@@ -945,6 +946,16 @@ function saveTrack() {
       saveTrack._timer = null;
     }, 5000);
   }
+}
+
+function clearTrack() {
+  if (!state.trackHistory.length) { alert("No track to clear yet."); return; }
+  if (!confirm("Clear the GPS track trail (" + state.trackHistory.length + " points)? Waypoints and trip stats are kept.")) return;
+  state.trackHistory = [];
+  // Cancel any pending debounced save, then wipe the stored copy.
+  if (saveTrack._timer) { clearTimeout(saveTrack._timer); saveTrack._timer = null; }
+  localStorage.removeItem("sd_track");
+  if (navigator.vibrate) navigator.vibrate(40);
 }
 
 // ---------- Render ----------
@@ -1755,6 +1766,8 @@ function centerOnWaypoint(id) {
   state.mapFollow = false;
   state.mapCenter = { lat: wp.lat, lon: wp.lon };
 }
+
+el.mapBtnClearTrack.addEventListener("click", clearTrack);
 
 // -- Multi-touch gesture system --
 const touches = new Map(); // pointerId -> {x, y, t}
