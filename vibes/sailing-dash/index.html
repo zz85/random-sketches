@@ -26,6 +26,11 @@
     --mob: #d40000;
     --bar-track: #e0e0e0;
     --bar-fill: #0a58ca;
+    --map-water: #dbeafe;
+    --map-grid: #94a3b8;
+    --map-track: #0a58ca;
+    --map-wp: #e11d48;
+    --map-boat: #000000;
   }
 
   body.night {
@@ -42,6 +47,11 @@
     --mob: #ff3b30;
     --bar-track: #1c232b;
     --bar-fill: #2dd4ff;
+    --map-water: #0c1824;
+    --map-grid: #334155;
+    --map-track: #38bdf8;
+    --map-wp: #fb7185;
+    --map-boat: #f2f2f2;
   }
 
   html, body {
@@ -66,15 +76,15 @@
   #topbar {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     padding: 6px 10px;
     border-bottom: 2px solid var(--panel-line);
     flex: 0 0 auto;
   }
   #title { font-weight: 800; font-size: 13px; letter-spacing: 0.5px; opacity: 0.7; }
   .chip {
-    font-size: 12px; font-weight: 700;
-    padding: 3px 8px; border-radius: 5px;
+    font-size: 11px; font-weight: 700;
+    padding: 3px 6px; border-radius: 5px;
     background: var(--panel); border: 1px solid var(--panel-line);
     white-space: nowrap;
   }
@@ -83,8 +93,8 @@
   .chip.bad  { color: var(--bad);  border-color: var(--bad); }
   #spacer { flex: 1; }
   .iconbtn {
-    font-size: 12px; font-weight: 800;
-    padding: 6px 10px; border-radius: 6px;
+    font-size: 11px; font-weight: 800;
+    padding: 5px 8px; border-radius: 6px;
     background: var(--panel); color: var(--fg);
     border: 1px solid var(--panel-line);
     cursor: pointer;
@@ -120,7 +130,7 @@
     color: var(--fg-dim);
     cursor: pointer;
   }
-  #sog-unit::after { content: " ▸"; opacity: 0.5; font-size: 0.7em; }
+  #sog-unit::after { content: " \25B8"; opacity: 0.5; font-size: 0.7em; }
   #speedbar {
     width: min(88%, 700px);
     height: clamp(10px, 2.4vmin, 22px);
@@ -236,17 +246,20 @@
   #overlay .err { color: var(--bad); font-weight: 700; min-height: 20px; }
   .hidden { display: none !important; }
 
-  /* ---- Tabs ---- */
+  /* ---- Tabs (icon + tiny text) ---- */
   #tabs { display: flex; border: 2px solid var(--panel-line); border-radius: 8px; overflow: hidden; }
   #tabs button {
-    padding: 6px 14px; font-size: 12px; font-weight: 800; letter-spacing: 0.5px;
+    padding: 4px 8px; font-size: 10px; font-weight: 800; letter-spacing: 0.3px;
     background: var(--bg); color: var(--fg-dim); border: none; cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; gap: 1px;
+    min-width: 40px;
   }
+  #tabs button .tab-icon { font-size: 16px; line-height: 1; }
   #tabs button.active { background: var(--accent); color: #fff; }
 
   /* ---- Views ---- */
   #view-dash { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-  #view-dash.off, #view-trim.off { display: none; }
+  .view-off { display: none !important; }
   #view-trim {
     flex: 1 1 auto; min-height: 0;
     display: flex; flex-direction: column;
@@ -311,32 +324,134 @@
   }
   #btn-level:active { transform: scale(0.97); }
   #trim-note { font-size: 11px; color: var(--fg-dim); text-align: center; max-width: 320px; }
+
+  /* ---- MAP view ---- */
+  #view-map {
+    flex: 1 1 auto; min-height: 0;
+    position: relative;
+    overflow: hidden;
+  }
+  #map-canvas {
+    width: 100%; height: 100%;
+    display: block;
+    touch-action: none;
+    background: var(--map-water);
+  }
+  .map-ctrl {
+    position: absolute;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .map-ctrl-tr { top: 10px; right: 10px; }
+  .map-ctrl-tl { top: 10px; left: 10px; }
+  .map-ctrl-bl { bottom: 10px; left: 10px; }
+  .map-ctrl-br { bottom: 10px; right: 10px; }
+  .map-btn {
+    width: 38px; height: 38px;
+    border-radius: 8px; border: 1px solid var(--panel-line);
+    background: var(--panel); color: var(--fg);
+    font-size: 18px; font-weight: 900;
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    opacity: 0.92;
+  }
+  .map-btn:active { transform: scale(0.92); }
+  .map-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  #map-scale {
+    background: rgba(0,0,0,0.6); color: #fff;
+    padding: 4px 8px; border-radius: 4px;
+    font-size: 11px; font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  #map-wp-info {
+    position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
+    background: var(--panel); border: 2px solid var(--panel-line);
+    border-radius: 10px; padding: 10px 16px;
+    display: none; align-items: center; gap: 14px;
+    font-size: 13px; font-weight: 700; max-width: 90%;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+  }
+  #map-wp-info.show { display: flex; }
+  #map-wp-info .wp-name { font-size: 15px; font-weight: 900; }
+  #map-wp-info .wp-detail { font-size: 12px; color: var(--fg-dim); }
+  #map-wp-info .wp-actions { display: flex; gap: 6px; margin-left: auto; }
+  #map-wp-info .wp-btn {
+    padding: 6px 10px; border-radius: 6px; font-size: 11px; font-weight: 800;
+    border: 1px solid var(--panel-line); background: var(--bg); color: var(--fg);
+    cursor: pointer;
+  }
+  #map-wp-info .wp-btn.nav { background: var(--accent); color: #fff; border-color: var(--accent); }
+  #map-wp-info .wp-btn.del { background: var(--bad); color: #fff; border-color: var(--bad); }
+
+  /* ---- NAV (2.5D HUD) view ---- */
+  #view-nav {
+    flex: 1 1 auto; min-height: 0;
+    position: relative;
+    overflow: hidden;
+  }
+  #nav-canvas {
+    width: 100%; height: 100%;
+    display: block;
+    background: var(--map-water);
+  }
+
+  /* ---- Paste GPS Modal ---- */
+  #paste-modal {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.6);
+    display: none; align-items: center; justify-content: center;
+    z-index: 100;
+    padding: 20px;
+  }
+  #paste-modal.show { display: flex; }
+  #paste-modal .modal-box {
+    background: var(--bg); border: 2px solid var(--panel-line);
+    border-radius: 14px; padding: 20px; width: 100%; max-width: 380px;
+  }
+  #paste-modal h3 { font-size: 16px; font-weight: 900; margin-bottom: 8px; }
+  #paste-modal p { font-size: 12px; color: var(--fg-dim); margin-bottom: 12px; line-height: 1.4; }
+  #paste-input {
+    width: 100%; padding: 12px; border-radius: 8px;
+    border: 2px solid var(--panel-line); background: var(--panel); color: var(--fg);
+    font-size: 14px; font-family: monospace;
+    -webkit-user-select: text; user-select: text;
+  }
+  #paste-input:focus { border-color: var(--accent); outline: none; }
+  #paste-error { color: var(--bad); font-size: 12px; font-weight: 700; min-height: 18px; margin-top: 6px; }
+  #paste-modal .modal-actions { display: flex; gap: 8px; margin-top: 12px; }
+  #paste-modal .modal-actions button {
+    flex: 1; padding: 12px; border-radius: 8px;
+    font-size: 14px; font-weight: 800; border: 2px solid var(--panel-line);
+    background: var(--panel); color: var(--fg); cursor: pointer;
+  }
+  #paste-modal .modal-actions button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
 </style>
 </head>
 <body>
 <div id="app">
   <div id="topbar">
-    <span id="title">⛵ SAILING</span>
-    <span id="chip-gps" class="chip warn">GPS …</span>
-    <span id="chip-acc" class="chip">±– m</span>
+    <span id="title">SAIL</span>
+    <span id="chip-gps" class="chip warn">GPS ...</span>
+    <span id="chip-acc" class="chip">+/-- m</span>
     <span id="spacer"></span>
     <div id="tabs">
-      <button id="tab-dash" class="active">DASH</button>
-      <button id="tab-trim">TRIM</button>
+      <button id="tab-dash" class="active"><span class="tab-icon">&#9202;</span>DSH</button>
+      <button id="tab-trim"><span class="tab-icon">&#9978;</span>TRM</button>
+      <button id="tab-map"><span class="tab-icon">&#127758;</span>MAP</button>
+      <button id="tab-nav"><span class="tab-icon">&#9650;</span>NAV</button>
     </div>
-    <span id="chip-wake" class="chip" title="Keep screen awake">☀ –</span>
+    <span id="chip-wake" class="chip" title="Keep screen awake">&#9728; --</span>
     <button id="btn-theme" class="iconbtn">NIGHT</button>
   </div>
 
   <div id="mob-banner">
-    <span id="mob-arrow">↑</span>
+    <span id="mob-arrow">&uarr;</span>
     <div class="mob-col">
-      <span class="mob-sub">RETURN TO MOB · BRG</span>
-      <span class="mob-stat"><span id="mob-brg">–</span>°</span>
+      <span class="mob-sub">RETURN TO MOB - BRG</span>
+      <span class="mob-stat"><span id="mob-brg">--</span>&deg;</span>
     </div>
     <div class="mob-col">
       <span class="mob-sub">DISTANCE</span>
-      <span class="mob-stat"><span id="mob-dist">–</span></span>
+      <span class="mob-stat"><span id="mob-dist">--</span></span>
     </div>
     <button id="mob-clear">CLEAR</button>
   </div>
@@ -354,19 +469,19 @@
       <div class="cell"><div class="k">AVG</div><div class="v"><span id="st-avg">0.0</span></div><div class="u" id="st-avg-u">kn</div></div>
       <div class="cell"><div class="k">DIST</div><div class="v"><span id="st-dist">0.00</span></div><div class="u" id="st-dist-u">nm</div></div>
       <div class="cell"><div class="k">TIME</div><div class="v"><span id="st-time">0:00</span></div><div class="u">trip</div></div>
-      <div class="cell"><div class="k">COG</div><div class="v"><span id="st-cog">–</span>°</div><div class="u">course</div></div>
+      <div class="cell"><div class="k">COG</div><div class="v"><span id="st-cog">--</span>&deg;</div><div class="u">course</div></div>
       <div class="cell"><div class="k">CLOCK</div><div class="v"><span id="st-local">--:--</span></div><div class="u">local</div></div>
-      <div class="cell wide pos-cell"><div class="k">POSITION</div><div class="v coord"><span id="st-pos">– , –</span></div><div class="u" id="st-pos-u">tap to copy</div></div>
+      <div class="cell wide pos-cell"><div class="k">POSITION</div><div class="v coord"><span id="st-pos">-- , --</span></div><div class="u" id="st-pos-u">tap to copy</div></div>
     </div>
   </div>
 
-  <div id="view-trim" class="off">
+  <div id="view-trim" class="view-off">
     <div id="compass">
       <div id="compass-lubber"></div>
       <div id="compass-dial"></div>
       <div id="compass-center">
-        <span id="compass-hdg">–</span>
-        <span id="compass-hdg-label">COG °T</span>
+        <span id="compass-hdg">--</span>
+        <span id="compass-hdg-label">COG &deg;T</span>
       </div>
     </div>
     <div id="attitude">
@@ -378,23 +493,73 @@
       <div id="attitude-marker"></div>
     </div>
     <div id="trim-nums">
-      <div class="trim-stat" id="ts-heel"><div class="k">HEEL</div><div class="v"><span id="tv-heel">–</span>°</div></div>
-      <div class="trim-stat" id="ts-pitch"><div class="k">PITCH</div><div class="v"><span id="tv-pitch">–</span>°</div></div>
+      <div class="trim-stat" id="ts-heel"><div class="k">HEEL</div><div class="v"><span id="tv-heel">--</span>&deg;</div></div>
+      <div class="trim-stat" id="ts-pitch"><div class="k">PITCH</div><div class="v"><span id="tv-pitch">--</span>&deg;</div></div>
     </div>
     <button id="btn-level">SET LEVEL (ZERO)</button>
     <div id="trim-note">Mount the tablet, sit level, then tap SET LEVEL. Heel = side-to-side lean, pitch = bow up/down. Enable motion sensors if prompted.</div>
   </div>
 
+  <!-- MAP view -->
+  <div id="view-map" class="view-off">
+    <canvas id="map-canvas"></canvas>
+    <div class="map-ctrl map-ctrl-tr">
+      <button class="map-btn" id="map-btn-mode" title="North-Up / Head-Up">N</button>
+      <button class="map-btn" id="map-btn-center" title="Re-center on position">&#8982;</button>
+      <button class="map-btn" id="map-btn-zin" title="Zoom in">+</button>
+      <button class="map-btn" id="map-btn-zout" title="Zoom out">&minus;</button>
+    </div>
+    <div class="map-ctrl map-ctrl-tl">
+      <button class="map-btn" id="map-btn-paste" title="Paste GPS / Add waypoint">&#128204;</button>
+    </div>
+    <div class="map-ctrl map-ctrl-bl">
+      <div id="map-scale">-- NM</div>
+    </div>
+    <div id="map-wp-info">
+      <div>
+        <div class="wp-name" id="wp-info-name">--</div>
+        <div class="wp-detail" id="wp-info-detail">--</div>
+      </div>
+      <div class="wp-actions">
+        <button class="wp-btn nav" id="wp-btn-nav">NAV</button>
+        <button class="wp-btn del" id="wp-btn-del">DEL</button>
+        <button class="wp-btn" id="wp-btn-close">X</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- NAV 2.5D HUD view -->
+  <div id="view-nav" class="view-off">
+    <canvas id="nav-canvas"></canvas>
+  </div>
+
   <div id="actions">
     <button id="btn-trip" class="btn primary">START TRIP</button>
     <button id="btn-reset" class="btn">RESET</button>
-    <button id="btn-mob" class="btn">⚠ MOB</button>
+    <button id="btn-mob" class="btn">&#9888; MOB</button>
+  </div>
+</div>
+
+<!-- Paste GPS modal -->
+<div id="paste-modal">
+  <div class="modal-box">
+    <h3>Add Waypoint</h3>
+    <p>Paste coordinates in any format:<br>
+    37.7749, -122.4194<br>
+    37&deg;46.494'N 122&deg;25.164'W<br>
+    Google Maps URL</p>
+    <input type="text" id="paste-input" placeholder="Paste GPS coordinates..." autocomplete="off">
+    <div id="paste-error"></div>
+    <div class="modal-actions">
+      <button id="paste-cancel">Cancel</button>
+      <button id="paste-add" class="primary">Add WP</button>
+    </div>
   </div>
 </div>
 
 <div id="overlay">
-  <h1>⛵ Sailing Dashboard</h1>
-  <p>Live GPS speed, trip log, and a Man-Over-Board marker. Works best outdoors with a clear sky view. Keep this tab in the foreground.</p>
+  <h1>Sailing Dashboard</h1>
+  <p>Live GPS speed, trip log, map, and navigation. Works best outdoors with a clear sky view. Keep this tab in the foreground.</p>
   <button id="start-btn">START GPS</button>
   <div class="err" id="overlay-err"></div>
   <p style="font-size:12px;">Your location never leaves this device. Add to home screen for a fullscreen dashboard.</p>
@@ -414,41 +579,48 @@ const UNITS = {
          dist: 1 / 1609.344, distLabel: "mi" },
 };
 const UNIT_ORDER = ["kn", "kmh", "mph"];
+const NM_METERS = 1852;
+const TRACK_MAX_POINTS = 2000;
 
 // ---------- State ----------
 const state = {
   unit: localStorage.getItem("sd_unit") || "kn",
   night: localStorage.getItem("sd_night") === "1",
   watchId: null,
-  // smoothed speed in m/s
   sogMs: 0,
-  // trip
   tripActive: false,
-  tripStart: 0,        // epoch ms of trip start
-  tripElapsedBase: 0,  // accumulated ms from previous run segments
-  distM: 0,            // accumulated meters
+  tripStart: 0,
+  tripElapsedBase: 0,
+  distM: 0,
   maxMs: 0,
-  speedSum: 0,         // for avg: sum of sog samples
+  speedSum: 0,
   speedSamples: 0,
-  // last fix used for distance integration
-  lastFix: null,       // {lat, lon, t, acc}
-  // current readout
+  lastFix: null,
   cog: null,
   alt: null,
-  lastPos: null,       // {lat, lon}
-  gpsTime: null,       // epoch ms from the GPS fix
-  gpsOffset: 0,        // gpsTime - device clock, to tick the clock between fixes
-  // MOB
-  mob: JSON.parse(localStorage.getItem("sd_mob") || "null"), // {lat, lon, t}
+  lastPos: null,
+  gpsTime: null,
+  gpsOffset: 0,
+  mob: JSON.parse(localStorage.getItem("sd_mob") || "null"),
   wakeLock: null,
-  // view
   view: "dash",
-  // attitude (degrees, smoothed) and zero-offset calibration
   heel: null,
   pitch: null,
   heelZero: parseFloat(localStorage.getItem("sd_heelZero") || "0"),
   pitchZero: parseFloat(localStorage.getItem("sd_pitchZero") || "0"),
   orientReady: false,
+  // MAP state
+  waypoints: JSON.parse(localStorage.getItem("sd_waypoints") || "[]"),
+  trackHistory: JSON.parse(localStorage.getItem("sd_track") || "[]"),
+  activeWp: localStorage.getItem("sd_activeWp") || null,
+  selectedWp: null, // id of currently selected (info panel open)
+  mapMode: localStorage.getItem("sd_mapMode") || "north-up", // "north-up" | "head-up"
+  mapZoom: parseFloat(localStorage.getItem("sd_mapZoom") || "15"),
+  mapCenter: null, // {lat, lon} or null = auto-follow
+  mapRotation: 0,  // degrees, current visual rotation (computed each frame)
+  mapRotationOffset: parseFloat(localStorage.getItem("sd_mapRotOff") || "0"), // user 2-finger rotation
+  mapFollow: true,  // auto-follow boat position
+  wpCounter: parseInt(localStorage.getItem("sd_wpCounter") || "0"),
 };
 
 // ---------- Element refs ----------
@@ -464,11 +636,19 @@ const el = {
   btnTrip: $("btn-trip"), btnReset: $("btn-reset"), btnMob: $("btn-mob"),
   btnTheme: $("btn-theme"),
   overlay: $("overlay"), startBtn: $("start-btn"), overlayErr: $("overlay-err"),
-  tabDash: $("tab-dash"), tabTrim: $("tab-trim"),
-  viewDash: $("view-dash"), viewTrim: $("view-trim"),
+  tabDash: $("tab-dash"), tabTrim: $("tab-trim"), tabMap: $("tab-map"), tabNav: $("tab-nav"),
+  viewDash: $("view-dash"), viewTrim: $("view-trim"), viewMap: $("view-map"), viewNav: $("view-nav"),
   compassDial: $("compass-dial"), compassHdg: $("compass-hdg"), compassHdgLabel: $("compass-hdg-label"),
   horizon: $("horizon"), tvHeel: $("tv-heel"), tvPitch: $("tv-pitch"),
   tsHeel: $("ts-heel"), tsPitch: $("ts-pitch"), btnLevel: $("btn-level"),
+  mapCanvas: $("map-canvas"), navCanvas: $("nav-canvas"),
+  mapScale: $("map-scale"), mapBtnMode: $("map-btn-mode"),
+  mapBtnCenter: $("map-btn-center"), mapBtnZin: $("map-btn-zin"), mapBtnZout: $("map-btn-zout"),
+  mapBtnPaste: $("map-btn-paste"),
+  mapWpInfo: $("map-wp-info"), wpInfoName: $("wp-info-name"), wpInfoDetail: $("wp-info-detail"),
+  wpBtnNav: $("wp-btn-nav"), wpBtnDel: $("wp-btn-del"), wpBtnClose: $("wp-btn-close"),
+  pasteModal: $("paste-modal"), pasteInput: $("paste-input"),
+  pasteError: $("paste-error"), pasteCancel: $("paste-cancel"), pasteAdd: $("paste-add"),
 };
 
 // ---------- Geometry ----------
@@ -507,19 +687,16 @@ function fmtClock(msTotal) {
   return `${m}:${String(sec).padStart(2, "0")}`;
 }
 function fmtMobDist(meters) {
-  // Always show the most actionable unit for a rescue: meters when close.
   if (meters < 1000) return Math.round(meters) + " m";
   return fmtDist(meters) + " " + UNITS[state.unit].distLabel;
 }
-// Degrees + decimal minutes — the maritime / VHF-radio standard for reading a
-// position over the air (e.g. a mayday): "37°48.451'N 122°16.302'W".
 function toDM(deg, isLat) {
   const hemi = isLat ? (deg < 0 ? "S" : "N") : (deg < 0 ? "W" : "E");
   const abs = Math.abs(deg);
   const d = Math.floor(abs);
   const m = (abs - d) * 60;
   const dStr = isLat ? String(d).padStart(2, "0") : String(d).padStart(3, "0");
-  return `${dStr}°${m.toFixed(3).padStart(6, "0")}'${hemi}`;
+  return `${dStr}\u00B0${m.toFixed(3).padStart(6, "0")}'${hemi}`;
 }
 function fmtPosDM(lat, lon) {
   return toDM(lat, true) + " " + toDM(lon, false);
@@ -528,6 +705,13 @@ function pad2(n) { return String(n).padStart(2, "0"); }
 function fmtLocalTime(ms) {
   const d = new Date(ms);
   return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+}
+function fmtNm(meters) {
+  const nm = meters / NM_METERS;
+  if (nm < 0.01) return nm.toFixed(3) + " NM";
+  if (nm < 1) return nm.toFixed(2) + " NM";
+  if (nm < 10) return nm.toFixed(1) + " NM";
+  return Math.round(nm) + " NM";
 }
 
 // ---------- Theme ----------
@@ -562,20 +746,20 @@ el.sogUnit.addEventListener("click", cycleUnit);
 // ---------- Wake Lock ----------
 async function requestWakeLock() {
   if (!("wakeLock" in navigator)) {
-    el.chipWake.textContent = "☀ n/a";
-    el.chipWake.title = "Wake Lock unsupported — set device sleep to Never";
+    el.chipWake.textContent = "\u2600 n/a";
+    el.chipWake.title = "Wake Lock unsupported";
     return;
   }
   try {
     state.wakeLock = await navigator.wakeLock.request("screen");
-    el.chipWake.textContent = "☀ ON";
+    el.chipWake.textContent = "\u2600 ON";
     el.chipWake.classList.add("good");
     state.wakeLock.addEventListener("release", () => {
-      el.chipWake.textContent = "☀ off";
+      el.chipWake.textContent = "\u2600 off";
       el.chipWake.classList.remove("good");
     });
   } catch (e) {
-    el.chipWake.textContent = "☀ off";
+    el.chipWake.textContent = "\u2600 off";
   }
 }
 document.addEventListener("visibilitychange", () => {
@@ -598,44 +782,36 @@ function startGps() {
 }
 
 function onGpsError(err) {
-  // Permission denied is fatal — send the user back to the overlay to fix it.
-  // Everything else (timeout, momentary "unavailable") is transient: the watch
-  // keeps running, so we just flag it on the status chip and stay on the dashboard.
-  if (err.code === 1 /* PERMISSION_DENIED */) {
+  if (err.code === 1) {
     el.overlay.classList.remove("hidden");
     el.overlayErr.textContent = "Location permission denied. Enable it for this site in browser settings, then reload.";
     el.chipGps.className = "chip bad";
-    el.chipGps.textContent = "GPS ✕";
+    el.chipGps.textContent = "GPS \u2715";
     return;
   }
-  // Transient: if we've never had a fix, keep the reassuring "acquiring" state;
-  // if we had one, show a brief "no signal" warning but keep the last readings.
   el.chipGps.className = "chip warn";
-  el.chipGps.textContent = state.lastPos ? "GPS weak" : "GPS …";
+  el.chipGps.textContent = state.lastPos ? "GPS weak" : "GPS \u2026";
 }
 
 function onPosition(pos) {
   const c = pos.coords;
   const now = pos.timestamp || Date.now();
-  const acc = c.accuracy; // meters
+  const acc = c.accuracy;
 
-  // ---- GPS fix quality chip ----
   el.chipGps.className = "chip good";
-  el.chipGps.textContent = "GPS ●";
+  el.chipGps.textContent = "GPS \u25CF";
   let accCls = "good";
   if (acc > 30) accCls = "bad";
   else if (acc > 12) accCls = "warn";
   el.chipAcc.className = "chip " + accCls;
-  el.chipAcc.textContent = "±" + Math.round(acc) + " m";
+  el.chipAcc.textContent = "\u00B1" + Math.round(acc) + " m";
 
   state.lastPos = { lat: c.latitude, lon: c.longitude };
-  // Track the GPS↔device-clock offset so the displayed clock can tick smoothly
-  // between fixes instead of freezing at the last fix's timestamp.
   state.gpsTime = now;
   state.gpsOffset = now - Date.now();
   if (c.altitude != null) state.alt = c.altitude;
 
-  // ---- Speed: prefer GPS Doppler speed, fall back to position delta ----
+  // Speed
   let speedMs = null;
   if (c.speed != null && !Number.isNaN(c.speed) && c.speed >= 0) {
     speedMs = c.speed;
@@ -648,23 +824,20 @@ function onPosition(pos) {
   }
   if (speedMs == null) speedMs = 0;
 
-  // Exponential smoothing for a steady readout
   const alpha = 0.35;
   state.sogMs = alpha * speedMs + (1 - alpha) * state.sogMs;
-  // Treat tiny speeds as zero (GPS jitter at rest)
   if (state.sogMs < 0.15) state.sogMs = 0;
 
-  // ---- Course over ground ----
+  // COG
   if (c.heading != null && !Number.isNaN(c.heading) && speedMs > 0.5) {
     state.cog = c.heading;
   } else if (state.lastFix && speedMs > 0.5) {
     state.cog = bearing(state.lastFix.lat, state.lastFix.lon, c.latitude, c.longitude);
   }
 
-  // ---- Trip integration ----
+  // Trip integration
   if (state.tripActive && state.lastFix) {
     const seg = haversine(state.lastFix.lat, state.lastFix.lon, c.latitude, c.longitude);
-    // Only count movement that exceeds GPS noise — avoids drift padding the log while moored.
     const noiseFloor = Math.max(2, acc * 0.5);
     if (seg > noiseFloor && acc < 40) {
       state.distM += seg;
@@ -673,15 +846,37 @@ function onPosition(pos) {
     if (state.sogMs > 0) { state.speedSum += state.sogMs; state.speedSamples++; }
   }
 
+  // Track history
+  if (acc < 30) {
+    const last = state.trackHistory[state.trackHistory.length - 1];
+    const minDist = 5; // meters between track points
+    if (!last || haversine(last.lat, last.lon, c.latitude, c.longitude) > minDist) {
+      state.trackHistory.push({ lat: c.latitude, lon: c.longitude, t: now });
+      if (state.trackHistory.length > TRACK_MAX_POINTS) {
+        state.trackHistory = state.trackHistory.slice(-TRACK_MAX_POINTS);
+      }
+      saveTrack();
+    }
+  }
+
   state.lastFix = { lat: c.latitude, lon: c.longitude, t: now, acc };
   render();
+}
+
+function saveTrack() {
+  // Debounce track saves to avoid thrashing localStorage
+  if (!saveTrack._timer) {
+    saveTrack._timer = setTimeout(() => {
+      localStorage.setItem("sd_track", JSON.stringify(state.trackHistory));
+      saveTrack._timer = null;
+    }, 5000);
+  }
 }
 
 // ---------- Render ----------
 function render() {
   // Hero SOG
   el.sog.textContent = fmtSpeed(state.sogMs, 1);
-  // Speed bar scaled so a typical cruising boat sits mid-bar; clamps for fast craft.
   const kn = state.sogMs * MS_TO_KN;
   const pct = Math.max(0, Math.min(100, (kn / 12) * 100));
   el.bar.style.width = pct + "%";
@@ -691,38 +886,34 @@ function render() {
   const avgMs = state.speedSamples ? state.speedSum / state.speedSamples : 0;
   el.stAvg.textContent = fmtSpeed(avgMs, 1);
   el.stDist.textContent = fmtDist(state.distM);
-  el.stCog.textContent = state.cog == null ? "–" : pad2(Math.round(state.cog));
+  el.stCog.textContent = state.cog == null ? "\u2013" : pad2(Math.round(state.cog));
 
   if (state.lastPos) {
     el.stPos.textContent = fmtPosDM(state.lastPos.lat, state.lastPos.lon);
   }
 
-  // Local clock — disciplined to GPS time when we have a fix, else the device clock.
   el.stLocal.textContent = fmtLocalTime(Date.now() + (state.gpsTime != null ? (state.gpsOffset || 0) : 0));
 
-  // Trip time
   if (state.tripActive) {
     el.stTime.textContent = fmtClock(state.tripElapsedBase + (Date.now() - state.tripStart));
   } else {
     el.stTime.textContent = fmtClock(state.tripElapsedBase);
   }
 
-  // Trim view (only worth touching the DOM when it's visible)
   if (state.view === "trim") renderTrim();
 
-  // MOB return guidance
+  // MOB
   if (state.mob && state.lastPos) {
     const d = haversine(state.lastPos.lat, state.lastPos.lon, state.mob.lat, state.mob.lon);
     const brg = bearing(state.lastPos.lat, state.lastPos.lon, state.mob.lat, state.mob.lon);
     el.mobBrg.textContent = Math.round(brg);
     el.mobDist.textContent = fmtMobDist(d);
-    // Arrow points relative to current course when moving, else absolute (north-up).
     const rel = state.cog == null ? brg : (brg - state.cog + 360) % 360;
     el.mobArrow.style.transform = `rotate(${rel}deg)`;
   }
 }
 
-// ---------- Compass dial (built once, rotated via transform) ----------
+// ---------- Compass dial ----------
 function buildCompassDial() {
   const NS = "http://www.w3.org/2000/svg";
   const svg = document.createElementNS(NS, "svg");
@@ -776,64 +967,66 @@ function buildCompassDial() {
 
 // ---------- Trim view rendering ----------
 function renderTrim() {
-  // Compass shows COG (course over ground) — what GPS actually gives us; a
-  // magnetometer heading isn't reliably exposed to the browser on most devices.
   const hdg = state.cog;
   if (hdg == null) {
-    el.compassHdg.textContent = "–";
+    el.compassHdg.textContent = "\u2013";
   } else {
     el.compassHdg.textContent = pad2(Math.round(hdg));
-    // Rotate the card so the current heading sits under the top lubber line.
     compassRot.style.transform = `rotate(${-hdg}deg)`;
   }
 
-  // Attitude: rotate the horizon by heel, shift it by pitch.
   const heel = state.heel, pitch = state.pitch;
   if (heel == null || pitch == null) {
-    el.tvHeel.textContent = "–";
-    el.tvPitch.textContent = "–";
+    el.tvHeel.textContent = "\u2013";
+    el.tvPitch.textContent = "\u2013";
   } else {
     el.tvHeel.textContent = Math.abs(Math.round(heel));
     el.tvPitch.textContent = (pitch >= 0 ? "+" : "") + Math.round(pitch);
-    // 1° pitch ≈ 1.5% of the box height of vertical shift, clamped.
     const shift = Math.max(-40, Math.min(40, pitch * 1.5));
     el.horizon.style.transform = `rotate(${heel}deg) translateY(${shift}%)`;
-    // Color the heel readout as it climbs — gentle warn, then hard over.
     const a = Math.abs(heel);
     el.tsHeel.className = "trim-stat" + (a > 25 ? " bad" : a > 15 ? " warn" : "");
   }
 }
 
 // ---------- Tabs ----------
+const views = ["dash", "trim", "map", "nav"];
+const viewEls = [el.viewDash, el.viewTrim, el.viewMap, el.viewNav];
+const tabEls = [el.tabDash, el.tabTrim, el.tabMap, el.tabNav];
+
 function setView(v) {
   state.view = v;
-  const dash = v === "dash";
-  el.viewDash.classList.toggle("off", !dash);
-  el.viewTrim.classList.toggle("off", dash);
-  el.tabDash.classList.toggle("active", dash);
-  el.tabTrim.classList.toggle("active", !dash);
-  if (!dash) {
+  views.forEach((name, i) => {
+    viewEls[i].classList.toggle("view-off", name !== v);
+    tabEls[i].classList.toggle("active", name === v);
+  });
+  if (v === "trim") {
     enableOrientation();
     render();
   }
+  if (v === "map") {
+    resizeMapCanvas();
+    startMapLoop();
+  } else if (v === "nav") {
+    resizeNavCanvas();
+    startNavLoop();
+  }
 }
-el.tabDash.addEventListener("click", () => setView("dash"));
-el.tabTrim.addEventListener("click", () => setView("trim"));
+tabEls.forEach((tab, i) => {
+  tab.addEventListener("click", () => setView(views[i]));
+});
 
-// ---------- Device orientation (heel / pitch) ----------
+// ---------- Device orientation ----------
 function onOrientation(e) {
-  // beta = front-back tilt (pitch), gamma = left-right tilt (heel), in degrees.
   if (e.beta == null || e.gamma == null) return;
   state.orientReady = true;
-  const rawPitch = e.beta;   // -180..180
-  const rawHeel = e.gamma;   // -90..90
+  const rawPitch = e.beta;
+  const rawHeel = e.gamma;
   const sp = rawPitch - state.pitchZero;
   const sh = rawHeel - state.heelZero;
-  // Light smoothing to settle sensor noise on the water.
   const a = 0.25;
   state.pitch = state.pitch == null ? sp : a * sp + (1 - a) * state.pitch;
   state.heel  = state.heel  == null ? sh : a * sh + (1 - a) * state.heel;
-  // Repaint the attitude smoothly without spamming the DOM faster than the screen.
   if (state.view === "trim" && !trimRafPending) {
     trimRafPending = true;
     requestAnimationFrame(() => { trimRafPending = false; renderTrim(); });
@@ -843,7 +1036,6 @@ let trimRafPending = false;
 let orientWired = false;
 function enableOrientation() {
   if (orientWired) return;
-  // iOS 13+ needs an explicit permission request from a user gesture.
   const DOE = window.DeviceOrientationEvent;
   if (DOE && typeof DOE.requestPermission === "function") {
     DOE.requestPermission().then((res) => {
@@ -857,18 +1049,16 @@ function enableOrientation() {
 el.btnLevel.addEventListener("click", () => {
   if (!state.orientReady) {
     enableOrientation();
-    el.btnLevel.textContent = "TILT THE TABLET TO ACTIVATE SENSORS…";
+    el.btnLevel.textContent = "TILT THE TABLET TO ACTIVATE SENSORS\u2026";
     setTimeout(() => { el.btnLevel.textContent = "SET LEVEL (ZERO)"; }, 2500);
     return;
   }
-  // Capture current raw attitude as the new zero by folding the live deviation
-  // back into the stored offsets.
   state.heelZero += (state.heel || 0);
   state.pitchZero += (state.pitch || 0);
   state.heel = 0; state.pitch = 0;
   localStorage.setItem("sd_heelZero", String(state.heelZero));
   localStorage.setItem("sd_pitchZero", String(state.pitchZero));
-  el.btnLevel.textContent = "ZEROED ✓";
+  el.btnLevel.textContent = "ZEROED \u2713";
   if (navigator.vibrate) navigator.vibrate(60);
   setTimeout(() => { el.btnLevel.textContent = "SET LEVEL (ZERO)"; }, 1200);
   renderTrim();
@@ -885,7 +1075,7 @@ el.btnTrip.addEventListener("click", () => {
   } else {
     state.tripStart = Date.now();
     state.tripActive = true;
-    state.lastFix = null; // don't count the gap while paused as distance
+    state.lastFix = null;
   }
   setTripButton();
 });
@@ -925,11 +1115,1010 @@ el.stPos.parentElement.parentElement.addEventListener("click", () => {
   if (!state.lastPos) return;
   const txt = state.lastPos.lat.toFixed(6) + ", " + state.lastPos.lon.toFixed(6);
   if (navigator.clipboard) navigator.clipboard.writeText(txt).catch(() => {});
-  el.stPosU.textContent = "copied ✓";
+  el.stPosU.textContent = "copied \u2713";
   setTimeout(() => { el.stPosU.textContent = "tap to copy"; }, 1500);
 });
 
-// ---------- Tick (keeps clock + MOB live between GPS fixes) ----------
+// ============================================================
+// MAP VIEW - 2D Canvas Renderer
+// ============================================================
+
+// -- Projection: lat/lon to/from canvas pixels --
+// Uses equirectangular projection centered on mapCenter, scaled by zoom.
+// At zoom 15, ~1 NM fits in roughly 256px.
+
+function getMapCenter() {
+  if (state.mapCenter && !state.mapFollow) return state.mapCenter;
+  if (state.lastPos) return state.lastPos;
+  // Default to 0,0 if no position yet
+  return { lat: 0, lon: 0 };
+}
+
+function metersPerPixel(zoom) {
+  // At zoom 15, roughly 4.77 m/px (web mercator-ish scale)
+  return 156543.03 * Math.cos(0) / Math.pow(2, zoom);
+}
+
+function getScale() {
+  const center = getMapCenter();
+  const cosLat = Math.cos(center.lat * Math.PI / 180);
+  // meters per pixel at current zoom
+  const mpp = 156543.03 * cosLat / Math.pow(2, state.mapZoom);
+  return mpp;
+}
+
+function latLonToCanvas(lat, lon, center, mpp, cx, cy, rotation) {
+  const toRad = Math.PI / 180;
+  const cosLat = Math.cos(center.lat * toRad);
+  // Offset in meters from center
+  const dx = (lon - center.lon) * toRad * 6371000 * cosLat;
+  const dy = (lat - center.lat) * toRad * 6371000;
+  // Convert to pixels
+  let px = dx / mpp;
+  let py = -dy / mpp; // Y flipped (screen Y goes down)
+  // Apply rotation
+  if (rotation !== 0) {
+    const r = rotation * toRad;
+    const cosR = Math.cos(r), sinR = Math.sin(r);
+    const rx = px * cosR - py * sinR;
+    const ry = px * sinR + py * cosR;
+    px = rx; py = ry;
+  }
+  return { x: cx + px, y: cy + py };
+}
+
+function canvasToLatLon(x, y, center, mpp, cx, cy, rotation) {
+  const toRad = Math.PI / 180;
+  const cosLat = Math.cos(center.lat * toRad);
+  let px = x - cx;
+  let py = y - cy;
+  // Reverse rotation
+  if (rotation !== 0) {
+    const r = -rotation * toRad;
+    const cosR = Math.cos(r), sinR = Math.sin(r);
+    const rx = px * cosR - py * sinR;
+    const ry = px * sinR + py * cosR;
+    px = rx; py = ry;
+  }
+  const dx = px * mpp;
+  const dy = -py * mpp;
+  const lat = center.lat + dy / (6371000 * toRad);
+  const lon = center.lon + dx / (6371000 * cosLat * toRad);
+  return { lat, lon };
+}
+
+// -- Map canvas setup --
+let mapCtx = null;
+let mapW = 0, mapH = 0;
+let mapAnimId = null;
+
+function resizeMapCanvas() {
+  const rect = el.mapCanvas.parentElement.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  mapW = rect.width; mapH = rect.height;
+  el.mapCanvas.width = mapW * dpr;
+  el.mapCanvas.height = mapH * dpr;
+  el.mapCanvas.style.width = mapW + "px";
+  el.mapCanvas.style.height = mapH + "px";
+  mapCtx = el.mapCanvas.getContext("2d");
+  mapCtx.scale(dpr, dpr);
+}
+
+function startMapLoop() {
+  if (mapAnimId) return;
+  function loop() {
+    if (state.view !== "map") { mapAnimId = null; return; }
+    renderMap();
+    mapAnimId = requestAnimationFrame(loop);
+  }
+  mapAnimId = requestAnimationFrame(loop);
+}
+
+function renderMap() {
+  if (!mapCtx) return;
+  const ctx = mapCtx;
+  const w = mapW, h = mapH;
+  const center = getMapCenter();
+  const mpp = getScale();
+  const base = state.mapMode === "head-up" && state.cog != null ? -state.cog : 0;
+  const rotation = base + state.mapRotationOffset;
+  state.mapRotation = rotation;
+  const cx = w / 2, cy = h / 2;
+
+  // Clear
+  const waterColor = state.night ? "#0c1824" : "#dbeafe";
+  ctx.fillStyle = waterColor;
+  ctx.fillRect(0, 0, w, h);
+
+  // Grid (lat/lon lines)
+  drawMapGrid(ctx, center, mpp, cx, cy, rotation, w, h);
+
+  // Track history
+  drawTrack(ctx, center, mpp, cx, cy, rotation);
+
+  // Bearing line to active waypoint
+  if (state.activeWp && state.lastPos) {
+    const wp = state.waypoints.find(w => w.id === state.activeWp);
+    if (wp) {
+      const pA = latLonToCanvas(state.lastPos.lat, state.lastPos.lon, center, mpp, cx, cy, rotation);
+      const pB = latLonToCanvas(wp.lat, wp.lon, center, mpp, cx, cy, rotation);
+      ctx.save();
+      ctx.setLineDash([8, 6]);
+      ctx.strokeStyle = state.night ? "#fb7185" : "#e11d48";
+      ctx.lineWidth = 2;
+      ctx.globalAlpha = 0.7;
+      ctx.beginPath();
+      ctx.moveTo(pA.x, pA.y);
+      ctx.lineTo(pB.x, pB.y);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  // Waypoints
+  drawWaypoints(ctx, center, mpp, cx, cy, rotation);
+
+  // Heading line from boat
+  if (state.lastPos && state.cog != null && state.sogMs > 0.3) {
+    const headingLen = 2 * NM_METERS; // 2 NM ahead
+    const toRad = Math.PI / 180;
+    const endLat = state.lastPos.lat + (headingLen * Math.cos(state.cog * toRad)) / 6371000 / toRad;
+    const endLon = state.lastPos.lon + (headingLen * Math.sin(state.cog * toRad)) / (6371000 * Math.cos(state.lastPos.lat * toRad)) / toRad;
+    const pS = latLonToCanvas(state.lastPos.lat, state.lastPos.lon, center, mpp, cx, cy, rotation);
+    const pE = latLonToCanvas(endLat, endLon, center, mpp, cx, cy, rotation);
+    ctx.save();
+    ctx.strokeStyle = state.night ? "#38bdf8" : "#0a58ca";
+    ctx.lineWidth = 2.5;
+    ctx.setLineDash([12, 6]);
+    ctx.globalAlpha = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(pS.x, pS.y);
+    ctx.lineTo(pE.x, pE.y);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Boat marker
+  if (state.lastPos) {
+    drawBoat(ctx, center, mpp, cx, cy, rotation);
+  }
+
+  // Scale bar
+  drawScaleBar(ctx, mpp, w, h);
+
+  // Update mode button
+  el.mapBtnMode.textContent = state.mapMode === "north-up" ? "N" : "\u2191";
+  el.mapBtnMode.classList.toggle("active", state.mapMode === "head-up");
+}
+
+function drawMapGrid(ctx, center, mpp, cx, cy, rotation, w, h) {
+  // Determine grid spacing based on zoom
+  const viewNm = (w * mpp) / NM_METERS;
+  let gridNm;
+  if (viewNm < 0.5) gridNm = 0.1;
+  else if (viewNm < 2) gridNm = 0.25;
+  else if (viewNm < 5) gridNm = 0.5;
+  else if (viewNm < 15) gridNm = 1;
+  else if (viewNm < 50) gridNm = 5;
+  else gridNm = 10;
+
+  const gridMeters = gridNm * NM_METERS;
+  const gridDegLat = gridMeters / 111320;
+  const toRad = Math.PI / 180;
+  const cosLat = Math.cos(center.lat * toRad);
+  const gridDegLon = gridDegLat / cosLat;
+
+  // Range of grid lines visible
+  const halfW = (w / 2) * mpp / 111320;
+  const halfH = (h / 2) * mpp / 111320;
+
+  const latMin = center.lat - halfH * 1.5;
+  const latMax = center.lat + halfH * 1.5;
+  const lonMin = center.lon - halfW * 1.5 / cosLat;
+  const lonMax = center.lon + halfW * 1.5 / cosLat;
+
+  ctx.save();
+  ctx.strokeStyle = state.night ? "#334155" : "#94a3b8";
+  ctx.lineWidth = 0.5;
+  ctx.globalAlpha = 0.5;
+  ctx.font = "10px -apple-system, sans-serif";
+  ctx.fillStyle = state.night ? "#64748b" : "#64748b";
+
+  // Latitude lines
+  const latStart = Math.floor(latMin / gridDegLat) * gridDegLat;
+  for (let lat = latStart; lat <= latMax; lat += gridDegLat) {
+    const p1 = latLonToCanvas(lat, lonMin, center, mpp, cx, cy, rotation);
+    const p2 = latLonToCanvas(lat, lonMax, center, mpp, cx, cy, rotation);
+    ctx.beginPath();
+    ctx.moveTo(p1.x, p1.y);
+    ctx.lineTo(p2.x, p2.y);
+    ctx.stroke();
+  }
+  // Longitude lines
+  const lonStart = Math.floor(lonMin / gridDegLon) * gridDegLon;
+  for (let lon = lonStart; lon <= lonMax; lon += gridDegLon) {
+    const p1 = latLonToCanvas(latMin, lon, center, mpp, cx, cy, rotation);
+    const p2 = latLonToCanvas(latMax, lon, center, mpp, cx, cy, rotation);
+    ctx.beginPath();
+    ctx.moveTo(p1.x, p1.y);
+    ctx.lineTo(p2.x, p2.y);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawTrack(ctx, center, mpp, cx, cy, rotation) {
+  const track = state.trackHistory;
+  if (track.length < 2) return;
+  ctx.save();
+  ctx.strokeStyle = state.night ? "#38bdf8" : "#0a58ca";
+  ctx.lineWidth = 2.5;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  let started = false;
+  for (let i = 0; i < track.length; i++) {
+    const p = latLonToCanvas(track[i].lat, track[i].lon, center, mpp, cx, cy, rotation);
+    // Skip points far off screen for performance
+    if (p.x < -100 || p.x > mapW + 100 || p.y < -100 || p.y > mapH + 100) {
+      started = false;
+      continue;
+    }
+    if (!started) { ctx.moveTo(p.x, p.y); started = true; }
+    else ctx.lineTo(p.x, p.y);
+  }
+  ctx.globalAlpha = 0.7;
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawWaypoints(ctx, center, mpp, cx, cy, rotation) {
+  for (const wp of state.waypoints) {
+    const p = latLonToCanvas(wp.lat, wp.lon, center, mpp, cx, cy, rotation);
+    // Skip off-screen
+    if (p.x < -50 || p.x > mapW + 50 || p.y < -50 || p.y > mapH + 50) continue;
+
+    const isActive = wp.id === state.activeWp;
+    const isSelected = wp.id === state.selectedWp;
+    const radius = isActive ? 10 : 7;
+
+    ctx.save();
+    // Outer ring
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+    ctx.fillStyle = wp.color || (state.night ? "#fb7185" : "#e11d48");
+    ctx.fill();
+    if (isSelected || isActive) {
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+    }
+
+    // Label
+    ctx.font = "bold 11px -apple-system, sans-serif";
+    ctx.fillStyle = state.night ? "#e2e8f0" : "#1e293b";
+    ctx.textAlign = "center";
+    ctx.fillText(wp.name, p.x, p.y - radius - 5);
+
+    // Distance label if we have position
+    if (state.lastPos) {
+      const dist = haversine(state.lastPos.lat, state.lastPos.lon, wp.lat, wp.lon);
+      ctx.font = "10px -apple-system, sans-serif";
+      ctx.fillStyle = state.night ? "#94a3b8" : "#64748b";
+      ctx.fillText(fmtNm(dist), p.x, p.y + radius + 12);
+    }
+
+    ctx.restore();
+  }
+}
+
+function drawBoat(ctx, center, mpp, cx, cy, rotation) {
+  const p = latLonToCanvas(state.lastPos.lat, state.lastPos.lon, center, mpp, cx, cy, rotation);
+  const boatSize = 14;
+  const headingDeg = state.cog || 0;
+  // In head-up mode the map is already rotated, so boat points up
+  const angle = state.mapMode === "head-up" ? 0 : headingDeg;
+  const rad = angle * Math.PI / 180;
+
+  ctx.save();
+  ctx.translate(p.x, p.y);
+  ctx.rotate(rad);
+
+  // Triangle (boat shape)
+  ctx.beginPath();
+  ctx.moveTo(0, -boatSize);
+  ctx.lineTo(-boatSize * 0.6, boatSize * 0.7);
+  ctx.lineTo(0, boatSize * 0.4);
+  ctx.lineTo(boatSize * 0.6, boatSize * 0.7);
+  ctx.closePath();
+  ctx.fillStyle = state.night ? "#f2f2f2" : "#000000";
+  ctx.fill();
+  ctx.strokeStyle = state.night ? "#000" : "#fff";
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Accuracy circle
+  if (state.lastFix && state.lastFix.acc > 5) {
+    const accRadius = state.lastFix.acc / mpp;
+    if (accRadius > 3 && accRadius < 200) {
+      ctx.beginPath();
+      ctx.arc(0, 0, accRadius, 0, Math.PI * 2);
+      ctx.fillStyle = state.night ? "rgba(56,189,248,0.1)" : "rgba(10,88,202,0.1)";
+      ctx.fill();
+      ctx.strokeStyle = state.night ? "rgba(56,189,248,0.3)" : "rgba(10,88,202,0.3)";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+  }
+
+  ctx.restore();
+}
+
+function drawScaleBar(ctx, mpp, w, h) {
+  // Target bar length ~100px, find nice NM value
+  const targetPx = 100;
+  const targetMeters = targetPx * mpp;
+  const targetNm = targetMeters / NM_METERS;
+
+  // Find nice round NM value
+  const niceValues = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50];
+  let bestNm = niceValues[0];
+  for (const v of niceValues) {
+    if (v <= targetNm * 1.5) bestNm = v;
+  }
+  const barPx = (bestNm * NM_METERS) / mpp;
+
+  // Draw at bottom-left (positioned by CSS, but we draw into canvas for the bar itself)
+  // Actually update the HTML element
+  el.mapScale.textContent = bestNm < 1 ? (bestNm * 1000).toFixed(0) + "m" : bestNm + " NM";
+  el.mapScale.style.width = barPx + "px";
+  el.mapScale.style.borderBottom = "3px solid #fff";
+  el.mapScale.style.borderLeft = "2px solid #fff";
+  el.mapScale.style.borderRight = "2px solid #fff";
+}
+
+// -- Map controls --
+el.mapBtnMode.addEventListener("click", () => {
+  state.mapMode = state.mapMode === "north-up" ? "head-up" : "north-up";
+  // Clear any free-rotation the user applied so the mode is honored exactly.
+  state.mapRotationOffset = 0;
+  localStorage.setItem("sd_mapRotOff", "0");
+  localStorage.setItem("sd_mapMode", state.mapMode);
+});
+el.mapBtnCenter.addEventListener("click", () => {
+  state.mapFollow = true;
+  state.mapCenter = null;
+  state.mapRotationOffset = 0;
+  localStorage.setItem("sd_mapRotOff", "0");
+});
+el.mapBtnZin.addEventListener("click", () => {
+  state.mapZoom = Math.min(20, state.mapZoom + 0.5);
+  localStorage.setItem("sd_mapZoom", String(state.mapZoom));
+});
+el.mapBtnZout.addEventListener("click", () => {
+  state.mapZoom = Math.max(8, state.mapZoom - 0.5);
+  localStorage.setItem("sd_mapZoom", String(state.mapZoom));
+});
+
+// -- Multi-touch gesture system --
+const touches = new Map(); // pointerId -> {x, y, t}
+let lastPinchDist = 0;
+let lastPinchAngle = 0;
+let lastMidX = null, lastMidY = null;
+let lastPanX = 0, lastPanY = 0;
+let longPressTimer = null;
+let longPressPos = null;
+let gestureType = null; // "pan" | "pinch" | null
+
+el.mapCanvas.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  touches.set(e.pointerId, { x: e.clientX, y: e.clientY, t: Date.now() });
+  el.mapCanvas.setPointerCapture(e.pointerId);
+
+  if (touches.size === 1) {
+    lastPanX = e.clientX;
+    lastPanY = e.clientY;
+    gestureType = null;
+    // Start long-press timer
+    longPressPos = { x: e.clientX, y: e.clientY };
+    longPressTimer = setTimeout(() => {
+      if (touches.size === 1) {
+        handleLongPress(longPressPos.x, longPressPos.y);
+      }
+      longPressTimer = null;
+    }, 600);
+  } else if (touches.size === 2) {
+    gestureType = "pinch";
+    clearLongPress();
+    const pts = Array.from(touches.values());
+    lastPinchDist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+    lastPinchAngle = Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x);
+    lastMidX = (pts[0].x + pts[1].x) / 2;
+    lastMidY = (pts[0].y + pts[1].y) / 2;
+  }
+});
+
+el.mapCanvas.addEventListener("pointermove", (e) => {
+  if (!touches.has(e.pointerId)) return;
+  e.preventDefault();
+  const prev = touches.get(e.pointerId);
+  touches.set(e.pointerId, { x: e.clientX, y: e.clientY, t: Date.now() });
+
+  // Cancel long-press if moved too much
+  if (longPressTimer && longPressPos) {
+    const dx = e.clientX - longPressPos.x;
+    const dy = e.clientY - longPressPos.y;
+    if (Math.hypot(dx, dy) > 10) clearLongPress();
+  }
+
+  if (touches.size === 1 && gestureType !== "pinch") {
+    gestureType = "pan";
+    const dx = e.clientX - lastPanX;
+    const dy = e.clientY - lastPanY;
+    lastPanX = e.clientX;
+    lastPanY = e.clientY;
+    panMap(dx, dy);
+  } else if (touches.size === 2) {
+    const pts = Array.from(touches.values());
+    const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+    const angle = Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x);
+    const midX = (pts[0].x + pts[1].x) / 2;
+    const midY = (pts[0].y + pts[1].y) / 2;
+
+    // Pinch zoom
+    if (lastPinchDist > 0) {
+      const scale = dist / lastPinchDist;
+      const zoomDelta = Math.log2(scale);
+      state.mapZoom = Math.max(8, Math.min(20, state.mapZoom + zoomDelta));
+      localStorage.setItem("sd_mapZoom", String(state.mapZoom));
+    }
+
+    // Two-finger rotate — applies a free rotation offset on top of the base
+    // (works in both north-up and head-up modes).
+    let angleDelta = (angle - lastPinchAngle) * 180 / Math.PI;
+    // Normalize to [-180,180] so a wrap doesn't spin the map.
+    if (angleDelta > 180) angleDelta -= 360;
+    if (angleDelta < -180) angleDelta += 360;
+    if (Math.abs(angleDelta) < 45) { // ignore jumps from finger lift/reorder
+      state.mapRotationOffset = (state.mapRotationOffset + angleDelta) % 360;
+      localStorage.setItem("sd_mapRotOff", String(state.mapRotationOffset));
+    }
+
+    // Two-finger pan (track midpoint movement)
+    if (lastMidX != null) {
+      panMap(midX - lastMidX, midY - lastMidY);
+    }
+
+    lastPinchDist = dist;
+    lastPinchAngle = angle;
+    lastMidX = midX;
+    lastMidY = midY;
+  }
+});
+
+el.mapCanvas.addEventListener("pointerup", handlePointerEnd);
+el.mapCanvas.addEventListener("pointercancel", handlePointerEnd);
+
+function handlePointerEnd(e) {
+  const wasTouch = touches.get(e.pointerId);
+  touches.delete(e.pointerId);
+  clearLongPress();
+
+  if (touches.size === 0) {
+    // Check for tap (short duration, small movement)
+    if (wasTouch && gestureType === null) {
+      const dt = Date.now() - wasTouch.t;
+      if (dt < 300) {
+        handleMapTap(wasTouch.x, wasTouch.y);
+      }
+    }
+    gestureType = null;
+    lastPinchDist = 0;
+    lastMidX = null; lastMidY = null;
+  } else if (touches.size === 1) {
+    // Reset pan tracking to remaining finger
+    const remaining = Array.from(touches.values())[0];
+    lastPanX = remaining.x;
+    lastPanY = remaining.y;
+    gestureType = "pan";
+    lastMidX = null; lastMidY = null;
+  }
+}
+
+function clearLongPress() {
+  if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+}
+
+function panMap(dx, dy) {
+  state.mapFollow = false;
+  const center = getMapCenter();
+  const mpp = getScale();
+  const rotation = state.mapRotation;
+  const toRad = Math.PI / 180;
+  const cosLat = Math.cos(center.lat * toRad);
+
+  // Reverse rotation on the pan delta
+  let pdx = -dx, pdy = -dy;
+  if (rotation !== 0) {
+    const r = -rotation * toRad;
+    const cosR = Math.cos(r), sinR = Math.sin(r);
+    const rx = pdx * cosR - pdy * sinR;
+    const ry = pdx * sinR + pdy * cosR;
+    pdx = rx; pdy = ry;
+  }
+
+  const dLon = pdx * mpp / (6371000 * cosLat * toRad);
+  const dLat = pdy * mpp / (6371000 * toRad);
+  state.mapCenter = {
+    lat: center.lat + dLat,
+    lon: center.lon + dLon,
+  };
+}
+
+function handleMapTap(clientX, clientY) {
+  const rect = el.mapCanvas.getBoundingClientRect();
+  const x = clientX - rect.left;
+  const y = clientY - rect.top;
+  const center = getMapCenter();
+  const mpp = getScale();
+  const rotation = state.mapRotation;
+  const cx = mapW / 2, cy = mapH / 2;
+
+  // Check if tap is near a waypoint
+  let hitWp = null;
+  let hitDist = Infinity;
+  for (const wp of state.waypoints) {
+    const p = latLonToCanvas(wp.lat, wp.lon, center, mpp, cx, cy, rotation);
+    const d = Math.hypot(p.x - x, p.y - y);
+    if (d < 25 && d < hitDist) {
+      hitWp = wp;
+      hitDist = d;
+    }
+  }
+
+  if (hitWp) {
+    selectWaypoint(hitWp.id);
+  } else {
+    deselectWaypoint();
+  }
+}
+
+function handleLongPress(clientX, clientY) {
+  const rect = el.mapCanvas.getBoundingClientRect();
+  const x = clientX - rect.left;
+  const y = clientY - rect.top;
+  const center = getMapCenter();
+  const mpp = getScale();
+  const rotation = state.mapRotation;
+  const cx = mapW / 2, cy = mapH / 2;
+  const pos = canvasToLatLon(x, y, center, mpp, cx, cy, rotation);
+  addWaypoint(pos.lat, pos.lon);
+  if (navigator.vibrate) navigator.vibrate(50);
+}
+
+// -- Double-tap detection --
+let lastTapTime = 0;
+el.mapCanvas.addEventListener("pointerup", (e) => {
+  const now = Date.now();
+  if (now - lastTapTime < 300 && touches.size === 0) {
+    // Double tap: re-center
+    state.mapFollow = true;
+    state.mapCenter = null;
+  }
+  lastTapTime = now;
+});
+
+// ============================================================
+// WAYPOINT MANAGEMENT
+// ============================================================
+
+function addWaypoint(lat, lon, name) {
+  state.wpCounter++;
+  const wp = {
+    id: "wp_" + Date.now() + "_" + state.wpCounter,
+    lat: lat,
+    lon: lon,
+    name: name || ("WP" + state.wpCounter),
+    color: null, // uses default
+  };
+  state.waypoints.push(wp);
+  saveWaypoints();
+  selectWaypoint(wp.id);
+  return wp;
+}
+
+function removeWaypoint(id) {
+  state.waypoints = state.waypoints.filter(w => w.id !== id);
+  if (state.activeWp === id) state.activeWp = null;
+  if (state.selectedWp === id) deselectWaypoint();
+  saveWaypoints();
+}
+
+function saveWaypoints() {
+  localStorage.setItem("sd_waypoints", JSON.stringify(state.waypoints));
+  localStorage.setItem("sd_wpCounter", String(state.wpCounter));
+  if (state.activeWp) localStorage.setItem("sd_activeWp", state.activeWp);
+  else localStorage.removeItem("sd_activeWp");
+}
+
+function selectWaypoint(id) {
+  state.selectedWp = id;
+  const wp = state.waypoints.find(w => w.id === id);
+  if (!wp) return;
+  el.wpInfoName.textContent = wp.name;
+  let detail = `${wp.lat.toFixed(5)}, ${wp.lon.toFixed(5)}`;
+  if (state.lastPos) {
+    const dist = haversine(state.lastPos.lat, state.lastPos.lon, wp.lat, wp.lon);
+    const brg = bearing(state.lastPos.lat, state.lastPos.lon, wp.lat, wp.lon);
+    detail = `${fmtNm(dist)} \u2022 ${Math.round(brg)}\u00B0`;
+    if (state.sogMs > 0.3) {
+      const eta = dist / state.sogMs;
+      detail += ` \u2022 ETA ${fmtClock(eta * 1000)}`;
+    }
+  }
+  el.wpInfoDetail.textContent = detail;
+  el.mapWpInfo.classList.add("show");
+}
+
+function deselectWaypoint() {
+  state.selectedWp = null;
+  el.mapWpInfo.classList.remove("show");
+}
+
+// Waypoint info panel buttons
+el.wpBtnNav.addEventListener("click", () => {
+  if (state.selectedWp) {
+    state.activeWp = state.selectedWp;
+    saveWaypoints();
+    deselectWaypoint();
+  }
+});
+el.wpBtnDel.addEventListener("click", () => {
+  if (state.selectedWp && confirm("Delete this waypoint?")) {
+    removeWaypoint(state.selectedWp);
+  }
+});
+el.wpBtnClose.addEventListener("click", deselectWaypoint);
+
+// ============================================================
+// PASTE GPS MODAL
+// ============================================================
+
+el.mapBtnPaste.addEventListener("click", () => {
+  el.pasteModal.classList.add("show");
+  el.pasteInput.value = "";
+  el.pasteError.textContent = "";
+  setTimeout(() => el.pasteInput.focus(), 100);
+});
+
+el.pasteCancel.addEventListener("click", () => {
+  el.pasteModal.classList.remove("show");
+});
+
+el.pasteAdd.addEventListener("click", () => {
+  const text = el.pasteInput.value.trim();
+  if (!text) { el.pasteError.textContent = "Enter coordinates"; return; }
+  const result = parseGpsInput(text);
+  if (!result) { el.pasteError.textContent = "Could not parse coordinates"; return; }
+  addWaypoint(result.lat, result.lon, result.name);
+  el.pasteModal.classList.remove("show");
+});
+
+el.pasteInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") el.pasteAdd.click();
+  if (e.key === "Escape") el.pasteCancel.click();
+});
+
+// Close modal on backdrop click
+el.pasteModal.addEventListener("click", (e) => {
+  if (e.target === el.pasteModal) el.pasteModal.classList.remove("show");
+});
+
+function parseGpsInput(text) {
+  // Try multiple formats
+
+  // 1. Google Maps URL: extract @lat,lon or ?q=lat,lon or ?ll=lat,lon
+  const urlMatch = text.match(/@(-?\d+\.?\d*),(-?\d+\.?\d*)/) ||
+                   text.match(/[?&]q=(-?\d+\.?\d*),(-?\d+\.?\d*)/) ||
+                   text.match(/[?&]ll=(-?\d+\.?\d*),(-?\d+\.?\d*)/);
+  if (urlMatch) {
+    return { lat: parseFloat(urlMatch[1]), lon: parseFloat(urlMatch[2]), name: null };
+  }
+
+  // 2. Decimal degrees: "37.7749, -122.4194" or "37.7749 -122.4194"
+  const decMatch = text.match(/^\s*(-?\d+\.?\d*)\s*[,\s]\s*(-?\d+\.?\d*)\s*$/);
+  if (decMatch) {
+    const lat = parseFloat(decMatch[1]);
+    const lon = parseFloat(decMatch[2]);
+    if (Math.abs(lat) <= 90 && Math.abs(lon) <= 180) {
+      return { lat, lon, name: null };
+    }
+  }
+
+  // 3. Degrees + decimal minutes: 37°46.494'N 122°25.164'W
+  const dmMatch = text.match(/(\d+)\s*[°]\s*(\d+\.?\d*)\s*[']\s*([NSEW])\s*[,\s]*(\d+)\s*[°]\s*(\d+\.?\d*)\s*[']\s*([NSEW])/i);
+  if (dmMatch) {
+    let lat = parseInt(dmMatch[1]) + parseFloat(dmMatch[2]) / 60;
+    let lon = parseInt(dmMatch[4]) + parseFloat(dmMatch[5]) / 60;
+    if (dmMatch[3].toUpperCase() === "S") lat = -lat;
+    if (dmMatch[6].toUpperCase() === "W") lon = -lon;
+    return { lat, lon, name: null };
+  }
+
+  // 4. DMS: 37°46'29.6"N 122°25'9.8"W
+  const dmsMatch = text.match(/(\d+)\s*[°]\s*(\d+)\s*[']\s*(\d+\.?\d*)\s*["]\s*([NSEW])\s*[,\s]*(\d+)\s*[°]\s*(\d+)\s*[']\s*(\d+\.?\d*)\s*["]\s*([NSEW])/i);
+  if (dmsMatch) {
+    let lat = parseInt(dmsMatch[1]) + parseInt(dmsMatch[2]) / 60 + parseFloat(dmsMatch[3]) / 3600;
+    let lon = parseInt(dmsMatch[5]) + parseInt(dmsMatch[6]) / 60 + parseFloat(dmsMatch[7]) / 3600;
+    if (dmsMatch[4].toUpperCase() === "S") lat = -lat;
+    if (dmsMatch[8].toUpperCase() === "W") lon = -lon;
+    return { lat, lon, name: null };
+  }
+
+  // 5. Simple space/tab separated
+  const parts = text.split(/[\s,;]+/).filter(Boolean).map(Number);
+  if (parts.length >= 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+    if (Math.abs(parts[0]) <= 90 && Math.abs(parts[1]) <= 180) {
+      return { lat: parts[0], lon: parts[1], name: null };
+    }
+  }
+
+  return null;
+}
+
+// ============================================================
+// NAV VIEW - 2.5D HUD Renderer
+// ============================================================
+
+let navCtx = null;
+let navW = 0, navH = 0;
+let navAnimId = null;
+
+function resizeNavCanvas() {
+  const rect = el.navCanvas.parentElement.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  navW = rect.width; navH = rect.height;
+  el.navCanvas.width = navW * dpr;
+  el.navCanvas.height = navH * dpr;
+  el.navCanvas.style.width = navW + "px";
+  el.navCanvas.style.height = navH + "px";
+  navCtx = el.navCanvas.getContext("2d");
+  navCtx.scale(dpr, dpr);
+}
+
+function startNavLoop() {
+  if (navAnimId) return;
+  function loop() {
+    if (state.view !== "nav") { navAnimId = null; return; }
+    renderNav();
+    navAnimId = requestAnimationFrame(loop);
+  }
+  navAnimId = requestAnimationFrame(loop);
+}
+
+function renderNav() {
+  if (!navCtx) return;
+  const ctx = navCtx;
+  const w = navW, h = navH;
+
+  // Background: sky top, sea bottom
+  const horizonY = h * 0.4;
+  const skyColor = state.night ? "#0f172a" : "#bfdbfe";
+  const seaColor = state.night ? "#0c1824" : "#1e40af";
+
+  ctx.fillStyle = skyColor;
+  ctx.fillRect(0, 0, w, horizonY);
+  ctx.fillStyle = seaColor;
+  ctx.fillRect(0, horizonY, w, h - horizonY);
+
+  // Horizon line
+  ctx.strokeStyle = state.night ? "#64748b" : "#93c5fd";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(0, horizonY);
+  ctx.lineTo(w, horizonY);
+  ctx.stroke();
+
+  // Compass ribbon at top
+  drawCompassRibbon(ctx, w, h);
+
+  // Waypoint indicators on horizon
+  drawNavWaypoints(ctx, w, h, horizonY);
+
+  // Boat nose indicator
+  const noseY = h * 0.65;
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(w / 2, noseY - 20);
+  ctx.lineTo(w / 2 - 12, noseY);
+  ctx.lineTo(w / 2 + 12, noseY);
+  ctx.closePath();
+  ctx.fillStyle = state.night ? "#e2e8f0" : "#1e293b";
+  ctx.fill();
+  ctx.restore();
+
+  // Info panel at bottom
+  drawNavInfoPanel(ctx, w, h);
+}
+
+function drawCompassRibbon(ctx, w, h) {
+  const ribbonH = 36;
+  const heading = state.cog || 0;
+
+  ctx.save();
+  ctx.fillStyle = state.night ? "rgba(15,23,42,0.85)" : "rgba(255,255,255,0.85)";
+  ctx.fillRect(0, 0, w, ribbonH);
+  ctx.strokeStyle = state.night ? "#334155" : "#cbd5e1";
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, ribbonH); ctx.lineTo(w, ribbonH); ctx.stroke();
+
+  // Draw heading markings
+  const degreesVisible = 90; // 90 degrees visible across width
+  const pxPerDeg = w / degreesVisible;
+  const cardinals = { 0: "N", 45: "NE", 90: "E", 135: "SE", 180: "S", 225: "SW", 270: "W", 315: "NW" };
+
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  for (let deg = -180; deg <= 540; deg += 5) {
+    const relDeg = ((deg - heading + 540) % 360) - 180;
+    if (Math.abs(relDeg) > degreesVisible / 2 + 10) continue;
+    const x = w / 2 + relDeg * pxPerDeg;
+    const normDeg = ((deg % 360) + 360) % 360;
+
+    if (deg % 10 === 0) {
+      ctx.strokeStyle = state.night ? "#64748b" : "#94a3b8";
+      ctx.lineWidth = deg % 30 === 0 ? 2 : 1;
+      ctx.beginPath();
+      ctx.moveTo(x, ribbonH - 4);
+      ctx.lineTo(x, ribbonH - (deg % 30 === 0 ? 14 : 9));
+      ctx.stroke();
+    }
+
+    if (cardinals[normDeg]) {
+      ctx.font = "bold 12px -apple-system, sans-serif";
+      ctx.fillStyle = normDeg === 0 ? (state.night ? "#ff5a52" : "#c81e1e") : (state.night ? "#e2e8f0" : "#1e293b");
+      ctx.fillText(cardinals[normDeg], x, 13);
+    } else if (normDeg % 30 === 0) {
+      ctx.font = "10px -apple-system, sans-serif";
+      ctx.fillStyle = state.night ? "#94a3b8" : "#64748b";
+      ctx.fillText(String(normDeg), x, 13);
+    }
+  }
+
+  // Center lubber line
+  ctx.strokeStyle = state.night ? "#2dd4ff" : "#0a58ca";
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(w / 2, ribbonH);
+  ctx.lineTo(w / 2, ribbonH - 16);
+  ctx.stroke();
+
+  // Heading readout
+  ctx.font = "bold 14px -apple-system, sans-serif";
+  ctx.fillStyle = state.night ? "#2dd4ff" : "#0a58ca";
+  ctx.fillText(pad2(Math.round(heading)) + "\u00B0", w / 2, ribbonH + 14);
+
+  ctx.restore();
+}
+
+function drawNavWaypoints(ctx, w, h, horizonY) {
+  if (!state.lastPos) return;
+  const heading = state.cog || 0;
+  const degreesVisible = 90;
+  const pxPerDeg = w / degreesVisible;
+
+  for (const wp of state.waypoints) {
+    const dist = haversine(state.lastPos.lat, state.lastPos.lon, wp.lat, wp.lon);
+    const brg = bearing(state.lastPos.lat, state.lastPos.lon, wp.lat, wp.lon);
+    const relBrg = ((brg - heading + 540) % 360) - 180;
+
+    // Only show if within view (with some extra margin)
+    if (Math.abs(relBrg) > degreesVisible / 2 + 20) continue;
+
+    const x = w / 2 + relBrg * pxPerDeg;
+    // Y position: closer waypoints appear lower (closer to boat)
+    // Further waypoints appear on/near horizon
+    const maxDist = 20 * NM_METERS; // 20 NM
+    const distRatio = Math.min(1, dist / maxDist);
+    const y = horizonY + (1 - distRatio) * (h * 0.2);
+
+    const isActive = wp.id === state.activeWp;
+    const size = isActive ? 14 : 10;
+
+    // Diamond shape — isolate the rotate transform in its own save/restore so
+    // the labels below draw in the normal (unrotated) screen space.
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(Math.PI / 4);
+    ctx.fillStyle = wp.color || (state.night ? "#fb7185" : "#e11d48");
+    ctx.fillRect(-size / 2, -size / 2, size, size);
+    if (isActive) {
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(-size / 2, -size / 2, size, size);
+    }
+    ctx.restore();
+
+    // Labels (screen-space, after restore)
+    ctx.font = "bold 11px -apple-system, sans-serif";
+    ctx.fillStyle = state.night ? "#e2e8f0" : "#1e293b";
+    ctx.textAlign = "center";
+    ctx.fillText(wp.name, x, y - size - 4);
+    ctx.font = "10px -apple-system, sans-serif";
+    ctx.fillStyle = state.night ? "#94a3b8" : "#64748b";
+    ctx.fillText(fmtNm(dist), x, y + size + 10);
+  }
+}
+
+function drawNavInfoPanel(ctx, w, h) {
+  const panelH = 70;
+  const panelY = h - panelH;
+
+  ctx.save();
+  ctx.fillStyle = state.night ? "rgba(15,23,42,0.9)" : "rgba(255,255,255,0.9)";
+  ctx.fillRect(0, panelY, w, panelH);
+  ctx.strokeStyle = state.night ? "#334155" : "#cbd5e1";
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, panelY); ctx.lineTo(w, panelY); ctx.stroke();
+
+  const sogKn = (state.sogMs * MS_TO_KN).toFixed(1);
+  ctx.font = "bold 13px -apple-system, sans-serif";
+  ctx.fillStyle = state.night ? "#e2e8f0" : "#1e293b";
+  ctx.textAlign = "left";
+
+  const col1 = 14, col2 = w / 2 + 10;
+  const row1 = panelY + 20, row2 = panelY + 42, row3 = panelY + 60;
+
+  ctx.font = "10px -apple-system, sans-serif";
+  ctx.fillStyle = state.night ? "#94a3b8" : "#64748b";
+  ctx.fillText("SOG", col1, row1);
+  ctx.fillText("COG", col1, row2);
+
+  ctx.font = "bold 14px -apple-system, sans-serif";
+  ctx.fillStyle = state.night ? "#2dd4ff" : "#0a58ca";
+  ctx.fillText(sogKn + " kn", col1 + 30, row1);
+  ctx.fillText((state.cog != null ? pad2(Math.round(state.cog)) + "\u00B0" : "\u2013"), col1 + 30, row2);
+
+  // Active waypoint info
+  if (state.activeWp && state.lastPos) {
+    const wp = state.waypoints.find(w => w.id === state.activeWp);
+    if (wp) {
+      const dist = haversine(state.lastPos.lat, state.lastPos.lon, wp.lat, wp.lon);
+      const brg = bearing(state.lastPos.lat, state.lastPos.lon, wp.lat, wp.lon);
+      const vmg = state.sogMs * Math.cos((brg - (state.cog || 0)) * Math.PI / 180);
+      const eta = vmg > 0.1 ? dist / vmg : Infinity;
+
+      ctx.font = "10px -apple-system, sans-serif";
+      ctx.fillStyle = state.night ? "#94a3b8" : "#64748b";
+      ctx.fillText("WPT", col2, row1);
+      ctx.fillText("BRG", col2, row2);
+      ctx.fillText("VMG", col1, row3);
+
+      ctx.font = "bold 13px -apple-system, sans-serif";
+      ctx.fillStyle = state.night ? "#fb7185" : "#e11d48";
+      ctx.fillText(wp.name + " \u2022 " + fmtNm(dist), col2 + 26, row1);
+      ctx.fillStyle = state.night ? "#e2e8f0" : "#1e293b";
+      ctx.fillText(Math.round(brg) + "\u00B0" + (eta < 86400 ? " \u2022 ETA " + fmtClock(eta * 1000) : ""), col2 + 26, row2);
+
+      ctx.fillStyle = vmg > 0 ? (state.night ? "#3fb950" : "#0a7d2c") : (state.night ? "#ff5a52" : "#c81e1e");
+      ctx.fillText((vmg * MS_TO_KN).toFixed(1) + " kn", col1 + 30, row3);
+    }
+  }
+  ctx.restore();
+}
+
+// ============================================================
+// INIT
+// ============================================================
+
+// Resize handlers
+window.addEventListener("resize", () => {
+  if (state.view === "map") resizeMapCanvas();
+  if (state.view === "nav") resizeNavCanvas();
+});
+
+// ---------- Tick ----------
 setInterval(() => { if (state.watchId !== null) render(); }, 1000);
 
 // ---------- Init ----------
@@ -939,6 +2128,11 @@ applyUnitLabels();
 setTripButton();
 if (state.mob) el.mobBanner.classList.add("active");
 el.startBtn.addEventListener("click", startGps);
+
+// Validate active waypoint still exists
+if (state.activeWp && !state.waypoints.find(w => w.id === state.activeWp)) {
+  state.activeWp = null;
+}
 </script>
 </body>
 </html>
