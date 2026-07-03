@@ -209,21 +209,21 @@
   #actions {
     flex: 0 0 auto;
     display: flex;
-    gap: 8px;
-    padding: 8px 10px;
+    gap: 6px;
+    padding: 5px 8px calc(5px + env(safe-area-inset-bottom));
     border-top: 2px solid var(--panel-line);
   }
   .btn {
     flex: 1;
-    font-size: 15px; font-weight: 900; letter-spacing: 0.5px;
-    padding: 14px 8px; border-radius: 10px;
+    font-size: 13px; font-weight: 800; letter-spacing: 0.3px;
+    padding: 9px 6px; border-radius: 8px;
     border: 2px solid var(--panel-line);
     background: var(--panel); color: var(--fg);
     cursor: pointer;
   }
   .btn:active { transform: scale(0.97); }
   .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
-  #btn-mob { background: var(--mob); color: #fff; border-color: var(--mob); flex: 0 0 38%; }
+  #btn-mob { background: var(--mob); color: #fff; border-color: var(--mob); flex: 0 0 30%; }
   #btn-mob.armed { animation: none; }
 
   /* ---- Permission / start overlay ---- */
@@ -382,17 +382,33 @@
   #map-wp-info .wp-btn.nav { background: var(--accent); color: #fff; border-color: var(--accent); }
   #map-wp-info .wp-btn.del { background: var(--bad); color: #fff; border-color: var(--bad); }
 
-  /* ---- NAV (2.5D HUD) view ---- */
-  #view-nav {
-    flex: 1 1 auto; min-height: 0;
-    position: relative;
-    overflow: hidden;
+  /* SOG readout overlay */
+  #map-sog {
+    position: absolute; top: 8px; left: 10px;
+    background: rgba(0,0,0,0.45); color: #fff;
+    padding: 5px 10px 6px; border-radius: 10px;
+    pointer-events: none; line-height: 1;
   }
-  #nav-canvas {
-    width: 100%; height: 100%;
-    display: block;
-    background: var(--map-water);
+  body:not(.night) #map-sog { background: rgba(255,255,255,0.7); color: #000; }
+  #map-sog .ms-spd { font-weight: 900; font-variant-numeric: tabular-nums; }
+  #map-sog .ms-spd #map-sog-val { font-size: 30px; }
+  #map-sog .ms-spd #map-sog-unit { font-size: 13px; font-weight: 800; margin-left: 3px; opacity: 0.8; }
+  #map-sog .ms-cog { font-size: 12px; font-weight: 700; opacity: 0.8; margin-top: 3px; }
+
+  /* Active-waypoint nav pill */
+  #map-navpill {
+    position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
+    background: rgba(10,88,202,0.9); color: #fff;
+    padding: 6px 12px; border-radius: 999px;
+    display: none; align-items: center; gap: 10px;
+    max-width: 72%; box-shadow: 0 2px 10px rgba(0,0,0,0.25);
   }
+  body.night #map-navpill { background: rgba(45,212,255,0.92); color: #001018; }
+  #map-navpill.show { display: flex; }
+  #map-navpill .np-arrow { font-size: 22px; line-height: 1; display: inline-block; transition: transform 0.3s ease-out; }
+  #map-navpill .np-col { display: flex; flex-direction: column; line-height: 1.15; min-width: 0; }
+  #map-navpill .np-name { font-size: 14px; font-weight: 900; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #map-navpill .np-sub { font-size: 11px; font-weight: 700; opacity: 0.9; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
   /* ---- Paste GPS Modal ---- */
   #paste-modal {
@@ -437,7 +453,6 @@
       <button id="tab-dash" class="active"><span class="tab-icon">&#9202;</span>DSH</button>
       <button id="tab-trim"><span class="tab-icon">&#9978;</span>TRM</button>
       <button id="tab-map"><span class="tab-icon">&#127758;</span>MAP</button>
-      <button id="tab-nav"><span class="tab-icon">&#9650;</span>NAV</button>
     </div>
     <span id="chip-wake" class="chip" title="Keep screen awake">&#9728; --</span>
     <button id="btn-theme" class="iconbtn">NIGHT</button>
@@ -500,16 +515,34 @@
     <div id="trim-note">Mount the tablet, sit level, then tap SET LEVEL. Heel = side-to-side lean, pitch = bow up/down. Enable motion sensors if prompted.</div>
   </div>
 
-  <!-- MAP view -->
+  <!-- MAP view (2D top-down <-> 2.5D perspective, one canvas) -->
   <div id="view-map" class="view-off">
     <canvas id="map-canvas"></canvas>
+
+    <!-- SOG readout (top-left) -->
+    <div id="map-sog">
+      <div class="ms-spd"><span id="map-sog-val">0.0</span><span id="map-sog-unit">kn</span></div>
+      <div class="ms-cog">COG <span id="map-cog-val">--</span>&deg;</div>
+    </div>
+
+    <!-- Active waypoint nav pill (top-center) -->
+    <div id="map-navpill">
+      <span class="np-arrow" id="np-arrow">&#8593;</span>
+      <div class="np-col">
+        <span class="np-name" id="np-name">--</span>
+        <span class="np-sub"><span id="np-dist">--</span> &middot; <span id="np-brg">--</span>&deg; &middot; ETA <span id="np-eta">--</span></span>
+      </div>
+    </div>
+
     <div class="map-ctrl map-ctrl-tr">
+      <button class="map-btn" id="map-btn-tilt" title="2D / 2.5D view">2.5D</button>
       <button class="map-btn" id="map-btn-mode" title="North-Up / Head-Up">N</button>
-      <button class="map-btn" id="map-btn-center" title="Re-center on position">&#8982;</button>
+      <button class="map-btn" id="map-btn-center" title="Re-center on boat">&#8982;</button>
+    </div>
+    <div class="map-ctrl map-ctrl-br">
       <button class="map-btn" id="map-btn-zin" title="Zoom in">+</button>
       <button class="map-btn" id="map-btn-zout" title="Zoom out">&minus;</button>
-    </div>
-    <div class="map-ctrl map-ctrl-tl">
+      <button class="map-btn" id="map-btn-wp" title="Cycle / center on waypoints">&#9873;</button>
       <button class="map-btn" id="map-btn-paste" title="Paste GPS / Add waypoint">&#128204;</button>
     </div>
     <div class="map-ctrl map-ctrl-bl">
@@ -522,15 +555,11 @@
       </div>
       <div class="wp-actions">
         <button class="wp-btn nav" id="wp-btn-nav">NAV</button>
+        <button class="wp-btn" id="wp-btn-ctr">CTR</button>
         <button class="wp-btn del" id="wp-btn-del">DEL</button>
         <button class="wp-btn" id="wp-btn-close">X</button>
       </div>
     </div>
-  </div>
-
-  <!-- NAV 2.5D HUD view -->
-  <div id="view-nav" class="view-off">
-    <canvas id="nav-canvas"></canvas>
   </div>
 
   <div id="actions">
@@ -621,6 +650,9 @@ const state = {
   mapRotationOffset: parseFloat(localStorage.getItem("sd_mapRotOff") || "0"), // user 2-finger rotation
   mapFollow: true,  // auto-follow boat position
   wpCounter: parseInt(localStorage.getItem("sd_wpCounter") || "0"),
+  // 2D <-> 2.5D tilt (radians). mapTilt animates toward mapTiltTarget.
+  mapTilt: 0,
+  mapTiltTarget: localStorage.getItem("sd_tilt") === "1" ? (62 * Math.PI / 180) : 0,
 };
 
 // ---------- Element refs ----------
@@ -636,17 +668,20 @@ const el = {
   btnTrip: $("btn-trip"), btnReset: $("btn-reset"), btnMob: $("btn-mob"),
   btnTheme: $("btn-theme"),
   overlay: $("overlay"), startBtn: $("start-btn"), overlayErr: $("overlay-err"),
-  tabDash: $("tab-dash"), tabTrim: $("tab-trim"), tabMap: $("tab-map"), tabNav: $("tab-nav"),
-  viewDash: $("view-dash"), viewTrim: $("view-trim"), viewMap: $("view-map"), viewNav: $("view-nav"),
+  tabDash: $("tab-dash"), tabTrim: $("tab-trim"), tabMap: $("tab-map"),
+  viewDash: $("view-dash"), viewTrim: $("view-trim"), viewMap: $("view-map"),
   compassDial: $("compass-dial"), compassHdg: $("compass-hdg"), compassHdgLabel: $("compass-hdg-label"),
   horizon: $("horizon"), tvHeel: $("tv-heel"), tvPitch: $("tv-pitch"),
   tsHeel: $("ts-heel"), tsPitch: $("ts-pitch"), btnLevel: $("btn-level"),
-  mapCanvas: $("map-canvas"), navCanvas: $("nav-canvas"),
-  mapScale: $("map-scale"), mapBtnMode: $("map-btn-mode"),
+  mapCanvas: $("map-canvas"),
+  mapScale: $("map-scale"), mapBtnMode: $("map-btn-mode"), mapBtnTilt: $("map-btn-tilt"),
   mapBtnCenter: $("map-btn-center"), mapBtnZin: $("map-btn-zin"), mapBtnZout: $("map-btn-zout"),
-  mapBtnPaste: $("map-btn-paste"),
+  mapBtnPaste: $("map-btn-paste"), mapBtnWp: $("map-btn-wp"),
+  mapSogVal: $("map-sog-val"), mapSogUnit: $("map-sog-unit"), mapCogVal: $("map-cog-val"),
+  mapNavpill: $("map-navpill"), npArrow: $("np-arrow"), npName: $("np-name"),
+  npDist: $("np-dist"), npBrg: $("np-brg"), npEta: $("np-eta"),
   mapWpInfo: $("map-wp-info"), wpInfoName: $("wp-info-name"), wpInfoDetail: $("wp-info-detail"),
-  wpBtnNav: $("wp-btn-nav"), wpBtnDel: $("wp-btn-del"), wpBtnClose: $("wp-btn-close"),
+  wpBtnNav: $("wp-btn-nav"), wpBtnCtr: $("wp-btn-ctr"), wpBtnDel: $("wp-btn-del"), wpBtnClose: $("wp-btn-close"),
   pasteModal: $("paste-modal"), pasteInput: $("paste-input"),
   pasteError: $("paste-error"), pasteCancel: $("paste-cancel"), pasteAdd: $("paste-add"),
 };
@@ -990,9 +1025,9 @@ function renderTrim() {
 }
 
 // ---------- Tabs ----------
-const views = ["dash", "trim", "map", "nav"];
-const viewEls = [el.viewDash, el.viewTrim, el.viewMap, el.viewNav];
-const tabEls = [el.tabDash, el.tabTrim, el.tabMap, el.tabNav];
+const views = ["dash", "trim", "map"];
+const viewEls = [el.viewDash, el.viewTrim, el.viewMap];
+const tabEls = [el.tabDash, el.tabTrim, el.tabMap];
 
 function setView(v) {
   state.view = v;
@@ -1007,9 +1042,6 @@ function setView(v) {
   if (v === "map") {
     resizeMapCanvas();
     startMapLoop();
-  } else if (v === "nav") {
-    resizeNavCanvas();
-    startNavLoop();
   }
 }
 tabEls.forEach((tab, i) => {
@@ -1147,16 +1179,20 @@ function getScale() {
   return mpp;
 }
 
-function latLonToCanvas(lat, lon, center, mpp, cx, cy, rotation) {
+// -- Unified projection --
+// The map is drawn as a ground plane that can tilt from flat top-down (2D) to a
+// pitched perspective (2.5D). We first compute a point's top-down pixel offset
+// from the map center (rotated for head-up / free rotation), then run it through
+// a simple pinhole camera whose pitch is `tilt`.
+const TILT_MAX = 62 * Math.PI / 180;
+
+function worldOffsetPx(lat, lon, center, mpp, rotation) {
   const toRad = Math.PI / 180;
   const cosLat = Math.cos(center.lat * toRad);
-  // Offset in meters from center
   const dx = (lon - center.lon) * toRad * 6371000 * cosLat;
   const dy = (lat - center.lat) * toRad * 6371000;
-  // Convert to pixels
   let px = dx / mpp;
-  let py = -dy / mpp; // Y flipped (screen Y goes down)
-  // Apply rotation
+  let py = -dy / mpp; // screen Y goes down; north is up
   if (rotation !== 0) {
     const r = rotation * toRad;
     const cosR = Math.cos(r), sinR = Math.sin(r);
@@ -1164,27 +1200,98 @@ function latLonToCanvas(lat, lon, center, mpp, cx, cy, rotation) {
     const ry = px * sinR + py * cosR;
     px = rx; py = ry;
   }
-  return { x: cx + px, y: cy + py };
+  return { sx: px, sy: py };
 }
 
-function canvasToLatLon(x, y, center, mpp, cx, cy, rotation) {
-  const toRad = Math.PI / 180;
-  const cosLat = Math.cos(center.lat * toRad);
-  let px = x - cx;
-  let py = y - cy;
-  // Reverse rotation
+function buildCam(w, h, tilt) {
+  const cy = h / 2;
+  const tNorm = TILT_MAX > 0 ? tilt / TILT_MAX : 0;
+  return {
+    w, h,
+    cx: w / 2,
+    cyFocus: cy + (h * 0.70 - cy) * tNorm, // boat slides down as we tilt
+    sinT: Math.sin(tilt),
+    cosT: Math.cos(tilt),
+    D0: h * 0.62,           // camera focal/distance in px (perspective strength)
+    minDepth: h * 0.62 * 0.06,
+    tNorm,
+    tilt,
+  };
+}
+
+// Project a top-down offset (sx right, sy down) through the tilt camera.
+function project(sx, sy, cam) {
+  const lat = sx;          // lateral (screen right)
+  const fwd = -sy;         // ahead (screen up) is positive
+  const depth = cam.D0 + fwd * cam.sinT;
+  if (depth <= cam.minDepth) return { x: 0, y: 0, scale: 0, ok: false };
+  const scale = cam.D0 / depth;
+  return {
+    x: cam.cx + lat * scale,
+    y: cam.cyFocus - (fwd * cam.cosT) * scale,
+    scale,
+    ok: true,
+  };
+}
+
+function projectLatLon(lat, lon, center, mpp, rotation, cam) {
+  const o = worldOffsetPx(lat, lon, center, mpp, rotation);
+  return project(o.sx, o.sy, cam);
+}
+
+// Clip a segment (in top-down offset space) to the region in front of the
+// camera, then project both endpoints. Returns [pa, pb] or null.
+function projSeg(sx1, sy1, sx2, sy2, cam) {
+  const eps = cam.minDepth;
+  const d1 = cam.D0 + (-sy1) * cam.sinT;
+  const d2 = cam.D0 + (-sy2) * cam.sinT;
+  if (d1 <= eps && d2 <= eps) return null;
+  let ax = sx1, ay = sy1, bx = sx2, by = sy2;
+  if (d1 <= eps) {
+    const t = (eps - d1) / (d2 - d1);
+    ax = sx1 + (sx2 - sx1) * t; ay = sy1 + (sy2 - sy1) * t;
+  }
+  if (d2 <= eps) {
+    const t = (eps - d2) / (d1 - d2);
+    bx = sx2 + (sx1 - sx2) * t; by = sy2 + (sy1 - sy2) * t;
+  }
+  const pa = project(ax, ay, cam), pb = project(bx, by, cam);
+  if (!pa.ok || !pb.ok) return null;
+  return [pa, pb];
+}
+
+// Inverse: screen pixel -> lat/lon on the ground plane. Returns null if the
+// point is above the horizon (no ground intersection).
+function unprojectToLatLon(X, Y, center, mpp, rotation, cam) {
+  const U = cam.cyFocus - Y;                 // = fwd * cosT * scale
+  const denom = cam.cosT * cam.D0 - U * cam.sinT;
+  if (Math.abs(denom) < 1e-6) return null;
+  const fwd = (U * cam.D0) / denom;
+  const depth = cam.D0 + fwd * cam.sinT;
+  if (depth <= cam.minDepth) return null;
+  const scale = cam.D0 / depth;
+  const lat = (X - cam.cx) / scale;          // lateral offset (sx)
+  let px = lat, py = -fwd;                    // back to top-down offset
   if (rotation !== 0) {
-    const r = -rotation * toRad;
+    const r = -rotation * Math.PI / 180;
     const cosR = Math.cos(r), sinR = Math.sin(r);
     const rx = px * cosR - py * sinR;
     const ry = px * sinR + py * cosR;
     px = rx; py = ry;
   }
+  const toRad = Math.PI / 180;
+  const cosLat = Math.cos(center.lat * toRad);
   const dx = px * mpp;
   const dy = -py * mpp;
-  const lat = center.lat + dy / (6371000 * toRad);
-  const lon = center.lon + dx / (6371000 * cosLat * toRad);
-  return { lat, lon };
+  return {
+    lat: center.lat + dy / (6371000 * toRad),
+    lon: center.lon + dx / (6371000 * cosLat * toRad),
+  };
+}
+
+function horizonScreenY(cam) {
+  if (cam.sinT < 1e-4) return -1e6; // effectively off the top (top-down)
+  return cam.cyFocus - (cam.cosT / cam.sinT) * cam.D0;
 }
 
 // -- Map canvas setup --
@@ -1218,82 +1325,107 @@ function renderMap() {
   if (!mapCtx) return;
   const ctx = mapCtx;
   const w = mapW, h = mapH;
+
+  // Animate the tilt toward its target for a smooth 2D <-> 2.5D transition.
+  const dt = 0.18;
+  if (Math.abs(state.mapTilt - state.mapTiltTarget) < 0.001) {
+    state.mapTilt = state.mapTiltTarget;
+  } else {
+    state.mapTilt += (state.mapTiltTarget - state.mapTilt) * dt;
+  }
+
   const center = getMapCenter();
   const mpp = getScale();
   const base = state.mapMode === "head-up" && state.cog != null ? -state.cog : 0;
   const rotation = base + state.mapRotationOffset;
   state.mapRotation = rotation;
-  const cx = w / 2, cy = h / 2;
+  const cam = buildCam(w, h, state.mapTilt);
 
-  // Clear
+  // Sky / sea split (sky only visible once tilted; top-down = all water)
   const waterColor = state.night ? "#0c1824" : "#dbeafe";
+  const skyColor = state.night ? "#0b1220" : "#bcd8ff";
+  const hy = horizonScreenY(cam);
+  const skyBottom = Math.max(0, Math.min(h, hy));
+  if (skyBottom > 0) {
+    ctx.fillStyle = skyColor;
+    ctx.fillRect(0, 0, w, skyBottom);
+  }
   ctx.fillStyle = waterColor;
-  ctx.fillRect(0, 0, w, h);
+  ctx.fillRect(0, skyBottom, w, h - skyBottom);
+  if (skyBottom > 0 && skyBottom < h) {
+    ctx.strokeStyle = state.night ? "#1e293b" : "#93c5fd";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(0, skyBottom); ctx.lineTo(w, skyBottom); ctx.stroke();
+  }
 
-  // Grid (lat/lon lines)
-  drawMapGrid(ctx, center, mpp, cx, cy, rotation, w, h);
-
-  // Track history
-  drawTrack(ctx, center, mpp, cx, cy, rotation);
+  drawMapGrid(ctx, center, mpp, rotation, cam);
+  drawTrack(ctx, center, mpp, rotation, cam);
 
   // Bearing line to active waypoint
   if (state.activeWp && state.lastPos) {
     const wp = state.waypoints.find(w => w.id === state.activeWp);
     if (wp) {
-      const pA = latLonToCanvas(state.lastPos.lat, state.lastPos.lon, center, mpp, cx, cy, rotation);
-      const pB = latLonToCanvas(wp.lat, wp.lon, center, mpp, cx, cy, rotation);
+      const a = worldOffsetPx(state.lastPos.lat, state.lastPos.lon, center, mpp, rotation);
+      const b = worldOffsetPx(wp.lat, wp.lon, center, mpp, rotation);
+      const seg = projSeg(a.sx, a.sy, b.sx, b.sy, cam);
+      if (seg) {
+        ctx.save();
+        ctx.setLineDash([8, 6]);
+        ctx.strokeStyle = state.night ? "#fb7185" : "#e11d48";
+        ctx.lineWidth = 2;
+        ctx.globalAlpha = 0.75;
+        ctx.beginPath();
+        ctx.moveTo(seg[0].x, seg[0].y);
+        ctx.lineTo(seg[1].x, seg[1].y);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+  }
+
+  // Heading line from boat (direction of travel)
+  if (state.lastPos && state.cog != null && state.sogMs > 0.3) {
+    const headingLen = 2 * NM_METERS;
+    const toRad = Math.PI / 180;
+    const endLat = state.lastPos.lat + (headingLen * Math.cos(state.cog * toRad)) / 6371000 / toRad;
+    const endLon = state.lastPos.lon + (headingLen * Math.sin(state.cog * toRad)) / (6371000 * Math.cos(state.lastPos.lat * toRad)) / toRad;
+    const a = worldOffsetPx(state.lastPos.lat, state.lastPos.lon, center, mpp, rotation);
+    const b = worldOffsetPx(endLat, endLon, center, mpp, rotation);
+    const seg = projSeg(a.sx, a.sy, b.sx, b.sy, cam);
+    if (seg) {
       ctx.save();
-      ctx.setLineDash([8, 6]);
-      ctx.strokeStyle = state.night ? "#fb7185" : "#e11d48";
-      ctx.lineWidth = 2;
-      ctx.globalAlpha = 0.7;
+      ctx.strokeStyle = state.night ? "#38bdf8" : "#0a58ca";
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([12, 6]);
+      ctx.globalAlpha = 0.85;
       ctx.beginPath();
-      ctx.moveTo(pA.x, pA.y);
-      ctx.lineTo(pB.x, pB.y);
+      ctx.moveTo(seg[0].x, seg[0].y);
+      ctx.lineTo(seg[1].x, seg[1].y);
       ctx.stroke();
       ctx.restore();
     }
   }
 
-  // Waypoints
-  drawWaypoints(ctx, center, mpp, cx, cy, rotation);
+  drawWaypoints(ctx, center, mpp, rotation, cam);
+  if (state.lastPos) drawBoat(ctx, center, mpp, rotation, cam);
 
-  // Heading line from boat
-  if (state.lastPos && state.cog != null && state.sogMs > 0.3) {
-    const headingLen = 2 * NM_METERS; // 2 NM ahead
-    const toRad = Math.PI / 180;
-    const endLat = state.lastPos.lat + (headingLen * Math.cos(state.cog * toRad)) / 6371000 / toRad;
-    const endLon = state.lastPos.lon + (headingLen * Math.sin(state.cog * toRad)) / (6371000 * Math.cos(state.lastPos.lat * toRad)) / toRad;
-    const pS = latLonToCanvas(state.lastPos.lat, state.lastPos.lon, center, mpp, cx, cy, rotation);
-    const pE = latLonToCanvas(endLat, endLon, center, mpp, cx, cy, rotation);
-    ctx.save();
-    ctx.strokeStyle = state.night ? "#38bdf8" : "#0a58ca";
-    ctx.lineWidth = 2.5;
-    ctx.setLineDash([12, 6]);
-    ctx.globalAlpha = 0.8;
-    ctx.beginPath();
-    ctx.moveTo(pS.x, pS.y);
-    ctx.lineTo(pE.x, pE.y);
-    ctx.stroke();
-    ctx.restore();
-  }
+  // Compass ribbon fades in as the view tilts toward 2.5D
+  if (cam.tNorm > 0.02) drawMapCompassRibbon(ctx, w, h, cam.tNorm);
 
-  // Boat marker
-  if (state.lastPos) {
-    drawBoat(ctx, center, mpp, cx, cy, rotation);
-  }
+  drawScaleBar(ctx, mpp, w, h, cam.tNorm);
+  updateMapOverlays();
 
-  // Scale bar
-  drawScaleBar(ctx, mpp, w, h);
-
-  // Update mode button
+  // Control button states
   el.mapBtnMode.textContent = state.mapMode === "north-up" ? "N" : "\u2191";
   el.mapBtnMode.classList.toggle("active", state.mapMode === "head-up");
+  el.mapBtnTilt.textContent = state.mapTiltTarget > 0 ? "2D" : "2.5D";
+  el.mapBtnTilt.classList.toggle("active", state.mapTiltTarget > 0);
 }
 
-function drawMapGrid(ctx, center, mpp, cx, cy, rotation, w, h) {
-  // Determine grid spacing based on zoom
-  const viewNm = (w * mpp) / NM_METERS;
+function drawMapGrid(ctx, center, mpp, rotation, cam) {
+  const w = cam.w, h = cam.h;
+  // Coarsen the grid as we tilt (we see much farther ahead in perspective).
+  const viewNm = (w * mpp) / NM_METERS * (1 + cam.tNorm * 3);
   let gridNm;
   if (viewNm < 0.5) gridNm = 0.1;
   else if (viewNm < 2) gridNm = 0.25;
@@ -1308,46 +1440,40 @@ function drawMapGrid(ctx, center, mpp, cx, cy, rotation, w, h) {
   const cosLat = Math.cos(center.lat * toRad);
   const gridDegLon = gridDegLat / cosLat;
 
-  // Range of grid lines visible
+  // Extend bounds well beyond the viewport, more when tilted (far horizon).
+  const f = 1.5 + cam.tNorm * 14;
   const halfW = (w / 2) * mpp / 111320;
   const halfH = (h / 2) * mpp / 111320;
-
-  const latMin = center.lat - halfH * 1.5;
-  const latMax = center.lat + halfH * 1.5;
-  const lonMin = center.lon - halfW * 1.5 / cosLat;
-  const lonMax = center.lon + halfW * 1.5 / cosLat;
+  const latMin = center.lat - halfH * f;
+  const latMax = center.lat + halfH * f;
+  const lonMin = center.lon - halfW * f / cosLat;
+  const lonMax = center.lon + halfW * f / cosLat;
 
   ctx.save();
   ctx.strokeStyle = state.night ? "#334155" : "#94a3b8";
-  ctx.lineWidth = 0.5;
-  ctx.globalAlpha = 0.5;
-  ctx.font = "10px -apple-system, sans-serif";
-  ctx.fillStyle = state.night ? "#64748b" : "#64748b";
+  ctx.lineWidth = 1;
+  ctx.globalAlpha = 0.45;
 
-  // Latitude lines
   const latStart = Math.floor(latMin / gridDegLat) * gridDegLat;
   for (let lat = latStart; lat <= latMax; lat += gridDegLat) {
-    const p1 = latLonToCanvas(lat, lonMin, center, mpp, cx, cy, rotation);
-    const p2 = latLonToCanvas(lat, lonMax, center, mpp, cx, cy, rotation);
-    ctx.beginPath();
-    ctx.moveTo(p1.x, p1.y);
-    ctx.lineTo(p2.x, p2.y);
-    ctx.stroke();
+    const a = worldOffsetPx(lat, lonMin, center, mpp, rotation);
+    const b = worldOffsetPx(lat, lonMax, center, mpp, rotation);
+    const seg = projSeg(a.sx, a.sy, b.sx, b.sy, cam);
+    if (!seg) continue;
+    ctx.beginPath(); ctx.moveTo(seg[0].x, seg[0].y); ctx.lineTo(seg[1].x, seg[1].y); ctx.stroke();
   }
-  // Longitude lines
   const lonStart = Math.floor(lonMin / gridDegLon) * gridDegLon;
   for (let lon = lonStart; lon <= lonMax; lon += gridDegLon) {
-    const p1 = latLonToCanvas(latMin, lon, center, mpp, cx, cy, rotation);
-    const p2 = latLonToCanvas(latMax, lon, center, mpp, cx, cy, rotation);
-    ctx.beginPath();
-    ctx.moveTo(p1.x, p1.y);
-    ctx.lineTo(p2.x, p2.y);
-    ctx.stroke();
+    const a = worldOffsetPx(latMin, lon, center, mpp, rotation);
+    const b = worldOffsetPx(latMax, lon, center, mpp, rotation);
+    const seg = projSeg(a.sx, a.sy, b.sx, b.sy, cam);
+    if (!seg) continue;
+    ctx.beginPath(); ctx.moveTo(seg[0].x, seg[0].y); ctx.lineTo(seg[1].x, seg[1].y); ctx.stroke();
   }
   ctx.restore();
 }
 
-function drawTrack(ctx, center, mpp, cx, cy, rotation) {
+function drawTrack(ctx, center, mpp, rotation, cam) {
   const track = state.trackHistory;
   if (track.length < 2) return;
   ctx.save();
@@ -1355,35 +1481,36 @@ function drawTrack(ctx, center, mpp, cx, cy, rotation) {
   ctx.lineWidth = 2.5;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
+  ctx.globalAlpha = 0.7;
   ctx.beginPath();
   let started = false;
   for (let i = 0; i < track.length; i++) {
-    const p = latLonToCanvas(track[i].lat, track[i].lon, center, mpp, cx, cy, rotation);
-    // Skip points far off screen for performance
-    if (p.x < -100 || p.x > mapW + 100 || p.y < -100 || p.y > mapH + 100) {
+    const p = projectLatLon(track[i].lat, track[i].lon, center, mpp, rotation, cam);
+    if (!p.ok || p.x < -200 || p.x > cam.w + 200 || p.y < -200 || p.y > cam.h + 200) {
       started = false;
       continue;
     }
     if (!started) { ctx.moveTo(p.x, p.y); started = true; }
     else ctx.lineTo(p.x, p.y);
   }
-  ctx.globalAlpha = 0.7;
   ctx.stroke();
   ctx.restore();
 }
 
-function drawWaypoints(ctx, center, mpp, cx, cy, rotation) {
-  for (const wp of state.waypoints) {
-    const p = latLonToCanvas(wp.lat, wp.lon, center, mpp, cx, cy, rotation);
-    // Skip off-screen
-    if (p.x < -50 || p.x > mapW + 50 || p.y < -50 || p.y > mapH + 50) continue;
+function drawWaypoints(ctx, center, mpp, rotation, cam) {
+  // Draw far waypoints first so nearer (larger) ones layer on top.
+  const list = state.waypoints.map(wp => {
+    const p = projectLatLon(wp.lat, wp.lon, center, mpp, rotation, cam);
+    return { wp, p };
+  }).filter(o => o.p.ok).sort((a, b) => a.p.scale - b.p.scale);
 
+  for (const { wp, p } of list) {
+    if (p.x < -60 || p.x > cam.w + 60 || p.y < -60 || p.y > cam.h + 60) continue;
     const isActive = wp.id === state.activeWp;
     const isSelected = wp.id === state.selectedWp;
-    const radius = isActive ? 10 : 7;
+    const radius = Math.max(4, Math.min(13, (isActive ? 10 : 7) * (0.6 + 0.4 * p.scale)));
 
     ctx.save();
-    // Outer ring
     ctx.beginPath();
     ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
     ctx.fillStyle = wp.color || (state.night ? "#fb7185" : "#e11d48");
@@ -1393,38 +1520,57 @@ function drawWaypoints(ctx, center, mpp, cx, cy, rotation) {
       ctx.lineWidth = 2.5;
       ctx.stroke();
     }
-
-    // Label
-    ctx.font = "bold 11px -apple-system, sans-serif";
+    // Labels shrink a little with distance but stay legible
+    const fs = Math.max(9, Math.min(12, 11 * (0.7 + 0.3 * p.scale)));
+    ctx.font = "bold " + fs + "px -apple-system, sans-serif";
     ctx.fillStyle = state.night ? "#e2e8f0" : "#1e293b";
     ctx.textAlign = "center";
-    ctx.fillText(wp.name, p.x, p.y - radius - 5);
-
-    // Distance label if we have position
+    ctx.fillText(wp.name, p.x, p.y - radius - 4);
     if (state.lastPos) {
       const dist = haversine(state.lastPos.lat, state.lastPos.lon, wp.lat, wp.lon);
-      ctx.font = "10px -apple-system, sans-serif";
+      ctx.font = (fs - 1) + "px -apple-system, sans-serif";
       ctx.fillStyle = state.night ? "#94a3b8" : "#64748b";
-      ctx.fillText(fmtNm(dist), p.x, p.y + radius + 12);
+      ctx.fillText(fmtNm(dist), p.x, p.y + radius + 11);
     }
-
     ctx.restore();
   }
 }
 
-function drawBoat(ctx, center, mpp, cx, cy, rotation) {
-  const p = latLonToCanvas(state.lastPos.lat, state.lastPos.lon, center, mpp, cx, cy, rotation);
-  const boatSize = 14;
-  const headingDeg = state.cog || 0;
-  // In head-up mode the map is already rotated, so boat points up
-  const angle = state.mapMode === "head-up" ? 0 : headingDeg;
-  const rad = angle * Math.PI / 180;
+function drawBoat(ctx, center, mpp, rotation, cam) {
+  const p = projectLatLon(state.lastPos.lat, state.lastPos.lon, center, mpp, rotation, cam);
+  if (!p.ok) return;
+  const boatSize = 13 * Math.max(0.7, Math.min(1.4, p.scale));
+
+  // Orient the marker along the projected COG direction (handles tilt + rotation).
+  let angle = 0;
+  if (state.cog != null) {
+    const toRad = Math.PI / 180;
+    const aheadM = 40;
+    const aLat = state.lastPos.lat + (aheadM * Math.cos(state.cog * toRad)) / 6371000 / toRad;
+    const aLon = state.lastPos.lon + (aheadM * Math.sin(state.cog * toRad)) / (6371000 * Math.cos(state.lastPos.lat * toRad)) / toRad;
+    const pa = projectLatLon(aLat, aLon, center, mpp, rotation, cam);
+    if (pa.ok) angle = Math.atan2(pa.y - p.y, pa.x - p.x) + Math.PI / 2;
+  }
+
+  // Accuracy circle only makes sense near top-down
+  if (cam.tNorm < 0.35 && state.lastFix && state.lastFix.acc > 5) {
+    const accRadius = state.lastFix.acc / mpp * p.scale;
+    if (accRadius > 3 && accRadius < 200) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, accRadius, 0, Math.PI * 2);
+      ctx.fillStyle = state.night ? "rgba(56,189,248,0.1)" : "rgba(10,88,202,0.1)";
+      ctx.fill();
+      ctx.strokeStyle = state.night ? "rgba(56,189,248,0.3)" : "rgba(10,88,202,0.3)";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
 
   ctx.save();
   ctx.translate(p.x, p.y);
-  ctx.rotate(rad);
-
-  // Triangle (boat shape)
+  ctx.rotate(angle);
   ctx.beginPath();
   ctx.moveTo(0, -boatSize);
   ctx.lineTo(-boatSize * 0.6, boatSize * 0.7);
@@ -1436,45 +1582,91 @@ function drawBoat(ctx, center, mpp, cx, cy, rotation) {
   ctx.strokeStyle = state.night ? "#000" : "#fff";
   ctx.lineWidth = 1.5;
   ctx.stroke();
-
-  // Accuracy circle
-  if (state.lastFix && state.lastFix.acc > 5) {
-    const accRadius = state.lastFix.acc / mpp;
-    if (accRadius > 3 && accRadius < 200) {
-      ctx.beginPath();
-      ctx.arc(0, 0, accRadius, 0, Math.PI * 2);
-      ctx.fillStyle = state.night ? "rgba(56,189,248,0.1)" : "rgba(10,88,202,0.1)";
-      ctx.fill();
-      ctx.strokeStyle = state.night ? "rgba(56,189,248,0.3)" : "rgba(10,88,202,0.3)";
-      ctx.lineWidth = 1;
-      ctx.stroke();
-    }
-  }
-
   ctx.restore();
 }
 
-function drawScaleBar(ctx, mpp, w, h) {
-  // Target bar length ~100px, find nice NM value
+function drawScaleBar(ctx, mpp, w, h, tNorm) {
+  // Scale is only accurate near top-down; fade it out as we tilt.
+  const op = Math.max(0, 1 - tNorm * 2.2);
+  el.mapScale.style.opacity = op;
+  if (op <= 0.01) return;
   const targetPx = 100;
-  const targetMeters = targetPx * mpp;
-  const targetNm = targetMeters / NM_METERS;
-
-  // Find nice round NM value
+  const targetNm = (targetPx * mpp) / NM_METERS;
   const niceValues = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50];
   let bestNm = niceValues[0];
-  for (const v of niceValues) {
-    if (v <= targetNm * 1.5) bestNm = v;
-  }
+  for (const v of niceValues) { if (v <= targetNm * 1.5) bestNm = v; }
   const barPx = (bestNm * NM_METERS) / mpp;
-
-  // Draw at bottom-left (positioned by CSS, but we draw into canvas for the bar itself)
-  // Actually update the HTML element
   el.mapScale.textContent = bestNm < 1 ? (bestNm * 1000).toFixed(0) + "m" : bestNm + " NM";
   el.mapScale.style.width = barPx + "px";
   el.mapScale.style.borderBottom = "3px solid #fff";
   el.mapScale.style.borderLeft = "2px solid #fff";
   el.mapScale.style.borderRight = "2px solid #fff";
+}
+
+// Compass ribbon along the top (shown in 2.5D). Ported from the old NAV HUD.
+function drawMapCompassRibbon(ctx, w, h, alpha) {
+  const ribbonH = 30;
+  const heading = state.cog || 0;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = state.night ? "rgba(15,23,42,0.8)" : "rgba(255,255,255,0.8)";
+  ctx.fillRect(0, 0, w, ribbonH);
+  const degreesVisible = 90;
+  const pxPerDeg = w / degreesVisible;
+  const cardinals = { 0: "N", 45: "NE", 90: "E", 135: "SE", 180: "S", 225: "SW", 270: "W", 315: "NW" };
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  for (let deg = -180; deg <= 540; deg += 5) {
+    const relDeg = ((deg - heading + 540) % 360) - 180;
+    if (Math.abs(relDeg) > degreesVisible / 2 + 8) continue;
+    const x = w / 2 + relDeg * pxPerDeg;
+    const normDeg = ((deg % 360) + 360) % 360;
+    if (deg % 10 === 0) {
+      ctx.strokeStyle = state.night ? "#64748b" : "#94a3b8";
+      ctx.lineWidth = deg % 30 === 0 ? 2 : 1;
+      ctx.beginPath();
+      ctx.moveTo(x, ribbonH - 3);
+      ctx.lineTo(x, ribbonH - (deg % 30 === 0 ? 12 : 7));
+      ctx.stroke();
+    }
+    if (cardinals[normDeg]) {
+      ctx.font = "bold 12px -apple-system, sans-serif";
+      ctx.fillStyle = normDeg === 0 ? (state.night ? "#ff5a52" : "#c81e1e") : (state.night ? "#e2e8f0" : "#1e293b");
+      ctx.fillText(cardinals[normDeg], x, 12);
+    } else if (normDeg % 30 === 0) {
+      ctx.font = "10px -apple-system, sans-serif";
+      ctx.fillStyle = state.night ? "#94a3b8" : "#64748b";
+      ctx.fillText(String(normDeg), x, 12);
+    }
+  }
+  ctx.strokeStyle = state.night ? "#2dd4ff" : "#0a58ca";
+  ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.moveTo(w / 2, ribbonH); ctx.lineTo(w / 2, ribbonH - 14); ctx.stroke();
+  ctx.restore();
+}
+
+// Update the HTML overlays (SOG readout + active-waypoint nav pill).
+function updateMapOverlays() {
+  el.mapSogVal.textContent = fmtSpeed(state.sogMs, 1);
+  el.mapSogUnit.textContent = UNITS[state.unit].spdShort;
+  el.mapCogVal.textContent = state.cog == null ? "--" : pad2(Math.round(state.cog));
+
+  const wp = state.activeWp ? state.waypoints.find(w => w.id === state.activeWp) : null;
+  if (wp && state.lastPos) {
+    const dist = haversine(state.lastPos.lat, state.lastPos.lon, wp.lat, wp.lon);
+    const brg = bearing(state.lastPos.lat, state.lastPos.lon, wp.lat, wp.lon);
+    // ETA uses velocity made good toward the waypoint (closing speed).
+    const vmg = state.sogMs * Math.cos((brg - (state.cog || 0)) * Math.PI / 180);
+    el.npName.textContent = wp.name;
+    el.npDist.textContent = fmtNm(dist);
+    el.npBrg.textContent = Math.round(brg);
+    el.npEta.textContent = vmg > 0.1 ? fmtClock((dist / vmg) * 1000) : "--";
+    const rel = state.cog == null ? brg : (brg - state.cog + 360) % 360;
+    el.npArrow.style.transform = `rotate(${rel}deg)`;
+    el.mapNavpill.classList.add("show");
+  } else {
+    el.mapNavpill.classList.remove("show");
+  }
 }
 
 // -- Map controls --
@@ -1499,6 +1691,31 @@ el.mapBtnZout.addEventListener("click", () => {
   state.mapZoom = Math.max(8, state.mapZoom - 0.5);
   localStorage.setItem("sd_mapZoom", String(state.mapZoom));
 });
+// 2D <-> 2.5D tilt toggle (animated via mapTilt in the render loop)
+el.mapBtnTilt.addEventListener("click", () => {
+  const on = state.mapTiltTarget <= 0.001;
+  state.mapTiltTarget = on ? TILT_MAX : 0;
+  localStorage.setItem("sd_tilt", on ? "1" : "0");
+});
+// Cycle through waypoints, selecting + centering on each in turn.
+let wpCycleIdx = -1;
+el.mapBtnWp.addEventListener("click", () => {
+  if (!state.waypoints.length) {
+    if (state.lastPos) { state.mapFollow = true; state.mapCenter = null; }
+    return;
+  }
+  wpCycleIdx = (wpCycleIdx + 1) % state.waypoints.length;
+  const wp = state.waypoints[wpCycleIdx];
+  centerOnWaypoint(wp.id);
+  selectWaypoint(wp.id);
+});
+
+function centerOnWaypoint(id) {
+  const wp = state.waypoints.find(w => w.id === id);
+  if (!wp) return;
+  state.mapFollow = false;
+  state.mapCenter = { lat: wp.lat, lon: wp.lon };
+}
 
 // -- Multi-touch gesture system --
 const touches = new Map(); // pointerId -> {x, y, t}
@@ -1637,18 +1854,21 @@ function panMap(dx, dy) {
   const toRad = Math.PI / 180;
   const cosLat = Math.cos(center.lat * toRad);
 
-  // Reverse rotation on the pan delta
-  let pdx = -dx, pdy = -dy;
+  // The map should follow the finger, so the center moves opposite to the drag.
+  let sx = -dx, sy = -dy;
+  // Un-rotate the screen delta back into world-aligned axes.
   if (rotation !== 0) {
     const r = -rotation * toRad;
     const cosR = Math.cos(r), sinR = Math.sin(r);
-    const rx = pdx * cosR - pdy * sinR;
-    const ry = pdx * sinR + pdy * cosR;
-    pdx = rx; pdy = ry;
+    const rx = sx * cosR - sy * sinR;
+    const ry = sx * sinR + sy * cosR;
+    sx = rx; sy = ry;
   }
-
-  const dLon = pdx * mpp / (6371000 * cosLat * toRad);
-  const dLat = pdy * mpp / (6371000 * toRad);
+  // Screen +y is downward, but north is up, so north = -sy.
+  const dEast = sx * mpp;
+  const dNorth = -sy * mpp;
+  const dLon = dEast / (6371000 * cosLat * toRad);
+  const dLat = dNorth / (6371000 * toRad);
   state.mapCenter = {
     lat: center.lat + dLat,
     lon: center.lon + dLon,
@@ -1662,15 +1882,16 @@ function handleMapTap(clientX, clientY) {
   const center = getMapCenter();
   const mpp = getScale();
   const rotation = state.mapRotation;
-  const cx = mapW / 2, cy = mapH / 2;
+  const cam = buildCam(mapW, mapH, state.mapTilt);
 
-  // Check if tap is near a waypoint
+  // Forward-project each waypoint and hit-test in screen space (works at any tilt).
   let hitWp = null;
   let hitDist = Infinity;
   for (const wp of state.waypoints) {
-    const p = latLonToCanvas(wp.lat, wp.lon, center, mpp, cx, cy, rotation);
+    const p = projectLatLon(wp.lat, wp.lon, center, mpp, rotation, cam);
+    if (!p.ok) continue;
     const d = Math.hypot(p.x - x, p.y - y);
-    if (d < 25 && d < hitDist) {
+    if (d < 28 && d < hitDist) {
       hitWp = wp;
       hitDist = d;
     }
@@ -1690,8 +1911,9 @@ function handleLongPress(clientX, clientY) {
   const center = getMapCenter();
   const mpp = getScale();
   const rotation = state.mapRotation;
-  const cx = mapW / 2, cy = mapH / 2;
-  const pos = canvasToLatLon(x, y, center, mpp, cx, cy, rotation);
+  const cam = buildCam(mapW, mapH, state.mapTilt);
+  const pos = unprojectToLatLon(x, y, center, mpp, rotation, cam);
+  if (!pos) return; // tapped above the horizon (sky) — no ground point
   addWaypoint(pos.lat, pos.lon);
   if (navigator.vibrate) navigator.vibrate(50);
 }
@@ -1772,6 +1994,9 @@ el.wpBtnNav.addEventListener("click", () => {
     saveWaypoints();
     deselectWaypoint();
   }
+});
+el.wpBtnCtr.addEventListener("click", () => {
+  if (state.selectedWp) centerOnWaypoint(state.selectedWp);
 });
 el.wpBtnDel.addEventListener("click", () => {
   if (state.selectedWp && confirm("Delete this waypoint?")) {
@@ -1867,255 +2092,12 @@ function parseGpsInput(text) {
 }
 
 // ============================================================
-// NAV VIEW - 2.5D HUD Renderer
-// ============================================================
-
-let navCtx = null;
-let navW = 0, navH = 0;
-let navAnimId = null;
-
-function resizeNavCanvas() {
-  const rect = el.navCanvas.parentElement.getBoundingClientRect();
-  const dpr = window.devicePixelRatio || 1;
-  navW = rect.width; navH = rect.height;
-  el.navCanvas.width = navW * dpr;
-  el.navCanvas.height = navH * dpr;
-  el.navCanvas.style.width = navW + "px";
-  el.navCanvas.style.height = navH + "px";
-  navCtx = el.navCanvas.getContext("2d");
-  navCtx.scale(dpr, dpr);
-}
-
-function startNavLoop() {
-  if (navAnimId) return;
-  function loop() {
-    if (state.view !== "nav") { navAnimId = null; return; }
-    renderNav();
-    navAnimId = requestAnimationFrame(loop);
-  }
-  navAnimId = requestAnimationFrame(loop);
-}
-
-function renderNav() {
-  if (!navCtx) return;
-  const ctx = navCtx;
-  const w = navW, h = navH;
-
-  // Background: sky top, sea bottom
-  const horizonY = h * 0.4;
-  const skyColor = state.night ? "#0f172a" : "#bfdbfe";
-  const seaColor = state.night ? "#0c1824" : "#1e40af";
-
-  ctx.fillStyle = skyColor;
-  ctx.fillRect(0, 0, w, horizonY);
-  ctx.fillStyle = seaColor;
-  ctx.fillRect(0, horizonY, w, h - horizonY);
-
-  // Horizon line
-  ctx.strokeStyle = state.night ? "#64748b" : "#93c5fd";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(0, horizonY);
-  ctx.lineTo(w, horizonY);
-  ctx.stroke();
-
-  // Compass ribbon at top
-  drawCompassRibbon(ctx, w, h);
-
-  // Waypoint indicators on horizon
-  drawNavWaypoints(ctx, w, h, horizonY);
-
-  // Boat nose indicator
-  const noseY = h * 0.65;
-  ctx.save();
-  ctx.beginPath();
-  ctx.moveTo(w / 2, noseY - 20);
-  ctx.lineTo(w / 2 - 12, noseY);
-  ctx.lineTo(w / 2 + 12, noseY);
-  ctx.closePath();
-  ctx.fillStyle = state.night ? "#e2e8f0" : "#1e293b";
-  ctx.fill();
-  ctx.restore();
-
-  // Info panel at bottom
-  drawNavInfoPanel(ctx, w, h);
-}
-
-function drawCompassRibbon(ctx, w, h) {
-  const ribbonH = 36;
-  const heading = state.cog || 0;
-
-  ctx.save();
-  ctx.fillStyle = state.night ? "rgba(15,23,42,0.85)" : "rgba(255,255,255,0.85)";
-  ctx.fillRect(0, 0, w, ribbonH);
-  ctx.strokeStyle = state.night ? "#334155" : "#cbd5e1";
-  ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(0, ribbonH); ctx.lineTo(w, ribbonH); ctx.stroke();
-
-  // Draw heading markings
-  const degreesVisible = 90; // 90 degrees visible across width
-  const pxPerDeg = w / degreesVisible;
-  const cardinals = { 0: "N", 45: "NE", 90: "E", 135: "SE", 180: "S", 225: "SW", 270: "W", 315: "NW" };
-
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-
-  for (let deg = -180; deg <= 540; deg += 5) {
-    const relDeg = ((deg - heading + 540) % 360) - 180;
-    if (Math.abs(relDeg) > degreesVisible / 2 + 10) continue;
-    const x = w / 2 + relDeg * pxPerDeg;
-    const normDeg = ((deg % 360) + 360) % 360;
-
-    if (deg % 10 === 0) {
-      ctx.strokeStyle = state.night ? "#64748b" : "#94a3b8";
-      ctx.lineWidth = deg % 30 === 0 ? 2 : 1;
-      ctx.beginPath();
-      ctx.moveTo(x, ribbonH - 4);
-      ctx.lineTo(x, ribbonH - (deg % 30 === 0 ? 14 : 9));
-      ctx.stroke();
-    }
-
-    if (cardinals[normDeg]) {
-      ctx.font = "bold 12px -apple-system, sans-serif";
-      ctx.fillStyle = normDeg === 0 ? (state.night ? "#ff5a52" : "#c81e1e") : (state.night ? "#e2e8f0" : "#1e293b");
-      ctx.fillText(cardinals[normDeg], x, 13);
-    } else if (normDeg % 30 === 0) {
-      ctx.font = "10px -apple-system, sans-serif";
-      ctx.fillStyle = state.night ? "#94a3b8" : "#64748b";
-      ctx.fillText(String(normDeg), x, 13);
-    }
-  }
-
-  // Center lubber line
-  ctx.strokeStyle = state.night ? "#2dd4ff" : "#0a58ca";
-  ctx.lineWidth = 2.5;
-  ctx.beginPath();
-  ctx.moveTo(w / 2, ribbonH);
-  ctx.lineTo(w / 2, ribbonH - 16);
-  ctx.stroke();
-
-  // Heading readout
-  ctx.font = "bold 14px -apple-system, sans-serif";
-  ctx.fillStyle = state.night ? "#2dd4ff" : "#0a58ca";
-  ctx.fillText(pad2(Math.round(heading)) + "\u00B0", w / 2, ribbonH + 14);
-
-  ctx.restore();
-}
-
-function drawNavWaypoints(ctx, w, h, horizonY) {
-  if (!state.lastPos) return;
-  const heading = state.cog || 0;
-  const degreesVisible = 90;
-  const pxPerDeg = w / degreesVisible;
-
-  for (const wp of state.waypoints) {
-    const dist = haversine(state.lastPos.lat, state.lastPos.lon, wp.lat, wp.lon);
-    const brg = bearing(state.lastPos.lat, state.lastPos.lon, wp.lat, wp.lon);
-    const relBrg = ((brg - heading + 540) % 360) - 180;
-
-    // Only show if within view (with some extra margin)
-    if (Math.abs(relBrg) > degreesVisible / 2 + 20) continue;
-
-    const x = w / 2 + relBrg * pxPerDeg;
-    // Y position: closer waypoints appear lower (closer to boat)
-    // Further waypoints appear on/near horizon
-    const maxDist = 20 * NM_METERS; // 20 NM
-    const distRatio = Math.min(1, dist / maxDist);
-    const y = horizonY + (1 - distRatio) * (h * 0.2);
-
-    const isActive = wp.id === state.activeWp;
-    const size = isActive ? 14 : 10;
-
-    // Diamond shape — isolate the rotate transform in its own save/restore so
-    // the labels below draw in the normal (unrotated) screen space.
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(Math.PI / 4);
-    ctx.fillStyle = wp.color || (state.night ? "#fb7185" : "#e11d48");
-    ctx.fillRect(-size / 2, -size / 2, size, size);
-    if (isActive) {
-      ctx.strokeStyle = "#fff";
-      ctx.lineWidth = 2;
-      ctx.strokeRect(-size / 2, -size / 2, size, size);
-    }
-    ctx.restore();
-
-    // Labels (screen-space, after restore)
-    ctx.font = "bold 11px -apple-system, sans-serif";
-    ctx.fillStyle = state.night ? "#e2e8f0" : "#1e293b";
-    ctx.textAlign = "center";
-    ctx.fillText(wp.name, x, y - size - 4);
-    ctx.font = "10px -apple-system, sans-serif";
-    ctx.fillStyle = state.night ? "#94a3b8" : "#64748b";
-    ctx.fillText(fmtNm(dist), x, y + size + 10);
-  }
-}
-
-function drawNavInfoPanel(ctx, w, h) {
-  const panelH = 70;
-  const panelY = h - panelH;
-
-  ctx.save();
-  ctx.fillStyle = state.night ? "rgba(15,23,42,0.9)" : "rgba(255,255,255,0.9)";
-  ctx.fillRect(0, panelY, w, panelH);
-  ctx.strokeStyle = state.night ? "#334155" : "#cbd5e1";
-  ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(0, panelY); ctx.lineTo(w, panelY); ctx.stroke();
-
-  const sogKn = (state.sogMs * MS_TO_KN).toFixed(1);
-  ctx.font = "bold 13px -apple-system, sans-serif";
-  ctx.fillStyle = state.night ? "#e2e8f0" : "#1e293b";
-  ctx.textAlign = "left";
-
-  const col1 = 14, col2 = w / 2 + 10;
-  const row1 = panelY + 20, row2 = panelY + 42, row3 = panelY + 60;
-
-  ctx.font = "10px -apple-system, sans-serif";
-  ctx.fillStyle = state.night ? "#94a3b8" : "#64748b";
-  ctx.fillText("SOG", col1, row1);
-  ctx.fillText("COG", col1, row2);
-
-  ctx.font = "bold 14px -apple-system, sans-serif";
-  ctx.fillStyle = state.night ? "#2dd4ff" : "#0a58ca";
-  ctx.fillText(sogKn + " kn", col1 + 30, row1);
-  ctx.fillText((state.cog != null ? pad2(Math.round(state.cog)) + "\u00B0" : "\u2013"), col1 + 30, row2);
-
-  // Active waypoint info
-  if (state.activeWp && state.lastPos) {
-    const wp = state.waypoints.find(w => w.id === state.activeWp);
-    if (wp) {
-      const dist = haversine(state.lastPos.lat, state.lastPos.lon, wp.lat, wp.lon);
-      const brg = bearing(state.lastPos.lat, state.lastPos.lon, wp.lat, wp.lon);
-      const vmg = state.sogMs * Math.cos((brg - (state.cog || 0)) * Math.PI / 180);
-      const eta = vmg > 0.1 ? dist / vmg : Infinity;
-
-      ctx.font = "10px -apple-system, sans-serif";
-      ctx.fillStyle = state.night ? "#94a3b8" : "#64748b";
-      ctx.fillText("WPT", col2, row1);
-      ctx.fillText("BRG", col2, row2);
-      ctx.fillText("VMG", col1, row3);
-
-      ctx.font = "bold 13px -apple-system, sans-serif";
-      ctx.fillStyle = state.night ? "#fb7185" : "#e11d48";
-      ctx.fillText(wp.name + " \u2022 " + fmtNm(dist), col2 + 26, row1);
-      ctx.fillStyle = state.night ? "#e2e8f0" : "#1e293b";
-      ctx.fillText(Math.round(brg) + "\u00B0" + (eta < 86400 ? " \u2022 ETA " + fmtClock(eta * 1000) : ""), col2 + 26, row2);
-
-      ctx.fillStyle = vmg > 0 ? (state.night ? "#3fb950" : "#0a7d2c") : (state.night ? "#ff5a52" : "#c81e1e");
-      ctx.fillText((vmg * MS_TO_KN).toFixed(1) + " kn", col1 + 30, row3);
-    }
-  }
-  ctx.restore();
-}
-
-// ============================================================
 // INIT
 // ============================================================
 
 // Resize handlers
 window.addEventListener("resize", () => {
   if (state.view === "map") resizeMapCanvas();
-  if (state.view === "nav") resizeNavCanvas();
 });
 
 // ---------- Tick ----------
