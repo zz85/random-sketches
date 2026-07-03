@@ -440,6 +440,16 @@
     background: var(--panel); color: var(--fg); cursor: pointer;
   }
   #paste-modal .modal-actions button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  #paste-presets { margin-top: 14px; }
+  #paste-presets .pp-label { font-size: 11px; font-weight: 800; letter-spacing: 0.5px; color: var(--fg-dim); margin-bottom: 6px; }
+  #paste-presets .pp-btns { display: flex; flex-wrap: wrap; gap: 6px; }
+  #paste-presets .pp-btn {
+    padding: 8px 12px; border-radius: 8px; cursor: pointer;
+    font-size: 13px; font-weight: 800; letter-spacing: 0.5px;
+    border: 2px solid var(--panel-line); background: var(--panel); color: var(--fg);
+  }
+  #paste-presets .pp-btn:active { transform: scale(0.96); }
+  #paste-presets .pp-btn .pp-sub { display: block; font-size: 10px; font-weight: 600; letter-spacing: 0; color: var(--fg-dim); }
 </style>
 </head>
 <body>
@@ -573,12 +583,16 @@
 <div id="paste-modal">
   <div class="modal-box">
     <h3>Add Waypoint</h3>
-    <p>Paste coordinates in any format:<br>
+    <p>Paste coordinates in any format, or type an STYC course code (e.g. NBMN):<br>
     37.7749, -122.4194<br>
     37&deg;46.494'N 122&deg;25.164'W<br>
     Google Maps URL</p>
-    <input type="text" id="paste-input" placeholder="Paste GPS coordinates..." autocomplete="off">
+    <input type="text" id="paste-input" placeholder="Coordinates or course code..." autocomplete="off" autocapitalize="characters" spellcheck="false">
     <div id="paste-error"></div>
+    <div id="paste-presets">
+      <div class="pp-label">STYC course presets</div>
+      <div class="pp-btns" id="pp-btns"></div>
+    </div>
     <div class="modal-actions">
       <button id="paste-cancel">Cancel</button>
       <button id="paste-add" class="primary">Add WP</button>
@@ -610,6 +624,30 @@ const UNITS = {
 const UNIT_ORDER = ["kn", "kmh", "mph"];
 const NM_METERS = 1852;
 const TRACK_MAX_POINTS = 2000;
+
+// ---------- STYC race marks (Puget Sound) ----------
+// Source: https://www.styc.org/race_marks (race.styc.org mark_data).
+// Courses are strings of mark letters, e.g. NBMN = Start > Ballard > Meadow > Finish.
+const STYC_MARKS = {
+  B: { name: "B", desc: "Ballard Sails (Discovery Park)", lat: 47.67142, lon: -122.42237 },
+  D: { name: "D", desc: "Duwamish Head",                  lat: 47.59888, lon: -122.38778 },
+  E: { name: "E", desc: "Green Ship Canal Buoy",          lat: 47.67947, lon: -122.41495 },
+  I: { name: "I", desc: "Blake Island",                   lat: 47.52667, lon: -122.50000 },
+  K: { name: "K", desc: "Blakely Rock",                   lat: 47.59500, lon: -122.48000 },
+  M: { name: "M", desc: "Meadow Point",                   lat: 47.69638, lon: -122.40972 },
+  N: { name: "N", desc: "Start / Finish (Shilshole)",     lat: 47.68440, lon: -122.41132 },
+  O: { name: "O", desc: "Point Monroe",                   lat: 47.71000, lon: -122.50750 },
+  P: { name: "P", desc: "Wing Point Reef Buoy 2",         lat: 47.61228, lon: -122.48570 },
+  R: { name: "R", desc: "Spring Beach",                   lat: 47.73978, lon: -122.38240 },
+  S: { name: "S", desc: "Skiff Point",                    lat: 47.66200, lon: -122.49650 },
+  U: { name: "U", desc: "Richmond Beach (UW buoy)",       lat: 47.76127, lon: -122.39722 },
+  W: { name: "W", desc: "West Point",                     lat: 47.66028, lon: -122.44112 },
+  Z: { name: "Z", desc: "PMYC near Jefferson Head",       lat: 47.74000, lon: -122.49000 },
+};
+// Add course presets here as needed; each is just a string of mark letters.
+const COURSE_PRESETS = [
+  { course: "NBMN", label: "Start \u2022 Ballard \u2022 Meadow \u2022 Finish" },
+];
 
 // ---------- State ----------
 const state = {
@@ -684,6 +722,7 @@ const el = {
   wpBtnNav: $("wp-btn-nav"), wpBtnCtr: $("wp-btn-ctr"), wpBtnDel: $("wp-btn-del"), wpBtnClose: $("wp-btn-close"),
   pasteModal: $("paste-modal"), pasteInput: $("paste-input"),
   pasteError: $("paste-error"), pasteCancel: $("paste-cancel"), pasteAdd: $("paste-add"),
+  ppBtns: $("pp-btns"),
 };
 
 // ---------- Geometry ----------
@@ -2022,9 +2061,14 @@ el.pasteCancel.addEventListener("click", () => {
 
 el.pasteAdd.addEventListener("click", () => {
   const text = el.pasteInput.value.trim();
-  if (!text) { el.pasteError.textContent = "Enter coordinates"; return; }
+  if (!text) { el.pasteError.textContent = "Enter coordinates or a course code"; return; }
+  // A course code is all known STYC mark letters (e.g. NBMN), optional trailing digit.
+  if (isCourseCode(text)) {
+    const n = loadCoursePreset(text);
+    if (n > 0) { el.pasteModal.classList.remove("show"); return; }
+  }
   const result = parseGpsInput(text);
-  if (!result) { el.pasteError.textContent = "Could not parse coordinates"; return; }
+  if (!result) { el.pasteError.textContent = "Could not parse coordinates or course"; return; }
   addWaypoint(result.lat, result.lon, result.name);
   el.pasteModal.classList.remove("show");
 });
@@ -2038,6 +2082,59 @@ el.pasteInput.addEventListener("keydown", (e) => {
 el.pasteModal.addEventListener("click", (e) => {
   if (e.target === el.pasteModal) el.pasteModal.classList.remove("show");
 });
+
+// ---------- STYC course presets ----------
+function isCourseCode(text) {
+  const s = text.trim().toUpperCase().replace(/\d+$/, ""); // ignore trailing lap count
+  if (!s || !/^[A-Z]+$/.test(s)) return false;
+  return s.split("").every((c) => STYC_MARKS[c]);
+}
+
+// Turn a course string (e.g. "NBMN") into waypoints. Repeated marks (a start
+// that is also the finish) collapse to a single waypoint. Preset marks use a
+// stable id ("styc_N") so re-loading updates instead of duplicating.
+function loadCoursePreset(course) {
+  const letters = course.trim().toUpperCase().replace(/\d+$/, "").split("");
+  const seen = new Set();
+  let firstId = null, added = 0;
+  for (const c of letters) {
+    const m = STYC_MARKS[c];
+    if (!m || seen.has(c)) continue;
+    seen.add(c);
+    const id = "styc_" + c;
+    let wp = state.waypoints.find((w) => w.id === id);
+    if (wp) {
+      wp.lat = m.lat; wp.lon = m.lon; wp.name = m.name;
+    } else {
+      state.waypoints.push({ id, lat: m.lat, lon: m.lon, name: m.name, color: null });
+    }
+    if (!firstId) firstId = id;
+    added++;
+  }
+  if (firstId) {
+    state.activeWp = firstId;   // navigate to the first mark (the start)
+    centerOnWaypoint(firstId);
+  }
+  saveWaypoints();
+  return added;
+}
+
+// Build the preset buttons in the Add-Waypoint modal.
+function buildCoursePresetButtons() {
+  el.ppBtns.innerHTML = "";
+  for (const p of COURSE_PRESETS) {
+    const btn = document.createElement("button");
+    btn.className = "pp-btn";
+    btn.innerHTML = p.course + '<span class="pp-sub">' + p.label + "</span>";
+    btn.addEventListener("click", () => {
+      loadCoursePreset(p.course);
+      el.pasteModal.classList.remove("show");
+    });
+    el.ppBtns.appendChild(btn);
+  }
+}
+buildCoursePresetButtons();
+
 
 function parseGpsInput(text) {
   // Try multiple formats
