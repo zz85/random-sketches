@@ -450,6 +450,52 @@
   }
   #paste-presets .pp-btn:active { transform: scale(0.96); }
   #paste-presets .pp-btn .pp-sub { display: block; font-size: 10px; font-weight: 600; letter-spacing: 0; color: var(--fg-dim); }
+
+  /* ---- Saved Tracks modal ---- */
+  #archive-modal {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.6);
+    display: none; align-items: center; justify-content: center;
+    z-index: 100; padding: 20px;
+  }
+  #archive-modal.show { display: flex; }
+  #archive-modal .modal-box {
+    background: var(--bg); border: 2px solid var(--panel-line);
+    border-radius: 14px; padding: 20px; width: 100%; max-width: 440px;
+  }
+  #archive-modal h3 { font-size: 16px; font-weight: 900; margin-bottom: 8px; }
+  #archive-modal p { font-size: 12px; color: var(--fg-dim); margin-bottom: 12px; line-height: 1.4; }
+  #archive-current:not(:empty) { margin-bottom: 10px; }
+  #archive-list {
+    max-height: 46vh; overflow-y: auto; -webkit-overflow-scrolling: touch;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .arch-empty { font-size: 13px; color: var(--fg-dim); padding: 12px 0; text-align: center; }
+  .arch-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px; border: 1px solid var(--panel-line);
+    border-radius: 8px; background: var(--panel);
+  }
+  .arch-row.live { border-color: var(--accent); }
+  .arch-meta { min-width: 0; flex: 1; }
+  .arch-title { font-size: 13px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .arch-sub { font-size: 11px; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
+  .arch-btns { display: flex; gap: 6px; margin-left: auto; }
+  .arch-btn {
+    padding: 6px 10px; border-radius: 6px; font-size: 11px; font-weight: 800;
+    border: 1px solid var(--panel-line); background: var(--bg); color: var(--fg); cursor: pointer;
+  }
+  .arch-btn:active { transform: scale(0.95); }
+  .arch-btn.exp { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .arch-btn.del { background: var(--bad); color: #fff; border-color: var(--bad); }
+  #archive-modal .modal-actions { display: flex; gap: 8px; margin-top: 14px; }
+  #archive-modal .modal-actions button {
+    flex: 1; padding: 12px; border-radius: 8px;
+    font-size: 14px; font-weight: 800; border: 2px solid var(--panel-line);
+    background: var(--panel); color: var(--fg); cursor: pointer;
+  }
+  #archive-modal .modal-actions button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  #archive-clearall { color: var(--bad); }
 </style>
 </head>
 <body>
@@ -555,6 +601,7 @@
       <button class="map-btn" id="map-btn-wp" title="Cycle / center on waypoints">&#9873;</button>
       <button class="map-btn" id="map-btn-paste" title="Paste GPS / Add waypoint">&#128204;</button>
       <button class="map-btn" id="map-btn-cleartrack" title="Clear GPS track trail">&#129529;</button>
+      <button class="map-btn" id="map-btn-archive" title="Saved tracks / export GPX">&#128190;</button>
     </div>
     <div class="map-ctrl map-ctrl-bl">
       <div id="map-scale">-- NM</div>
@@ -597,6 +644,20 @@
     <div class="modal-actions">
       <button id="paste-cancel">Cancel</button>
       <button id="paste-add" class="primary">Add WP</button>
+    </div>
+  </div>
+</div>
+
+<!-- Saved Tracks / GPX export modal -->
+<div id="archive-modal">
+  <div class="modal-box">
+    <h3>Saved Tracks</h3>
+    <p>Cleared tracks are archived here. Export any as a .gpx file to open in your charting / analysis app.</p>
+    <div id="archive-current"></div>
+    <div id="archive-list"><div class="arch-empty">Loading&hellip;</div></div>
+    <div class="modal-actions">
+      <button id="archive-clearall">Delete All</button>
+      <button id="archive-close" class="primary">Close</button>
     </div>
   </div>
 </div>
@@ -716,6 +777,7 @@ const el = {
   mapScale: $("map-scale"), mapBtnMode: $("map-btn-mode"), mapBtnTilt: $("map-btn-tilt"),
   mapBtnCenter: $("map-btn-center"), mapBtnZin: $("map-btn-zin"), mapBtnZout: $("map-btn-zout"),
   mapBtnPaste: $("map-btn-paste"), mapBtnWp: $("map-btn-wp"), mapBtnClearTrack: $("map-btn-cleartrack"),
+  mapBtnArchive: $("map-btn-archive"),
   mapSogVal: $("map-sog-val"), mapSogUnit: $("map-sog-unit"), mapCogVal: $("map-cog-val"),
   mapNavpill: $("map-navpill"), npArrow: $("np-arrow"), npName: $("np-name"),
   npDist: $("np-dist"), npBrg: $("np-brg"), npEta: $("np-eta"),
@@ -724,6 +786,8 @@ const el = {
   pasteModal: $("paste-modal"), pasteInput: $("paste-input"),
   pasteError: $("paste-error"), pasteCancel: $("paste-cancel"), pasteAdd: $("paste-add"),
   ppBtns: $("pp-btns"),
+  archiveModal: $("archive-modal"), archiveCurrent: $("archive-current"),
+  archiveList: $("archive-list"), archiveClose: $("archive-close"), archiveClearAll: $("archive-clearall"),
 };
 
 // ---------- Geometry ----------
@@ -948,9 +1012,10 @@ function saveTrack() {
   }
 }
 
-function clearTrack() {
+async function clearTrack() {
   if (!state.trackHistory.length) { alert("No track to clear yet."); return; }
-  if (!confirm("Clear the GPS track trail (" + state.trackHistory.length + " points)? Waypoints and trip stats are kept.")) return;
+  if (!confirm("Clear the GPS track trail (" + state.trackHistory.length + " points)? It will be archived to Saved Tracks first. Waypoints and trip stats are kept.")) return;
+  await archiveCurrentTrack("clear-track");
   state.trackHistory = [];
   // Cancel any pending debounced save, then wipe the stored copy.
   if (saveTrack._timer) { clearTimeout(saveTrack._timer); saveTrack._timer = null; }
@@ -1161,8 +1226,19 @@ el.btnTrip.addEventListener("click", () => {
   }
   setTripButton();
 });
-el.btnReset.addEventListener("click", () => {
-  if (!confirm("Reset trip stats?")) return;
+el.btnReset.addEventListener("click", async () => {
+  const hasTrack = state.trackHistory.length >= 2;
+  const nWp = state.waypoints.length;
+  let msg = "Reset trip? This clears the trip stats";
+  if (hasTrack) msg += ", archives & clears the GPS track";
+  if (nWp) msg += " and removes " + nWp + " waypoint" + (nWp > 1 ? "s" : "");
+  msg += ".";
+  if (!confirm(msg)) return;
+
+  // Archive the current track (with a waypoint snapshot) BEFORE we wipe anything.
+  if (hasTrack) await archiveCurrentTrack("reset");
+
+  // Trip stats
   state.tripActive = false;
   state.tripStart = 0;
   state.tripElapsedBase = 0;
@@ -1170,6 +1246,15 @@ el.btnReset.addEventListener("click", () => {
   state.maxMs = 0;
   state.speedSum = 0;
   state.speedSamples = 0;
+
+  // GPS track trail
+  state.trackHistory = [];
+  if (saveTrack._timer) { clearTimeout(saveTrack._timer); saveTrack._timer = null; }
+  localStorage.removeItem("sd_track");
+
+  // Waypoints (WPs + STYC marks) — the map clutter
+  clearAllWaypoints();
+
   setTripButton();
   render();
 });
@@ -2008,6 +2093,14 @@ function removeWaypoint(id) {
   saveWaypoints();
 }
 
+function clearAllWaypoints() {
+  state.waypoints = [];
+  state.activeWp = null;
+  wpCycleIdx = -1;
+  deselectWaypoint();
+  saveWaypoints();
+}
+
 function saveWaypoints() {
   localStorage.setItem("sd_waypoints", JSON.stringify(state.waypoints));
   localStorage.setItem("sd_wpCounter", String(state.wpCounter));
@@ -2200,6 +2293,239 @@ function parseGpsInput(text) {
 
   return null;
 }
+
+// ============================================================
+// TRACK ARCHIVE (IndexedDB) + GPX EXPORT
+// ============================================================
+
+const ARCHIVE_DB = "sailing_dash";
+const ARCHIVE_STORE = "sessions";
+let _archiveDbPromise = null;
+
+function openArchiveDB() {
+  if (_archiveDbPromise) return _archiveDbPromise;
+  _archiveDbPromise = new Promise((resolve, reject) => {
+    if (!("indexedDB" in window)) { reject(new Error("IndexedDB unavailable")); return; }
+    const req = indexedDB.open(ARCHIVE_DB, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(ARCHIVE_STORE)) {
+        db.createObjectStore(ARCHIVE_STORE, { keyPath: "id", autoIncrement: true });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+  return _archiveDbPromise;
+}
+
+function archivePut(session) {
+  return openArchiveDB().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(ARCHIVE_STORE, "readwrite");
+    tx.objectStore(ARCHIVE_STORE).add(session);
+    tx.oncomplete = () => resolve(true);
+    tx.onerror = () => reject(tx.error);
+  }));
+}
+function archiveGetAll() {
+  return openArchiveDB().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(ARCHIVE_STORE, "readonly");
+    const req = tx.objectStore(ARCHIVE_STORE).getAll();
+    req.onsuccess = () => resolve(req.result || []);
+    req.onerror = () => reject(req.error);
+  }));
+}
+function archiveDelete(id) {
+  return openArchiveDB().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(ARCHIVE_STORE, "readwrite");
+    tx.objectStore(ARCHIVE_STORE).delete(id);
+    tx.oncomplete = () => resolve(true);
+    tx.onerror = () => reject(tx.error);
+  }));
+}
+function archiveClear() {
+  return openArchiveDB().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(ARCHIVE_STORE, "readwrite");
+    tx.objectStore(ARCHIVE_STORE).clear();
+    tx.oncomplete = () => resolve(true);
+    tx.onerror = () => reject(tx.error);
+  }));
+}
+
+// Build a session snapshot from the live state (not yet persisted).
+function currentSessionSnapshot() {
+  const pts = state.trackHistory;
+  return {
+    savedAt: Date.now(),
+    startT: pts.length ? (pts[0].t || null) : null,
+    endT: pts.length ? (pts[pts.length - 1].t || null) : null,
+    points: pts.map(p => ({ lat: p.lat, lon: p.lon, t: p.t || null })),
+    waypoints: state.waypoints.map(w => ({ name: w.name, lat: w.lat, lon: w.lon })),
+    distM: state.distM,
+    maxMs: state.maxMs,
+    elapsedMs: state.tripElapsedBase + (state.tripActive ? (Date.now() - state.tripStart) : 0),
+    unit: state.unit,
+  };
+}
+
+// Persist the current track to IndexedDB. Skips if there's nothing worth saving.
+async function archiveCurrentTrack(reason) {
+  if (!state.trackHistory || state.trackHistory.length < 2) return null;
+  const session = currentSessionSnapshot();
+  session.reason = reason || null;
+  try {
+    await archivePut(session);
+    return session;
+  } catch (e) {
+    console.warn("Track archive failed", e);
+    return null;
+  }
+}
+
+// -- GPX generation --
+function xmlEscape(s) {
+  return String(s).replace(/[<>&'"]/g, c => (
+    { "<": "&lt;", ">": "&gt;", "&": "&amp;", "'": "&apos;", '"': "&quot;" }[c]
+  ));
+}
+function gpxName(session) {
+  const t = session.startT || session.savedAt || Date.now();
+  const d = new Date(t);
+  return "Sail " + d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate()) +
+         " " + pad2(d.getHours()) + ":" + pad2(d.getMinutes());
+}
+function buildGpx(session) {
+  const out = [];
+  out.push('<?xml version="1.0" encoding="UTF-8"?>');
+  out.push('<gpx version="1.1" creator="Sailing Dashboard" xmlns="http://www.topografix.com/GPX/1/1">');
+  const when = session.savedAt || session.endT || Date.now();
+  out.push('  <metadata><time>' + new Date(when).toISOString() + '</time></metadata>');
+  for (const w of (session.waypoints || [])) {
+    out.push('  <wpt lat="' + w.lat + '" lon="' + w.lon + '"><name>' + xmlEscape(w.name || "WP") + '</name></wpt>');
+  }
+  const pts = session.points || [];
+  if (pts.length) {
+    out.push('  <trk><name>' + xmlEscape(gpxName(session)) + '</name><trkseg>');
+    for (const p of pts) {
+      let s = '    <trkpt lat="' + p.lat + '" lon="' + p.lon + '">';
+      if (p.t) s += '<time>' + new Date(p.t).toISOString() + '</time>';
+      s += '</trkpt>';
+      out.push(s);
+    }
+    out.push('  </trkseg></trk>');
+  }
+  out.push('</gpx>');
+  return out.join("\n");
+}
+function downloadGpx(session) {
+  const blob = new Blob([buildGpx(session)], { type: "application/gpx+xml" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = gpxName(session).replace(/[:\s]/g, "-") + ".gpx";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// -- Saved Tracks modal --
+function fmtArchiveDate(ms) {
+  if (!ms) return "Track";
+  const d = new Date(ms);
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + ", " +
+         pad2(d.getHours()) + ":" + pad2(d.getMinutes());
+}
+function trackLengthM(pts) {
+  let m = 0;
+  for (let i = 1; i < pts.length; i++) {
+    m += haversine(pts[i - 1].lat, pts[i - 1].lon, pts[i].lat, pts[i].lon);
+  }
+  return m;
+}
+
+function openArchiveModal() {
+  el.archiveModal.classList.add("show");
+  renderArchiveCurrent();
+  renderArchiveList();
+}
+
+function renderArchiveCurrent() {
+  el.archiveCurrent.innerHTML = "";
+  const n = state.trackHistory.length;
+  if (n < 2) return;
+  const row = document.createElement("div");
+  row.className = "arch-row live";
+  const meta = document.createElement("div");
+  meta.className = "arch-meta";
+  meta.innerHTML = '<div class="arch-title">Current track (live)</div>' +
+    '<div class="arch-sub">' + n + ' pts · ' + fmtNm(trackLengthM(state.trackHistory)) + '</div>';
+  const btns = document.createElement("div");
+  btns.className = "arch-btns";
+  const exp = document.createElement("button");
+  exp.className = "arch-btn exp";
+  exp.textContent = "GPX";
+  exp.addEventListener("click", () => downloadGpx(currentSessionSnapshot()));
+  btns.appendChild(exp);
+  row.appendChild(meta);
+  row.appendChild(btns);
+  el.archiveCurrent.appendChild(row);
+}
+
+async function renderArchiveList() {
+  el.archiveList.innerHTML = '<div class="arch-empty">Loading…</div>';
+  let sessions;
+  try {
+    sessions = await archiveGetAll();
+  } catch (e) {
+    el.archiveList.innerHTML = '<div class="arch-empty">Archive unavailable on this device.</div>';
+    return;
+  }
+  sessions.sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
+  if (!sessions.length) {
+    el.archiveList.innerHTML = '<div class="arch-empty">No saved tracks yet.</div>';
+    return;
+  }
+  el.archiveList.innerHTML = "";
+  for (const s of sessions) {
+    const row = document.createElement("div");
+    row.className = "arch-row";
+    const meta = document.createElement("div");
+    meta.className = "arch-meta";
+    const np = s.points ? s.points.length : 0;
+    meta.innerHTML = '<div class="arch-title">' + xmlEscape(fmtArchiveDate(s.savedAt)) + '</div>' +
+      '<div class="arch-sub">' + np + ' pts · ' + fmtNm(s.distM || 0) + ' · ' + fmtClock(s.elapsedMs || 0) + '</div>';
+    const btns = document.createElement("div");
+    btns.className = "arch-btns";
+    const exp = document.createElement("button");
+    exp.className = "arch-btn exp";
+    exp.textContent = "GPX";
+    exp.addEventListener("click", () => downloadGpx(s));
+    const del = document.createElement("button");
+    del.className = "arch-btn del";
+    del.textContent = "Del";
+    del.addEventListener("click", async () => {
+      await archiveDelete(s.id);
+      renderArchiveList();
+    });
+    btns.appendChild(exp);
+    btns.appendChild(del);
+    row.appendChild(meta);
+    row.appendChild(btns);
+    el.archiveList.appendChild(row);
+  }
+}
+
+el.mapBtnArchive.addEventListener("click", openArchiveModal);
+el.archiveClose.addEventListener("click", () => el.archiveModal.classList.remove("show"));
+el.archiveModal.addEventListener("click", (e) => {
+  if (e.target === el.archiveModal) el.archiveModal.classList.remove("show");
+});
+el.archiveClearAll.addEventListener("click", async () => {
+  if (!confirm("Delete ALL archived tracks? This cannot be undone.")) return;
+  try { await archiveClear(); } catch (e) { /* ignore */ }
+  renderArchiveList();
+});
 
 // ============================================================
 // INIT
