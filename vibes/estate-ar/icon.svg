@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#142238"/><stop offset="1" stop-color="#05070c"/></linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="96" fill="url(#bg)"/>
+  <!-- ground plane parcel outline -->
+  <path d="M96 392 L208 328 L416 328 L304 392 Z" fill="none" stroke="#37d3ff" stroke-width="10" stroke-linejoin="round" opacity=".55"/>
+  <!-- building -->
+  <path d="M176 340 L176 200 L272 152 L272 292 Z" fill="#0b1626" stroke="#37d3ff" stroke-width="12" stroke-linejoin="round"/>
+  <path d="M272 292 L272 152 L352 192 L352 332 Z" fill="#0f1c30" stroke="#37d3ff" stroke-width="12" stroke-linejoin="round"/>
+  <path d="M176 200 L272 152 L352 192 L256 240 Z" fill="#1a2c48" stroke="#37d3ff" stroke-width="12" stroke-linejoin="round"/>
+  <!-- price tag -->
+  <rect x="248" y="72" width="192" height="76" rx="18" fill="#ff8a3d"/>
+  <text x="344" y="126" font-family="-apple-system, Inter, Roboto, sans-serif" font-size="56" font-weight="800" fill="#1a0c00" text-anchor="middle">$2.9M</text>
+  <path d="M296 148 L296 190" stroke="#ff8a3d" stroke-width="10" stroke-linecap="round"/>
+</svg>

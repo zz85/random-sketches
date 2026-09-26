@@ -1,13 +1,13 @@
-// bun live_check.js [lat lon [radius_m]]
-// Live smoke test against King County's ArcGIS services and Nominatim — the
-// same calls the browser makes. Default point: Brooklyn Ave NE, U-District.
+// bun live_check.js [lat lon [radius_m]]     one point (default: Brooklyn Ave NE, U-District)
+// bun live_check.js --all                    one point per provider (Seattle, Everett, Tacoma)
+// Live smoke test against the county ArcGIS services and Nominatim — the same
+// calls the browser makes.
 const Geo = require("./geo.js");
 const P = require("./providers.js");
 
-const lat = parseFloat(process.argv[2] || "47.6625"), lon = parseFloat(process.argv[3] || "-122.3145");
-const radius = parseFloat(process.argv[4] || "150");
+const POINTS = { kingcounty: [47.6625, -122.3145], snohomish: [47.9790, -122.2021], wastate: [47.2529, -122.4390] };
 
-(async () => {
+async function check(lat, lon, radius) {
   const prov = P.providerFor(lat, lon);
   if (!prov) { console.error(`No provider covers ${lat},${lon}`); process.exit(2); }
   console.log(`Provider: ${prov.name}   point: ${lat},${lon}   radius: ${radius} m`);
@@ -33,5 +33,11 @@ const radius = parseFloat(process.argv[4] || "150");
   const total = r.parcels.reduce((s, p) => s + (p.totalValue || 0), 0);
   console.log(`\nTotal assessed within ${radius} m: ${Geo.fmtMoney(total)}   malformed parcels: ${bad.length}`);
   if (bad.length) process.exit(1);
-  console.log("OK");
+  console.log("OK\n");
+}
+
+(async () => {
+  if (process.argv[2] === "--all") { for (const [id, [la, lo]] of Object.entries(POINTS)) { console.log(`##### ${id}`); await check(la, lo, 120); } return; }
+  const lat = parseFloat(process.argv[2] || "47.6625"), lon = parseFloat(process.argv[3] || "-122.3145");
+  await check(lat, lon, parseFloat(process.argv[4] || "150"));
 })().catch((e) => { console.error("FAIL:", e.message); process.exit(1); });

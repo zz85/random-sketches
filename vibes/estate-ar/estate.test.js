@@ -2,6 +2,8 @@
 const { test, expect, describe } = require("bun:test");
 const Geo = require("./geo.js");
 const P = require("./providers.js");
+const H = require("./heights.js");
+const PS = require("./parcelstore.js");
 const parcelsFx = require("./fixture_parcels.json");   // live King County response, 120 m around ME
 const salesFx = require("./fixture_sales.json");       // live sales layer, 250 m around ME
 
@@ -182,6 +184,62 @@ describe("Providers: King County parsing (live fixture)", () => {
   });
 });
 
+describe("Providers: Snohomish County (live fixture, Hewitt Ave, Everett)", () => {
+  const SNO = P.PROVIDERS.snohomish, fx = require("./fixture_snohomish.json");
+  const parcels = fx.features.map((f) => P.normalizeParcel(f, SNO)).filter(Boolean);
+  test("qualified field names are mapped, use code prefix and -Real suffix stripped", () => {
+    expect(parcels.length).toBe(16);
+    const p = parcels.find((q) => q.id === "00439068800500");
+    expect(p.address).toBe("2931 BROADWAY AVE"); expect(p.city).toBe("EVERETT"); expect(p.zip).toBe("98201");
+    expect(p.use).toBe("Undeveloped (Vacant) Land");
+    expect(p.landValue).toBe(324000); expect(p.imprValue).toBe(0); expect(p.totalValue).toBe(324000);
+    expect(p.propType).toBe("U"); expect(p.propTypeName).toBe("Undeveloped");
+    expect(p.lotSqft).toBeCloseTo(5561.6, 0); expect(p.acres).toBe(0.13);
+    expect(p.link).toContain("snoco.org/proptax");
+    expect(SNO.links["Assessor record"](p)).toBe(p.link);
+  });
+  test("typeFromUse buckets", () => {
+    expect(P.typeFromUse("Single Family Residence")).toBe("R");
+    expect(P.typeFromUse("Condominium Unit")).toBe("K");
+    expect(P.typeFromUse("Eating Places (Restaurants)")).toBe("C");
+    expect(P.typeFromUse("Church")).toBe("X");
+    expect(P.typeFromUse(null)).toBeNull();
+  });
+});
+
+describe("Providers: WA statewide layer (live fixture, Pacific Ave, Tacoma)", () => {
+  const WA = P.PROVIDERS.wastate, fx = require("./fixture_wastate.json");
+  const parcels = fx.features.map((f) => P.normalizeParcel(f, WA)).filter(Boolean);
+  test("DOR codes decoded, county named, lot area derived from polygon", () => {
+    expect(parcels.length).toBe(48);
+    const p = parcels.find((q) => q.id === "053-9009560040");
+    expect(p.address).toBe("1250 PACIFIC AVE"); expect(p.county).toBe("Pierce");
+    expect(p.use).toBe("Condominium (non-res)"); expect(p.propType).toBe("C");
+    expect(p.landValue).toBe(1092400); expect(p.imprValue).toBe(4466300); expect(p.totalValue).toBe(5558700);
+    expect(p.lotSqft).toBeGreaterThan(0); expect(p.acres).toBeCloseTo(p.lotSqft / 43560, 6);
+    expect(p.link).toContain("atip.piercecountywa.gov"); expect(p.asOf).toBe(1770969600000);
+    const parking = parcels.find((q) => q.id === "053-2011050070");
+    expect(parking.use).toBe("Parking"); expect(parking.propType).toBe("C");
+  });
+  test("dorType buckets", () => {
+    expect(P.dorType(11)).toBe("R"); expect(P.dorType(14)).toBe("K"); expect(P.dorType(58)).toBe("C");
+    expect(P.dorType(91)).toBe("U"); expect(P.dorType(83)).toBe("T"); expect(P.dorType(68)).toBe("X"); expect(P.dorType(null)).toBeNull();
+  });
+  test("providerFor: county-specific first, statewide fallback, nothing outside WA", () => {
+    expect(P.providerFor(47.2529, -122.439).id).toBe("wastate");      // Tacoma
+    expect(P.providerFor(47.32, -122.31).id).toBe("kingcounty");      // Federal Way
+    expect(P.providerFor(47.755, -122.34).id).toBe("kingcounty");     // Shoreline
+    expect(P.providerFor(47.82, -122.31).id).toBe("snohomish");       // Lynnwood
+    expect(P.providerFor(48.75, -122.48).id).toBe("wastate");         // Bellingham
+    expect(P.providerFor(45.5152, -122.6784)).toBeNull();             // Portland
+  });
+  test("fetchArea works for a provider without a sales layer", async () => {
+    const fake = async () => ({ ok: true, json: async () => fx });
+    const r = await P.fetchArea(WA, 47.2529, -122.439, 100, fake);
+    expect(r.parcels.length).toBe(48); expect(r.salesCount).toBe(0); expect(r.parcels[0].sales).toEqual([]);
+  });
+});
+
 describe("Providers: query building and fetch plumbing", () => {
   test("arcgisParams", () => {
     const q = P.arcgisParams(47.6625, -122.3145, 220.4, ["PIN", "ADDR_FULL"], true);
@@ -214,7 +272,6 @@ describe("Providers: query building and fetch plumbing", () => {
   });
   test("providerFor", () => {
     expect(P.providerFor(47.6625, -122.3145)).toBe(KC);
-    expect(P.providerFor(45.5152, -122.6784)).toBeNull();   // Portland
   });
   test("reverseGeocode picks city + neighbourhood", async () => {
     const fake = async () => ({ ok: true, json: async () => ({ display_name: "x", address: { city: "Seattle", neighbourhood: "Greek Row", road: "Brooklyn Avenue Northeast" } }) });
@@ -223,36 +280,130 @@ describe("Providers: query building and fetch plumbing", () => {
   });
 });
 
-describe("Providers: ParcelStore", () => {
-  const mem = () => { const m = new Map(); return { getItem: (k) => m.has(k) ? m.get(k) : null, setItem: (k, v) => m.set(k, v), removeItem: (k) => m.delete(k) }; };
-  test("needsFetch: first time, moved, radius grown, provider changed, ttl", () => {
-    const s = new ParcelStoreTest(mem());
-    expect(s.needsFetch(ME.lat, ME.lon, 200, "kingcounty")).toBe(true);
-    s.set(ME.lat, ME.lon, 200, "kingcounty", []);
-    expect(s.needsFetch(ME.lat, ME.lon, 200, "kingcounty")).toBe(false);
-    expect(s.needsFetch(ME.lat + 50 / 111180, ME.lon, 200, "kingcounty")).toBe(false);   // 50 m < 40% of 200
-    expect(s.needsFetch(ME.lat + 100 / 111180, ME.lon, 200, "kingcounty")).toBe(true);   // 100 m
-    expect(s.needsFetch(ME.lat, ME.lon, 300, "kingcounty")).toBe(true);
-    expect(s.needsFetch(ME.lat, ME.lon, 200, "other")).toBe(true);
-    s.at = Date.now() - 7 * 3600e3;
-    expect(s.needsFetch(ME.lat, ME.lon, 200, "kingcounty")).toBe(true);
+describe("Heights: estimates", () => {
+  const parcels = parcelsFx.features.map((f) => P.normalizeParcel(f, KC));
+  H.applyHeights(parcels, null);
+  const by = (addr) => parcels.find((p) => p.address === addr);
+  test("density curve hits the anchors", () => {
+    expect(H.storeysFromDensity(60)).toBeCloseTo(1, 0);
+    expect(H.storeysFromDensity(1000)).toBeCloseTo(6, 0);
+    expect(H.storeysFromDensity(8500)).toBeCloseTo(24, 0);
+    expect(H.storeysFromDensity(0)).toBe(1);
   });
-  test("persists to storage and revives Dates", () => {
-    const storage = mem();
-    const a = new P.ParcelStore({ storage });
+  test("U-District skyline: tower, hotel, walk-up, retail, parking", () => {
+    expect(by("4515 BROOKLYN AVE NE").storeys).toBeGreaterThanOrEqual(22);   // The Standard, 24 fl
+    expect(by("4507 BROOKLYN AVE NE").storeys).toBeGreaterThanOrEqual(7);    // Graduate Hotel, ~8 fl
+    expect(by("4507 BROOKLYN AVE NE").storeys).toBeLessThanOrEqual(10);
+    expect(by("4535 12TH AVE NE").storeys).toBeGreaterThanOrEqual(5);        // 6-storey apartments
+    expect(by("4534 UNIVERSITY WAY NE").storeys).toBeLessThanOrEqual(6);     // retail
+    const parking = parcels.find((p) => /Parking/.test(p.use));
+    expect(parking.storeys).toBe(0); expect(parking.height).toBe(0);
+    expect(by("4557 BROOKLYN AVE NE").height).toBe(0);                        // vacant
+    for (const p of parcels) { expect(p.heightSource).toBe("estimate"); expect(p.height).toBeGreaterThanOrEqual(0); }
+  });
+  test("class bounds: a house never gets a tower height, 4-plex is 2+", () => {
+    expect(H.estimateHeight({ use: "Single Family(Res Use/Zone)", propType: "R", imprValue: 5e6, lotSqft: 5000 }).storeys).toBe(3);
+    expect(H.estimateHeight({ use: "4-Plex", propType: "R", imprValue: 0, lotSqft: 5000 }).storeys).toBe(2);
+    expect(H.estimateHeight({ use: "Apartment", propType: "C", imprValue: 1e6, lotSqft: 0, centroid: { areaM2: 500 } }).storeys).toBeGreaterThan(1);
+    expect(H.estimateHeight({ use: "Railroad Transportation", propType: "C" }).height).toBe(0);
+    expect(H.estimateHeight({ use: "DOR 0", address: "REFERENCE" }).height).toBe(0);
+  });
+});
+
+describe("Heights: OSM", () => {
+  test("parseOsmHeight", () => {
+    expect(H.parseOsmHeight("12")).toBe(12); expect(H.parseOsmHeight("12.5 m")).toBe(12.5);
+    expect(H.parseOsmHeight("40 ft")).toBeCloseTo(12.19, 2); expect(H.parseOsmHeight("40'")).toBeCloseTo(12.19, 2);
+    expect(H.parseOsmHeight("tall")).toBeNull(); expect(H.parseOsmHeight(null)).toBeNull();
+  });
+  test("osmBuilding uses height, else levels, else null", () => {
+    expect(H.osmBuilding({ center: { lat: 1, lon: 2 }, tags: { building: "yes", height: "30" } })).toMatchObject({ height: 30, storeys: 9 });
+    expect(H.osmBuilding({ center: { lat: 1, lon: 2 }, tags: { building: "yes", "building:levels": "6" } })).toMatchObject({ height: 6 * H.STOREY_M + 1, storeys: 6 });
+    expect(H.osmBuilding({ center: { lat: 1, lon: 2 }, tags: { building: "yes" } })).toBeNull();
+    expect(H.osmBuilding({ tags: { height: "3" } })).toBeNull();
+  });
+  test("applyHeights matches OSM buildings to containing parcels, tallest wins, name fills in", () => {
+    const parcels = parcelsFx.features.map((f) => P.normalizeParcel(f, KC));
+    const p = parcels.find((q) => q.address === "4541 BROOKLYN AVE NE");
+    const osm = [
+      { lat: p.centroid.lat, lon: p.centroid.lon, height: 9, storeys: 3, name: "Brooklyn Apts" },
+      { lat: p.centroid.lat, lon: p.centroid.lon, height: 6, storeys: 2, name: null },
+      { lat: 0, lon: 0, height: 100, storeys: 30, name: "nowhere" },
+    ];
+    H.applyHeights(parcels, osm);
+    expect(p.height).toBe(9); expect(p.storeys).toBe(3); expect(p.heightSource).toBe("osm"); expect(p.name).toBe("Brooklyn Apts");
+    expect(parcels.filter((q) => q.heightSource === "osm").length).toBe(1);
+  });
+  test("fetchOsmHeights falls through mirrors and posts a query", async () => {
+    const calls = [];
+    const fake = async (url, init) => { calls.push({ url, body: init.body }); if (calls.length === 1) return { ok: false, status: 504 }; return { ok: true, json: async () => ({ elements: [{ type: "way", center: { lat: 1, lon: 2 }, tags: { building: "yes", height: "20" } }] }) }; };
+    const out = await H.fetchOsmHeights(47.66, -122.31, 150, fake, ["https://a/", "https://b/"]);
+    expect(calls.length).toBe(2); expect(calls[0].url).toBe("https://a/");
+    expect(decodeURIComponent(calls[1].body)).toContain('way["building"]["building"!="no"](around:150,47.660000,-122.310000)');
+    expect(out).toEqual([{ lat: 1, lon: 2, height: 20, storeys: 6, name: null }]);
+    await expect(H.fetchOsmHeights(0, 0, 10, async () => ({ ok: false, status: 500 }), ["https://a/"])).rejects.toThrow("HTTP 500");
+  });
+});
+
+describe("ParcelStore: coverage", () => {
+  const mpd = Geo.metresPerDegree(ME.lat);
+  test("covers only when the query circle is inside a fresh circle of the same provider", () => {
+    const c = new PS.Coverage([], 1000);
+    expect(c.covers(ME.lat, ME.lon, 100, "kingcounty")).toBe(false);
+    c.add(ME.lat, ME.lon, 220, "kingcounty", 5000);
+    expect(c.covers(ME.lat, ME.lon, 220, "kingcounty", 5100)).toBe(true);
+    expect(c.covers(ME.lat, ME.lon, 221.5, "kingcounty", 5100)).toBe(false);
+    expect(c.covers(ME.lat + 100 / mpd.lat, ME.lon, 120, "kingcounty", 5100)).toBe(true);    // 100 + 120 <= 220
+    expect(c.covers(ME.lat + 100 / mpd.lat, ME.lon, 130, "kingcounty", 5100)).toBe(false);
+    expect(c.covers(ME.lat, ME.lon, 100, "snohomish", 5100)).toBe(false);
+    expect(c.covers(ME.lat, ME.lon, 100, "kingcounty", 7000)).toBe(false);                  // expired (ttl 1000)
+  });
+  test("fraction: none, all, half", () => {
+    const c = new PS.Coverage([], 1e9);
+    expect(c.fraction(ME.lat, ME.lon, 100, "kingcounty")).toBe(0);
+    c.add(ME.lat, ME.lon, 300, "kingcounty");
+    expect(c.fraction(ME.lat, ME.lon, 100, "kingcounty")).toBe(1);
+    const half = c.fraction(ME.lat, ME.lon + 300 / mpd.lon, 200, "kingcounty");   // centre on the edge
+    expect(half).toBeGreaterThan(0.3); expect(half).toBeLessThan(0.7);
+  });
+  test("add swallows contained circles and enforces ttl and cap", () => {
+    const c = new PS.Coverage([], 1000);
+    c.add(ME.lat, ME.lon, 100, "kingcounty", 10); c.add(ME.lat, ME.lon, 200, "kingcounty", 20);
+    expect(c.circles.length).toBe(1); expect(c.circles[0].radius).toBe(200);
+    c.add(ME.lat + 0.01, ME.lon, 100, "kingcounty", 20); expect(c.circles.length).toBe(2);
+    c.add(ME.lat, ME.lon, 50, "kingcounty", 2000); expect(c.circles.length).toBe(1);     // the others aged out
+    expect(c.boxes(2000).length).toBe(1); expect(c.boxes(2000)[0][0]).toBeLessThan(ME.lon);
+  });
+});
+
+describe("ParcelStore: Store with MemoryDB", () => {
+  test("put / near / needsFetch / thawed dates / clear", async () => {
+    const store = new PS.Store(new PS.MemoryDB(), { ttlMs: 1e9 });
     const parcels = parcelsFx.features.map((f) => P.normalizeParcel(f, KC));
     P.joinSales(parcels, salesFx.features.map((f) => P.normalizeSale(f, KC)));
-    a.set(ME.lat, ME.lon, 120, "kingcounty", parcels);
-    const b = new P.ParcelStore({ storage });
-    expect(b.parcels.length).toBe(43); expect(b.needsFetch(ME.lat, ME.lon, 120, "kingcounty")).toBe(false);
-    const sold = b.parcels.find((p) => p.lastSale);
+    H.applyHeights(parcels, null);
+    expect(await store.needsFetch(ME.lat, ME.lon, 120, "kingcounty")).toBe(true);
+    await store.put(ME.lat, ME.lon, 120, "kingcounty", parcels);
+    expect(await store.needsFetch(ME.lat, ME.lon, 120, "kingcounty")).toBe(false);
+    expect(await store.needsFetch(ME.lat, ME.lon, 120, "snohomish")).toBe(true);
+    expect(await store.count()).toBe(43);
+    const near = await store.near(ME.lat, ME.lon, 120, "kingcounty");
+    expect(near.length).toBe(43);
+    const sold = near.find((p) => p.lastSale);
     expect(sold.lastSale.date).toBeInstanceOf(Date); expect(sold.sales[0].date).toBeInstanceOf(Date);
-    b.clear();
-    expect(new P.ParcelStore({ storage }).parcels.length).toBe(0);
+    expect(near[0].height).toBeDefined(); expect(near[0].ring.length).toBeGreaterThan(3);
+    // far away: nothing
+    expect((await store.near(ME.lat + 0.05, ME.lon, 120, "kingcounty")).length).toBe(0);
+    // re-put updates in place (no duplicates)
+    await store.put(ME.lat, ME.lon, 120, "kingcounty", parcels); expect(await store.count()).toBe(43);
+    // coverage persisted through meta and reloaded by a second Store on the same DB
+    const again = new PS.Store(store.db, { ttlMs: 1e9 });
+    expect(await again.needsFetch(ME.lat, ME.lon, 120, "kingcounty")).toBe(false);
+    await store.clear(); expect(await store.count()).toBe(0);
+    expect(await store.needsFetch(ME.lat, ME.lon, 120, "kingcounty")).toBe(true);
   });
-  test("corrupt storage is ignored", () => {
-    const storage = mem(); storage.setItem("estate-ar:cache", "{not json");
-    expect(new P.ParcelStore({ storage }).parcels.length).toBe(0);
+  test("open() falls back to memory when IndexedDB is missing", async () => {
+    const s = PS.open({ memory: true }); expect(s.db).toBeInstanceOf(PS.MemoryDB);
+    const s2 = PS.open(); expect(s2.db).toBeInstanceOf(typeof indexedDB === "undefined" ? PS.MemoryDB : PS.ParcelDB);
   });
-  function ParcelStoreTest(storage) { return new P.ParcelStore({ storage }); }
 });
