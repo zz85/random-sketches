@@ -1,5 +1,7 @@
 # Random experiments
 
+- [SailNav](vibes/sailnav/) - Browser chart plotter for Puget Sound: official NOAA ENC charts (S-52 day/night), charted depth + tide under the boat from GPS, automatic draft-aware water routing between two points, XTE/BRG/TTG navigation, MOB, GPX, offline mode that parses NOAA S-57 cells in the browser. Navigation math ported from OpenCPN
+- [West Point Buoy](vibes/buoy-data/) - Fast, rich dashboard for NOAA NDBC station WPOW1 (and other Puget Sound stations): 10-min wind + gusts, forecast overlay, pressure, tide, marine forecast
 - [Night Sky AR](vibes/night-sky/) - AR camera overlay that identifies stars, planets, and the Moon by pointing your phone at the sky
 - [BrainWave - Neural Audio Engine](vibes/brain-waves/) - Brainwave entrainment app with binaural beats, study/focus modes, and procedural ambient music
 - [CPU/Numa Affinity planner / visualizer](cpu-affinity-planner/)
@@ -9,6 +11,7 @@
   - [sun day path](cosmos/sunpath_three.html) - Sun's visualization path of the day
   - [sun year path](cosmos/sunpath_three_year.html) - Sun's visualization path of the year
 - [sun charts](cosmos/suncharts.html) - JS based sunrise and sunset tables and visualizations
+- [tide predictor](cosmos/tides.html) - Harmonic tide prediction in the browser (Schureman / NOS method) from NOAA constituents, with tide clock, hi/lo table, spring/neap envelope, constituent decomposition and phasor view. Engine in [tides.js](cosmos/tides.js), validated against NOAA in [test_tides.js](cosmos/test_tides.js)
 - [compass](cosmos/compass.html) - Web based implementation of IOS compass app
   - [compass with positioning](cosmos/compass_position.html) - with positioning data
   - [compass with sun position](cosmos/compass_sun.html) - with sunrise and sunset

@@ -1,5 +1,15 @@
 # Logs
 
+26 Sep 2026
+- Add [SailNav](vibes/sailnav/) - studied OpenCPN (s52cnsy DEPARE01 banding, georef Mercator sailing, Routeman XTE/arrival) and built a browser plotter on NOAA ENC Online tiles + ENC Direct DEPARE/SOUNDG queries. Depth-under-boat with tide correction, grid A* water routing respecting draft, shore margin and charted hazards. `bun test` + live NOAA smoke test.
+- SailNav offline: `s57.js` reads ISO 8211 / S-57 `.000` cells directly in the browser (DecompressionStream unzip, DataView parsing, IndexedDB store); vector S-52 chart, depth and routing without network. Verified identical to ENC Direct on US5SEAGK.
+
+26 Sep 2026
+- Add [West Point Buoy](vibes/buoy-data/) - single-file dashboard replacing the NDBC station page: NDBC 10-min wind/gust via tiny CORS proxy (NWS hourly fallback), NWS hourly forecast dashed onto the wind chart, pressure/temp, CO-OPS tide, parsed coastal waters forecast with advisories
+- Add [tide predictor](cosmos/tides.html) - harmonic tide prediction in plain JS. [tides.js](cosmos/tides.js) is a port of the Schureman SP-98 constituent definitions (following pytides and XTide's congen_input.txt), fed by NOAA CO-OPS harmonic constituents. Visualizations: height curve with daylight bands and NOAA overlay, tide clock, hi/lo table, ±45 day spring/neap envelope with moon phases, constituent bars, decomposition of the top constituents, animated phasor sum.
+- [test_tides.js](cosmos/test_tides.js) validates against NOAA official predictions for 8 stations: height rmse 0.006-0.11 ft, hi/lo timing mean error under 1 minute. Gotcha found: NOAA's M1 uses Schureman's second formula (V = T - s + h + 90, u = xi - nu + Q) with the speed of the first (14.4966939 deg/h).
+- Research notes: surveyed pytides, UTide, pyTMD, PyFES/aviso-fes, hatyan, slackwater (ex-neaps, TS) and its station database, solunar. Picked pytides/congen as the reference for a small browser port; slackwater is the best maintained JS option if a dependency is acceptable.
+
 17 Feb 2026
 - Add [BrainWave - Neural Audio Engine](vibes/brain-waves/) - Web Audio app for brainwave entrainment with binaural beats, isochronic tones, and 9 study/focus mode presets
 - Procedural ambient music engine with 10 generative styles (ambient pads, piano, space drone, singing bowls, lo-fi, arpeggios, dark pad, cinematic lo-fi, cinematic arpeggio, shimmer)

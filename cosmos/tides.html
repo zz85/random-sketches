@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Tide predictor</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="//writ.cmcenroe.me/1.0.4/writ.min.css">
+    <style>
+        body { max-width: 1100px; }
+        h1 { margin-bottom: 0; }
+        .muted { color: #777; font-size: 0.85em; }
+        .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+        .row > * { margin: 0; }
+        canvas { display: block; max-width: 100%; }
+        .card { border: 1px solid #ddd; border-radius: 6px; padding: 10px; margin: 12px 0; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+        table { font-size: 0.9em; border-collapse: collapse; width: 100%; }
+        td, th { padding: 2px 8px; text-align: right; }
+        td:first-child, th:first-child { text-align: left; }
+        tr.now { background: #fff3c4; }
+        .H { color: #1a6fb0; } .L { color: #b0571a; }
+        .cbar { display: flex; align-items: center; gap: 6px; font-size: 0.8em; margin: 1px 0; }
+        .cbar .n { width: 56px; font-family: monospace; }
+        .cbar .b { height: 10px; border-radius: 2px; }
+        .cbar .v { width: 60px; color: #666; }
+        .legend span { display: inline-block; margin-right: 12px; }
+        .legend i { display: inline-block; width: 12px; height: 12px; vertical-align: middle; margin-right: 4px; border-radius: 2px; }
+        label { font-size: 0.9em; }
+        input[type=number] { width: 5em; }
+        #err { color: #b00020; white-space: pre-wrap; }
+        #stationList { min-width: 320px; }
+        .big { font-size: 1.8em; font-weight: bold; }
+    </style>
+</head>
+
+<body>
+    <h1>Tide predictor</h1>
+    <p class="muted">Harmonic prediction (Schureman / NOS method) computed in the browser from NOAA CO-OPS constituents.
+        <b>Not for navigation.</b> Astronomical tide only, no weather.</p>
+
+    <div class="card">
+        <div class="row">
+            <label>Station <select id="stationList"></select></label>
+            <label>or ID <input id="stationId" size="8" placeholder="9447130"> <button id="loadBtn">Load</button></label>
+            <button id="nearBtn" title="use geolocation">Nearest</button>
+            <label>Datum <select id="datum"><option>MLLW</option><option>MSL</option><option>MLW</option><option>MHW</option><option>MHHW</option><option>NAVD88</option><option>STND</option></select></label>
+            <label>Units <select id="units"><option value="ft">feet</option><option value="m">meters</option></select></label>
+            <label>Date <input type="date" id="date"></label>
+            <label>Days <input type="number" id="days" value="3" min="1" max="31"></label>
+            <label><input type="checkbox" id="localTz" checked> station local time</label>
+            <label><input type="checkbox" id="noaaOverlay"> overlay NOAA official</label>
+        </div>
+        <div id="err"></div>
+        <div id="stationInfo" class="muted"></div>
+    </div>
+
+    <div class="grid">
+        <div class="card">
+            <div class="row"><div class="big" id="nowHeight">-</div><div id="nowText" class="muted"></div></div>
+            <canvas id="clock" width="260" height="260"></canvas>
+        </div>
+        <div class="card">
+            <b>High / low water</b>
+            <div style="max-height: 300px; overflow: auto"><table id="hilo"></table></div>
+        </div>
+    </div>
+
+    <div class="card">
+        <b>Predicted height</b> <span class="muted" id="curveHint">drag / wheel to pan and zoom, hover for value</span>
+        <canvas id="curve" height="320"></canvas>
+        <div class="legend muted"><span><i style="background:#1a6fb0"></i>prediction</span><span><i style="background:#e0483e"></i>NOAA official</span><span><i style="background:#f2c14e"></i>daylight</span><span><i style="background:#999"></i>now</span></div>
+    </div>
+
+    <div class="card">
+        <b>Spring / neap envelope</b> <span class="muted">daily range over ±45 days, with moon phase (Mf, Mm and the M2/S2 beat)</span>
+        <canvas id="envelope" height="180"></canvas>
+    </div>
+
+    <div class="grid">
+        <div class="card">
+            <b>Constituents</b> <span class="muted" id="statsText"></span>
+            <div id="bars"></div>
+        </div>
+        <div class="card">
+            <b>Decomposition</b> <span class="muted">the biggest terms over the selected window, and their sum</span>
+            <canvas id="decomp" height="360"></canvas>
+        </div>
+    </div>
+
+    <div class="card">
+        <b>Phasor view</b> <span class="muted">each constituent as a rotating vector f·H at angle V+u−κ; the tide height is the sum of x components. Animates at 600× real time.</span>
+        <div class="row"><canvas id="phasor" width="360" height="360"></canvas><div class="muted" id="phasorText"></div></div>
+    </div>
+
+    <p class="muted">Engine: <a href="tides.js">tides.js</a>, a JavaScript port of the constituent definitions in Schureman SP-98 as encoded by
+        <a href="https://github.com/sam-cox/pytides">pytides</a> and XTide's congen, validated against NOAA predictions in <a href="test_tides.js">test_tides.js</a>.
+        Data: <a href="https://api.tidesandcurrents.noaa.gov/mdapi/prod/">NOAA CO-OPS metadata API</a> (harmonic constituents and datums).</p>
+
+    <script src="vendor/suncalc.js"></script>
+    <script src="tides.js"></script>
+    <script src="tide_stations.js"></script>
+    <script>
+        // ---------------------------------------------------------------
+        // state
+        // ---------------------------------------------------------------
+        const $ = (id) => document.getElementById(id);
+        const state = {
+            model: null, station: null, harcon: null, datums: null,
+            units: 'ft', tzOffset: 0, start: null, end: null, viewStart: null, viewEnd: null,
+            series: null, extremes: [], noaa: null, hover: null
+        };
+        const FT2M = 0.3048;
+        const cvt = (ft) => state.units === 'm' ? ft * FT2M : ft;
+        const unitLabel = () => state.units === 'm' ? 'm' : 'ft';
+
+        function tz() { return $('localTz').checked ? state.tzOffset : 0; }
+        // date formatting in station local (fixed offset, no DST) or UTC
+        function shifted(d) { return new Date(d.getTime() + tz() * 3600000); }
+        function fmtTime(d) { const s = shifted(d); return s.toISOString().slice(11, 16); }
+        function fmtDay(d) { const s = shifted(d); return s.toISOString().slice(0, 10); }
+        function fmtDayShort(d) { const s = shifted(d); return s.toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric' }); }
+        function tzLabel() { const o = tz(); return o === 0 ? 'UTC' : 'UTC' + (o > 0 ? '+' : '') + o; }
+
+        function setupCanvas(canvas, w, h) {
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = w * dpr; canvas.height = h * dpr;
+            canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+            const ctx = canvas.getContext('2d');
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            ctx.w = w; ctx.h = h;
+            return ctx;
+        }
+
+        // ---------------------------------------------------------------
+        // station loading
+        // ---------------------------------------------------------------
+        function fillStations() {
+            const sel = $('stationList');
+            const groups = {};
+            for (const s of window.TIDE_STATIONS) { (groups[s[2] || 'Other'] = groups[s[2] || 'Other'] || []).push(s); }
+            for (const st of Object.keys(groups).sort()) {
+                const og = document.createElement('optgroup'); og.label = st;
+                for (const s of groups[st]) { const o = document.createElement('option'); o.value = s[0]; o.textContent = s[1] + ' (' + s[0] + ')'; og.appendChild(o); }
+                sel.appendChild(og);
+            }
+        }
+
+        async function loadStation(id) {
+            $('err').textContent = '';
+            $('stationInfo').textContent = 'loading ' + id + ' ...';
+            try {
+                const r = await Tides.NOAA.fetchStation(id);
+                state.station = r.station; state.harcon = r.harcon; state.datums = r.datums;
+                state.tzOffset = r.station.tz || 0;
+                $('stationList').value = id;
+                $('stationId').value = id;
+                location.hash = id;
+                rebuildModel();
+            } catch (e) {
+                $('err').textContent = 'Could not load station ' + id + ': ' + e.message + '\n(NOAA only publishes harmonic constituents for reference stations)';
+                $('stationInfo').textContent = '';
+            }
+        }
+
+        function rebuildModel() {
+            if (!state.harcon) return;
+            const datum = $('datum').value;
+            const m = Tides.NOAA.toModel(state.station, state.harcon, state.datums, datum);
+            state.model = m;
+            const dv = m.datums;
+            const haveDatum = dv[datum] != null;
+            const st = Tides.stats(m);
+            const s = state.station;
+            $('stationInfo').innerHTML = `<b>${s.name}${s.state ? ', ' + s.state : ''}</b> #${s.id} · ${s.lat.toFixed(3)}, ${s.lng.toFixed(3)} · ${tzLabel()} ·
+                ${m.constituents.length} constituents · ${st.type} (form number ${st.formNumber.toFixed(2)}) · datum ${datum}${haveDatum ? '' : ' <span style="color:#b00020">(not published for this station, showing MSL)</span>'}
+                · MSL ${cvt(dv.MSL - (dv[datum] != null ? dv[datum] : dv.MSL)).toFixed(2)} ${unitLabel()} above datum`;
+            recompute();
+        }
+
+        // ---------------------------------------------------------------
+        // compute
+        // ---------------------------------------------------------------
+        function recompute() {
+            const m = state.model; if (!m) return;
+            const dateStr = $('date').value;
+            const days = Math.max(1, Math.min(31, +$('days').value || 3));
+            // start at local midnight of selected day
+            const d0 = new Date(dateStr + 'T00:00:00Z');
+            state.start = new Date(d0.getTime() - tz() * 3600000);
+            state.end = new Date(state.start.getTime() + days * 86400000);
+            state.viewStart = state.start; state.viewEnd = state.end;
+            state.series = Tides.series(m, new Date(state.start - 86400000), new Date(state.end.getTime() + 86400000), 6);
+            state.extremes = Tides.extremes(m, new Date(state.start - 86400000), new Date(state.end.getTime() + 86400000));
+            state.noaa = null;
+            if ($('noaaOverlay').checked) fetchNoaa();
+            drawAll();
+            renderBars();
+            drawEnvelope();
+        }
+
+        async function fetchNoaa() {
+            try {
+                const pts = await Tides.NOAA.fetchPredictions(state.station.id, state.start, state.end, { datum: $('datum').value, interval: 6 });
+                state.noaa = pts;
+                drawCurve();
+            } catch (e) { $('err').textContent = 'NOAA overlay: ' + e.message; }
+        }
+
+        function drawAll() { drawCurve(); renderHiLo(); drawClock(); drawDecomp(); }
+
+        // ---------------------------------------------------------------
+        // main curve
+        // ---------------------------------------------------------------
+        const curve = $('curve');
+        function xOf(t, ctx, pad) { return pad.l + (t - state.viewStart) / (state.viewEnd - state.viewStart) * (ctx.w - pad.l - pad.r); }
+        function drawCurve() {
+            if (!state.series) return;
+            const W = curve.parentElement.clientWidth - 22;
+            const ctx = setupCanvas(curve, W, 320);
+            const pad = { l: 44, r: 12, t: 18, b: 34 };
+            const s = state.series;
+            const vs = state.viewStart.getTime(), ve = state.viewEnd.getTime();
+            let lo = Infinity, hi = -Infinity;
+            for (let i = 0; i < s.times.length; i++) if (s.times[i] >= vs && s.times[i] <= ve) { lo = Math.min(lo, s.heights[i]); hi = Math.max(hi, s.heights[i]); }
+            if (state.noaa) for (const p of state.noaa) { lo = Math.min(lo, p.height); hi = Math.max(hi, p.height); }
+            lo = Math.min(lo, 0);
+            const span = (hi - lo) || 1; lo -= span * 0.08; hi += span * 0.08;
+            const X = (t) => xOf(t, ctx, pad);
+            const Y = (h) => pad.t + (hi - h) / (hi - lo) * (ctx.h - pad.t - pad.b);
+
+            // daylight bands
+            if (window.SunCalc && state.station) {
+                ctx.fillStyle = 'rgba(242,193,78,0.18)';
+                for (let d = new Date(vs - 86400000); d.getTime() < ve + 86400000; d = new Date(d.getTime() + 86400000)) {
+                    const t = SunCalc.getTimes(d, state.station.lat, state.station.lng);
+                    if (isNaN(t.sunrise) || isNaN(t.sunset)) continue;
+                    const a = Math.max(vs, t.sunrise.getTime()), b = Math.min(ve, t.sunset.getTime());
+                    if (b > a) ctx.fillRect(X(a), pad.t, X(b) - X(a), ctx.h - pad.t - pad.b);
+                }
+            }
+            // datum line and grid
+            ctx.strokeStyle = '#eee'; ctx.lineWidth = 1; ctx.fillStyle = '#666'; ctx.font = '11px sans-serif'; ctx.textAlign = 'right';
+            const step = niceStep((hi - lo) / 6);
+            for (let h = Math.ceil(lo / step) * step; h <= hi; h += step) {
+                ctx.beginPath(); ctx.moveTo(pad.l, Y(h)); ctx.lineTo(ctx.w - pad.r, Y(h)); ctx.stroke();
+                ctx.fillText(cvt(h).toFixed(step < 0.5 ? 1 : 0), pad.l - 4, Y(h) + 4);
+            }
+            ctx.strokeStyle = '#bbb'; ctx.beginPath(); ctx.moveTo(pad.l, Y(0)); ctx.lineTo(ctx.w - pad.r, Y(0)); ctx.stroke();
+            ctx.textAlign = 'center';
+            // day boundaries + labels (in display tz)
+            const dayMs = 86400000;
+            const firstMidnight = Math.floor((vs + tz() * 3600000) / dayMs) * dayMs - tz() * 3600000;
+            const spanDays = (ve - vs) / dayMs;
+            for (let t = firstMidnight; t <= ve; t += dayMs) {
+                if (t >= vs) { ctx.strokeStyle = '#ccc'; ctx.beginPath(); ctx.moveTo(X(t), pad.t); ctx.lineTo(X(t), ctx.h - pad.b); ctx.stroke(); }
+                const a = Math.max(t, vs), b = Math.min(t + dayMs, ve);
+                if (b - a > (ve - vs) * 0.04) { ctx.fillStyle = '#444'; ctx.fillText(fmtDayShort(new Date(t + 43200000)), X((a + b) / 2), ctx.h - 6); }
+                if (spanDays <= 4) {
+                    ctx.fillStyle = '#999';
+                    for (let hh = 6; hh < 24; hh += 6) { const tt = t + hh * 3600000; if (tt > vs && tt < ve) { ctx.fillText(hh + ':00', X(tt), ctx.h - pad.b + 12); ctx.strokeStyle = '#f0f0f0'; ctx.beginPath(); ctx.moveTo(X(tt), pad.t); ctx.lineTo(X(tt), ctx.h - pad.b); ctx.stroke(); } }
+                }
+            }
+            // fill under water level
+            ctx.beginPath();
+            let started = false;
+            for (let i = 0; i < s.times.length; i++) {
+                if (s.times[i] < vs - s.stepMs || s.times[i] > ve + s.stepMs) continue;
+                const x = X(s.times[i]), y = Y(s.heights[i]);
+                if (!started) { ctx.moveTo(x, Y(lo)); ctx.lineTo(x, y); started = true; } else ctx.lineTo(x, y);
+            }
+            ctx.lineTo(X(Math.min(ve, s.times[s.times.length - 1])), Y(lo)); ctx.closePath();
+            ctx.fillStyle = 'rgba(26,111,176,0.12)'; ctx.fill();
+            // line
+            ctx.beginPath(); started = false;
+            for (let i = 0; i < s.times.length; i++) {
+                if (s.times[i] < vs - s.stepMs || s.times[i] > ve + s.stepMs) continue;
+                const x = X(s.times[i]), y = Y(s.heights[i]);
+                if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+            }
+            ctx.strokeStyle = '#1a6fb0'; ctx.lineWidth = 2; ctx.stroke();
+            // NOAA overlay
+            if (state.noaa) {
+                ctx.beginPath(); started = false;
+                for (const p of state.noaa) { const x = X(p.time.getTime()), y = Y(p.height); if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y); }
+                ctx.strokeStyle = '#e0483e'; ctx.lineWidth = 1.2; ctx.setLineDash([5, 4]); ctx.stroke(); ctx.setLineDash([]);
+                // residual stats
+                let se = 0, n = 0, mx = 0;
+                for (const p of state.noaa) { const e = Tides.height(state.model, p.time) - p.height; se += e * e; n++; mx = Math.max(mx, Math.abs(e)); }
+                ctx.fillStyle = '#e0483e'; ctx.textAlign = 'right'; ctx.font = '11px sans-serif';
+                ctx.fillText(`vs NOAA: rmse ${cvt(Math.sqrt(se / n)).toFixed(3)} ${unitLabel()}, max ${cvt(mx).toFixed(3)} ${unitLabel()}`, ctx.w - pad.r, pad.t - 5);
+                ctx.textAlign = 'center';
+            }
+            // extremes markers
+            ctx.font = '11px sans-serif';
+            for (const e of state.extremes) {
+                const t = e.time.getTime(); if (t < vs || t > ve) continue;
+                const x = X(t), y = Y(e.height);
+                ctx.fillStyle = e.type === 'H' ? '#1a6fb0' : '#b0571a';
+                ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fill();
+                if (spanDays <= 8) ctx.fillText(`${fmtTime(e.time)} ${cvt(e.height).toFixed(1)}`, x, e.type === 'H' ? y - 8 : y + 16);
+            }
+            // now
+            const now = Date.now();
+            if (now >= vs && now <= ve) {
+                ctx.strokeStyle = '#999'; ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.moveTo(X(now), pad.t); ctx.lineTo(X(now), ctx.h - pad.b); ctx.stroke(); ctx.setLineDash([]);
+            }
+            // hover
+            if (state.hover) {
+                const t = state.hover; const h = Tides.height(state.model, new Date(t));
+                ctx.strokeStyle = '#333'; ctx.beginPath(); ctx.moveTo(X(t), pad.t); ctx.lineTo(X(t), ctx.h - pad.b); ctx.stroke();
+                ctx.fillStyle = '#333'; ctx.beginPath(); ctx.arc(X(t), Y(h), 4, 0, Math.PI * 2); ctx.fill();
+                ctx.textAlign = X(t) > ctx.w / 2 ? 'right' : 'left';
+                ctx.fillText(`${fmtDay(new Date(t))} ${fmtTime(new Date(t))}  ${cvt(h).toFixed(2)} ${unitLabel()}`, X(t) + (X(t) > ctx.w / 2 ? -8 : 8), pad.t + 10);
+            }
+            ctx.fillStyle = '#666'; ctx.textAlign = 'left'; ctx.fillText(`${unitLabel()} above ${$('datum').value}, times ${tzLabel()}`, pad.l, pad.t - 5);
+        }
+        function niceStep(x) { const p = Math.pow(10, Math.floor(Math.log10(x))); const f = x / p; return (f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10) * p; }
+
+        // pan / zoom / hover
+        let drag = null;
+        curve.addEventListener('mousedown', (e) => { drag = { x: e.clientX, vs: state.viewStart.getTime(), ve: state.viewEnd.getTime() }; });
+        window.addEventListener('mouseup', () => { drag = null; });
+        curve.addEventListener('mousemove', (e) => {
+            const rect = curve.getBoundingClientRect();
+            const pad = { l: 44, r: 12 };
+            const frac = (e.clientX - rect.left - pad.l) / (rect.width - pad.l - pad.r);
+            if (drag) {
+                const dt = (e.clientX - drag.x) / (rect.width - pad.l - pad.r) * (drag.ve - drag.vs);
+                setView(drag.vs - dt, drag.ve - dt);
+            } else {
+                state.hover = state.viewStart.getTime() + frac * (state.viewEnd - state.viewStart);
+                if (frac < 0 || frac > 1) state.hover = null;
+                drawCurve();
+            }
+        });
+        curve.addEventListener('mouseleave', () => { state.hover = null; drawCurve(); });
+        curve.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const rect = curve.getBoundingClientRect();
+            const frac = Math.min(1, Math.max(0, (e.clientX - rect.left - 44) / (rect.width - 56)));
+            const vs = state.viewStart.getTime(), ve = state.viewEnd.getTime();
+            const k = e.deltaY > 0 ? 1.2 : 1 / 1.2;
+            const c = vs + frac * (ve - vs);
+            let nvs = c - (c - vs) * k, nve = c + (ve - c) * k;
+            if (nve - nvs < 3 * 3600000) return;
+            setView(nvs, nve);
+        }, { passive: false });
+        function setView(vs, ve) {
+            // extend computed series if needed
+            const s = state.series;
+            if (vs < s.times[0] || ve > s.times[s.times.length - 1]) {
+                const a = new Date(Math.min(vs, s.times[0]) - 86400000), b = new Date(Math.max(ve, s.times[s.times.length - 1]) + 86400000);
+                if (b - a < 400 * 86400000) {
+                    state.series = Tides.series(state.model, a, b, 6);
+                    state.extremes = Tides.extremes(state.model, a, b);
+                }
+            }
+            state.viewStart = new Date(vs); state.viewEnd = new Date(ve);
+            drawCurve(); renderHiLo();
+        }
+
+        // ---------------------------------------------------------------
+        // hi/lo table
+        // ---------------------------------------------------------------
+        function renderHiLo() {
+            const t = $('hilo');
+            const now = Date.now();
+            let rows = `<tr><th>Date</th><th>Time (${tzLabel()})</th><th></th><th>${unitLabel()}</th><th>Δ</th></tr>`;
+            let prev = null, lastDay = '';
+            let nextIdx = state.extremes.findIndex(e => e.time.getTime() > now);
+            state.extremes.forEach((e, i) => {
+                if (e.time < state.viewStart || e.time > state.viewEnd) { prev = e; return; }
+                const day = fmtDay(e.time);
+                const delta = prev ? (cvt(e.height - prev.height)).toFixed(1) : '';
+                rows += `<tr class="${i === nextIdx ? 'now' : ''}"><td>${day !== lastDay ? fmtDayShort(e.time) : ''}</td><td>${fmtTime(e.time)}</td><td class="${e.type}">${e.type === 'H' ? 'High' : 'Low'}</td><td>${cvt(e.height).toFixed(2)}</td><td class="muted">${delta ? (delta > 0 ? '+' : '') + delta : ''}</td></tr>`;
+                lastDay = day; prev = e;
+            });
+            t.innerHTML = rows;
+        }
+
+        // ---------------------------------------------------------------
+        // tide clock: 12h25m dial, hand shows position between hi/lo
+        // ---------------------------------------------------------------
+        function drawClock() {
+            const ctx = setupCanvas($('clock'), 260, 260);
+            const m = state.model; if (!m) return;
+            const now = new Date();
+            const h = Tides.height(m, now);
+            $('nowHeight').textContent = cvt(h).toFixed(2) + ' ' + unitLabel();
+            // find bracketing extremes around now
+            const ex = Tides.extremes(m, new Date(now - 15 * 3600000), new Date(now.getTime() + 15 * 3600000));
+            let prev = null, next = null;
+            for (const e of ex) { if (e.time <= now) prev = e; else if (!next) next = e; }
+            const rate = (Tides.height(m, new Date(now.getTime() + 600000)) - Tides.height(m, new Date(now.getTime() - 600000))) / 20; // per minute
+            let txt = `${fmtTime(now)} ${tzLabel()} · ${rate > 0 ? 'rising' : 'falling'} ${Math.abs(cvt(rate) * 60).toFixed(2)} ${unitLabel()}/h`;
+            if (next) txt += `<br>next ${next.type === 'H' ? 'high' : 'low'} ${fmtTime(next.time)} (${cvt(next.height).toFixed(2)}) in ${fmtDur(next.time - now)}`;
+            if (prev) txt += `<br>last ${prev.type === 'H' ? 'high' : 'low'} ${fmtTime(prev.time)} (${cvt(prev.height).toFixed(2)}) ${fmtDur(now - prev.time)} ago`;
+            $('nowText').innerHTML = txt;
+
+            const cx = 130, cy = 130, R = 110;
+            ctx.translate(cx, cy);
+            // dial: top = high, bottom = low; hand runs clockwise, so falling is the right half and rising the left
+            ctx.lineWidth = 14;
+            ctx.strokeStyle = '#d9e8f5'; ctx.beginPath(); ctx.arc(0, 0, R, Math.PI / 2, 3 * Math.PI / 2); ctx.stroke(); // rising (left)
+            ctx.strokeStyle = '#f3e3d5'; ctx.beginPath(); ctx.arc(0, 0, R, -Math.PI / 2, Math.PI / 2); ctx.stroke(); // falling (right)
+            ctx.lineWidth = 1; ctx.strokeStyle = '#999';
+            ctx.fillStyle = '#333'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center';
+            ctx.fillText('HIGH', 0, -R + 30); ctx.fillText('LOW', 0, R - 22);
+            ctx.font = '10px sans-serif'; ctx.fillStyle = '#777';
+            ctx.fillText('rising', -R + 36, 4); ctx.fillText('falling', R - 36, 4);
+            for (let i = 0; i < 12; i++) {
+                const a = i / 12 * Math.PI * 2 - Math.PI / 2;
+                ctx.beginPath(); ctx.moveTo(Math.cos(a) * (R - 12), Math.sin(a) * (R - 12)); ctx.lineTo(Math.cos(a) * (R - 4), Math.sin(a) * (R - 4)); ctx.stroke();
+            }
+            // hand: fraction of the way from prev to next extreme, mapped to half circle
+            if (prev && next) {
+                const frac = (now - prev.time) / (next.time - prev.time);
+                // clockwise angle from top (high): high -> low sweeps the right half, low -> high the left half
+                const ang = prev.type === 'H' ? frac * Math.PI : Math.PI + frac * Math.PI;
+                const a = ang - Math.PI / 2;
+                ctx.strokeStyle = '#1a6fb0'; ctx.lineWidth = 4; ctx.lineCap = 'round';
+                ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(Math.cos(a) * (R - 26), Math.sin(a) * (R - 26)); ctx.stroke();
+                ctx.fillStyle = '#1a6fb0'; ctx.beginPath(); ctx.arc(0, 0, 6, 0, Math.PI * 2); ctx.fill();
+                // mini water level gauge in center
+                const range = next.height - prev.height;
+                const lvl = range !== 0 ? (h - Math.min(prev.height, next.height)) / Math.abs(range) : 0.5;
+                ctx.fillStyle = 'rgba(26,111,176,0.25)';
+                ctx.beginPath(); ctx.arc(0, 0, 40, 0, Math.PI * 2); ctx.clip();
+                ctx.fillRect(-40, 40 - lvl * 80, 80, lvl * 80);
+            }
+        }
+        function fmtDur(ms) { const m = Math.round(ms / 60000); return m >= 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m` : `${m}m`; }
+
+        // ---------------------------------------------------------------
+        // constituent bars
+        // ---------------------------------------------------------------
+        const SPECIES_COLOR = { long: '#7b6ca8', diurnal: '#e0a030', semidiurnal: '#1a6fb0', terdiurnal: '#3a9d5d', shallow: '#999' };
+        function renderBars() {
+            const m = state.model; if (!m) return;
+            const st = Tides.stats(m);
+            $('statsText').innerHTML = `Σ semidiurnal ${cvt(st.bySpecies.semidiurnal || 0).toFixed(2)}, diurnal ${cvt(st.bySpecies.diurnal || 0).toFixed(2)}, shallow ${cvt((st.bySpecies.shallow || 0) + (st.bySpecies.terdiurnal || 0)).toFixed(2)}, long ${cvt(st.bySpecies.long || 0).toFixed(2)} ${unitLabel()} ·
+                <span class="legend">${Object.entries(SPECIES_COLOR).map(([k, c]) => `<span><i style="background:${c}"></i>${k}</span>`).join('')}</span>`;
+            const a = Tides.astro(new Date());
+            const max = m.constituents[0].amplitude;
+            let html = '';
+            for (const c of m.constituents.slice(0, 40)) {
+                const f = c.def.f(a);
+                html += `<div class="cbar" title="${c.name}: H=${c.amplitude} ${m.units}, κ=${c.phase}°, speed ${c.speed.toFixed(4)}°/h, period ${(360 / c.speed).toFixed(2)} h, f=${f.toFixed(3)} now">
+                    <span class="n">${c.name}</span><span class="b" style="width:${(c.amplitude / max * 100).toFixed(1)}%;background:${SPECIES_COLOR[c.species]}"></span><span class="v">${cvt(c.amplitude).toFixed(3)} · ${(360 / c.speed).toFixed(1)}h</span></div>`;
+            }
+            if (m.constituents.length > 40) html += `<div class="muted">… ${m.constituents.length - 40} more</div>`;
+            $('bars').innerHTML = html;
+        }
+
+        // ---------------------------------------------------------------
+        // decomposition: top N constituents as stacked small plots + sum
+        // ---------------------------------------------------------------
+        function drawDecomp() {
+            const m = state.model; if (!m) return;
+            const W = $('decomp').parentElement.clientWidth - 22;
+            const N = 6;
+            const ctx = setupCanvas($('decomp'), W, 360);
+            const vs = state.viewStart.getTime(), ve = state.viewEnd.getTime();
+            const top = m.constituents.slice(0, N);
+            const rowH = (ctx.h - 10) / (N + 1.6);
+            const pad = 56;
+            const mid = new Date((vs + ve) / 2), a = Tides.astro(mid);
+            const steps = Math.min(600, Math.floor((ve - vs) / 360000));
+            const dt = (ve - vs) / steps;
+            const total = new Float64Array(steps + 1);
+            const scale = top[0].amplitude * top[0].def.f(a);
+            ctx.font = '11px monospace'; ctx.textAlign = 'right'; ctx.lineWidth = 1.2;
+            top.forEach((c, r) => {
+                const f = c.def.f(a), u = c.def.u(a), V0 = Tides.V(c.name, mid) + u - c.phase, w = c.speed * Math.PI / 180 / 3600000;
+                const y0 = 8 + r * rowH + rowH / 2, amp = rowH * 0.42 * (f * c.amplitude / scale);
+                ctx.strokeStyle = '#eee'; ctx.beginPath(); ctx.moveTo(pad, y0); ctx.lineTo(ctx.w, y0); ctx.stroke();
+                ctx.fillStyle = SPECIES_COLOR[c.species]; ctx.fillText(c.name, pad - 6, y0 + 4);
+                ctx.strokeStyle = SPECIES_COLOR[c.species]; ctx.beginPath();
+                for (let i = 0; i <= steps; i++) {
+                    const t = vs + i * dt; const v = f * c.amplitude * Math.cos(V0 * Math.PI / 180 + w * (t - mid.getTime()));
+                    total[i] += v;
+                    const x = pad + (t - vs) / (ve - vs) * (ctx.w - pad), y = y0 - v / (f * c.amplitude) * amp;
+                    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+                }
+                ctx.stroke();
+            });
+            // sum row (of the top N only)
+            const y0 = 8 + N * rowH + rowH * 0.8; const amp = rowH * 0.7;
+            let mx = 0; for (const v of total) mx = Math.max(mx, Math.abs(v));
+            ctx.strokeStyle = '#eee'; ctx.beginPath(); ctx.moveTo(pad, y0); ctx.lineTo(ctx.w, y0); ctx.stroke();
+            ctx.fillStyle = '#333'; ctx.fillText('Σ top ' + N, pad - 6, y0 + 4);
+            ctx.strokeStyle = '#333'; ctx.lineWidth = 1.6; ctx.beginPath();
+            for (let i = 0; i <= steps; i++) { const x = pad + i / steps * (ctx.w - pad), y = y0 - total[i] / mx * amp; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+            ctx.stroke();
+            // full model, faint, for comparison
+            ctx.strokeStyle = 'rgba(26,111,176,0.5)'; ctx.lineWidth = 1; ctx.setLineDash([2, 3]); ctx.beginPath();
+            for (let i = 0; i <= steps; i++) { const t = vs + i * dt; const v = Tides.height(m, new Date(t)) - m.offset; const x = pad + i / steps * (ctx.w - pad), y = y0 - v / mx * amp; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+            ctx.stroke(); ctx.setLineDash([]);
+        }
+
+        // ---------------------------------------------------------------
+        // spring / neap envelope: daily range over ±45 days + moon phase
+        // ---------------------------------------------------------------
+        function drawEnvelope() {
+            const m = state.model; if (!m) return;
+            const W = $('envelope').parentElement.clientWidth - 22;
+            const ctx = setupCanvas($('envelope'), W, 180);
+            const pad = { l: 44, r: 12, t: 22, b: 22 };
+            const center = state.start.getTime() + (state.end - state.start) / 2;
+            const a = new Date(center - 45 * 86400000), b = new Date(center + 45 * 86400000);
+            const ex = Tides.extremes(m, a, b);
+            const highs = ex.filter(e => e.type === 'H'), lows = ex.filter(e => e.type === 'L');
+            let lo = Infinity, hi = -Infinity;
+            for (const e of ex) { lo = Math.min(lo, e.height); hi = Math.max(hi, e.height); }
+            const span = hi - lo; lo -= span * 0.05; hi += span * 0.05;
+            const X = (t) => pad.l + (t - a) / (b - a) * (ctx.w - pad.l - pad.r);
+            const Y = (h) => pad.t + (hi - h) / (hi - lo) * (ctx.h - pad.t - pad.b);
+            // selected window shading
+            ctx.fillStyle = 'rgba(26,111,176,0.08)'; ctx.fillRect(X(state.start), pad.t, X(state.end) - X(state.start), ctx.h - pad.t - pad.b);
+            // envelopes
+            const line = (pts, color) => { ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.beginPath(); pts.forEach((e, i) => { const x = X(e.time), y = Y(e.height); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.stroke(); };
+            ctx.fillStyle = 'rgba(26,111,176,0.10)'; ctx.beginPath();
+            highs.forEach((e, i) => { i ? ctx.lineTo(X(e.time), Y(e.height)) : ctx.moveTo(X(e.time), Y(e.height)); });
+            for (let i = lows.length - 1; i >= 0; i--) ctx.lineTo(X(lows[i].time), Y(lows[i].height));
+            ctx.closePath(); ctx.fill();
+            line(highs, '#1a6fb0'); line(lows, '#b0571a');
+            // axes
+            ctx.fillStyle = '#666'; ctx.font = '11px sans-serif'; ctx.textAlign = 'right';
+            const step = niceStep((hi - lo) / 4);
+            for (let h = Math.ceil(lo / step) * step; h <= hi; h += step) ctx.fillText(cvt(h).toFixed(step < 0.5 ? 1 : 0), pad.l - 4, Y(h) + 4);
+            ctx.textAlign = 'center';
+            // moon phases (SunCalc)
+            if (window.SunCalc) {
+                let prevPhase = null;
+                for (let t = a.getTime(); t <= b.getTime(); t += 3600000) {
+                    const ph = SunCalc.getMoonIllumination(new Date(t)).phase;
+                    if (prevPhase !== null) {
+                        for (const [q, glyph] of [[0, '●'], [0.25, '◐'], [0.5, '○'], [0.75, '◑']]) {
+                            const crossed = q === 0 ? prevPhase > 0.9 && ph < 0.1 : prevPhase < q && ph >= q;
+                            if (crossed) { ctx.fillStyle = '#333'; ctx.font = '14px sans-serif'; ctx.fillText(glyph, X(t), pad.t - 6); ctx.strokeStyle = '#eee'; ctx.beginPath(); ctx.moveTo(X(t), pad.t); ctx.lineTo(X(t), ctx.h - pad.b); ctx.stroke(); }
+                        }
+                    }
+                    prevPhase = ph;
+                }
+            }
+            // month ticks
+            ctx.fillStyle = '#444'; ctx.font = '11px sans-serif';
+            for (let d = new Date(a); d <= b; d = new Date(d.getTime() + 86400000)) {
+                const s = shifted(d);
+                if (s.getUTCDate() === 1 || s.getUTCDate() === 15) { ctx.fillText(s.toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric' }), X(d), ctx.h - 6); ctx.strokeStyle = '#ddd'; ctx.beginPath(); ctx.moveTo(X(d), pad.t); ctx.lineTo(X(d), ctx.h - pad.b); ctx.stroke(); }
+            }
+            // now
+            const now = Date.now(); if (now > a && now < b) { ctx.strokeStyle = '#999'; ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.moveTo(X(now), pad.t); ctx.lineTo(X(now), ctx.h - pad.b); ctx.stroke(); ctx.setLineDash([]); }
+        }
+
+        // ---------------------------------------------------------------
+        // phasor animation
+        // ---------------------------------------------------------------
+        let phasorTime = Date.now();
+        function drawPhasor() {
+            const m = state.model; if (!m) return;
+            const ctx = setupCanvas($('phasor'), 360, 360);
+            const t = new Date(phasorTime);
+            const terms = Tides.terms(m, t).slice(0, 12);
+            const total = Tides.height(m, t);
+            const R = 150, cx = 180, cy = 180;
+            const scale = R / Math.max(1e-9, terms.reduce((s, x) => s + x.f * x.amplitude, 0));
+            ctx.translate(cx, cy);
+            ctx.strokeStyle = '#eee'; ctx.beginPath(); ctx.arc(0, 0, R, 0, Math.PI * 2); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(-R, 0); ctx.lineTo(R, 0); ctx.moveTo(0, -R); ctx.lineTo(0, R); ctx.stroke();
+            // vectors tip to tail
+            let x = 0, y = 0;
+            ctx.lineWidth = 2; ctx.font = '10px monospace';
+            for (const tm of terms) {
+                const len = tm.f * tm.amplitude * scale;
+                const nx = x + Math.cos(tm.arg) * len, ny = y - Math.sin(tm.arg) * len;
+                ctx.strokeStyle = SPECIES_COLOR[tm.species]; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(nx, ny); ctx.stroke();
+                if (len > 18) { ctx.fillStyle = SPECIES_COLOR[tm.species]; ctx.fillText(tm.name, (x + nx) / 2 + 4, (y + ny) / 2 - 2); }
+                x = nx; y = ny;
+            }
+            // resultant and its projection onto x (the height)
+            ctx.strokeStyle = '#333'; ctx.lineWidth = 1; ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(x, y); ctx.stroke(); ctx.setLineDash([]);
+            ctx.strokeStyle = '#e0483e'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(x, 0); ctx.stroke();
+            ctx.strokeStyle = '#ccc'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, 0); ctx.stroke();
+            $('phasorText').innerHTML = `${fmtDay(t)} ${fmtTime(t)} ${tzLabel()}<br>height − MSL: <b>${cvt(x / scale).toFixed(2)} ${unitLabel()}</b> (top ${terms.length} of ${m.constituents.length})<br>full model above ${$('datum').value}: <b>${cvt(total).toFixed(2)} ${unitLabel()}</b><br>${terms.slice(0, 5).map(tm => `${tm.name} f=${tm.f.toFixed(3)} u=${tm.u.toFixed(1)}°`).join('<br>')}`;
+        }
+        function tick() {
+            if (state.model) {
+                phasorTime += 600 * 1000 / 30; // 600x realtime at ~30fps
+                if (phasorTime > Date.now() + 86400000 * 3) phasorTime = Date.now();
+                drawPhasor();
+            }
+            requestAnimationFrame(tick);
+        }
+
+        // ---------------------------------------------------------------
+        // wiring
+        // ---------------------------------------------------------------
+        fillStations();
+        const today = new Date(); $('date').value = today.toISOString().slice(0, 10);
+        $('stationList').addEventListener('change', (e) => loadStation(e.target.value));
+        $('loadBtn').addEventListener('click', () => loadStation($('stationId').value.trim()));
+        $('stationId').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadStation($('stationId').value.trim()); });
+        $('datum').addEventListener('change', rebuildModel);
+        $('units').addEventListener('change', () => { state.units = $('units').value; drawAll(); renderBars(); drawEnvelope(); });
+        $('date').addEventListener('change', recompute);
+        $('days').addEventListener('change', recompute);
+        $('localTz').addEventListener('change', () => { rebuildModel(); });
+        $('noaaOverlay').addEventListener('change', () => { if ($('noaaOverlay').checked) fetchNoaa(); else { state.noaa = null; drawCurve(); } });
+        $('nearBtn').addEventListener('click', () => {
+            navigator.geolocation.getCurrentPosition((p) => {
+                const { latitude: la, longitude: lo } = p.coords;
+                let best = null, bd = Infinity;
+                for (const s of window.TIDE_STATIONS) { const d = Math.hypot((s[3] - la), (s[4] - lo) * Math.cos(la * Math.PI / 180)); if (d < bd) { bd = d; best = s; } }
+                if (best) loadStation(best[0]);
+            }, (e) => { $('err').textContent = 'geolocation: ' + e.message; });
+        });
+        window.addEventListener('resize', () => { if (state.model) { drawAll(); drawEnvelope(); } });
+        setInterval(() => { if (state.model) { drawClock(); renderHiLo(); drawCurve(); } }, 60000);
+        tick();
+        loadStation((location.hash || '#9447130').slice(1));
+    </script>
+</body>
+
+</html>
