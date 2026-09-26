@@ -1,0 +1,816 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0b1220">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>West Point Buoy</title>
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  [hidden] { display: none !important; }
+
+  :root {
+    --bg: #0b1220;
+    --bg2: #0f1a2e;
+    --card: #131f35;
+    --line: #22304a;
+    --fg: #e8eef8;
+    --fg-dim: #8b9ab5;
+    --fg-mute: #5b6a85;
+    --accent: #38d6e0;
+    --accent-2: #7cc4ff;
+    --gust: #ffb347;
+    --pres: #b48cff;
+    --temp: #ff7e79;
+    --tide: #4fd1a8;
+    --fcst: #a3b3cc;
+    --cmp: #ff79c6;
+    --warn: #ffb347;
+    --bad: #ff5a52;
+    --good: #3fd28a;
+    --shadow: 0 10px 30px rgba(0,0,0,.35);
+    --radius: 16px;
+  }
+  body.light {
+    --bg: #f3f6fb;
+    --bg2: #ffffff;
+    --card: #ffffff;
+    --line: #dde5f0;
+    --fg: #0c1526;
+    --fg-dim: #4b5b75;
+    --fg-mute: #8d9bb3;
+    --accent: #0d7c86;
+    --accent-2: #1f6fd0;
+    --gust: #c76a00;
+    --pres: #6b3fd6;
+    --temp: #d03a34;
+    --tide: #0d8a63;
+    --fcst: #5a6b88;
+    --cmp: #c2257f;
+    --shadow: 0 8px 24px rgba(20,40,80,.10);
+  }
+
+  html, body { min-height: 100%; background: var(--bg); color: var(--fg);
+    font-family: -apple-system, "SF Pro Display", "Segoe UI", Roboto, system-ui, sans-serif;
+    font-feature-settings: "tnum" 1; }
+  body { padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+
+  #app { max-width: 1180px; margin: 0 auto; padding: 12px 14px 40px; }
+
+  /* ---- header ---- */
+  header { display: flex; align-items: center; gap: 10px; padding: 6px 2px 14px; flex-wrap: wrap; }
+  header h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; display: flex; align-items: center; gap: 8px; }
+  header h1 select { appearance: none; -webkit-appearance: none; background: transparent; color: var(--fg); border: 0; font: inherit; font-weight: 700;
+    padding: 4px 22px 4px 0; cursor: pointer; border-bottom: 1px dashed var(--fg-mute); max-width: 62vw; text-overflow: ellipsis;
+    background-image: linear-gradient(45deg, transparent 50%, var(--fg-dim) 50%), linear-gradient(135deg, var(--fg-dim) 50%, transparent 50%);
+    background-position: calc(100% - 10px) 55%, calc(100% - 5px) 55%; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; }
+  header h1 .vs { font-size: 12px; font-weight: 500; color: var(--fg-mute); }
+  header h1 select.cmp { color: var(--cmp); font-size: 14px; font-weight: 600; border-bottom-color: transparent; }
+  @media (max-width: 480px) { header h1 select { max-width: 48vw; } header h1 select.cmp { max-width: 30vw; font-size: 13px; } }
+  header h1 select.cmp.none { color: var(--fg-mute); font-weight: 500; }
+  .chip { border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--fg); border-radius: 999px; padding: 3px 10px; font: inherit; font-size: 11px; font-weight: 600; cursor: pointer; text-transform: none; letter-spacing: 0; }
+  .chip::after { content: ' ✕'; color: var(--fg-dim); }
+  .cmprow { border-top: 1px solid var(--line); padding-top: 8px; margin-top: 10px !important; }
+  .cmprow .tag { color: var(--cmp); font-weight: 700; }
+  .cmprow .delta { color: var(--fg-mute); }
+  .heat-legend { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--fg-dim); margin-top: 6px; }
+  .heat-legend .bar { flex: 0 0 140px; height: 8px; border-radius: 4px; }
+  canvas.chart.heat-tall { height: 260px; }
+  .wrose canvas { cursor: pointer; }
+  header .sub { color: var(--fg-dim); font-size: 12px; display: flex; gap: 10px; align-items: center; flex: 1 1 100%; }
+  header .spacer { flex: 1; }
+  .btn { border: 1px solid var(--line); background: var(--card); color: var(--fg); border-radius: 10px; padding: 7px 11px; font: inherit; font-size: 13px; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px; min-height: 36px; }
+  .btn:hover { border-color: var(--fg-mute); }
+  .btn.icon { width: 36px; padding: 0; justify-content: center; }
+  .btn.spin svg { animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--good); display: inline-block; }
+  .dot.stale { background: var(--warn); } .dot.bad { background: var(--bad); }
+
+  /* ---- grid ---- */
+  .grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+  @media (min-width: 760px) { .grid { grid-template-columns: repeat(2, 1fr); } .span2 { grid-column: span 2; } }
+  @media (min-width: 1040px) { .grid { grid-template-columns: repeat(3, 1fr); } .span2 { grid-column: span 2; } .span3 { grid-column: span 3; } }
+
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; box-shadow: var(--shadow); position: relative; min-width: 0; display: flex; flex-direction: column; }
+  .card h2 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--fg-dim); display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+  .card h2 .right { margin-left: auto; font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--fg-mute); font-size: 11px; }
+  .legend { display: inline-flex; gap: 10px; align-items: center; }
+  .legend i { display: inline-block; width: 10px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 4px; }
+
+  /* ---- hero ---- */
+  .hero { display: grid; grid-template-columns: 1fr auto; gap: 8px 14px; align-items: center; }
+  .hero .big { font-size: 72px; line-height: 1; font-weight: 800; letter-spacing: -0.03em; display: flex; align-items: baseline; gap: 8px; }
+  .hero .big small { font-size: 18px; font-weight: 600; color: var(--fg-dim); letter-spacing: 0; }
+  .hero .row { display: flex; gap: 14px; flex-wrap: wrap; color: var(--fg-dim); font-size: 14px; margin-top: 6px; }
+  .hero .row b { color: var(--fg); font-weight: 600; }
+  .hero .bft { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; color: #08111f; background: var(--accent); }
+  .hero canvas { width: 150px; height: 150px; }
+  .trend { font-weight: 700; }
+  .trend.up { color: var(--gust); } .trend.down { color: var(--accent); } .trend.flat { color: var(--fg-dim); }
+
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+  .stat { background: var(--bg2); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+  .stat .k { font-size: 11px; color: var(--fg-dim); text-transform: uppercase; letter-spacing: .06em; }
+  .stat .v { font-size: 22px; font-weight: 700; margin-top: 2px; }
+  .stat .v small { font-size: 12px; color: var(--fg-dim); font-weight: 500; margin-left: 3px; }
+  .stat .d { font-size: 11px; color: var(--fg-mute); margin-top: 2px; }
+
+  canvas.chart { width: 100%; height: 190px; display: block; touch-action: pan-y; cursor: crosshair; flex: 1 1 auto; }
+  canvas.chart.short { height: 130px; min-height: 130px; }
+  canvas.chart.tall { height: 220px; }
+
+  .wrose { display: flex; gap: 12px; align-items: center; flex: 1; }
+  .wrose canvas { width: 100%; max-width: 230px; aspect-ratio: 1; height: auto; flex: 1 1 0; min-width: 0; }
+  .wrose-side { flex: 0 0 auto; font-size: 11px; color: var(--fg-dim); display: flex; flex-direction: column; gap: 10px; }
+  .wrose-legend div { display: flex; align-items: center; gap: 6px; line-height: 1.7; white-space: nowrap; }
+  .wrose-legend i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+  .wrose-sum b { color: var(--fg); font-size: 14px; display: block; }
+  .wrose-sum div { margin-bottom: 4px; }
+  @media (min-width: 1040px) { .wrose { flex-direction: column; align-items: stretch; } .wrose canvas { max-width: none; } .wrose-side { flex-direction: row; justify-content: space-between; align-items: flex-end; } }
+  .range { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; margin-left: auto; }
+  @media (max-width: 480px) { .range { margin-left: 0; flex-basis: 100%; width: max-content; } }
+  .range button { border: 0; background: transparent; color: var(--fg-dim); font: inherit; font-size: 11px; padding: 4px 8px; cursor: pointer; }
+  .range button.on { background: var(--accent); color: #08111f; font-weight: 600; }
+
+  .tides { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .tides .t { background: var(--bg2); border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px; font-size: 12px; color: var(--fg-dim); }
+  .tides .t b { color: var(--fg); font-size: 14px; display: block; }
+  .tides .t.next { border-color: var(--tide); }
+
+  .fcst .headline { background: color-mix(in srgb, var(--warn) 18%, transparent); border: 1px solid var(--warn); color: var(--fg); border-radius: 10px; padding: 8px 10px; font-size: 13px; font-weight: 600; margin-bottom: 10px; }
+  .fcst .period { display: grid; grid-template-columns: 92px 1fr; gap: 8px; padding: 7px 0; border-top: 1px solid var(--line); font-size: 13px; line-height: 1.4; }
+  .fcst .period:first-of-type { border-top: 0; }
+  .fcst .period .n { color: var(--accent-2); font-weight: 600; font-size: 12px; text-transform: capitalize; }
+  .fcst .period .kt { color: var(--fg); font-weight: 600; }
+  .fcst .meta { font-size: 11px; color: var(--fg-mute); margin-top: 8px; }
+
+  .empty { color: var(--fg-mute); font-size: 13px; padding: 20px 0; text-align: center; }
+  .err { color: var(--bad); font-size: 12px; }
+  .skeleton { background: linear-gradient(90deg, var(--line) 25%, var(--bg2) 50%, var(--line) 75%); background-size: 200% 100%; animation: sh 1.2s infinite; border-radius: 8px; height: 14px; }
+  @keyframes sh { from { background-position: 200% 0 } to { background-position: -200% 0 } }
+
+  footer { color: var(--fg-mute); font-size: 11px; margin-top: 18px; line-height: 1.6; }
+  footer a { color: var(--fg-dim); }
+
+  /* ---- settings sheet ---- */
+  #sheet { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: none; align-items: flex-end; justify-content: center; z-index: 10; }
+  #sheet.open { display: flex; }
+  #sheet .panel { background: var(--card); border-radius: 18px 18px 0 0; width: 100%; max-width: 560px; padding: 18px 18px calc(18px + env(safe-area-inset-bottom)); border: 1px solid var(--line); }
+  #sheet h3 { font-size: 16px; margin-bottom: 12px; }
+  #sheet label { display: block; font-size: 12px; color: var(--fg-dim); margin: 12px 0 4px; }
+  #sheet input[type=text] { width: 100%; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg2); color: var(--fg); font: inherit; font-size: 13px; }
+  #sheet .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  #sheet .seg button { border: 0; background: transparent; color: var(--fg-dim); font: inherit; font-size: 13px; padding: 7px 12px; cursor: pointer; }
+  #sheet .seg button.on { background: var(--accent); color: #08111f; font-weight: 600; }
+  #sheet .hint { font-size: 11px; color: var(--fg-mute); margin-top: 4px; line-height: 1.5; }
+  #sheet .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 17c2 1.5 4 1.5 6 0s4-1.5 6 0 4 1.5 6 0"/><path d="M2 12c2 1.5 4 1.5 6 0s4-1.5 6 0 4 1.5 6 0"/><path d="M12 3v6"/><path d="M9 6l3-3 3 3"/></svg>
+      <select id="station" aria-label="Station"></select>
+      <span class="vs">vs</span>
+      <select id="cmpStation" class="cmp" aria-label="Compare with station"></select>
+    </h1>
+    <div class="spacer"></div>
+    <button class="btn icon" id="themeBtn" title="Toggle theme" aria-label="Toggle theme">◐</button>
+    <button class="btn icon" id="settingsBtn" title="Settings" aria-label="Settings">⚙︎</button>
+    <button class="btn" id="refreshBtn" title="Refresh now">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>
+      <span id="countdown">—</span>
+    </button>
+    <div class="sub">
+      <span class="dot" id="dot"></span>
+      <span id="status">loading…</span>
+      <span id="source"></span>
+    </div>
+  </header>
+
+  <div class="grid">
+    <section class="card span2">
+      <h2>Wind now <span class="right" id="obsTime"></span></h2>
+      <div class="hero">
+        <div>
+          <div class="big"><span id="wspd">—</span><small id="wunit">kt</small></div>
+          <div class="row">
+            <span><b id="wdirTxt">—</b> <span id="wdirDeg"></span></span>
+            <span>gust <b id="gst">—</b></span>
+            <span class="trend flat" id="trend">—</span>
+          </div>
+          <div class="row" style="margin-top:10px"><span class="bft" id="bft">—</span><span id="bftTxt" style="color:var(--fg-dim)"></span></div>
+          <div class="row cmprow" id="cmpRow" hidden></div>
+        </div>
+        <canvas id="rose" width="300" height="300" aria-label="Wind compass"></canvas>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Conditions</h2>
+      <div class="stats" id="stats"></div>
+    </section>
+
+    <section class="card span2">
+      <h2>Wind <span class="legend"><span><i style="background:var(--accent)"></i>speed</span><span><i style="background:var(--gust)"></i>gust</span><span id="cmpLegend" hidden><i style="background:var(--cmp)"></i><span></span></span><span><i style="background:var(--fcst);opacity:.7"></i>NWS forecast</span></span>
+        <button class="chip" id="dirChip" hidden></button>
+        <div class="range" id="range"></div></h2>
+      <canvas class="chart tall" id="windChart"></canvas>
+    </section>
+    <section class="card">
+      <h2>Wind rose <span class="right" id="roseRange"></span></h2>
+      <div class="wrose">
+        <canvas id="windRose" width="320" height="320" aria-label="Wind rose histogram"></canvas>
+        <div class="wrose-side">
+          <div class="wrose-legend" id="roseLegend"></div>
+          <div class="wrose-sum" id="roseSummary"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card span3">
+      <h2>Diurnal wind <span class="right">hour of day · local</span></h2>
+      <canvas class="chart" id="heatChart"></canvas>
+      <div class="heat-legend" id="heatLegend"></div>
+    </section>
+
+    <section class="card">
+      <h2>Pressure <span class="right" id="presTend"></span></h2>
+      <canvas class="chart short" id="presChart"></canvas>
+    </section>
+    <section class="card">
+      <h2>Air temp</h2>
+      <canvas class="chart short" id="tempChart"></canvas>
+    </section>
+    <section class="card">
+      <h2>Tide <span class="right" id="tideStation"></span></h2>
+      <canvas class="chart short" id="tideChart"></canvas>
+      <div class="tides" id="tides"></div>
+    </section>
+
+    <section class="card span3 fcst">
+      <h2>Marine forecast <span class="right" id="fcstZone"></span></h2>
+      <div id="fcst"><div class="skeleton"></div></div>
+    </section>
+  </div>
+
+  <footer>
+    Data: <a href="https://www.ndbc.noaa.gov/station_page.php?station=wpow1" target="_blank" rel="noopener" id="ndbcLink">NOAA NDBC</a> · <a href="https://api.weather.gov" target="_blank" rel="noopener">NWS API</a> · <a href="https://tidesandcurrents.noaa.gov" target="_blank" rel="noopener">CO-OPS</a>.
+    Wind in <span id="unitNote">knots</span>, times local. Cached locally; refreshes every 5 min while open.
+  </footer>
+</div>
+
+<div id="sheet" role="dialog" aria-modal="true">
+  <div class="panel">
+    <h3>Settings</h3>
+    <label>Wind units</label>
+    <div class="seg" id="unitSeg"><button data-v="kt">kt</button><button data-v="mph">mph</button><button data-v="ms">m/s</button><button data-v="kmh">km/h</button></div>
+    <label>Temperature</label>
+    <div class="seg" id="tempSeg"><button data-v="F">°F</button><button data-v="C">°C</button></div>
+    <label>NDBC proxy base URL (optional)</label>
+    <input type="text" id="proxyInput" placeholder="http://localhost:8787/ndbc/">
+    <div class="hint">NDBC's 10-minute wind feed has no CORS headers. Run <code>node proxy.js</code> in this folder and open the app from it, or point this at any CORS proxy that forwards to https://www.ndbc.noaa.gov/data/. Empty = hourly data from api.weather.gov only.</div>
+    <div class="actions"><button class="btn" id="sheetClose">Done</button></div>
+  </div>
+</div>
+
+<script>
+'use strict';
+// ------------------------------------------------------------------ config
+const STATIONS = {
+  WPOW1: { name: 'West Point, Seattle', lat: 47.662, lon: -122.435, tide: '9447130', tideName: 'Seattle', zone: 'PZZ135' },
+  EBSW1: { name: 'Seattle waterfront', lat: 47.602, lon: -122.338, tide: '9447130', tideName: 'Seattle', zone: 'PZZ135' },
+  TCNW1: { name: 'Tacoma', lat: 47.267, lon: -122.413, tide: '9446484', tideName: 'Tacoma', zone: 'PZZ135' },
+  PTWW1: { name: 'Port Townsend', lat: 48.111, lon: -122.760, tide: '9444900', tideName: 'Port Townsend', zone: 'PZZ134' },
+  SISW1: { name: 'Smith Island', lat: 48.321, lon: -122.831, tide: '9444900', tideName: 'Port Townsend', zone: 'PZZ131' },
+  FRDW1: { name: 'Friday Harbor', lat: 48.545, lon: -123.012, tide: '9449880', tideName: 'Friday Harbor', zone: 'PZZ132' },
+  46088: { name: 'New Dungeness buoy', lat: 48.332, lon: -123.179, tide: '9444090', tideName: 'Port Angeles', zone: 'PZZ131' },
+};
+const REFRESH_MS = 5 * 60 * 1000;
+const RANGES = [['24h', 24], ['48h', 48], ['7d', 168], ['14d', 336], ['45d', 1080]];
+const LS = { get(k, d) { try { const v = localStorage.getItem('wpb:' + k); return v == null ? d : JSON.parse(v); } catch { return d; } }, set(k, v) { try { localStorage.setItem('wpb:' + k, JSON.stringify(v)); } catch {} } };
+
+const settings = Object.assign({ station: 'WPOW1', unit: 'kt', temp: 'F', range: 48, theme: 'auto', proxy: '', cmp: '' }, LS.get('settings', {}));
+const saveSettings = () => LS.set('settings', settings);
+
+// ------------------------------------------------------------------ units
+const MS2KT = 1.943844, MS2MPH = 2.236936, MS2KMH = 3.6;
+const wind = ms => ms == null ? null : settings.unit === 'kt' ? ms * MS2KT : settings.unit === 'mph' ? ms * MS2MPH : settings.unit === 'kmh' ? ms * MS2KMH : ms;
+const windU = () => ({ kt: 'kt', mph: 'mph', ms: 'm/s', kmh: 'km/h' })[settings.unit];
+const temp = c => c == null ? null : settings.temp === 'F' ? c * 9 / 5 + 32 : c;
+const tempU = () => settings.temp === 'F' ? '°F' : '°C';
+const fmt = (v, d = 0) => v == null || Number.isNaN(v) ? '—' : v.toFixed(d);
+const CARD = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
+const cardinal = d => d == null ? '—' : CARD[Math.round(((d % 360) + 360) % 360 / 22.5) % 16];
+const BFT = [[1, 'Calm'], [3, 'Light air'], [6, 'Light breeze'], [10, 'Gentle breeze'], [16, 'Moderate breeze'], [21, 'Fresh breeze'], [27, 'Strong breeze'], [33, 'Near gale'], [40, 'Gale'], [47, 'Strong gale'], [55, 'Storm'], [63, 'Violent storm'], [Infinity, 'Hurricane']];
+const beaufort = ms => { const kt = ms * MS2KT; for (let i = 0; i < BFT.length; i++) if (kt < BFT[i][0]) return [i, BFT[i][1]]; return [12, 'Hurricane']; };
+const windColor = ms => { const k = ms * MS2KT; const stops = [[0, [56, 214, 224]], [10, [63, 210, 138]], [17, [250, 204, 21]], [25, [255, 140, 40]], [34, [255, 70, 70]], [50, [200, 60, 220]]];
+  for (let i = 1; i < stops.length; i++) if (k <= stops[i][0]) { const [a, ca] = stops[i - 1], [b, cb] = stops[i]; const t = (k - a) / (b - a); return `rgb(${ca.map((c, j) => Math.round(c + (cb[j] - c) * t)).join(',')})`; } return 'rgb(200,60,220)'; };
+const ago = ms => { const s = Math.max(0, (Date.now() - ms) / 1000); if (s < 90) return 'just now'; if (s < 3600) return `${Math.round(s / 60)} min ago`; if (s < 86400) return `${(s / 3600).toFixed(1)} h ago`; return `${Math.round(s / 86400)} d ago`; };
+const hm = t => new Date(t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+const dayhm = t => new Date(t).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+
+// ------------------------------------------------------------------ state
+const state = { obs: [], obsSource: '', fcstHourly: [], tide: null, cwf: null, lastFetch: 0, err: null, hover: null, dirFilter: null, cmp: { id: null, obs: [], source: '' } };
+
+// ------------------------------------------------------------------ fetchers
+const V = n => getComputedStyle(document.body).getPropertyValue(n).trim();
+const num = v => (v == null || v === 'MM' || v === '' ? null : Number(v));
+const ndbcMissing = (v, miss) => (v == null || miss.includes(v) ? null : v);
+
+function proxyBase() {
+  if (settings.proxy) return settings.proxy.replace(/\/?$/, '/');
+  if (location.protocol.startsWith('http')) return location.origin + '/ndbc/';
+  return null;
+}
+
+// NDBC realtime2: .cwind = 10-min continuous winds, .txt = hourly standard met. Merge into one series.
+async function fetchNDBC(id) {
+  const base = proxyBase(); if (!base) throw new Error('no proxy');
+  const get = f => fetch(base + `realtime2/${id}.${f}`, { cache: 'no-store' }).then(r => r.ok ? r.text() : '').catch(() => '');
+  const [cw, sm] = await Promise.all([get('cwind'), get('txt')]);
+  if (!cw && !sm) throw new Error('NDBC unavailable');
+  const rows = t => t.split('\n').filter(l => l && l[0] !== '#').map(l => l.trim().split(/\s+/));
+  const ts = r => Date.UTC(+r[0], +r[1] - 1, +r[2], +r[3], +r[4]);
+  const byT = new Map();
+  for (const r of rows(cw)) { // YY MM DD hh mm WDIR WSPD GDR GST GTIME
+    const t = ts(r); byT.set(t, { t, wdir: ndbcMissing(num(r[5]), [999]), wspd: ndbcMissing(num(r[6]), [99]), gst: ndbcMissing(num(r[8]), [99]) });
+  }
+  for (const r of rows(sm)) { // YY MM DD hh mm WDIR WSPD GST WVHT DPD APD MWD PRES ATMP WTMP DEWP VIS PTDY TIDE
+    const t = ts(r); const o = byT.get(t) || { t, wdir: num(r[5]), wspd: num(r[6]), gst: num(r[7]) };
+    if (o.gst == null) o.gst = num(r[7]);
+    o.pres = num(r[12]); o.atmp = num(r[13]); o.wtmp = num(r[14]); o.dewp = num(r[15]); o.ptdy = num(r[17]); o.wvht = num(r[8]);
+    byT.set(t, o);
+  }
+  // carry hourly pressure/temp into intermediate 10-min rows for tooltips
+  const out = [...byT.values()].sort((a, b) => a.t - b.t);
+  let last = null; for (const o of out) { if (o.pres != null || o.atmp != null) last = o; else if (last && o.t - last.t < 3600e3) { o.pres = last.pres; o.atmp = last.atmp; o.wtmp = last.wtmp; o.dewp = last.dewp; } }
+  out.tenMinute = !!cw;
+  return out;
+}
+
+// NWS: same station, hourly, JSON, CORS. ~7 days.
+async function fetchNWS(id, hours) {
+  const end = new Date(), start = new Date(end - Math.min(hours, 168) * 3600e3);
+  const u = `https://api.weather.gov/stations/${id}/observations?start=${start.toISOString()}&end=${end.toISOString()}&limit=500`;
+  const r = await fetch(u, { headers: { Accept: 'application/geo+json' } }); if (!r.ok) throw new Error('NWS ' + r.status);
+  const j = await r.json();
+  const v = x => (x && x.value != null ? x.value : null), kmh = x => (v(x) == null ? null : v(x) / MS2KMH);
+  return j.features.map(f => { const p = f.properties; return { t: Date.parse(p.timestamp), wdir: v(p.windDirection), wspd: kmh(p.windSpeed), gst: kmh(p.windGust),
+    pres: v(p.seaLevelPressure) != null ? v(p.seaLevelPressure) / 100 : v(p.barometricPressure) != null ? v(p.barometricPressure) / 100 : null,
+    atmp: v(p.temperature), dewp: v(p.dewpoint) }; }).sort((a, b) => a.t - b.t);
+}
+
+async function fetchForecastHourly(st) {
+  const p = await (await fetch(`https://api.weather.gov/points/${st.lat},${st.lon}`)).json();
+  const h = await (await fetch(p.properties.forecastHourly + '?units=si')).json();
+  const dir = { N: 0, NNE: 22.5, NE: 45, ENE: 67.5, E: 90, ESE: 112.5, SE: 135, SSE: 157.5, S: 180, SSW: 202.5, SW: 225, WSW: 247.5, W: 270, WNW: 292.5, NW: 315, NNW: 337.5 };
+  return h.properties.periods.slice(0, 48).map(x => ({ t: Date.parse(x.startTime), wspd: parseFloat(x.windSpeed) / MS2KMH, wdir: dir[x.windDirection], short: x.shortForecast, atmp: x.temperature }));
+}
+
+async function fetchTides(st) {
+  const d = new Date(Date.now() - 24 * 3600e3), pad = n => String(n).padStart(2, '0');
+  const begin = `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}`;
+  const base = `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?station=${st.tide}&datum=MLLW&units=english&time_zone=gmt&format=json&begin_date=${begin}`;
+  const [pred, hilo, wl] = await Promise.all([
+    fetch(base + '&product=predictions&range=72').then(r => r.json()),
+    fetch(base + '&product=predictions&range=72&interval=hilo').then(r => r.json()),
+    fetch(base + '&product=water_level&range=48').then(r => r.json()).catch(() => ({})),
+  ]);
+  const T = s => Date.parse(s.replace(' ', 'T') + 'Z');
+  return { pred: (pred.predictions || []).map(p => ({ t: T(p.t), v: +p.v })), hilo: (hilo.predictions || []).map(p => ({ t: T(p.t), v: +p.v, type: p.type })), wl: (wl.data || []).map(p => ({ t: T(p.t), v: +p.v })).filter(p => !Number.isNaN(p.v)) };
+}
+
+async function fetchCWF(zone) {
+  const list = await (await fetch('https://api.weather.gov/products/types/CWF/locations/SEW')).json();
+  const latest = list['@graph'] && list['@graph'][0]; if (!latest) throw new Error('no CWF');
+  const prod = await (await fetch(latest['@id'])).json();
+  const txt = prod.productText; const i = txt.indexOf(zone + '-'); if (i < 0) throw new Error('zone not in CWF');
+  const block = txt.slice(i, txt.indexOf('$$', i));
+  const lines = block.split('\n');
+  const name = lines[1] ? lines[1].replace(/-$/, '') : zone;
+  const issued = lines[2] || '';
+  const headlines = [], periods = []; let cur = null;
+  for (const raw of lines.slice(3)) {
+    const l = raw.trimEnd();
+    if (/^\.\.\..*\.\.\.$/.test(l.trim())) { headlines.push(l.trim().replace(/^\.\.\.|\.\.\.$/g, '')); continue; }
+    const m = l.match(/^\.([A-Z][A-Z ]+?)\.\.\.(.*)$/);
+    if (m) { cur = { name: m[1], text: m[2] }; periods.push(cur); }
+    else if (cur && l.trim()) cur.text += ' ' + l.trim();
+  }
+  return { zone, name, issued, headlines, periods: periods.map(p => ({ ...p, text: p.text.replace(/\s+/g, ' ').trim() })), issuanceTime: latest.issuanceTime };
+}
+
+async function fetchObs(id) {
+  try { const obs = await fetchNDBC(id); return { obs, source: obs.tenMinute ? 'NDBC 10-min' : 'NDBC' }; }
+  catch (e) { console.warn(`NDBC unavailable for ${id}, falling back to NWS:`, e.message); return { obs: await fetchNWS(id, settings.range), source: 'NWS hourly' }; }
+}
+
+// ------------------------------------------------------------------ refresh
+let timer, countdownTimer, inflight = false;
+async function refresh(force) {
+  if (inflight) return; inflight = true;
+  const st = STATIONS[settings.station], id = settings.station;
+  document.getElementById('refreshBtn').classList.add('spin');
+  setStatus('updating…');
+  const tasks = [];
+  tasks.push((async () => {
+    const r = await fetchObs(id); state.obs = r.obs; state.obsSource = r.source;
+    state.lastFetch = Date.now(); if (state.obsSource.startsWith('NWS') && settings.range > 168) settings.range = 168; renderRange(); renderObs();
+  })().catch(e => { state.err = e.message; renderObs(); }));
+  if (settings.cmp && settings.cmp !== id) tasks.push(fetchObs(settings.cmp).then(r => { state.cmp = { id: settings.cmp, obs: r.obs, source: r.source }; LS.set('cache:' + settings.cmp, { obs: r.obs, obsSource: r.source, lastFetch: Date.now() }); renderObs(); }).catch(() => {}));
+  else state.cmp = { id: null, obs: [], source: '' };
+  tasks.push(fetchForecastHourly(st).then(f => { state.fcstHourly = f; drawWind(); }).catch(() => {}));
+  tasks.push(fetchTides(st).then(t => { state.tide = t; renderTide(); }).catch(e => { state.tide = null; renderTide(); }));
+  tasks.push(fetchCWF(st.zone).then(c => { state.cwf = c; renderCWF(); }).catch(e => { state.cwf = { error: e.message }; renderCWF(); }));
+  await Promise.allSettled(tasks);
+  LS.set('cache:' + id, { obs: state.obs, obsSource: state.obsSource, fcstHourly: state.fcstHourly, tide: state.tide, cwf: state.cwf, lastFetch: state.lastFetch });
+  document.getElementById('refreshBtn').classList.remove('spin');
+  inflight = false; schedule();
+}
+function schedule() {
+  clearTimeout(timer); timer = setTimeout(() => refresh(), REFRESH_MS);
+  clearInterval(countdownTimer);
+  const tick = () => { const left = Math.max(0, state.lastFetch + REFRESH_MS - Date.now()); document.getElementById('countdown').textContent = `${Math.floor(left / 60000)}:${String(Math.floor(left / 1000) % 60).padStart(2, '0')}`; renderStatus(); };
+  tick(); countdownTimer = setInterval(tick, 1000);
+}
+function setStatus(s) { document.getElementById('status').textContent = s; }
+function renderStatus() {
+  const last = state.obs.length ? state.obs[state.obs.length - 1].t : 0;
+  const dot = document.getElementById('dot');
+  dot.className = 'dot' + (state.err ? ' bad' : Date.now() - last > 2 * 3600e3 ? ' stale' : '');
+  setStatus(state.err ? `error: ${state.err}` : last ? `obs ${ago(last)}` : 'no data');
+  document.getElementById('source').textContent = state.obsSource ? `· ${state.obsSource}` : '';
+}
+
+// ------------------------------------------------------------------ render: hero + stats
+function latest(field) { for (let i = state.obs.length - 1; i >= 0; i--) if (state.obs[i][field] != null) return state.obs[i]; return null; }
+function avg(field, from, to) { const xs = state.obs.filter(o => o.t >= from && o.t < to && o[field] != null).map(o => o[field]); return xs.length ? xs.reduce((a, b) => a + b) / xs.length : null; }
+
+function renderObs() {
+  state.err = state.obs.length ? null : state.err;
+  renderStatus();
+  const w = latest('wspd'); const g = latest('gst');
+  document.getElementById('obsTime').textContent = w ? dayhm(w.t) : '';
+  document.getElementById('wspd').textContent = w ? fmt(wind(w.wspd), settings.unit === 'ms' ? 1 : 0) : '—';
+  document.getElementById('wunit').textContent = windU();
+  document.getElementById('unitNote').textContent = windU();
+  document.getElementById('wdirTxt').textContent = w ? cardinal(w.wdir) : '—';
+  document.getElementById('wdirDeg').textContent = w && w.wdir != null ? `${Math.round(w.wdir)}°` : '';
+  document.getElementById('gst').textContent = g && g.gst != null && Date.now() - g.t < 2 * 3600e3 ? `${fmt(wind(g.gst), settings.unit === 'ms' ? 1 : 0)} ${windU()}` : '—';
+  if (w) { const [n, txt] = beaufort(w.wspd); const b = document.getElementById('bft'); b.textContent = `Bft ${n}`; b.style.background = windColor(w.wspd); document.getElementById('bftTxt').textContent = txt; }
+  // trend: last 30 min vs 60–90 min earlier
+  const tr = document.getElementById('trend');
+  if (w) { const now = w.t, a = avg('wspd', now - 30 * 60e3, now + 1), b = avg('wspd', now - 90 * 60e3, now - 45 * 60e3);
+    if (a != null && b != null) { const d = wind(a - b); const cls = Math.abs(d) < 1.5 ? 'flat' : d > 0 ? 'up' : 'down'; tr.className = 'trend ' + cls; tr.textContent = cls === 'flat' ? 'steady' : `${d > 0 ? '▲' : '▼'} ${fmt(Math.abs(d), settings.unit === 'ms' ? 1 : 0)} ${windU()} / hr`; }
+    else { tr.className = 'trend flat'; tr.textContent = ''; } }
+  drawRose(w);
+  // stats
+  const p = latest('pres'), a = latest('atmp'), wt = latest('wtmp'), dp = latest('dewp'), hv = latest('wvht');
+  const p3 = p ? avg('pres', p.t - 3.25 * 3600e3, p.t - 2.75 * 3600e3) : null; const dp3 = p && p3 != null ? p.pres - p3 : null;
+  const tendTxt = dp3 == null ? '' : `${dp3 >= 0 ? '+' : ''}${dp3.toFixed(1)} hPa / 3h`;
+  document.getElementById('presTend').textContent = tendTxt;
+  const cells = [];
+  if (p) cells.push(['Pressure', fmt(p.pres, 1), 'hPa', dp3 == null ? '' : (Math.abs(dp3) < 1 ? 'steady' : dp3 > 0 ? `rising ${tendTxt}` : `falling ${tendTxt}`)]);
+  if (a) cells.push(['Air temp', fmt(temp(a.atmp), 0), tempU(), '']);
+  if (wt) cells.push(['Water temp', fmt(temp(wt.wtmp), 0), tempU(), '']);
+  if (dp) cells.push(['Dew point', fmt(temp(dp.dewp), 0), tempU(), '']);
+  if (hv) cells.push(['Wave height', fmt(hv.wvht * 3.28084, 1), 'ft', '']);
+  const mx = state.obs.filter(o => Date.now() - o.t < 24 * 3600e3 && o.gst != null).reduce((m, o) => (o.gst > (m ? m.gst : -1) ? o : m), null);
+  if (mx) cells.push(['Peak gust 24h', fmt(wind(mx.gst), 0), windU(), hm(mx.t)]);
+  const av = avg('wspd', Date.now() - 24 * 3600e3, Date.now() + 1); if (av != null) cells.push(['Avg wind 24h', fmt(wind(av), 0), windU(), '']);
+  document.getElementById('stats').innerHTML = cells.length ? cells.map(([k, v, u, d]) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}<small>${u}</small></div><div class="d">${d}</div></div>`).join('') : '<div class="empty">No observations</div>';
+  renderCompare(); renderDirChip(); drawWind(); drawPres(); drawTemp(); drawWindRose(); drawHeat();
+}
+
+// ------------------------------------------------------------------ compare
+const SECTORS = 16, sectorOf = d => Math.round(((d % 360) + 360) % 360 / (360 / SECTORS)) % SECTORS;
+function latestOf(obs, field) { for (let i = obs.length - 1; i >= 0; i--) if (obs[i][field] != null) return obs[i]; return null; }
+function renderCompare() {
+  const row = document.getElementById('cmpRow'), lg = document.getElementById('cmpLegend'); const c = state.cmp;
+  const on = !!(c.id && STATIONS[c.id]); row.hidden = !on; lg.hidden = !on; if (!on) return;
+  lg.querySelector('span').textContent = STATIONS[c.id].name;
+  const w = latestOf(c.obs, 'wspd'), g = latestOf(c.obs, 'gst'), a = latest('wspd'); const d = settings.unit === 'ms' ? 1 : 0;
+  if (!w) { row.innerHTML = `<span class="tag">${STATIONS[c.id].name}</span><span style="color:var(--fg-mute)">${c.obs.length ? 'no wind reported' : 'loading…'}</span>`; return; }
+  const delta = a && w ? wind(w.wspd - a.wspd) : null;
+  row.innerHTML = `<span class="tag">${STATIONS[c.id].name}</span><span><b>${fmt(wind(w.wspd), d)}</b> ${windU()}${w.wdir != null ? ` <b>${cardinal(w.wdir)}</b>` : ''}</span>` +
+    (g && g.gst != null && Date.now() - g.t < 2 * 3600e3 ? `<span>gust <b>${fmt(wind(g.gst), d)}</b></span>` : '') +
+    (delta != null ? `<span class="delta">${delta >= 0 ? '+' : '−'}${fmt(Math.abs(delta), d)} ${windU()} vs here</span>` : '') + `<span class="delta">${dayhm(w.t)} · ${c.source}</span>`;
+}
+function renderDirChip() {
+  const chip = document.getElementById('dirChip'); const f = state.dirFilter; chip.hidden = f == null;
+  if (f != null) chip.textContent = `from ${CARD[f]} only`;
+}
+document.getElementById('dirChip').addEventListener('click', () => { state.dirFilter = null; renderDirChip(); drawWind(); drawWindRose(); });
+const inSector = p => state.dirFilter == null || (p.wdir != null && sectorOf(p.wdir) === state.dirFilter);
+
+// ------------------------------------------------------------------ diurnal heatmap (rows = days, cols = hours, cell = mean wind)
+function drawHeat() {
+  const c = document.getElementById('heatChart'); const { t0, t1 } = windowObs();
+  const obs = state.obs.filter(o => o.t >= t0 && o.t <= t1 && o.wspd != null);
+  const dayKey = t => { const d = new Date(t); return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); };
+  const days = []; const first = dayKey(t0), lastD = dayKey(t1); for (let d = first; d <= lastD; d = dayKey(d + 26 * 3600e3)) days.push(d);
+  c.classList.toggle('heat-tall', days.length > 8);
+  const { ctx, W, H } = setupCanvas(c); ctx.clearRect(0, 0, W, H);
+  const lg = document.getElementById('heatLegend');
+  if (!obs.length) { ctx.fillStyle = V('--fg-mute'); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('no wind data', W / 2, H / 2); lg.innerHTML = ''; return; }
+  const sum = new Map(), cnt = new Map(), gmax = new Map();
+  for (const o of obs) { const d = new Date(o.t), k = dayKey(o.t) + ':' + d.getHours(); sum.set(k, (sum.get(k) || 0) + o.wspd); cnt.set(k, (cnt.get(k) || 0) + 1); if (o.gst != null) gmax.set(k, Math.max(gmax.get(k) || 0, o.gst)); }
+  const padL = 44, padT = 16, padB = 4, padR = 6, cw = (W - padL - padR) / 24, rh = (H - padT - padB) / days.length, gap = rh > 10 ? 1.5 : 0.5;
+  ctx.font = '10px -apple-system, system-ui, sans-serif'; ctx.fillStyle = V('--fg-mute'); ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+  for (let h = 0; h < 24; h += 3) ctx.fillText(h === 0 ? '12a' : h === 12 ? '12p' : h < 12 ? h + 'a' : (h - 12) + 'p', padL + (h + 0.5) * cw, padT - 3);
+  ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  const labelEvery = Math.max(1, Math.ceil(days.length / Math.max(1, Math.floor((H - padT - padB) / 14))));
+  days.forEach((d, i) => { if (i % labelEvery === 0 || days.length <= 8) ctx.fillText(new Date(d).toLocaleDateString([], { weekday: 'short', day: 'numeric' }), padL - 5, padT + (i + 0.5) * rh); });
+  const nowD = dayKey(Date.now()), nowH = new Date().getHours(); const hov = state.hover;
+  let hovCell = null;
+  days.forEach((d, i) => { for (let h = 0; h < 24; h++) { const k = d + ':' + h; const x = padL + h * cw, y = padT + i * rh;
+    if (!cnt.has(k)) { if (d < nowD || (d === nowD && h < nowH)) { ctx.fillStyle = V('--line'); ctx.globalAlpha = .4; ctx.fillRect(x + gap / 2, y + gap / 2, cw - gap, rh - gap); ctx.globalAlpha = 1; } continue; }
+    const m = sum.get(k) / cnt.get(k); ctx.fillStyle = windColor(m); ctx.fillRect(x + gap / 2, y + gap / 2, cw - gap, rh - gap);
+    if (hov && hov.i === i && hov.h === h) hovCell = { x, y, m, g: gmax.get(k), d, h, n: cnt.get(k) }; } });
+  c._heat = { padL, padT, cw, rh, days };
+  if (hovCell) { ctx.strokeStyle = V('--fg'); ctx.lineWidth = 2; ctx.strokeRect(hovCell.x + 1, hovCell.y + 1, cw - 2, rh - 2);
+    const dd = settings.unit === 'ms' ? 1 : 0; const lines = [`${new Date(hovCell.d).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })} ${hovCell.h}:00`, `avg ${fmt(wind(hovCell.m), dd)} ${windU()}` + (hovCell.g ? ` · gust ${fmt(wind(hovCell.g), dd)}` : '') + ` · ${hovCell.n} obs`];
+    ctx.font = '600 11px -apple-system, system-ui, sans-serif'; const tw = Math.max(...lines.map(l => ctx.measureText(l).width)) + 16, th = lines.length * 15 + 8;
+    let bx = hovCell.x + cw + 6; if (bx + tw > W) bx = hovCell.x - tw - 6; let by = hovCell.y - 4; if (by + th > H) by = H - th;
+    ctx.fillStyle = V('--bg2'); ctx.strokeStyle = V('--line'); ctx.lineWidth = 1; ctx.beginPath(); ctx.roundRect(bx, by, tw, th, 6); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = V('--fg'); ctx.textAlign = 'left'; ctx.textBaseline = 'top'; lines.forEach((l, j) => ctx.fillText(l, bx + 8, by + 5 + j * 15)); }
+  const stops = [0, 10, 17, 25, 34].map(k => windColor(k / MS2KT));
+  lg.innerHTML = `<span>0</span><span class="bar" style="background:linear-gradient(90deg,${stops.join(',')})"></span><span>${fmt(wind(34 / MS2KT), 0)}+ ${windU()}</span><span style="margin-left:auto">${obs.length} obs · ${days.length} days</span>`;
+}
+(() => { const c = document.getElementById('heatChart');
+  const cell = e => { const g = c._heat; if (!g) return null; const r = c.getBoundingClientRect(); const px = (e.touches ? e.touches[0].clientX : e.clientX) - r.left, py = (e.touches ? e.touches[0].clientY : e.clientY) - r.top;
+    const h = Math.floor((px - g.padL) / g.cw), i = Math.floor((py - g.padT) / g.rh); return h >= 0 && h < 24 && i >= 0 && i < g.days.length ? { i, h } : null; };
+  const set = e => { const v = cell(e); if ((v && v.i) !== (state.hover && state.hover.i) || (v && v.h) !== (state.hover && state.hover.h)) { state.hover = v; drawHeat(); } };
+  c.addEventListener('mousemove', set); c.addEventListener('mouseleave', () => { state.hover = null; drawHeat(); });
+  c.addEventListener('touchstart', set, { passive: true }); c.addEventListener('touchmove', set, { passive: true }); })();
+
+// ------------------------------------------------------------------ compass rose
+function drawRose(w) {
+  const c = document.getElementById('rose'), ctx = c.getContext('2d'), S = 300, cx = S / 2, cy = S / 2, R = 128;
+  ctx.clearRect(0, 0, S, S);
+  const line = V('--line'), dim = V('--fg-dim'), fg = V('--fg');
+  ctx.strokeStyle = line; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
+  for (let i = 0; i < 36; i++) { const a = (i * 10 - 90) * Math.PI / 180, L = i % 9 === 0 ? 14 : i % 3 === 0 ? 9 : 5; ctx.strokeStyle = i % 9 === 0 ? dim : line; ctx.lineWidth = i % 9 === 0 ? 2.5 : 1.5;
+    ctx.beginPath(); ctx.moveTo(cx + Math.cos(a) * (R - L), cy + Math.sin(a) * (R - L)); ctx.lineTo(cx + Math.cos(a) * R, cy + Math.sin(a) * R); ctx.stroke(); }
+  ctx.fillStyle = dim; ctx.font = '600 15px -apple-system, system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  [['N', 0], ['E', 90], ['S', 180], ['W', 270]].forEach(([l, d]) => { const a = (d - 90) * Math.PI / 180; ctx.fillText(l, cx + Math.cos(a) * (R - 28), cy + Math.sin(a) * (R - 28)); });
+  if (!w) return;
+  // 3h direction trail (older = fainter), then the current arrow. Arrow points where wind is going (from wdir + 180).
+  const now = w.t; const trail = state.obs.filter(o => o.t >= now - 3 * 3600e3 && o.t < now && o.wdir != null && o.wspd != null);
+  trail.forEach(o => { const age = (now - o.t) / (3 * 3600e3); const a = (o.wdir - 90) * Math.PI / 180; ctx.globalAlpha = 0.15 + 0.55 * (1 - age); ctx.fillStyle = windColor(o.wspd);
+    ctx.beginPath(); ctx.arc(cx + Math.cos(a) * (R - 8), cy + Math.sin(a) * (R - 8), 4, 0, Math.PI * 2); ctx.fill(); });
+  ctx.globalAlpha = 1;
+  if (w.wdir != null) {
+    const a = (w.wdir - 90) * Math.PI / 180, col = windColor(w.wspd);
+    const ax = Math.cos(a), ay = Math.sin(a), tail = R - 16, head = 40;
+    ctx.save(); ctx.translate(cx, cy); ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = 10; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(ax * tail, ay * tail); ctx.lineTo(ax * (head + 14), ay * (head + 14)); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(ax * head, ay * head); ctx.lineTo(ax * (head + 28) - ay * 16, ay * (head + 28) + ax * 16); ctx.lineTo(ax * (head + 28) + ay * 16, ay * (head + 28) - ax * 16); ctx.closePath(); ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = fg; ctx.font = '800 28px -apple-system, system-ui, sans-serif'; ctx.fillText(`${Math.round(w.wdir)}°`, cx, cy - 4);
+    ctx.fillStyle = dim; ctx.font = '600 11px -apple-system, system-ui, sans-serif'; ctx.fillText(cardinal(w.wdir), cx, cy + 18);
+  }
+}
+
+// ------------------------------------------------------------------ wind rose histogram
+// 16 direction sectors x speed bands (kt), stacked outward; radius ∝ frequency (sqrt-scaled so area ∝ count).
+const ROSE_BANDS = [[0, 5], [5, 10], [10, 15], [15, 20], [20, 30], [30, Infinity]];
+const roseBandColor = ([lo, hi]) => windColor(((Number.isFinite(hi) ? (lo + hi) / 2 : lo + 5)) / MS2KT);
+function drawWindRose() {
+  const c = document.getElementById('windRose'); if (!c) return;
+  const dpr = window.devicePixelRatio || 1, cssW = c.getBoundingClientRect().width || 230, S = Math.round(cssW * dpr);
+  if (c.width !== S) { c.width = S; c.height = S; }
+  const ctx = c.getContext('2d'); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, S, S); ctx.setTransform(S / 320, 0, 0, S / 320, 0, 0);
+  const cx = 160, cy = 160, R = 132, ringInner = 20;
+  const line = V('--line'), dim = V('--fg-dim'), mute = V('--fg-mute'), fg = V('--fg');
+  const { t0, t1 } = windowObs();
+  const obs = state.obs.filter(o => o.t >= t0 && o.t <= t1 && o.wspd != null);
+  const rangeLabel = (RANGES.find(([, h]) => h === settings.range) || [settings.range + 'h'])[0];
+  document.getElementById('roseRange').textContent = obs.length ? `${rangeLabel} · ${obs.length} obs` : rangeLabel;
+  // background rings + labels
+  ctx.strokeStyle = line; ctx.lineWidth = 1;
+  ctx.fillStyle = dim; ctx.font = '600 12px -apple-system, system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  [['N', 0], ['E', 90], ['S', 180], ['W', 270]].forEach(([l, d]) => { const a = (d - 90) * Math.PI / 180; ctx.fillText(l, cx + Math.cos(a) * (R + 16), cy + Math.sin(a) * (R + 16)); });
+  const legend = document.getElementById('roseLegend'), sum = document.getElementById('roseSummary');
+  legend.innerHTML = ROSE_BANDS.map(b => `<div><i style="background:${roseBandColor(b)}"></i>${Number.isFinite(b[1]) ? `${b[0]}–${b[1]}` : `${b[0]}+`} kt</div>`).join('');
+  if (!obs.length) { for (let i = 1; i <= 4; i++) { ctx.beginPath(); ctx.arc(cx, cy, ringInner + (R - ringInner) * i / 4, 0, Math.PI * 2); ctx.stroke(); } sum.innerHTML = '<div class="empty">No wind data in range</div>'; return; }
+  // bin
+  const N = 16, counts = Array.from({ length: N }, () => ROSE_BANDS.map(() => 0)); let calm = 0;
+  for (const o of obs) { const kt = o.wspd * MS2KT; if (kt < 1 || o.wdir == null) { calm++; continue; }
+    const si = Math.round(((o.wdir % 360) + 360) % 360 / (360 / N)) % N; const bi = ROSE_BANDS.findIndex(([lo, hi]) => kt >= lo && kt < hi); counts[si][bi < 0 ? ROSE_BANDS.length - 1 : bi]++; }
+  const total = obs.length, sectorTot = counts.map(r => r.reduce((a, b) => a + b, 0)), maxFrac = Math.max(...sectorTot) / total;
+  const scale = f => ringInner + (R - ringInner) * Math.sqrt(f / maxFrac); // sqrt: area ∝ frequency
+  // rings at nice % steps
+  const stepPct = maxFrac > 0.4 ? 10 : maxFrac > 0.2 ? 5 : maxFrac > 0.08 ? 2 : 1;
+  ctx.font = '10px -apple-system, system-ui, sans-serif'; ctx.fillStyle = mute; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+  for (let p = stepPct; p / 100 <= maxFrac + 1e-9; p += stepPct) { const r = scale(p / 100); ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke(); ctx.fillText(p + '%', cx + r * 0.72 + 2, cy - r * 0.72); }
+  // sectors
+  const half = Math.PI / N * 0.85, sel = state.dirFilter;
+  for (let i = 0; i < N; i++) {
+    const a0 = (i * 360 / N - 90) * Math.PI / 180;
+    let rIn = ringInner, cum = 0; ctx.globalAlpha = sel == null || sel === i ? 1 : 0.22;
+    for (let b = 0; b < ROSE_BANDS.length; b++) { const n = counts[i][b]; if (!n) continue; cum += n; const rOut = scale(cum / total);
+      ctx.fillStyle = roseBandColor(ROSE_BANDS[b]); ctx.beginPath(); ctx.arc(cx, cy, rOut, a0 - half, a0 + half); ctx.arc(cx, cy, rIn, a0 + half, a0 - half, true); ctx.closePath(); ctx.fill(); rIn = rOut; }
+    ctx.globalAlpha = 1;
+    if (sel === i) { ctx.strokeStyle = fg; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(cx, cy, Math.max(rIn, ringInner + 6) + 3, a0 - half, a0 + half); ctx.arc(cx, cy, ringInner, a0 + half, a0 - half, true); ctx.closePath(); ctx.stroke(); }
+  }
+  c._rose = { cx, cy, R, ringInner, S, N };
+  // calm disc
+  ctx.fillStyle = V('--bg2'); ctx.strokeStyle = line; ctx.beginPath(); ctx.arc(cx, cy, ringInner - 2, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = fg; ctx.font = '700 10px -apple-system, system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(`${Math.round(calm / total * 100)}%`, cx, cy);
+  // summary (selected sector when filtering)
+  const dom = sel != null ? sel : sectorTot.indexOf(Math.max(...sectorTot)); const domPct = Math.round(sectorTot[dom] / total * 100);
+  const domSpd = obs.filter(o => o.wdir != null && Math.round(((o.wdir % 360) + 360) % 360 / (360 / N)) % N === dom).reduce((a, o) => a + o.wspd, 0) / Math.max(1, sectorTot[dom]);
+  const mean = obs.reduce((a, o) => a + o.wspd, 0) / total, d = settings.unit === 'ms' ? 1 : 0;
+  const strong = obs.filter(o => o.wspd * MS2KT >= 15).length;
+  sum.innerHTML = `<div><b>${CARD[dom]} ${domPct}%</b>${sel != null ? 'selected' : 'prevailing'} · avg ${fmt(wind(domSpd), d)} ${windU()}</div><div><b>${fmt(wind(mean), d)} ${windU()}</b>mean · calm ${Math.round(calm / total * 100)}% · ≥15 kt ${Math.round(strong / total * 100)}%</div>`;
+}
+
+document.getElementById('windRose').addEventListener('click', e => {
+  const c = e.currentTarget, g = c._rose; if (!g) return; const r = c.getBoundingClientRect(); const k = 320 / r.width;
+  const dx = (e.clientX - r.left) * k - g.cx, dy = (e.clientY - r.top) * k - g.cy, dist = Math.hypot(dx, dy);
+  if (dist < g.ringInner || dist > g.R + 12) { state.dirFilter = null; } else { const deg = (Math.atan2(dy, dx) * 180 / Math.PI + 90 + 360) % 360; const si = sectorOf(deg); state.dirFilter = state.dirFilter === si ? null : si; }
+  renderDirChip(); drawWind(); drawWindRose();
+});
+
+// ------------------------------------------------------------------ charts
+function setupCanvas(c) {
+  const dpr = window.devicePixelRatio || 1, r = c.getBoundingClientRect(); const W = Math.max(1, Math.round(r.width)), H = Math.max(1, Math.round(r.height));
+  if (c.width !== W * dpr || c.height !== H * dpr) { c.width = W * dpr; c.height = H * dpr; }
+  const ctx = c.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); return { ctx, W, H };
+}
+function timeTicks(t0, t1, W) {
+  const span = t1 - t0, hours = span / 3600e3; const step = hours <= 30 ? 6 : hours <= 60 ? 12 : hours <= 200 ? 24 : hours <= 400 ? 48 : 168;
+  const out = []; const d = new Date(t0); d.setMinutes(0, 0, 0); if (step >= 24) d.setHours(0); else d.setHours(Math.ceil(d.getHours() / step) * step);
+  for (let t = d.getTime(); t <= t1; t += step * 3600e3) { const dd = new Date(t); out.push({ t, label: step >= 24 ? dd.toLocaleDateString([], { weekday: 'short', day: 'numeric' }) : dd.getHours() === 0 ? dd.toLocaleDateString([], { weekday: 'short' }) : dd.toLocaleTimeString([], { hour: 'numeric' }) }); }
+  return out;
+}
+function frame(c, t0, t1, y0, y1, opts = {}) {
+  const { ctx, W, H } = setupCanvas(c); ctx.clearRect(0, 0, W, H);
+  const line = V('--line'), mute = V('--fg-mute'), dim = V('--fg-dim');
+  const padL = opts.padL || 34, padR = 8, padT = opts.padT || 8, padB = 18;
+  const x = t => padL + (t - t0) / (t1 - t0) * (W - padL - padR), y = v => padT + (1 - (v - y0) / (y1 - y0)) * (H - padT - padB);
+  ctx.font = '10px -apple-system, system-ui, sans-serif'; ctx.fillStyle = mute; ctx.strokeStyle = line; ctx.lineWidth = 1;
+  const ny = opts.yTicks || 4; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  for (let i = 0; i <= ny; i++) { const v = y0 + (y1 - y0) * i / ny; ctx.beginPath(); ctx.moveTo(padL, y(v)); ctx.lineTo(W - padR, y(v)); ctx.stroke(); ctx.fillText(opts.yFmt ? opts.yFmt(v) : Math.round(v), padL - 5, y(v)); }
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  for (const tk of timeTicks(t0, t1, W)) { ctx.strokeStyle = line; ctx.beginPath(); ctx.moveTo(x(tk.t), padT); ctx.lineTo(x(tk.t), H - padB); ctx.stroke(); ctx.fillText(tk.label, x(tk.t), H - padB + 4); }
+  // now line
+  const now = Date.now(); if (now > t0 && now < t1) { ctx.strokeStyle = dim; ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.moveTo(x(now), padT); ctx.lineTo(x(now), H - padB); ctx.stroke(); ctx.setLineDash([]); }
+  return { ctx, W, H, x, y, padL, padR, padT, padB };
+}
+function linePath(ctx, pts, x, y, field) { let pen = false; for (const p of pts) { if (p[field] == null) { pen = false; continue; } if (!pen) { ctx.moveTo(x(p.t), y(p[field])); pen = true; } else ctx.lineTo(x(p.t), y(p[field])); } }
+function niceMax(v, step) { return Math.max(step, Math.ceil(v / step) * step); }
+function windowObs() { const t1 = Date.now(), t0 = t1 - settings.range * 3600e3; return { t0, t1, pts: state.obs.filter(o => o.t >= t0 - 3600e3) }; }
+function hoverAt(c, t) { state.hover = t; drawWind(); drawPres(); drawTemp(); }
+function attachHover(c) {
+  const tOf = e => { const r = c.getBoundingClientRect(); const cx = (e.touches ? e.touches[0].clientX : e.clientX) - r.left; const f = c._frame; if (!f) return null; return f.t0 + (cx - f.padL) / (f.W - f.padL - f.padR) * (f.t1 - f.t0); };
+  c.addEventListener('mousemove', e => hoverAt(c, tOf(e))); c.addEventListener('mouseleave', () => hoverAt(c, null));
+  c.addEventListener('touchstart', e => hoverAt(c, tOf(e)), { passive: true }); c.addEventListener('touchmove', e => hoverAt(c, tOf(e)), { passive: true }); c.addEventListener('touchend', () => setTimeout(() => hoverAt(c, null), 1500));
+}
+function nearest(pts, t) { if (typeof t !== 'number') return null; let best = null; for (const p of pts) if (!best || Math.abs(p.t - t) < Math.abs(best.t - t)) best = p; return best && Math.abs(best.t - t) < 2 * 3600e3 ? best : null; }
+function tooltip(f, lines, tx) {
+  const { ctx, W, padT } = f; ctx.font = '600 11px -apple-system, system-ui, sans-serif'; const w = Math.max(...lines.map(l => ctx.measureText(l).width)) + 16, h = lines.length * 15 + 8;
+  let bx = f.x(tx) + 10; if (bx + w > W - 4) bx = f.x(tx) - w - 10; const by = padT + 2;
+  ctx.fillStyle = V('--bg2'); ctx.strokeStyle = V('--line'); ctx.beginPath(); ctx.roundRect(bx, by, w, h, 6); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = V('--fg'); ctx.textAlign = 'left'; ctx.textBaseline = 'top'; lines.forEach((l, i) => ctx.fillText(l, bx + 8, by + 5 + i * 15));
+  ctx.strokeStyle = V('--fg-dim'); ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(f.x(tx), padT); ctx.lineTo(f.x(tx), f.H - f.padB); ctx.stroke();
+}
+
+function drawWind() {
+  const c = document.getElementById('windChart'); const { t0, pts } = windowObs();
+  const fc = state.fcstHourly.filter(p => p.t > Date.now() - 3600e3 && p.t < Date.now() + 24 * 3600e3);
+  const t1 = fc.length ? Math.min(Date.now() + 24 * 3600e3, fc[fc.length - 1].t + 3600e3) : Date.now() + 3600e3;
+  if (!pts.length && !fc.length) { const { ctx, W, H } = setupCanvas(c); ctx.clearRect(0, 0, W, H); return; }
+  const cmpPts = state.cmp.id ? state.cmp.obs.filter(o => o.t >= t0 - 3600e3) : [];
+  const maxV = Math.max(5, ...pts.map(p => Math.max(wind(p.wspd) || 0, wind(p.gst) || 0)), ...fc.map(p => wind(p.wspd) || 0), ...cmpPts.map(p => wind(p.wspd) || 0));
+  const f = frame(c, t0, t1, 0, niceMax(maxV * 1.1, 5), { padT: 26 }); c._frame = { ...f, t0, t1 }; const { ctx, x, y } = f;
+  const filt = state.dirFilter != null;
+  // direction arrows along the top, every ~N px
+  const stepPx = 26; let lastX = -1e9; ctx.strokeStyle = V('--fg-dim'); ctx.lineWidth = 1.5; ctx.lineCap = 'round';
+  for (const p of pts) { if (p.wdir == null) continue; const px = x(p.t); if (px - lastX < stepPx || px < f.padL) continue; lastX = px; const a = (p.wdir + 90) * Math.PI / 180; // arrow points where wind goes (down-canvas is +y)
+    ctx.save(); ctx.translate(px, 14); ctx.rotate(a); ctx.strokeStyle = windColor(p.wspd || 0); ctx.beginPath(); ctx.moveTo(-6, 0); ctx.lineTo(6, 0); ctx.moveTo(2, -4); ctx.lineTo(6, 0); ctx.lineTo(2, 4); ctx.stroke(); ctx.restore(); }
+  // speed area
+  const accent = V('--accent');
+  ctx.beginPath(); linePath(ctx, pts.map(p => ({ t: p.t, v: wind(p.wspd) })), x, y, 'v');
+  const g = ctx.createLinearGradient(0, f.padT, 0, f.H - f.padB); g.addColorStop(0, accent.trim() + 'aa'); g.addColorStop(1, accent.trim() + '05');
+  const first = pts.find(p => p.wspd != null), last = [...pts].reverse().find(p => p.wspd != null);
+  if (first && last) { ctx.lineTo(x(last.t), y(0)); ctx.lineTo(x(first.t), y(0)); ctx.closePath(); ctx.fillStyle = g; ctx.fill(); }
+  ctx.beginPath(); linePath(ctx, pts.map(p => ({ t: p.t, v: wind(p.wspd) })), x, y, 'v'); ctx.strokeStyle = accent; ctx.lineWidth = 2; ctx.stroke();
+  if (filt) { // wash out everything, then re-draw only the selected sector on top
+    ctx.fillStyle = V('--card'); ctx.globalAlpha = 0.78; ctx.fillRect(f.padL, f.padT, f.W - f.padL - f.padR, f.H - f.padT - f.padB); ctx.globalAlpha = 1;
+    ctx.strokeStyle = accent; ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.beginPath(); linePath(ctx, pts.map(p => ({ t: p.t, v: inSector(p) ? wind(p.wspd) : null })), x, y, 'v'); ctx.stroke();
+    ctx.fillStyle = accent; for (const p of pts) if (inSector(p) && p.wspd != null) { ctx.beginPath(); ctx.arc(x(p.t), y(wind(p.wspd)), 1.6, 0, Math.PI * 2); ctx.fill(); } }
+  // gust dots/line (hourly)
+  ctx.fillStyle = V('--gust'); for (const p of pts) if (p.gst != null && inSector(p)) { ctx.beginPath(); ctx.arc(x(p.t), y(wind(p.gst)), 2.2, 0, Math.PI * 2); ctx.fill(); }
+  // compare station overlay
+  if (cmpPts.length) { ctx.strokeStyle = V('--cmp'); ctx.lineWidth = 1.8; ctx.globalAlpha = filt ? 0.5 : 0.9; ctx.beginPath(); linePath(ctx, cmpPts.map(p => ({ t: p.t, v: wind(p.wspd) })), x, y, 'v'); ctx.stroke(); ctx.globalAlpha = 1; }
+  // forecast (dashed)
+  if (fc.length) { ctx.setLineDash([5, 4]); ctx.strokeStyle = V('--fcst'); ctx.lineWidth = 2; ctx.beginPath(); linePath(ctx, fc.map(p => ({ t: p.t + 1800e3, v: wind(p.wspd) })), x, y, 'v'); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = V('--fg-mute'); ctx.font = '10px -apple-system, system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText('forecast →', x(Date.now()) + 4, f.H - f.padB - 12); }
+  // hover
+  if (state.hover != null) { const isF = state.hover > Date.now(); const p = isF ? nearest(fc.map(q => ({ ...q, t: q.t + 1800e3 })), state.hover) : nearest(pts, state.hover);
+    if (p) { const u = windU(), d = settings.unit === 'ms' ? 1 : 0; const lines = [dayhm(p.t) + (isF ? ' · forecast' : ''), `${fmt(wind(p.wspd), d)} ${u} from ${cardinal(p.wdir)}${p.wdir != null ? ` (${Math.round(p.wdir)}°)` : ''}`];
+      if (p.gst != null) lines.push(`gust ${fmt(wind(p.gst), d)} ${u}`); if (p.short) lines.push(p.short); if (!isF && p.pres != null) lines.push(`${fmt(p.pres, 1)} hPa · ${fmt(temp(p.atmp), 0)}${tempU()}`);
+      if (!isF && cmpPts.length) { const q = nearest(cmpPts, p.t); if (q) lines.push(`${STATIONS[state.cmp.id].name}: ${fmt(wind(q.wspd), d)} ${u} ${cardinal(q.wdir)}`); }
+      tooltip(f, lines, p.t); } }
+}
+function drawPres() {
+  const c = document.getElementById('presChart'); const { t0, t1, pts } = windowObs(); const vs = pts.filter(p => p.pres != null);
+  if (!vs.length) { const { ctx, W, H } = setupCanvas(c); ctx.clearRect(0, 0, W, H); ctx.fillStyle = V('--fg-mute'); ctx.textAlign = 'center'; ctx.fillText('no pressure data', W / 2, H / 2); return; }
+  const allP = vs.concat(state.cmp.id ? state.cmp.obs.filter(p => p.t >= t0 && p.pres != null) : []);
+  let lo = Math.min(...allP.map(p => p.pres)), hi = Math.max(...allP.map(p => p.pres)); const pad = Math.max(2, (hi - lo) * 0.15); lo = Math.floor(lo - pad); hi = Math.ceil(hi + pad);
+  const f = frame(c, t0, t1 + 3600e3, lo, hi, { yTicks: 3, yFmt: v => Math.round(v) }); c._frame = { ...f, t0, t1: t1 + 3600e3 };
+  const cv = state.cmp.id ? state.cmp.obs.filter(p => p.t >= t0 && p.pres != null) : [];
+  if (cv.length) { f.ctx.beginPath(); linePath(f.ctx, cv, f.x, f.y, 'pres'); f.ctx.strokeStyle = V('--cmp'); f.ctx.lineWidth = 1.5; f.ctx.globalAlpha = .8; f.ctx.stroke(); f.ctx.globalAlpha = 1; }
+  if (state.hover != null) { const p = nearest(vs, state.hover); if (p) { const lines = [dayhm(p.t), `${p.pres.toFixed(1)} hPa`]; const q = cv.length ? nearest(cv, p.t) : null; if (q) lines.push(`${STATIONS[state.cmp.id].name}: ${q.pres.toFixed(1)} hPa`); tooltip(f, lines, p.t); } }
+}
+function drawTemp() {
+  const c = document.getElementById('tempChart'); const { t0, t1, pts } = windowObs(); const vs = pts.filter(p => p.atmp != null).map(p => ({ t: p.t, v: temp(p.atmp), w: p.wtmp != null ? temp(p.wtmp) : null }));
+  if (!vs.length) { const { ctx, W, H } = setupCanvas(c); ctx.clearRect(0, 0, W, H); ctx.fillStyle = V('--fg-mute'); ctx.textAlign = 'center'; ctx.fillText('no temperature data', W / 2, H / 2); return; }
+  const all = vs.flatMap(p => [p.v, p.w]).filter(v => v != null); let lo = Math.floor(Math.min(...all) - 2), hi = Math.ceil(Math.max(...all) + 2);
+  const f = frame(c, t0, t1 + 3600e3, lo, hi, { yTicks: 3, yFmt: v => Math.round(v) + '°' }); c._frame = { ...f, t0, t1: t1 + 3600e3 };
+  f.ctx.beginPath(); linePath(f.ctx, vs, f.x, f.y, 'v'); f.ctx.strokeStyle = V('--temp'); f.ctx.lineWidth = 2; f.ctx.stroke();
+  if (vs.some(p => p.w != null)) { f.ctx.beginPath(); linePath(f.ctx, vs, f.x, f.y, 'w'); f.ctx.strokeStyle = V('--tide'); f.ctx.lineWidth = 2; f.ctx.stroke(); }
+  if (state.hover != null) { const p = nearest(vs, state.hover); if (p) tooltip(f, [dayhm(p.t), `air ${p.v.toFixed(0)}${tempU()}` + (p.w != null ? ` · water ${p.w.toFixed(0)}${tempU()}` : '')], p.t); }
+}
+function renderTide() {
+  const st = STATIONS[settings.station]; document.getElementById('tideStation').textContent = `${st.tideName} ${st.tide} · MLLW`;
+  const c = document.getElementById('tideChart'), box = document.getElementById('tides'); const td = state.tide;
+  if (!td || !td.pred.length) { const { ctx, W, H } = setupCanvas(c); ctx.clearRect(0, 0, W, H); box.innerHTML = '<div class="empty">Tide data unavailable</div>'; return; }
+  const now = Date.now(), t0 = now - 12 * 3600e3, t1 = now + 36 * 3600e3; const pts = td.pred.filter(p => p.t >= t0 && p.t <= t1);
+  const lo = Math.floor(Math.min(...pts.map(p => p.v)) - 1), hi = Math.ceil(Math.max(...pts.map(p => p.v)) + 1);
+  const f = frame(c, t0, t1, lo, hi, { yTicks: 3, yFmt: v => Math.round(v) + 'ft' }); const { ctx, x, y } = f;
+  const col = V('--tide');
+  ctx.beginPath(); linePath(ctx, pts, x, y, 'v'); ctx.lineTo(x(pts[pts.length - 1].t), y(lo)); ctx.lineTo(x(pts[0].t), y(lo)); ctx.closePath();
+  const g = ctx.createLinearGradient(0, f.padT, 0, f.H - f.padB); g.addColorStop(0, col.trim() + '66'); g.addColorStop(1, col.trim() + '05'); ctx.fillStyle = g; ctx.fill();
+  ctx.beginPath(); linePath(ctx, pts, x, y, 'v'); ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.stroke();
+  // observed water level
+  const wl = td.wl.filter(p => p.t >= t0); if (wl.length) { ctx.beginPath(); linePath(ctx, wl, x, y, 'v'); ctx.strokeStyle = V('--fg'); ctx.lineWidth = 1.5; ctx.stroke(); }
+  // hi/lo labels
+  ctx.font = '600 10px -apple-system, system-ui, sans-serif'; ctx.fillStyle = V('--fg-dim'); ctx.textAlign = 'center';
+  for (const h of td.hilo.filter(h => h.t >= t0 && h.t <= t1)) { ctx.textBaseline = h.type === 'H' ? 'bottom' : 'top'; ctx.fillText(`${h.v.toFixed(1)}`, x(h.t), y(h.v) + (h.type === 'H' ? -3 : 3)); }
+  // now marker
+  const cur = pts.reduce((b, p) => (Math.abs(p.t - now) < Math.abs(b.t - now) ? p : b), pts[0]); ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x(cur.t), y(cur.v), 4, 0, Math.PI * 2); ctx.fill();
+  const next = td.hilo.filter(h => h.t > now).slice(0, 4); const prev = td.hilo.filter(h => h.t <= now).slice(-1);
+  const rising = next.length && next[0].type === 'H';
+  const obs = td.wl.length ? td.wl[td.wl.length - 1] : null;
+  box.innerHTML = `<div class="t"><b>${cur.v.toFixed(1)} ft ${rising ? '↑' : '↓'}</b>${obs ? `obs ${obs.v.toFixed(1)} ft ${hm(obs.t)}` : 'predicted now'}</div>` +
+    next.map((h, i) => `<div class="t${i === 0 ? ' next' : ''}"><b>${h.type === 'H' ? 'High' : 'Low'} ${h.v.toFixed(1)} ft</b>${dayhm(h.t)}</div>`).join('');
+}
+function renderCWF() {
+  const el = document.getElementById('fcst'), c = state.cwf; const st = STATIONS[settings.station];
+  if (!c) { el.innerHTML = '<div class="skeleton"></div>'; return; }
+  if (c.error) { el.innerHTML = `<div class="empty">Forecast unavailable <span class="err">(${c.error})</span></div>`; document.getElementById('fcstZone').textContent = st.zone; return; }
+  document.getElementById('fcstZone').textContent = `${c.name} · ${c.zone}`;
+  const hl = c.headlines.map(h => `<div class="headline">⚠︎ ${h}</div>`).join('');
+  const emph = t => t.replace(/(\b[NSEW]{1,3}\b(?: to \b[NSEW]{1,3}\b)? wind[^.]*? kt)/gi, '<span class="kt">$1</span>');
+  el.innerHTML = hl + c.periods.map(p => `<div class="period"><div class="n">${p.name.toLowerCase()}</div><div>${emph(p.text)}</div></div>`).join('') + `<div class="meta">NWS Seattle coastal waters forecast · issued ${c.issued.trim()}</div>`;
+}
+
+// ------------------------------------------------------------------ ui wiring
+function applyTheme() {
+  const dark = settings.theme === 'auto' ? matchMedia('(prefers-color-scheme: dark)').matches : settings.theme === 'dark';
+  document.body.classList.toggle('light', !dark); document.querySelector('meta[name=theme-color]').content = dark ? '#0b1220' : '#f3f6fb';
+  if (state.obs.length) renderObs(); renderTide();
+}
+function renderRange() { document.getElementById('range').innerHTML = RANGES.filter(([, h]) => h <= 168 || state.obsSource.startsWith('NDBC')).map(([l, h]) => `<button data-h="${h}" class="${h === settings.range ? 'on' : ''}">${l}</button>`).join(''); }
+document.getElementById('range').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; settings.range = +b.dataset.h; saveSettings(); renderRange(); if (state.obsSource.startsWith('NWS')) refresh(); else { drawWind(); drawPres(); drawTemp(); drawWindRose(); drawHeat(); } });
+const sel = document.getElementById('station'); for (const [id, s] of Object.entries(STATIONS)) sel.add(new Option(`${s.name} (${id})`, id)); sel.value = settings.station;
+sel.addEventListener('change', () => { settings.station = sel.value; saveSettings(); loadCache(); refresh(true); });
+const cmpSel = document.getElementById('cmpStation'); function fillCmp() { cmpSel.innerHTML = ''; cmpSel.add(new Option('compare…', '')); for (const [id, s] of Object.entries(STATIONS)) if (id !== settings.station) cmpSel.add(new Option(s.name, id)); cmpSel.value = settings.cmp && settings.cmp !== settings.station ? settings.cmp : ''; cmpSel.classList.toggle('none', !cmpSel.value); }
+cmpSel.addEventListener('change', () => { settings.cmp = cmpSel.value; saveSettings(); cmpSel.classList.toggle('none', !cmpSel.value); if (!settings.cmp) { state.cmp = { id: null, obs: [], source: '' }; renderObs(); return; }
+  const cached = LS.get('cache:' + settings.cmp); state.cmp = { id: settings.cmp, obs: cached && cached.obs || [], source: cached && cached.obsSource || '' }; renderObs(); refresh(true); });
+document.getElementById('refreshBtn').addEventListener('click', () => refresh(true));
+document.getElementById('themeBtn').addEventListener('click', () => { const dark = !document.body.classList.contains('light'); settings.theme = dark ? 'light' : 'dark'; saveSettings(); applyTheme(); });
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
+const sheet = document.getElementById('sheet');
+document.getElementById('settingsBtn').addEventListener('click', () => { sheet.classList.add('open'); syncSheet(); });
+document.getElementById('sheetClose').addEventListener('click', closeSheet); sheet.addEventListener('click', e => { if (e.target === sheet) closeSheet(); });
+function closeSheet() { const p = document.getElementById('proxyInput').value.trim(); const changed = p !== settings.proxy; settings.proxy = p; saveSettings(); sheet.classList.remove('open'); if (changed) refresh(true); }
+function syncSheet() { document.getElementById('proxyInput').value = settings.proxy; for (const [id, k] of [['unitSeg', 'unit'], ['tempSeg', 'temp']]) document.querySelectorAll(`#${id} button`).forEach(b => b.classList.toggle('on', b.dataset.v === settings[k])); }
+for (const [id, k] of [['unitSeg', 'unit'], ['tempSeg', 'temp']]) document.getElementById(id).addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; settings[k] = b.dataset.v; saveSettings(); syncSheet(); renderObs(); });
+document.getElementById('ndbcLink').href = `https://www.ndbc.noaa.gov/station_page.php?station=${settings.station.toLowerCase()}`;
+for (const id of ['windChart', 'presChart', 'tempChart']) attachHover(document.getElementById(id));
+addEventListener('resize', () => { drawWind(); drawPres(); drawTemp(); drawWindRose(); drawHeat(); renderTide(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && Date.now() - state.lastFetch > 60e3) refresh(); });
+
+function loadCache() {
+  const c = LS.get('cache:' + settings.station); state.hover = null; state.dirFilter = null;
+  Object.assign(state, { obs: [], obsSource: '', fcstHourly: [], tide: null, cwf: null, lastFetch: 0, err: null }, c ? { obs: c.obs, obsSource: c.obsSource, fcstHourly: c.fcstHourly || [], tide: c.tide || null, cwf: c.cwf || null, lastFetch: c.lastFetch || 0 } : {});
+  if (settings.cmp === settings.station) settings.cmp = '';
+  fillCmp(); const cc = settings.cmp ? LS.get('cache:' + settings.cmp) : null; state.cmp = settings.cmp ? { id: settings.cmp, obs: cc && cc.obs || [], source: cc && cc.obsSource || '' } : { id: null, obs: [], source: '' };
+  document.getElementById('ndbcLink').href = `https://www.ndbc.noaa.gov/station_page.php?station=${settings.station.toLowerCase()}`;
+  renderRange(); renderObs(); renderTide(); renderCWF();
+}
+applyTheme(); loadCache(); refresh(true);
+</script>
+</body>
+</html>
