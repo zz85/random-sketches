@@ -1,6 +1,7 @@
 # Logs
 
 26 Sep 2026
+- Add [Estate AR](vibes/estate-ar/) - property price AR viewer. Surveyed sources callable from a static page: King County's `KingCo_PropertyInfo` ArcGIS MapServer answers point+distance queries with WGS84 polygons, appraised land/improvement values and a 3-year sales layer, all with CORS; Nominatim for place names. `geo.js` does centroid/angular-span/point-in-polygon and a pinhole projection from (bearing, pitch); Android Euler angles are rotated to the back-camera direction so any phone orientation works. Labels, ground-plane outlines when tilted down, radar, detail sheet with sales history and assessor links, simulated mode for desktop. `bun test` (33) on a captured live fixture + live smoke test.
 - Add [SailNav](vibes/sailnav/) - studied OpenCPN (s52cnsy DEPARE01 banding, georef Mercator sailing, Routeman XTE/arrival) and built a browser plotter on NOAA ENC Online tiles + ENC Direct DEPARE/SOUNDG queries. Depth-under-boat with tide correction, grid A* water routing respecting draft, shore margin and charted hazards. `bun test` + live NOAA smoke test.
 - SailNav offline: `s57.js` reads ISO 8211 / S-57 `.000` cells directly in the browser (DecompressionStream unzip, DataView parsing, IndexedDB store); vector S-52 chart, depth and routing without network. Verified identical to ENC Direct on US5SEAGK.
 

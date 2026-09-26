@@ -2,6 +2,7 @@
 
 - [SailNav](vibes/sailnav/) - Browser chart plotter for Puget Sound: official NOAA ENC charts (S-52 day/night), charted depth + tide under the boat from GPS, automatic draft-aware water routing between two points, XTE/BRG/TTG navigation, MOB, GPX, offline mode that parses NOAA S-57 cells in the browser. Navigation math ported from OpenCPN
 - [West Point Buoy](vibes/buoy-data/) - Fast, rich dashboard for NOAA NDBC station WPOW1 (and other Puget Sound stations): 10-min wind + gusts, forecast overlay, wind rose, pressure, tide, marine forecast
+- [Estate AR](vibes/estate-ar/) - Camera-passthrough AR that labels the buildings you point at with the county's assessed value, use, zoning and recent sales. King County parcel polygons from the assessor's public ArcGIS server (CORS, no keys, no backend), GPS + compass + tilt for placement, ground-plane parcel outlines, radar mini-map
 - [Night Sky AR](vibes/night-sky/) - AR camera overlay that identifies stars, planets, and the Moon by pointing your phone at the sky
 - [BrainWave - Neural Audio Engine](vibes/brain-waves/) - Brainwave entrainment app with binaural beats, study/focus modes, and procedural ambient music
 - [CPU/Numa Affinity planner / visualizer](cpu-affinity-planner/)

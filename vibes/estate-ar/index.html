@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#000">
+<title>Estate AR</title>
+<style>
+  :root {
+    --bg: rgba(8, 10, 16, .82);
+    --fg: #fff; --dim: #9aa3b2;
+    --res: #37d3ff; --com: #ff8a3d; --condo: #c58bff; --other: #8fe388; --exempt: #ffd166;
+    --ok: #35e07a; --warn: #ffb020; --bad: #ff5d5d;
+    --safe-t: env(safe-area-inset-top, 0px); --safe-b: env(safe-area-inset-bottom, 0px);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #000; color: var(--fg);
+    font: 14px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, Roboto, sans-serif; user-select: none; -webkit-user-select: none; }
+  #cam { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; background: radial-gradient(ellipse at 50% 120%, #22304a 0%, #0b0e16 60%, #000 100%); }
+  #cam.nocam { filter: none; }
+  #ground { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  #labels { position: fixed; inset: 0; overflow: hidden; }
+  .lbl { position: absolute; left: 0; top: 0; transform: translate(-50%, -100%); will-change: transform, opacity;
+    background: var(--bg); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,.14); border-left: 3px solid var(--c, var(--res)); border-radius: 10px; padding: 6px 9px 5px;
+    min-width: 92px; max-width: 46vw; text-align: left; box-shadow: 0 3px 14px rgba(0,0,0,.45); cursor: pointer; }
+  .lbl::after { content: ""; position: absolute; left: 50%; bottom: -7px; width: 1px; height: 7px; background: var(--c, var(--res)); }
+  .lbl .price { font-size: 17px; font-weight: 700; letter-spacing: -.3px; color: var(--c, var(--res)); text-shadow: 0 0 10px rgba(0,0,0,.6); }
+  .lbl .addr { font-size: 11px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .lbl .sub { font-size: 10px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .lbl.sel { border-color: #fff; box-shadow: 0 0 0 2px var(--c), 0 6px 20px rgba(0,0,0,.6); z-index: 50 !important; }
+  .lbl.far { padding: 4px 7px 3px; min-width: 0; }
+  .lbl.far .price { font-size: 13px; } .lbl.far .addr, .lbl.far .sub { display: none; }
+
+  #top { position: fixed; top: 0; left: 0; right: 0; padding: calc(var(--safe-t) + 8px) 10px 6px; display: flex; gap: 8px; align-items: flex-start; pointer-events: none; }
+  .chip { background: var(--bg); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,.12); border-radius: 12px; padding: 6px 10px; pointer-events: auto; }
+  #hdg { min-width: 84px; text-align: center; }
+  #hdg b { display: block; font-size: 20px; letter-spacing: -.5px; }
+  #hdg span { font-size: 10px; color: var(--dim); }
+  #loc { flex: 1; min-width: 0; }
+  #loc .t { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #loc .s { font-size: 11px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); margin-right: 4px; vertical-align: 1px; }
+  .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); }
+  #hint { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); color: var(--dim); text-align: center; pointer-events: none; text-shadow: 0 1px 3px #000; max-width: 70vw; }
+  #hint.hidden { display: none; }
+  #horizon { position: fixed; left: 0; right: 0; height: 1px; background: linear-gradient(90deg, transparent, rgba(255,255,255,.25), transparent); pointer-events: none; }
+
+  #bottom { position: fixed; left: 0; right: 0; bottom: 0; padding: 8px 10px calc(var(--safe-b) + 10px); display: flex; align-items: flex-end; gap: 8px; pointer-events: none; }
+  #radar { width: 132px; height: 132px; border-radius: 50%; background: rgba(8,10,16,.72); border: 1px solid rgba(255,255,255,.14); pointer-events: auto; }
+  #here { flex: 1; min-width: 0; pointer-events: auto; }
+  #here .k { font-size: 10px; color: var(--dim); text-transform: uppercase; letter-spacing: .6px; }
+  #here .v { font-weight: 700; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #here .p { color: var(--res); font-weight: 700; }
+  #btns { display: flex; flex-direction: column; gap: 8px; pointer-events: auto; }
+  .btn { width: 44px; height: 44px; border-radius: 50%; border: 1px solid rgba(255,255,255,.16); background: var(--bg); color: #fff; font-size: 18px; display: grid; place-items: center; cursor: pointer; backdrop-filter: blur(10px); }
+  .btn:active { transform: scale(.94); }
+  .btn.spin svg { animation: spin 1s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }
+
+  .sheet { position: fixed; left: 0; right: 0; bottom: 0; max-height: 78vh; overflow: auto; background: rgba(12,14,22,.96); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+    border-radius: 18px 18px 0 0; border-top: 1px solid rgba(255,255,255,.14); padding: 10px 16px calc(var(--safe-b) + 16px); transform: translateY(105%); transition: transform .28s cubic-bezier(.2,.8,.2,1); z-index: 100; }
+  .sheet.open { transform: none; }
+  .sheet .grab { width: 40px; height: 4px; border-radius: 2px; background: rgba(255,255,255,.25); margin: 0 auto 10px; }
+  .sheet h2 { margin: 0; font-size: 18px; letter-spacing: -.3px; }
+  .sheet .sub { color: var(--dim); font-size: 12px; margin-top: 2px; }
+  .sheet .x { position: absolute; right: 12px; top: 10px; width: 32px; height: 32px; border-radius: 50%; border: 0; background: rgba(255,255,255,.1); color: #fff; font-size: 16px; cursor: pointer; }
+  .big { display: flex; gap: 14px; margin: 14px 0 10px; }
+  .big div { flex: 1; } .big .k { font-size: 10px; color: var(--dim); text-transform: uppercase; letter-spacing: .6px; } .big .v { font-size: 22px; font-weight: 700; letter-spacing: -.5px; }
+  .big .v.total { color: var(--c, var(--res)); }
+  table.kv { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 6px; }
+  table.kv td { padding: 5px 0; border-top: 1px solid rgba(255,255,255,.07); vertical-align: top; }
+  table.kv td:first-child { color: var(--dim); width: 38%; }
+  .sales li { display: flex; justify-content: space-between; padding: 5px 0; border-top: 1px solid rgba(255,255,255,.07); font-size: 13px; }
+  .sales ul { list-style: none; margin: 0; padding: 0; }
+  .sales .z { color: var(--dim); }
+  .links { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+  .links a { flex: 1; text-align: center; padding: 10px; border-radius: 10px; background: rgba(255,255,255,.08); color: #fff; text-decoration: none; font-weight: 600; font-size: 13px; }
+  .row { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-top: 1px solid rgba(255,255,255,.07); gap: 10px; }
+  .row label { color: #fff; flex: 1; min-width: 0; } .row small { display: block; color: var(--dim); font-size: 11px; }
+  .row input[type=range] { width: 46%; } .row output { min-width: 56px; text-align: right; color: var(--dim); font-variant-numeric: tabular-nums; }
+  .seg { display: inline-flex; flex-shrink: 0; border: 1px solid rgba(255,255,255,.16); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; background: transparent; color: var(--dim); padding: 6px 8px; font-size: 12px; white-space: nowrap; cursor: pointer; }
+  .seg button.on { background: rgba(255,255,255,.14); color: #fff; }
+  .sw { position: relative; width: 44px; height: 26px; border-radius: 13px; background: rgba(255,255,255,.14); appearance: none; -webkit-appearance: none; outline: 0; cursor: pointer; margin: 0; }
+  .sw::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; transition: left .15s; }
+  .sw:checked { background: var(--res); } .sw:checked::after { left: 21px; }
+  .primary { width: 100%; padding: 14px; border-radius: 12px; border: 0; background: var(--res); color: #001018; font-weight: 700; font-size: 16px; cursor: pointer; }
+  .ghost { width: 100%; padding: 12px; border-radius: 12px; border: 1px solid rgba(255,255,255,.2); background: transparent; color: #fff; font-size: 14px; cursor: pointer; margin-top: 8px; }
+
+  #gate { position: fixed; inset: 0; background: radial-gradient(ellipse at 50% 0%, #142238, #05070c 70%); z-index: 200; display: flex; flex-direction: column; justify-content: flex-end; padding: 24px 22px calc(var(--safe-b) + 28px); }
+  #gate.hidden { display: none; }
+  #gate h1 { font-size: 30px; margin: 0 0 6px; letter-spacing: -.8px; }
+  #gate p { color: var(--dim); margin: 0 0 18px; }
+  #gate ul { margin: 0 0 22px; padding: 0; list-style: none; color: #cfd6e2; }
+  #gate li { padding: 6px 0; display: flex; gap: 10px; align-items: center; }
+  #gate li i { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 8px; background: rgba(255,255,255,.08); font-style: normal; }
+  #toast { position: fixed; left: 50%; top: calc(var(--safe-t) + 64px); transform: translateX(-50%); background: rgba(255,93,93,.92); color: #fff; padding: 8px 14px; border-radius: 10px; font-size: 13px; z-index: 150; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 90vw; }
+  #toast.show { opacity: 1; }
+  #toast.info { background: rgba(30,40,60,.95); }
+</style>
+</head>
+<body>
+<video id="cam" autoplay muted playsinline></video>
+<canvas id="ground"></canvas>
+<div id="horizon"></div>
+<div id="labels"></div>
+<div id="hint" class="hidden"></div>
+
+<div id="top">
+  <div class="chip" id="hdg"><b>--°</b><span>heading</span></div>
+  <div class="chip" id="loc"><div class="t"><span class="dot" id="gpsdot"></span><span id="loctxt">Locating…</span></div><div class="s" id="locsub">—</div></div>
+</div>
+
+<div id="bottom">
+  <canvas id="radar" width="264" height="264"></canvas>
+  <div class="chip" id="here"><div class="k">You are on</div><div class="v" id="hereaddr">—</div><div class="v p" id="hereval"></div></div>
+  <div id="btns">
+    <button class="btn" id="refresh" title="Refresh parcels" aria-label="Refresh parcels"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 4v5h-5"/></svg></button>
+    <button class="btn" id="gear" title="Settings" aria-label="Settings"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
+  </div>
+</div>
+
+<div class="sheet" id="detail" role="dialog" aria-modal="true"><div class="grab"></div><button class="x" id="dx" aria-label="Close">✕</button><div id="dbody"></div></div>
+
+<div class="sheet" id="settings" role="dialog" aria-modal="true">
+  <div class="grab"></div><button class="x" id="sx" aria-label="Close">✕</button>
+  <h2>Settings</h2>
+  <div class="row"><label>Price shown<small>Assessed values are the county's; sale is the last recorded non-zero price</small></label>
+    <div class="seg" data-set="priceMode"><button data-v="total">Total</button><button data-v="land">Land</button><button data-v="psf">$/ft²</button><button data-v="sale">Sale</button></div></div>
+  <div class="row"><label>Units</label><div class="seg" data-set="units"><button data-v="imperial">ft / mi</button><button data-v="metric">m / km</button></div></div>
+  <div class="row"><label>Fetch radius<small>Parcels loaded around you (1000 max per request)</small></label><input type="range" id="s-radius" min="80" max="600" step="20"><output id="o-radius"></output></div>
+  <div class="row"><label>Label distance<small>Hide parcels farther than this</small></label><input type="range" id="s-maxdist" min="40" max="600" step="10"><output id="o-maxdist"></output></div>
+  <div class="row"><label>Max labels<small>Nearest parcels win</small></label><input type="range" id="s-maxlabels" min="3" max="30" step="1"><output id="o-maxlabels"></output></div>
+  <div class="row"><label>Camera field of view<small>Horizontal. Point at a known edge and adjust until the outline sits on it</small></label><input type="range" id="s-fov" min="35" max="100" step="1"><output id="o-fov"></output></div>
+  <div class="row"><label>Heading offset<small>Compass correction if labels sit left/right of the buildings</small></label><input type="range" id="s-hoff" min="-45" max="45" step="1"><output id="o-hoff"></output></div>
+  <div class="row"><label>Magnetic declination<small>East positive. Seattle ≈ 15.3°E</small></label><input type="range" id="s-decl" min="-25" max="25" step="0.1"><output id="o-decl"></output></div>
+  <div class="row"><label>Ground outlines<small>Draw parcel boundaries on the ground when tilted down</small></label><input type="checkbox" class="sw" id="s-ground"></div>
+  <div class="row"><label>Label the parcel you stand on</label><input type="checkbox" class="sw" id="s-inside"></div>
+  <div class="row"><label>Only parcels with a price</label><input type="checkbox" class="sw" id="s-priced"></div>
+  <div class="row"><label>Radar heading-up</label><input type="checkbox" class="sw" id="s-radarup"></div>
+  <div class="row"><label>Simulate location<small>Desktop testing: fixed position in the U-District, drag to look around, wheel to tilt</small></label><input type="checkbox" class="sw" id="s-sim"></div>
+  <button class="ghost" id="clearcache">Clear cached parcels</button>
+  <p class="sub" style="margin-top:14px" id="about"></p>
+</div>
+
+<div id="gate">
+  <h1>Estate AR</h1>
+  <p>Point your phone at a building and see what the county thinks it is worth. Everything runs in this page; parcel data comes straight from public GIS servers.</p>
+  <ul>
+    <li><i>📷</i> Camera — passthrough background only, nothing is recorded</li>
+    <li><i>📍</i> Location — to load parcels around you</li>
+    <li><i>🧭</i> Motion &amp; orientation — compass heading and tilt</li>
+  </ul>
+  <button class="primary" id="start">Start</button>
+  <button class="ghost" id="startsim">Try without sensors (simulated location)</button>
+</div>
+<div id="toast" role="status"></div>
+
+<script src="geo.js"></script>
+<script src="providers.js"></script>
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const D2R = Math.PI / 180;
+
+  // ---- settings ----------------------------------------------------------
+  const DEFAULTS = { priceMode: "total", units: "imperial", radius: 220, maxdist: 200, maxlabels: 12, fov: 58, hoff: 0, decl: 15.3, ground: true, inside: false, priced: true, radarup: true, sim: false };
+  const S = Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem("estate-ar:settings") || "{}"));
+  const saveS = () => localStorage.setItem("estate-ar:settings", JSON.stringify(S));
+
+  // ---- state -------------------------------------------------------------
+  const st = {
+    lat: null, lon: null, acc: null, fixAt: 0,
+    headingRaw: null, heading: null, pitch: 0, hasCompass: false, hasOrient: false, iOSCompass: false,
+    provider: null, parcels: [], views: new Map(), fetching: false, lastFetchAt: 0, lastGeocodeAt: null, place: "",
+    selected: null, insideId: null, camOK: false, w: innerWidth, h: innerHeight,
+    sim: { heading: 20, pitch: 0 },
+  };
+  const store = new Providers.ParcelStore({ storage: localStorage });
+  const SIM = { lat: 47.6625, lon: -122.3145 };
+
+  const TYPE_COLOR = { R: "var(--res)", C: "var(--com)", K: "var(--condo)", M: "var(--res)", T: "var(--other)", U: "var(--other)", X: "var(--exempt)" };
+  const TYPE_HEX = { R: "#37d3ff", C: "#ff8a3d", K: "#c58bff", M: "#37d3ff", T: "#8fe388", U: "#8fe388", X: "#ffd166" };
+  const colorOf = (p) => TYPE_COLOR[p.propType] || "var(--other)";
+  const hexOf = (p) => TYPE_HEX[p.propType] || "#8fe388";
+  const imperial = () => S.units === "imperial";
+
+  function toast(msg, info) { const t = $("toast"); t.textContent = msg; t.className = "show" + (info ? " info" : ""); clearTimeout(t._t); t._t = setTimeout(() => t.className = "", 3200); }
+
+  // ---- price for label ----------------------------------------------------
+  function priceOf(p) {
+    switch (S.priceMode) {
+      case "land": return { v: p.landValue, tag: "land" };
+      case "psf": return { v: p.lotSqft ? p.totalValue / p.lotSqft : null, tag: "/ft² lot", psf: true };
+      case "sale": return p.lastSale ? { v: p.lastSale.price, tag: "sold " + p.lastSale.date.getFullYear() } : { v: p.totalValue, tag: "assessed" };
+      default: return { v: p.totalValue, tag: "assessed" };
+    }
+  }
+  const fmtP = (pr, compact) => pr.psf ? (pr.v == null ? "—" : "$" + Math.round(pr.v)) : Geo.fmtMoney(pr.v, compact);
+
+  // ---- camera ------------------------------------------------------------
+  async function startCamera() {
+    const v = $("cam");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+      v.srcObject = stream; await v.play().catch(() => {}); st.camOK = true;
+    } catch (e) { v.classList.add("nocam"); toast("Camera unavailable — running without passthrough", true); }
+  }
+
+  // ---- sensors -----------------------------------------------------------
+  function onOrient(e) {
+    st.hasOrient = true;
+    const screenAngle = (screen.orientation && screen.orientation.angle) || window.orientation || 0;
+    if (e.webkitCompassHeading != null && !isNaN(e.webkitCompassHeading)) {
+      st.iOSCompass = true; st.hasCompass = true;
+      st.headingRaw = Geo.wrap360(e.webkitCompassHeading + screenAngle);
+      // pitch of the back camera from beta/gamma (orientation independent)
+      const b = (e.beta || 0) * D2R, g = (e.gamma || 0) * D2R;
+      st.pitch = Math.asin(Math.max(-1, Math.min(1, -Math.cos(b) * Math.cos(g)))) / D2R;
+    } else if (e.alpha != null) {
+      // Direction of the device's -z axis (back camera) in the earth frame, from ZXY Euler angles.
+      const a = e.alpha * D2R, b = (e.beta || 0) * D2R, g = (e.gamma || 0) * D2R;
+      const cA = Math.cos(a), sA = Math.sin(a), cB = Math.cos(b), sB = Math.sin(b), cG = Math.cos(g), sG = Math.sin(g);
+      const east = -cA * sG - sA * sB * cG, north = -sA * sG + cA * sB * cG, up = -cB * cG;
+      st.headingRaw = Geo.wrap360(Math.atan2(east, north) / D2R);
+      st.pitch = Math.asin(Math.max(-1, Math.min(1, up))) / D2R;
+      if (e.absolute || e.type === "deviceorientationabsolute") st.hasCompass = true;
+    }
+  }
+  async function startOrientation() {
+    if (typeof DeviceOrientationEvent !== "undefined" && typeof DeviceOrientationEvent.requestPermission === "function") {
+      try { const r = await DeviceOrientationEvent.requestPermission(); if (r !== "granted") toast("Motion permission denied — use the simulate option"); } catch (e) { /* must be user gesture; we are in one */ }
+    }
+    if ("ondeviceorientationabsolute" in window) window.addEventListener("deviceorientationabsolute", onOrient, true);
+    window.addEventListener("deviceorientation", onOrient, true);
+  }
+  function startGPS() {
+    if (!navigator.geolocation) { toast("No geolocation in this browser"); return; }
+    navigator.geolocation.watchPosition((pos) => {
+      st.lat = pos.coords.latitude; st.lon = pos.coords.longitude; st.acc = pos.coords.accuracy; st.fixAt = Date.now();
+      maybeFetch(); maybeGeocode();
+    }, (err) => { toast("Location: " + err.message); $("gpsdot").className = "dot bad"; $("loctxt").textContent = "Location denied"; },
+    { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 });
+  }
+  function startSim() {
+    st.lat = SIM.lat; st.lon = SIM.lon; st.acc = 5; st.fixAt = Date.now(); st.hasCompass = true; st.hasOrient = true;
+    let drag = null;
+    const onDown = (x, y) => { drag = { x, y, h: st.sim.heading, p: st.sim.pitch }; };
+    const onMove = (x, y) => { if (!drag) return; st.sim.heading = Geo.wrap360(drag.h + (x - drag.x) * (S.fov / st.w)); st.sim.pitch = Math.max(-89, Math.min(89, drag.p - (y - drag.y) * (S.fov / st.w))); };
+    const lbls = $("labels");
+    lbls.addEventListener("mousedown", (e) => onDown(e.clientX, e.clientY));
+    window.addEventListener("mousemove", (e) => onMove(e.clientX, e.clientY));
+    window.addEventListener("mouseup", () => { drag = null; });
+    lbls.addEventListener("touchstart", (e) => onDown(e.touches[0].clientX, e.touches[0].clientY), { passive: true });
+    lbls.addEventListener("touchmove", (e) => onMove(e.touches[0].clientX, e.touches[0].clientY), { passive: true });
+    lbls.addEventListener("touchend", () => { drag = null; });
+    window.addEventListener("wheel", (e) => { st.sim.pitch = Math.max(-89, Math.min(89, st.sim.pitch - e.deltaY * 0.05)); }, { passive: true });
+    window.addEventListener("keydown", (e) => { if (e.key === "ArrowLeft") st.sim.heading -= 3; if (e.key === "ArrowRight") st.sim.heading += 3; if (e.key === "ArrowUp") st.sim.pitch += 2; if (e.key === "ArrowDown") st.sim.pitch -= 2; });
+    maybeFetch(); maybeGeocode();
+  }
+
+  // ---- data --------------------------------------------------------------
+  async function maybeFetch(force) {
+    if (st.lat == null || st.fetching) return;
+    const prov = Providers.providerFor(st.lat, st.lon);
+    if (!prov) { st.provider = null; st.parcels = []; $("hint").className = ""; $("hint").textContent = "No parcel data source for this location yet. Providers: " + Object.values(Providers.PROVIDERS).map((p) => p.name).join(", "); return; }
+    if (st.provider !== prov) { st.provider = prov; if (S.decl === DEFAULTS.decl && prov.declination != null) S.decl = prov.declination; }
+    if (!force && !store.needsFetch(st.lat, st.lon, S.radius, prov.id)) { if (st.parcels !== store.parcels) { st.parcels = store.parcels; st.views.clear(); } return; }
+    if (!force && Date.now() - st.lastFetchAt < 4000) return;
+    st.fetching = true; $("refresh").classList.add("spin"); st.lastFetchAt = Date.now();
+    try {
+      const r = await Providers.fetchArea(prov, st.lat, st.lon, S.radius);
+      store.set(st.lat, st.lon, S.radius, prov.id, r.parcels);
+      st.parcels = r.parcels; st.views.clear();
+      if (r.exceeded) toast("Dense area: only the first 1000 parcels loaded — reduce the radius", true);
+    } catch (e) { toast("Parcel fetch failed: " + e.message); }
+    finally { st.fetching = false; $("refresh").classList.remove("spin"); }
+  }
+  async function maybeGeocode() {
+    if (st.lat == null) return;
+    if (st.lastGeocodeAt && Geo.haversine(st.lat, st.lon, st.lastGeocodeAt.lat, st.lastGeocodeAt.lon) < 300) return;
+    st.lastGeocodeAt = { lat: st.lat, lon: st.lon };
+    try { const g = await Providers.reverseGeocode(st.lat, st.lon); st.place = [g.city, g.neighbourhood].filter(Boolean).join(" · "); } catch (e) { /* header just shows coords */ }
+  }
+
+  // ---- per-frame geometry ------------------------------------------------
+  function viewOf(p) {
+    // cache parcelView per parcel per GPS fix
+    let v = st.views.get(p.id);
+    if (!v || v.fixAt !== st.fixAt) { v = Geo.parcelView(st.lat, st.lon, p.ring, p.centroid); v.fixAt = st.fixAt; st.views.set(p.id, v); }
+    return v;
+  }
+  function currentHeading() {
+    if (S.sim) return st.sim.heading;
+    if (st.headingRaw == null) return null;
+    const trueHdg = Geo.wrap360(st.headingRaw + S.decl + S.hoff);
+    st.heading = Geo.smoothHeading(st.heading, trueHdg, 0.25);
+    return st.heading;
+  }
+  const currentPitch = () => S.sim ? st.sim.pitch : st.pitch;
+
+  // ---- render ------------------------------------------------------------
+  const labelEls = new Map();
+  const ground = $("ground"), gctx = ground.getContext("2d");
+  const radar = $("radar"), rctx = radar.getContext("2d");
+  function resize() { st.w = innerWidth; st.h = innerHeight; ground.width = st.w * devicePixelRatio; ground.height = st.h * devicePixelRatio; gctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0); }
+  addEventListener("resize", resize); resize();
+
+  const EYE = 1.6;      // metres, eye above ground
+  const LABEL_H = 5.5;  // metres, where the label floats above the parcel
+
+  function frame() {
+    requestAnimationFrame(frame);
+    const hdg = currentHeading(), pitch = currentPitch();
+    // header
+    if (hdg != null) { $("hdg").firstElementChild.textContent = Math.round(hdg) + "°"; $("hdg").lastElementChild.textContent = Geo.cardinal(hdg) + (st.hasCompass || S.sim ? "" : " · no compass"); }
+    if (st.lat != null) {
+      $("gpsdot").className = "dot " + (st.acc == null ? "" : st.acc <= 15 ? "ok" : st.acc <= 40 ? "" : "bad");
+      $("loctxt").textContent = st.place || `${st.lat.toFixed(5)}, ${st.lon.toFixed(5)}`;
+      $("locsub").textContent = `${st.parcels.length} parcels · ±${Geo.fmtDistance(st.acc || 0, imperial())} · ${st.provider ? st.provider.name : "no provider"}${S.sim ? " · SIMULATED" : ""}`;
+    }
+    // horizon line
+    const hp = Geo.project(hdg || 0, 0, hdg || 0, pitch, S.fov, st.w, st.h, 0);
+    $("horizon").style.top = (hp ? Math.round(hp.y) : -10) + "px";
+    $("horizon").style.display = hp && hp.y > 0 && hp.y < st.h ? "" : "none";
+
+    gctx.clearRect(0, 0, st.w, st.h);
+    const hint = $("hint");
+    if (hdg == null || st.lat == null) {
+      hint.className = ""; hint.textContent = st.lat == null ? "Waiting for GPS…" : "Waiting for compass… move the phone in a figure-8";
+      for (const el of labelEls.values()) el.style.display = "none";
+      drawRadar(hdg, []); return;
+    }
+
+    // collect visible parcels
+    const vis = [];
+    st.insideId = null;
+    for (const p of st.parcels) {
+      const v = viewOf(p);
+      if (v.inside) st.insideId = p.id;
+      if (S.priced && !(p.totalValue > 0)) continue;
+      if (v.inside && !S.inside) continue;
+      const d = v.inside ? 8 : Math.max(v.nearest, 3);
+      if (d > S.maxdist) continue;
+      const pr = Geo.project(v.bearing, Geo.pitchTo(Math.max(v.distance, 6), LABEL_H - EYE), hdg, pitch, S.fov, st.w, st.h, 14);
+      if (!pr) continue;
+      vis.push({ p, v, d, x: pr.x, y: pr.y });
+    }
+    vis.sort((a, b) => a.d - b.d);            // near first
+    if (vis.length > S.maxlabels) vis.length = S.maxlabels;
+
+    // de-overlap: near labels keep their spot; a farther one is bumped up a few
+    // times and dropped if it still collides, so dense blocks don't stack to the sky
+    const placed = [];
+    for (const it of vis) {
+      const far = it.d > S.maxdist * 0.55;
+      const w = far ? 64 : 120, h = far ? 26 : 54;
+      it.far = far; it.w = w; it.h = h;
+      let guard = 0;
+      while (guard < 3 && placed.some((q) => Math.abs(q.x - it.x) < (q.w + w) / 2 && Math.abs(q.y - it.y) < (q.h + h) / 2)) { it.y -= h + 4; guard++; }
+      if (guard === 3 && placed.some((q) => Math.abs(q.x - it.x) < (q.w + w) / 2 && Math.abs(q.y - it.y) < (q.h + h) / 2)) { it.drop = true; continue; }
+      if (it.y < 90) { it.drop = true; continue; }   // under the header
+      placed.push(it);
+    }
+    const shown = vis.filter((it) => !it.drop).reverse(); // far first => near on top
+
+    // DOM labels
+    const seen = new Set();
+    shown.forEach((it, i) => {
+      const p = it.p; seen.add(p.id);
+      let el = labelEls.get(p.id);
+      if (!el) {
+        el = document.createElement("button"); el.className = "lbl"; el.setAttribute("aria-label", "Property details");
+        el.innerHTML = '<div class="price"></div><div class="addr"></div><div class="sub"></div>';
+        el.addEventListener("click", (e) => { e.stopPropagation(); select(p.id); });
+        el.style.setProperty("--c", colorOf(p)); $("labels").appendChild(el); labelEls.set(p.id, el);
+      }
+      const pr = priceOf(p);
+      el.firstElementChild.textContent = fmtP(pr, true);
+      el.children[1].textContent = p.address || p.name || p.use || "(no address)";
+      el.children[2].textContent = `${Geo.fmtDistance(it.d, imperial())} · ${pr.tag}${p.use ? " · " + p.use.replace(/\(.*\)/, "") : ""}`;
+      el.className = "lbl" + (it.far ? " far" : "") + (st.selected === p.id ? " sel" : "");
+      el.style.display = "";
+      el.style.zIndex = String(i + 1);
+      el.style.opacity = String(Math.max(.45, 1 - it.d / (S.maxdist * 1.4)));
+      el.style.transform = `translate(${it.x.toFixed(1)}px, ${it.y.toFixed(1)}px) translate(-50%, -100%)`;
+    });
+    for (const [id, el] of labelEls) if (!seen.has(id)) el.style.display = "none";
+
+    if (S.ground) drawGround(hdg, pitch);
+    hint.className = shown.length ? "hidden" : "";
+    if (!shown.length) hint.textContent = st.parcels.length ? (pitch > 35 ? "Lower the phone toward the buildings" : "No parcels this way within " + Geo.fmtDistance(S.maxdist, imperial())) : (st.fetching ? "Loading parcels…" : "No parcels loaded");
+
+    // "you are on"
+    const inside = st.insideId && st.parcels.find((p) => p.id === st.insideId);
+    $("hereaddr").textContent = inside ? (inside.address || inside.name || inside.use || "PIN " + inside.id) : "—";
+    $("hereval").textContent = inside ? fmtP(priceOf(inside), false) + (inside.use ? " · " + inside.use : "") : "";
+    $("here").onclick = inside ? () => select(inside.id) : null;
+
+    drawRadar(hdg, shown);
+  }
+
+  function drawGround(hdg, pitch) {
+    const proj = (lon, lat) => {
+      const b = Geo.bearing(st.lat, st.lon, lat, lon), d = Geo.haversine(st.lat, st.lon, lat, lon);
+      if (d < 0.5) return null;
+      return Geo.project(b, Geo.pitchTo(d, -EYE), hdg, pitch, S.fov, st.w, st.h, 25);
+    };
+    gctx.lineWidth = 1.5; gctx.lineJoin = "round";
+    for (const p of st.parcels) {
+      const v = viewOf(p);
+      if (v.nearest > S.maxdist) continue;
+      if (Math.abs(Geo.angleDiff(v.bearing, hdg)) > S.fov / 2 + v.spanDeg / 2 + 10) continue;
+      const pts = p.ring.map(([lon, lat]) => proj(lon, lat));
+      const sel = st.selected === p.id;
+      gctx.strokeStyle = hexOf(p); gctx.globalAlpha = sel ? .95 : .55;
+      gctx.beginPath(); let started = false;
+      for (let i = 0; i <= pts.length; i++) {
+        const a = pts[i % pts.length];
+        if (!a || a.y < -st.h) { started = false; continue; }
+        if (!started) { gctx.moveTo(a.x, a.y); started = true; } else gctx.lineTo(a.x, a.y);
+      }
+      gctx.stroke();
+      if (sel) { gctx.globalAlpha = .18; gctx.fillStyle = hexOf(p); gctx.fill(); }
+    }
+    gctx.globalAlpha = 1;
+  }
+
+  function drawRadar(hdg, vis) {
+    const W = radar.width, c = W / 2, R = c - 6, scale = R / S.radius;
+    rctx.clearRect(0, 0, W, W);
+    const rot = S.radarup && hdg != null ? -hdg * D2R : 0;
+    const mpd = Geo.metresPerDegree(st.lat || 47.6);
+    const toXY = (lon, lat) => { const dx = (lon - st.lon) * mpd.lon, dy = (lat - st.lat) * mpd.lat; const x = dx * Math.cos(rot) - dy * Math.sin(rot), y = dx * Math.sin(rot) + dy * Math.cos(rot); return [c + x * scale, c - y * scale]; };
+    rctx.save(); rctx.beginPath(); rctx.arc(c, c, R, 0, Math.PI * 2); rctx.clip();
+    // rings
+    rctx.strokeStyle = "rgba(255,255,255,.08)"; rctx.lineWidth = 1;
+    for (const f of [1 / 3, 2 / 3, 1]) { rctx.beginPath(); rctx.arc(c, c, R * f, 0, Math.PI * 2); rctx.stroke(); }
+    if (st.lat != null) {
+      // view cone
+      if (hdg != null) {
+        const a0 = (S.radarup ? 0 : hdg) * D2R - S.fov / 2 * D2R - Math.PI / 2, a1 = a0 + S.fov * D2R;
+        rctx.fillStyle = "rgba(55,211,255,.13)"; rctx.beginPath(); rctx.moveTo(c, c); rctx.arc(c, c, R, a0, a1); rctx.closePath(); rctx.fill();
+      }
+      const visIds = new Set(vis.map((it) => it.p.id));
+      for (const p of st.parcels) {
+        rctx.beginPath();
+        p.ring.forEach(([lon, lat], i) => { const [x, y] = toXY(lon, lat); i ? rctx.lineTo(x, y) : rctx.moveTo(x, y); });
+        rctx.closePath();
+        const sel = st.selected === p.id, on = visIds.has(p.id);
+        rctx.fillStyle = hexOf(p); rctx.globalAlpha = sel ? .85 : on ? .5 : .16; rctx.fill();
+        rctx.globalAlpha = sel ? 1 : .45; rctx.strokeStyle = sel ? "#fff" : hexOf(p); rctx.lineWidth = sel ? 2 : 1; rctx.stroke();
+      }
+      rctx.globalAlpha = 1;
+      // north tick
+      const nAng = rot - Math.PI / 2; rctx.fillStyle = "#fff"; rctx.font = "bold 18px -apple-system, sans-serif"; rctx.textAlign = "center"; rctx.textBaseline = "middle";
+      rctx.fillText("N", c + Math.cos(nAng) * (R - 14), c + Math.sin(nAng) * (R - 14));
+      // me
+      rctx.fillStyle = "#fff"; rctx.beginPath(); rctx.arc(c, c, 5, 0, Math.PI * 2); rctx.fill();
+      rctx.strokeStyle = "rgba(255,255,255,.5)"; rctx.lineWidth = 2; rctx.beginPath(); rctx.arc(c, c, Math.max(6, (st.acc || 0) * scale), 0, Math.PI * 2); rctx.stroke();
+    }
+    rctx.restore();
+    rctx.fillStyle = "rgba(255,255,255,.5)"; rctx.font = "16px -apple-system, sans-serif"; rctx.textAlign = "left"; rctx.textBaseline = "bottom";
+    rctx.fillText(Geo.fmtDistance(S.radius, imperial()), 10, W - 10);
+  }
+
+  // ---- detail sheet ------------------------------------------------------
+  function select(id) {
+    st.selected = id;
+    const p = st.parcels.find((q) => q.id === id); if (!p) return;
+    const v = viewOf(p), imp = imperial(), prov = st.provider || Providers.PROVIDERS.kingcounty;
+    const area = p.lotSqft ? (imp ? p.lotSqft.toLocaleString() + " ft²" + (p.acres >= 0.25 ? ` (${p.acres.toFixed(2)} ac)` : "") : Math.round(p.lotSqft * 0.0929).toLocaleString() + " m²") : "—";
+    const psf = p.lotSqft && p.totalValue ? "$" + Math.round(p.totalValue / p.lotSqft) + " /ft² lot" : "";
+    const salesHtml = p.sales.length ? `<div class="sales"><h3 style="font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:.6px;margin:14px 0 2px">Recorded sales (3 yrs)</h3><ul>${p.sales.map((s) => `<li><span>${s.date ? s.date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "—"} <span class="z">${s.use || ""}</span></span><b class="${s.price > 0 ? "" : "z"}">${s.price > 0 ? Geo.fmtMoney(s.price) : "transfer / $0"}</b></li>`).join("")}</ul></div>` : "";
+    $("dbody").innerHTML = `
+      <h2>${esc(p.address || p.name || "(no address)")}</h2>
+      <div class="sub">${esc([p.city, p.zip].filter(Boolean).join(", "))} · PIN ${esc(p.id)} · ${Geo.fmtDistance(v.distance, imp)} ${Geo.cardinal(v.bearing)}</div>
+      <div class="big" style="--c:${colorOf(p)}">
+        <div><div class="k">Total assessed</div><div class="v total">${Geo.fmtMoney(p.totalValue)}</div><div class="sub">${psf}</div></div>
+        <div><div class="k">Land</div><div class="v">${Geo.fmtMoney(p.landValue, true)}</div></div>
+        <div><div class="k">Improvements</div><div class="v">${Geo.fmtMoney(p.imprValue, true)}</div></div>
+      </div>
+      ${p.lastSale ? `<div class="sub">Last sale <b style="color:#fff">${Geo.fmtMoney(p.lastSale.price)}</b> on ${p.lastSale.date.toLocaleDateString()}${p.totalValue ? ` · ${(p.lastSale.price / p.totalValue * 100).toFixed(0)}% of assessed` : ""}</div>` : ""}
+      <table class="kv">
+        <tr><td>Use</td><td>${esc(p.use || "—")}</td></tr>
+        <tr><td>Type</td><td>${esc(p.propTypeName || p.propType || "—")}</td></tr>
+        <tr><td>Zoning</td><td>${esc(p.zoning || "—")}</td></tr>
+        <tr><td>Lot</td><td>${area}</td></tr>
+        ${p.name ? `<tr><td>Name</td><td>${esc(p.name)}</td></tr>` : ""}
+        ${p.plat ? `<tr><td>Plat</td><td>${esc(p.plat)}</td></tr>` : ""}
+      </table>
+      ${salesHtml}
+      <div class="links">${prov.links ? Object.entries(prov.links).map(([k, fn]) => `<a href="${fn(p)}" target="_blank" rel="noopener">${k === "assessor" ? "Assessor record" : k === "parcelViewer" ? "Parcel viewer" : k}</a>`).join("") : ""}</div>
+      <div class="sub" style="margin-top:12px">${esc(prov.attribution)}. Assessed values are for taxation and are not a market appraisal.</div>`;
+    $("detail").classList.add("open");
+  }
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  $("dx").onclick = () => { $("detail").classList.remove("open"); st.selected = null; };
+  $("labels").addEventListener("click", () => { if ($("detail").classList.contains("open")) $("dx").onclick(); });
+
+  // ---- settings UI ---------------------------------------------------------
+  function bindRange(id, key, fmt) {
+    const el = $("s-" + id), out = $("o-" + id);
+    el.value = S[key]; out.textContent = fmt(S[key]);
+    el.oninput = () => { S[key] = parseFloat(el.value); out.textContent = fmt(S[key]); saveS(); if (key === "radius") maybeFetch(true); };
+  }
+  function bindSwitch(id, key, cb) { const el = $("s-" + id); el.checked = !!S[key]; el.onchange = () => { S[key] = el.checked; saveS(); cb && cb(); }; }
+  function bindSeg(key) { const seg = document.querySelector(`.seg[data-set="${key}"]`); const paint = () => [...seg.children].forEach((b) => b.classList.toggle("on", b.dataset.v === S[key])); paint(); seg.onclick = (e) => { if (!e.target.dataset.v) return; S[key] = e.target.dataset.v; saveS(); paint(); refreshRanges(); }; }
+  const dist = (m) => Geo.fmtDistance(m, imperial());
+  function refreshRanges() { bindRange("radius", "radius", dist); bindRange("maxdist", "maxdist", dist); bindRange("maxlabels", "maxlabels", (v) => String(v)); bindRange("fov", "fov", (v) => v + "°"); bindRange("hoff", "hoff", (v) => (v > 0 ? "+" : "") + v + "°"); bindRange("decl", "decl", (v) => v.toFixed(1) + "°"); }
+  refreshRanges(); bindSeg("priceMode"); bindSeg("units");
+  bindSwitch("ground", "ground"); bindSwitch("inside", "inside"); bindSwitch("priced", "priced"); bindSwitch("radarup", "radarup");
+  bindSwitch("sim", "sim", () => location.reload());
+  $("clearcache").onclick = () => { store.clear(); st.parcels = []; st.views.clear(); maybeFetch(true); toast("Cache cleared", true); };
+  $("gear").onclick = () => $("settings").classList.toggle("open");
+  $("sx").onclick = () => $("settings").classList.remove("open");
+  $("refresh").onclick = () => maybeFetch(true);
+  $("about").textContent = "Data: " + Object.values(Providers.PROVIDERS).map((p) => p.name).join(", ") + " (ArcGIS REST, CORS) and OpenStreetMap Nominatim for place names. No server: this page talks to those services directly.";
+
+  // ---- start ---------------------------------------------------------------
+  async function start(sim) {
+    $("gate").classList.add("hidden");
+    S.sim = !!sim; saveS();
+    if (!isSecureContext) toast("Camera/GPS need https or localhost");
+    if (sim) { startCamera().catch(() => {}); startSim(); }
+    else { await startOrientation(); startCamera(); startGPS(); }
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) maybeFetch(); });
+  }
+  $("start").onclick = () => start(false);
+  $("startsim").onclick = () => start(true);
+  if (S.sim) { $("startsim").textContent = "Continue with simulated location"; }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
