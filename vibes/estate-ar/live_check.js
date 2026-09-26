@@ -1,11 +1,11 @@
 // bun live_check.js [lat lon [radius_m]]     one point (default: Brooklyn Ave NE, U-District)
-// bun live_check.js --all                    one point per provider (Seattle, Everett, Tacoma)
+// bun live_check.js --all                    one point per provider (Seattle, Everett, Calabasas, Tacoma)
 // Live smoke test against the county ArcGIS services and Nominatim — the same
 // calls the browser makes.
 const Geo = require("./geo.js");
 const P = require("./providers.js");
 
-const POINTS = { kingcounty: [47.6625, -122.3145], snohomish: [47.9790, -122.2021], wastate: [47.2529, -122.4390] };
+const POINTS = { kingcounty: [47.6625, -122.3145], snohomish: [47.9790, -122.2021], lacounty: [34.1450, -118.6615], wastate: [47.2529, -122.4390] };
 
 async function check(lat, lon, radius) {
   const prov = P.providerFor(lat, lon);

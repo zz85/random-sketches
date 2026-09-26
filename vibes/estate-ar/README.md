@@ -114,13 +114,30 @@ For large residential buildings the total is not very meaningful, so the app add
 - **Rents.** No rent API is callable from a browser without a key, so `fetch_data.js` extracts the
   Washington rows of Zillow Research's public CSVs — ZORI (typical asking rent, all homes +
   multifamily) and ZHVI (typical condo value, typical home value) by ZIP, last 13 months — into
-  `data/wa_zip_market.json` (105 KB, 485 ZIPs). The detail sheet shows the ZIP typical rent, condo
+  `data/zip_market_wa.json` (105 KB, 485 ZIPs) and `data/zip_market_ca.json` (388 KB, 1,545 ZIPs); only your state's file is loaded. The detail sheet shows the ZIP typical rent, condo
   and home values with 1-year change, and an **estimated rent for a unit in this building**: ZIP
   typical rent × (unit size / 850 ft²)^0.6 × an age factor (new buildings +18%, pre-1985 −8%),
   with the implied gross yield against the assessed value per unit. On the Brooklyn Ave test block
   this gives studios ~$1,300, new towers ~$2,300, yields 4–9%, which matches asking rents there.
   It is an estimate and is labelled as one; the ZIP figures are Zillow's, as of the month shown.
 - A "Per unit" price mode puts the per-unit figure on the labels.
+
+## California: Proposition 13 and the market estimate
+
+Los Angeles County (Calabasas included) is a provider. California is different from Washington:
+under Proposition 13 the assessed value is the purchase price at the last change of ownership,
+grown at most 2 % a year, so two identical houses can carry $300K and $2.5M on the roll. Showing
+assessed values there would be misleading, so in Prop 13 counties the default label is a
+**comps-based market estimate**: the median $/ft² of arm's-length sales in the last 4 years within
+2× the search radius (at least 500 m), from the assessor's own sales layer, times the home's
+recorded living area. Labels say "est. market · 5 comps $645/ft²"; the detail sheet shows the
+estimate with the IQR of the comps, the Prop 13 value with its base year and homeowner exemption,
+the recorded living area / beds / baths / year built, and an estimated rent for the whole house.
+The estimate ignores condition, view and lot, and there is none for parcels without a recorded
+living area (vacant land, common-area slivers with a $9 roll value). The "Assessed" price mode
+still shows the roll value everywhere; "Auto" picks per state.
+
+Simulator: `index.html?sim=calabasas` starts you in Vista Pointe.
 
 ## Cost: bandwidth, CPU, battery
 
@@ -170,7 +187,9 @@ For large residential buildings the total is not very meaningful, so the app add
 | `nominatim.openstreetmap.org/reverse` | — | City + neighbourhood for the header | Once per 300 m of movement |
 | `overpass-api.de` / `overpass.kumi.systems` | — | OSM buildings with `height` or `building:levels` near you | Best effort; shared volunteer servers. Matched to parcels by building centroid |
 | `aqua.kingcounty.gov/extranet/assessor/*.zip` | King County | Apartment Complex + Unit Breakdown extracts | No CORS, so bundled by `fetch_data.js` into `data/kc_apartments.json` |
-| `files.zillowstatic.com/research/public_csvs/…` | WA ZIPs | ZORI rent, ZHVI condo and home value indices | 10–120 MB CSVs, so bundled by `fetch_data.js` into `data/wa_zip_market.json` |
+| `files.zillowstatic.com/research/public_csvs/…` | WA + CA ZIPs | ZORI rent, ZHVI condo and home value indices | 10–120 MB CSVs, so bundled by `fetch_data.js` into `data/zip_market_{wa,ca}.json` |
+| `cache.gis.lacounty.gov/cache/rest/services/LACounty_Cache/LACounty_Parcel/FeatureServer/0` | Los Angeles County | Parcels with roll values, base years, living ft², beds/baths, units, year built | Hosted layer, CORS, 2000/page, updated monthly |
+| `assessor.gis.lacounty.gov/assessor/rest/services/PAIS/pais_sales_parcels/MapServer/0` | Los Angeles County | Recorded sales with price, size, bedrooms | Feeds the comps estimate |
 
 Assessed values are the county's taxation values (typically a year behind and below market),
 not a market appraisal. Snohomish publishes "market" land/improvement values, which are its
@@ -197,5 +216,5 @@ sales layer / links. Most US county assessors publish parcels as an ArcGIS REST 
 - `fetch_data.js` — refreshes `data/` from the assessor extracts and Zillow Research CSVs
 - `parcelstore.js` — offline cache: coverage circles + IndexedDB parcel store (memory fallback), hex-lattice precache planner, circle-union boundary, GPS track/course, corridor-ahead planner, wifi gate, 24 h data meter
 - `sw.js`, `manifest.webmanifest`, `icon.svg`, `icon-192.png`, `icon-512.png` — PWA
-- `estate.test.js` — bun tests (76) using `fixture_parcels.json` / `fixture_sales.json` / `fixture_snohomish.json` / `fixture_wastate.json` captured from the live services
+- `estate.test.js` — bun tests (81) using `fixture_parcels.json` / `fixture_sales.json` / `fixture_snohomish.json` / `fixture_wastate.json` captured from the live services
 - `live_check.js` — live smoke test

@@ -131,8 +131,8 @@
 <div class="sheet" id="settings" role="dialog" aria-modal="true">
   <div class="grab"></div><button class="x" id="sx" aria-label="Close">✕</button>
   <h2>Settings</h2>
-  <div class="row"><label>Price shown<small>Assessed values are the county's; sale is the last recorded non-zero price</small></label>
-    <div class="seg" data-set="priceMode"><button data-v="total">Total</button><button data-v="land">Land</button><button data-v="psf">$/ft²</button><button data-v="unit">Per unit</button><button data-v="sale">Sale</button></div></div>
+  <div class="row"><label>Price shown<small>Auto = assessed in Washington, comps-based market estimate in California (where Prop 13 pins assessed value to the purchase price). Sale = last recorded non-zero price</small></label>
+    <div class="seg" data-set="priceMode" style="flex-wrap:wrap;max-width:60%"><button data-v="auto">Auto</button><button data-v="total">Assessed</button><button data-v="market">Market est.</button><button data-v="land">Land</button><button data-v="psf">$/ft²</button><button data-v="unit">Per unit</button><button data-v="sale">Sale</button></div></div>
   <div class="row"><label>Units</label><div class="seg" data-set="units"><button data-v="imperial">ft / mi</button><button data-v="metric">m / km</button></div></div>
   <div class="row"><label>Fetch radius<small>Parcels loaded around you (1000 max per request)</small></label><input type="range" id="s-radius" min="80" max="600" step="20"><output id="o-radius"></output></div>
   <div class="row"><label>Label distance<small>Hide parcels farther than this</small></label><input type="range" id="s-maxdist" min="40" max="600" step="10"><output id="o-maxdist"></output></div>
@@ -187,7 +187,7 @@
   const D2R = Math.PI / 180;
 
   // ---- settings ----------------------------------------------------------
-  const DEFAULTS = { priceMode: "total", units: "imperial", radius: 220, maxdist: 200, maxlabels: 12, fov: 58, hoff: 0, decl: 15.3, ground: true, rooftop: true, osm: true, inside: false, priced: true, radarup: true, radarcov: true, groundcov: true, prearea: 1000, auto: "wifi", autoahead: 600, dailyMB: 25, sim: false };
+  const DEFAULTS = { priceMode: "auto", units: "imperial", radius: 220, maxdist: 200, maxlabels: 12, fov: 58, hoff: 0, decl: 15.3, ground: true, rooftop: true, osm: true, inside: false, priced: true, radarup: true, radarcov: true, groundcov: true, prearea: 1000, auto: "wifi", autoahead: 600, dailyMB: 25, sim: false };
   const S = Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem("estate-ar:settings") || "{}"));
   const saveS = () => localStorage.setItem("estate-ar:settings", JSON.stringify(S));
 
@@ -205,7 +205,8 @@
   const dataMB = () => dataMeter.today() / 1048576;
   const overBudget = () => dataMeter.over(S.dailyMB * 1048576);
   let lastLoadKey = "";
-  const SIM = { lat: 47.6625, lon: -122.3145 };
+  const SIMS = { seattle: { lat: 47.6625, lon: -122.3145 }, calabasas: { lat: 34.1450, lon: -118.6615 } };
+  const SIM = SIMS[new URLSearchParams(location.search).get("sim")] || SIMS.seattle;   // ?sim=calabasas for the LA County test area
 
   const TYPE_COLOR = { R: "var(--res)", C: "var(--com)", K: "var(--condo)", M: "var(--res)", T: "var(--other)", U: "var(--other)", X: "var(--exempt)" };
   const TYPE_HEX = { R: "#37d3ff", C: "#ff8a3d", K: "#c58bff", M: "#37d3ff", T: "#8fe388", U: "#8fe388", X: "#ffd166" };
@@ -216,13 +217,20 @@
   function toast(msg, info) { const t = $("toast"); t.textContent = msg; t.className = "show" + (info ? " info" : ""); clearTimeout(t._t); t._t = setTimeout(() => t.className = "", 3200); }
 
   // ---- price for label ----------------------------------------------------
+  function marketOf(p) {
+    // comps-based estimate (Prop 13 counties); falls back to assessed
+    if (p.marketEstimate > 0) return { v: p.marketEstimate, tag: `est. market · ${p.comps.n} comps $${Math.round(p.comps.psf)}/ft²`, market: true };
+    return { v: p.totalValue, tag: p.baseYear ? `assessed (base ${p.baseYear})` : "assessed" };
+  }
   function priceOf(p) {
-    switch (S.priceMode) {
+    const mode = S.priceMode === "auto" ? (st.provider && st.provider.prop13 ? "market" : "total") : S.priceMode;
+    switch (mode) {
+      case "market": return marketOf(p);
       case "land": return { v: p.landValue, tag: "land" };
       case "psf": return { v: p.lotSqft ? p.totalValue / p.lotSqft : null, tag: "/ft² lot", psf: true };
       case "unit": { const m = Market.summary(p); return m.perUnit ? { v: m.perUnit, tag: m.kind === "condo" ? `avg of ${m.unitCount} units` : `per unit · ${m.apt.units} units` } : { v: p.totalValue, tag: "assessed" }; }
       case "sale": return p.lastSale ? { v: p.lastSale.price, tag: "sold " + p.lastSale.date.getFullYear() } : { v: p.totalValue, tag: "assessed" };
-      default: return { v: p.totalValue, tag: "assessed" };
+      default: return { v: p.totalValue, tag: p.baseYear && p.baseYear < new Date().getFullYear() - 1 ? `assessed · base ${p.baseYear}` : "assessed" };
     }
   }
   const fmtP = (pr, compact) => pr.psf ? (pr.v == null ? "—" : "$" + Math.round(pr.v)) : Geo.fmtMoney(pr.v, compact);
@@ -334,7 +342,7 @@
     if (st.provider !== prov) {
       st.provider = prov; if (S.decl === DEFAULTS.decl && prov.declination != null) S.decl = prov.declination;
       // bundled market data: ~100 KB of ZIP indices for all of WA, ~430 KB of apartment records for King County
-      Market.load("zips").then(() => { dirty = true; }).catch(() => {});
+      Market.load("zips:" + (prov.state || "WA")).then(() => { dirty = true; }).catch(() => {});
       if (prov.id === "kingcounty") Market.load("apts").then(() => { if (st.parcels.length) setParcels(st.parcels, st.source); }).catch(() => {});
     }
     st.fetching = true;
@@ -463,7 +471,9 @@
     for (const p of st.parcels) {
       const v = viewOf(p);
       if (v.inside) st.insideId = p.id;
-      if (S.priced && !(p.totalValue > 0)) continue;
+      // "only priced": needs a real value. Prop 13 counties carry $9 placeholder rolls on common-area slivers;
+      // treat anything under $1,000 with no market estimate as unpriced
+      if (S.priced && !(p.marketEstimate > 0) && !(p.totalValue >= 1000)) continue;
       if (v.inside && !S.inside) continue;
       const d = v.inside ? 8 : Math.max(v.nearest, 3);
       if (d > S.maxdist) continue;
@@ -730,20 +740,23 @@
     st.selected = id; dirty = true;
     const p = st.parcels.find((q) => q.id === id); if (!p) return;
     const v = viewOf(p), imp = imperial(), prov = st.provider || Providers.PROVIDERS.kingcounty;
-    const area = p.lotSqft ? (imp ? p.lotSqft.toLocaleString() + " ft²" + (p.acres >= 0.25 ? ` (${p.acres.toFixed(2)} ac)` : "") : Math.round(p.lotSqft * 0.0929).toLocaleString() + " m²") : "—";
+    const area = p.lotSqft ? (imp ? Math.round(p.lotSqft).toLocaleString() + " ft²" + (p.acres >= 0.25 ? ` (${p.acres.toFixed(2)} ac)` : "") : Math.round(p.lotSqft * 0.0929).toLocaleString() + " m²") : "—";
     const psf = p.lotSqft && p.totalValue ? "$" + Math.round(p.totalValue / p.lotSqft) + " /ft² lot" : "";
     const m = Market.summary(p);
     const pct = (x) => (x == null ? "" : `<span class="${x >= 0 ? "" : "z"}" style="color:${x >= 0 ? "var(--ok)" : "var(--bad)"}">${x >= 0 ? "+" : ""}${(x * 100).toFixed(1)}%</span> 1y`);
     const marketHtml = (m.kind || (m.zip && (p.propType === "R" || p.propType === "K" || m.kind))) ? `
-      <h3 style="font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:.6px;margin:14px 0 4px">${m.kind === "apartment" ? "Apartment building" : m.kind === "condo" ? "Condominium" : "Housing market"}</h3>
+      <h3 style="font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:.6px;margin:14px 0 4px">${m.kind === "apartment" ? "Apartment building" : m.kind === "condo" ? "Condominium" : m.kind === "home" ? "This home" : "Housing market"}</h3>
       ${m.kind === "apartment" ? `<div class="big" style="--c:${colorOf(p)}">
-        <div><div class="k">Assessed per unit</div><div class="v total">${Geo.fmtMoney(m.perUnit, true)}</div><div class="sub">${m.apt.units} units${m.apt.avgUnitSqft ? ` · avg ${m.apt.avgUnitSqft.toLocaleString()} ft²` : ""}${m.perSqft ? ` · $${m.perSqft}/ft²` : ""}</div></div>
+        <div><div class="k">${m.valueBasis === "market estimate" ? "Est. value per unit" : "Assessed per unit"}</div><div class="v total">${Geo.fmtMoney(m.perUnit, true)}</div><div class="sub">${m.apt.units} units${m.apt.avgUnitSqft ? ` · avg ${m.apt.avgUnitSqft.toLocaleString()} ft²` : ""}${m.perSqft ? ` · $${m.perSqft}/ft²` : ""}${m.valueBasis === "market estimate" ? " · from market est." : ""}</div></div>
         <div><div class="k">Est. rent / unit</div><div class="v">${m.rent ? "$" + m.rent.monthly.toLocaleString() + "<span style=\"font-size:12px;color:var(--dim)\">/mo</span>" : "—"}</div><div class="sub">${m.grossYield ? (m.grossYield * 100).toFixed(1) + "% gross yield" : ""}</div></div>
       </div>
       <table class="kv">
         ${m.apt.yearBuilt ? `<tr><td>Built</td><td>${m.apt.yearBuilt}${m.apt.stories ? ` · ${m.apt.stories} storeys` : ""}${m.apt.buildings > 1 ? ` · ${m.apt.buildings} buildings` : ""}${m.apt.elevator ? " · elevator" : ""}</td></tr>` : ""}
         ${m.mix ? `<tr><td>Unit mix</td><td>${esc(m.mix.join(", "))}</td></tr>` : ""}
       </table>` : ""}
+      ${m.kind === "home" ? `<div class="big" style="--c:${colorOf(p)}">
+        <div><div class="k">Est. rent</div><div class="v">${m.rent ? "$" + m.rent.monthly.toLocaleString() + "<span style=\"font-size:12px;color:var(--dim)\">/mo</span>" : "—"}</div><div class="sub">${m.grossYield ? (m.grossYield * 100).toFixed(1) + "% gross yield on " + (p.marketEstimate ? "est. market value" : "assessed value") : ""}</div></div>
+      </div>` : ""}
       ${m.kind === "condo" ? `<div class="big" style="--c:${colorOf(p)}">
         <div><div class="k">Avg assessed per unit</div><div class="v total">${Geo.fmtMoney(m.perUnit, true)}</div><div class="sub">${m.unitCount} units on this footprint</div></div>
         <div><div class="k">Est. rent (typical unit)</div><div class="v">${m.rent ? "$" + m.rent.monthly.toLocaleString() + "<span style=\"font-size:12px;color:var(--dim)\">/mo</span>" : "—"}</div></div>
@@ -753,15 +766,19 @@
         ${m.zip.condo ? `<tr><td>ZIP typical condo</td><td>${Geo.fmtMoney(m.zip.condo.value)} ${pct(m.zip.condo.change)}</td></tr>` : ""}
         ${m.zip.home ? `<tr><td>ZIP typical home</td><td>${Geo.fmtMoney(m.zip.home.value)} ${pct(m.zip.home.change)}</td></tr>` : ""}
       </table><div class="sub">Zillow Research indices for ${esc(p.zip || "")}, ${m.zip.asOf}. Rent per unit is an estimate: ZIP typical rent scaled by unit size and building age.</div>` : ""}` : "";
-    const salesHtml = prov.sales && p.sales.length ? `<div class="sales"><h3 style="font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:.6px;margin:14px 0 2px">Recorded sales (3 yrs)</h3><ul>${p.sales.map((s) => `<li><span>${s.date ? s.date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "—"} <span class="z">${s.use || ""}</span></span><b class="${s.price > 0 ? "" : "z"}">${s.price > 0 ? Geo.fmtMoney(s.price) : "transfer / $0"}</b></li>`).join("")}</ul></div>` : "";
+    const salesHtml = prov.sales && p.sales.length ?  `<div class="sales"><h3 style="font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:.6px;margin:14px 0 2px">Recorded sales (3 yrs)</h3><ul>${p.sales.map((s) => `<li><span>${s.date ? s.date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "—"} <span class="z">${s.use || ""}</span></span><b class="${s.price > 0 ? "" : "z"}">${s.price > 0 ? Geo.fmtMoney(s.price) + (s.sqft ? ` <span class="z">$${Math.round(s.price / s.sqft)}/ft²</span>` : "") : "transfer / $0"}</b></li>`).join("")}</ul></div>` : "";
     $("dbody").innerHTML = `
       <h2>${esc(p.address || p.name || "(no address)")}</h2>
       <div class="sub">${esc([p.city, p.county ? p.county + " County" : null, p.zip].filter(Boolean).join(", "))} · ${esc(p.id)} · ${Geo.fmtDistance(v.distance, imp)} ${Geo.cardinal(v.bearing)}</div>
-      <div class="big" style="--c:${colorOf(p)}">
-        <div><div class="k">Total assessed</div><div class="v total">${Geo.fmtMoney(p.totalValue)}</div><div class="sub">${psf}</div></div>
-        <div><div class="k">Land</div><div class="v">${Geo.fmtMoney(p.landValue, true)}</div></div>
-        <div><div class="k">Improvements</div><div class="v">${Geo.fmtMoney(p.imprValue, true)}</div></div>
+      ${p.comps || p.baseYear ? `<div class="big" style="--c:${colorOf(p)}">
+        <div><div class="k">Est. market value</div><div class="v total">${p.marketEstimate ? Geo.fmtMoney(p.marketEstimate) : "—"}</div><div class="sub">${p.comps ? `${p.comps.n} nearby sales · $${Math.round(p.comps.psf)}/ft² (IQR $${Math.round(p.comps.low)}–${Math.round(p.comps.high)})${p.livingSqft ? ` × ${p.livingSqft.toLocaleString()} ft²` : " · no living area on record"}` : "not enough nearby sales"}</div></div>
+        <div><div class="k">Assessed (Prop 13)</div><div class="v">${Geo.fmtMoney(p.totalValue, true)}</div><div class="sub">${p.baseYear ? `base year ${p.baseYear}` : ""}${p.homeownerExempt ? " · homeowner exemption" : ""}</div></div>
       </div>
+      <div class="sub">Under Proposition 13 the assessed value is the price at the last change of ownership (${p.baseYear || "base year"}) grown at most 2 % a year, so it says little about today's market. The estimate applies the median $/ft² of recent arm's-length sales within ${Geo.fmtDistance(Math.max(S.radius * 2, 500), imp)} to this home's recorded living area; it ignores condition, view and lot.</div>` : `<div class="big" style="--c:${colorOf(p)}">
+        <div><div class="k">Total assessed</div><div class="v total">${Geo.fmtMoney(p.totalValue)}</div><div class="sub">${psf}</div></div>`}
+        ${p.comps || p.baseYear ? "" : `<div><div class="k">Land</div><div class="v">${Geo.fmtMoney(p.landValue, true)}</div></div>
+        <div><div class="k">Improvements</div><div class="v">${Geo.fmtMoney(p.imprValue, true)}</div></div>
+      </div>`}
       ${p.lastSale ? `<div class="sub">Last sale <b style="color:#fff">${Geo.fmtMoney(p.lastSale.price)}</b> on ${p.lastSale.date.toLocaleDateString()}${p.totalValue ? ` · ${(p.lastSale.price / p.totalValue * 100).toFixed(0)}% of assessed` : ""}</div>` : ""}
       <table class="kv">
         ${p.units ? `<tr><td>Units</td><td>${p.units.length} parcels share this footprint (condominium / stacked) · values summed</td></tr>` : ""}
@@ -769,6 +786,7 @@
         <tr><td>Type</td><td>${esc(p.propTypeName || p.propType || "—")}</td></tr>
         <tr><td>Zoning</td><td>${esc(p.zoning || "—")}</td></tr>
         <tr><td>Lot</td><td>${area}</td></tr>
+        ${p.livingSqft || p.bedrooms || p.yearBuilt ? `<tr><td>Home</td><td>${[p.livingSqft ? p.livingSqft.toLocaleString() + " ft² living" : null, p.bedrooms ? p.bedrooms + " bd" : null, p.baths ? p.baths + " ba" : null, p.unitCount > 1 ? p.unitCount + " units" : null, p.yearBuilt ? "built " + p.yearBuilt : null].filter(Boolean).join(" · ")}</td></tr>` : ""}
         ${p.height > 0 ? `<tr><td>Height</td><td>${p.storeys} ${p.storeys === 1 ? "storey" : "storeys"} · ${imp ? Math.round(p.height * 3.28084) + " ft" : Math.round(p.height) + " m"} <span style="color:var(--dim)">(${p.heightSource === "osm" ? "OpenStreetMap" : p.heightSource === "assessor" ? "assessor record" : "estimated from assessed value"})</span></td></tr>` : ""}
         ${p.name ? `<tr><td>Name</td><td>${esc(p.name)}</td></tr>` : ""}
         ${p.plat ? `<tr><td>Plat</td><td>${esc(p.plat)}</td></tr>` : ""}
@@ -777,7 +795,7 @@
       ${salesHtml}
       ${p.units ? `<div class="sales"><h3 style="font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:.6px;margin:14px 0 2px">Units (${p.units.length})</h3><ul>${p.units.slice(0, 12).map((u) => `<li><span>${esc(u.address || u.id)} <span class="z">${esc(u.use || "")}</span></span><b>${Geo.fmtMoney(u.totalValue, true)}</b></li>`).join("")}${p.units.length > 12 ? `<li><span class="z">… ${p.units.length - 12} more</span></li>` : ""}</ul></div>` : ""}
       <div class="links">${prov.links ? Object.entries(prov.links).map(([k, fn]) => { const u = fn(p); return u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(k)}</a>` : ""; }).join("") : ""}</div>
-      <div class="sub" style="margin-top:12px">${esc(prov.attribution)}${p.asOf ? ", data as of " + new Date(p.asOf).toLocaleDateString() : ""}. <b style="color:#fff">Assessed value</b> is the assessor's estimate of market value on 1 January of the assessment year${p.taxYear ? ` (${p.taxYear})` : ""}, set annually for taxation — not the last sale price and not a current listing estimate; it typically runs a year behind and below the market.</div>`;
+      <div class="sub" style="margin-top:12px">${esc(prov.attribution)}${p.asOf ? ", data as of " + new Date(p.asOf).toLocaleDateString() : ""}. ${prov.prop13 ? `<b style="color:#fff">Assessed value</b> here is the Proposition 13 factored base-year value (roll ${p.taxYear || ""}): the purchase price at the last change of ownership, increased by at most 2 % a year. It is not a market estimate.` : `<b style="color:#fff">Assessed value</b> is the assessor's estimate of market value on 1 January of the assessment year${p.taxYear ? ` (${p.taxYear})` : ""}, set annually for taxation — not the last sale price and not a current listing estimate; it typically runs a year behind and below the market.`}</div>`;
     $("detail").classList.add("open");
   }
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));

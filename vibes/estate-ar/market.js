@@ -34,18 +34,22 @@
     return age < 5 ? 1.18 : age < 15 ? 1.08 : age < 40 ? 1.0 : 0.92;
   };
 
-  const state = { apts: null, zips: null, loading: {} };
+  const state = { apts: null, zips: {}, loading: {} };
 
+  /** kind: "apts" (King County complexes) or "zips:WA" / "zips:CA" (one Zillow file per state). */
   async function load(kind, fetchImpl, base) {
-    if (state[kind]) return state[kind];
+    const [k, st] = kind.split(":");
+    const have = k === "zips" ? state.zips[st] : state[k];
+    if (have) return have;
     if (state.loading[kind]) return state.loading[kind];
     const f = fetchImpl || fetch;
-    const url = (base || "") + (kind === "apts" ? "data/kc_apartments.json" : "data/wa_zip_market.json");
-    state.loading[kind] = f(url).then((r) => { if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`); return r.json(); }).then((d) => { state[kind] = d; return d; }).finally(() => { delete state.loading[kind]; });
+    const url = (base || "") + (k === "apts" ? "data/kc_apartments.json" : `data/zip_market_${(st || "wa").toLowerCase()}.json`);
+    state.loading[kind] = f(url).then((r) => { if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`); return r.json(); })
+      .then((d) => { if (k === "zips") state.zips[st] = d; else state[k] = d; return d; }).finally(() => { delete state.loading[kind]; });
     return state.loading[kind];
   }
-  /** Inject datasets directly (tests, or when the app already has them). */
-  function set(kind, data) { state[kind] = data; }
+  /** Inject datasets directly (tests, or when the app already has them). kind as in load(). */
+  function set(kind, data) { const [k, st] = kind.split(":"); if (k === "zips") state.zips[st || data.state] = data; else state[k] = data; }
 
   /** King County apartment complex record for a PIN, or null. */
   function apartment(pin) {
@@ -59,8 +63,11 @@
 
   /** Zillow ZIP row -> {rent, condo, home} each {value, yearAgo, change} for the latest month with data. */
   function zip(zipCode) {
-    const z = state.zips; if (!z || !zipCode) return null;
-    const row = z.byZip[String(zipCode).slice(0, 5)]; if (!row) return null;
+    if (!zipCode) return null;
+    const code = String(zipCode).slice(0, 5);
+    let z = null, row = null;
+    for (const d of Object.values(state.zips)) { if (d && d.byZip[code]) { z = d; row = d.byZip[code]; break; } }
+    if (!row) return null;
     const pick = (arr) => {
       if (!arr) return null;
       let i = arr.length - 1; while (i >= 0 && arr[i] == null) i--;
@@ -84,12 +91,15 @@
    */
   function summary(p, now) {
     const out = { kind: null };
-    const apt = apartment(p.id);
+    // King County: the bundled complex record. LA County: the parcel layer itself carries units / living ft² / year built.
+    const apt = apartment(p.id) || (p.unitCount >= 2 && p.livingSqft > 0 ? { units: p.unitCount, avgUnitSqft: Math.round(p.livingSqft / p.unitCount), stories: null, yearBuilt: p.yearBuilt || null, buildings: 1, elevator: false, bedroomMix: null, source: "parcel record" } : null);
     const z = zip(p.zip);
     if (apt) {
       out.kind = "apartment"; out.apt = apt;
-      out.perUnit = p.totalValue > 0 ? Math.round(p.totalValue / apt.units) : null;
-      out.perSqft = p.totalValue > 0 && apt.avgUnitSqft ? Math.round(p.totalValue / (apt.units * apt.avgUnitSqft)) : null;
+      const value = p.marketEstimate > 0 ? p.marketEstimate : p.totalValue;   // Prop 13 counties: use the comps estimate, not the frozen roll value
+      out.valueBasis = p.marketEstimate > 0 ? "market estimate" : "assessed";
+      out.perUnit = value > 0 ? Math.round(value / apt.units) : null;
+      out.perSqft = value > 0 && apt.avgUnitSqft ? Math.round(value / (apt.units * apt.avgUnitSqft)) : null;
       out.rent = estimateRent(p.zip, apt.avgUnitSqft, apt.yearBuilt, now);
       if (out.rent && out.perUnit) out.grossYield = (out.rent.monthly * 12) / out.perUnit;
       if (apt.bedroomMix) {
@@ -101,6 +111,12 @@
       out.kind = "condo"; out.unitCount = p.units.length;
       out.perUnit = valued.length ? Math.round(valued.reduce((s, u) => s + u.totalValue, 0) / valued.length) : null;
       out.rent = estimateRent(p.zip, null, null, now);
+    } else if (p.livingSqft > 0 && (p.propType === "R" || p.propType === "K")) {
+      // a single home with a recorded size: rent estimate for the whole house
+      out.kind = "home";
+      out.rent = estimateRent(p.zip, p.livingSqft, p.yearBuilt, now);
+      const value = p.marketEstimate > 0 ? p.marketEstimate : p.totalValue;
+      if (out.rent && value > 0) out.grossYield = (out.rent.monthly * 12) / value;
     }
     if (z) out.zip = z;
     return out;

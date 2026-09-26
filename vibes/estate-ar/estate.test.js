@@ -292,6 +292,58 @@ describe("Providers: WA statewide layer (live fixture, Pacific Ave, Tacoma)", ()
   });
 });
 
+describe("Providers: Los Angeles County (live fixture, Calabasas)", () => {
+  const LA = P.PROVIDERS.lacounty, fx = require("./fixture_la.json"), sfx = require("./fixture_la_sales.json");
+  const parcels = fx.features.map((f) => P.normalizeParcel(f, LA)).filter(Boolean);
+  const sales = sfx.features.map((f) => P.normalizeSale(f, LA));
+  const NOW = Date.parse("2026-09-26");
+  test("fields: address stripped of city/state/zip, home facts, Prop 13 base year", () => {
+    const p = parcels.find((q) => q.id === "2069021021");
+    expect(p.address).toBe("24513 PALERMO DR"); expect(p.city).toBe("CALABASAS"); expect(p.zip).toBe("91302");
+    expect(p.use).toBe("Single family"); expect(p.propType).toBe("R");
+    expect(p.landValue).toBe(343444); expect(p.imprValue).toBe(401829); expect(p.totalValue).toBe(745273);
+    expect(p.taxYear).toBe(2026); expect(p.baseYear).toBe(2024);
+    expect(p.livingSqft).toBe(2791); expect(p.bedrooms).toBe(3); expect(p.yearBuilt).toBe(1980); expect(p.unitCount).toBe(1);
+    expect(p.lotSqft).toBeGreaterThan(10000); expect(p.lotSqft).toBeLessThan(16000);
+    const golf = parcels.find((q) => q.id === "2069012068");
+    expect(golf.use).toBe("Golf Courses (Recreational)"); expect(golf.propType).toBe("C");
+    expect(LA.links["Assessor portal"](p)).toContain("portal.assessor.lacounty.gov/parceldetail/2069021021");
+  });
+  test("sales carry size, and compsPerSqft gives a median with an IQR", () => {
+    expect(sales[0].sqft).toBe(3375); expect(sales[0].bedrooms).toBe(4); expect(sales[0].date.getFullYear()).toBe(2023);
+    const c = P.compsPerSqft(sales, { years: 4, now: NOW });
+    expect(c.n).toBe(5); expect(c.psf).toBeCloseTo(645, 0); expect(c.low).toBeLessThan(c.psf); expect(c.high).toBeGreaterThan(c.psf);
+    expect(P.compsPerSqft(sales, { years: 1, now: NOW })).toBeNull();                 // too few recent
+    expect(P.compsPerSqft(sales, { years: 4, now: NOW, type: "CND" })).toBeNull();
+  });
+  test("fetchArea (prop13) attaches comps and a market estimate per home, and widens the sales circle", async () => {
+    const calls = [];
+    const fake = async (url) => { calls.push(url); return { ok: true, text: async () => JSON.stringify(url.includes("pais_sales") ? sfx : fx) }; };
+    const r = await P.fetchArea(LA, 34.145, -118.6615, 200, fake);
+    const salesUrl = calls.find((u) => u.includes("pais_sales")); expect(new URL(salesUrl).searchParams.get("distance")).toBe("500");
+    const p = r.parcels.find((q) => q.id === "2069021021");
+    expect(p.comps.n).toBeGreaterThanOrEqual(3);
+    expect(p.marketEstimate).toBeCloseTo(p.comps.psf * 2791, -3);
+    expect(p.marketEstimate).toBeGreaterThan(p.totalValue);                            // 2024 purchase, still below 2026 comps
+    expect(r.parcels.find((q) => q.id === "2069012068").marketEstimate).toBeGreaterThan(0);   // golf course clubhouse has a size; harmless
+    expect(r.parcels.find((q) => !q.livingSqft).marketEstimate).toBeUndefined();
+  });
+  test("providerFor: Calabasas and downtown LA -> lacounty; Irvine -> none", () => {
+    expect(P.providerFor(34.1367, -118.6615).id).toBe("lacounty");
+    expect(P.providerFor(34.05, -118.25).id).toBe("lacounty");
+    expect(P.providerFor(33.68, -117.8)).toBeNull();
+  });
+  test("Market.summary uses the parcel's own units/size in LA and the market estimate as the value basis", () => {
+    const home = parcels.find((q) => q.id === "2069021021"); home.marketEstimate = 1800000;
+    const m = M.summary(home, 2026);
+    expect(m.kind).toBe("home"); expect(m.rent.monthly).toBeGreaterThan(3000); expect(m.grossYield).toBeGreaterThan(0.01); expect(m.grossYield).toBeLessThan(0.06);
+    expect(m.zip.city).toBe("Calabasas"); expect(m.zip.county).toBe("Los Angeles");
+    const apt = { id: "x", zip: "91302", unitCount: 12, livingSqft: 9600, yearBuilt: 1975, totalValue: 2400000, marketEstimate: 6000000, propType: "R" };
+    const ma = M.summary(apt, 2026);
+    expect(ma.kind).toBe("apartment"); expect(ma.apt.units).toBe(12); expect(ma.apt.avgUnitSqft).toBe(800); expect(ma.perUnit).toBe(500000); expect(ma.valueBasis).toBe("market estimate");
+  });
+});
+
 describe("Providers: stacked parcels and paging", () => {
   test("groupStacked merges condo units on one footprint (Tacoma fixture)", () => {
     const ps = require("./fixture_wastate.json").features.map((f) => P.normalizeParcel(f, P.PROVIDERS.wastate));
@@ -442,7 +494,7 @@ describe("Heights: OSM", () => {
 });
 
 describe("Market: bundled datasets", () => {
-  M.set("apts", require("./data/kc_apartments.json")); M.set("zips", require("./data/wa_zip_market.json"));
+  M.set("apts", require("./data/kc_apartments.json")); M.set("zips:WA", require("./data/zip_market_wa.json")); M.set("zips:CA", require("./data/zip_market_ca.json"));
   const parcels = parcelsFx.features.map((f) => P.normalizeParcel(f, KC));
   const by = (addr) => parcels.find((p) => p.address === addr);
   test("apartment record: The Standard is 211 units / 25 storeys / 2022", () => {
@@ -493,7 +545,8 @@ describe("Market: bundled datasets", () => {
   test("bundled data files are reasonably small", () => {
     const fs = require("fs");
     expect(fs.statSync(__dirname + "/data/kc_apartments.json").size).toBeLessThan(600 * 1024);
-    expect(fs.statSync(__dirname + "/data/wa_zip_market.json").size).toBeLessThan(200 * 1024);
+    expect(fs.statSync(__dirname + "/data/zip_market_wa.json").size).toBeLessThan(200 * 1024);
+    expect(fs.statSync(__dirname + "/data/zip_market_ca.json").size).toBeLessThan(600 * 1024);
   });
 });
 

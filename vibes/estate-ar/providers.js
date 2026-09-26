@@ -131,6 +131,45 @@
       links: { "Assessor record": (p) => p.link || `https://www.snoco.org/proptax/search.aspx?parcel_number=${p.id}` },
     },
 
+    lacounty: {
+      id: "lacounty",
+      name: "Los Angeles County Assessor",
+      attribution: "Los Angeles County Assessor / County of Los Angeles eGIS",
+      bbox: [-118.95, 33.70, -117.65, 34.82],
+      declination: 11.6,        // deg east, LA 2026
+      state: "CA",
+      prop13: true,             // assessed = purchase price + ≤2 %/yr: show base year, prefer a comps-based market estimate
+      parcels: {
+        url: "https://cache.gis.lacounty.gov/cache/rest/services/LACounty_Cache/LACounty_Parcel/FeatureServer/0/query",
+        outFields: ["AIN", "SitusFullAddress", "SitusCity", "SitusZIP", "UseType", "UseDescription", "YearBuilt1", "Units1", "Bedrooms1", "Bathrooms1", "SQFTmain1", "Units2", "SQFTmain2", "Units3", "SQFTmain3", "Roll_Year", "Roll_LandValue", "Roll_ImpValue", "Roll_LandBaseYear", "Roll_ImpBaseYear", "Roll_HomeOwnersExemp", "Shape__Area"],
+        map: (a) => {
+          const units = (a.Units1 || 0) + (a.Units2 || 0) + (a.Units3 || 0), sqft = (a.SQFTmain1 || 0) + (a.SQFTmain2 || 0) + (a.SQFTmain3 || 0);
+          const desc = a.UseDescription === "Single" ? "Single family" : a.UseDescription;
+          const use = desc && desc !== a.UseType ? `${desc}${a.UseType && !/^Res/i.test(a.UseType) ? " (" + a.UseType + ")" : ""}` : (a.UseType || null);
+          const t = String(a.UseType || "").toUpperCase();
+          const propType = /SFR|SINGLE/.test(t) ? "R" : /CND|CONDO/.test(t) ? "K" : /VAC/.test(t) ? "U" : /RES|MULTI|APART|\dU\b/.test(t) || (units >= 2 && /R/.test(t)) ? "R" : /GOV|INST|EXEMPT|CHURCH|SCHOOL/.test(t) ? "X" : "C";
+          return {
+            id: a.AIN,
+            // "24513 PALERMO DR CALABASAS CA 91302" -> "24513 PALERMO DR"
+            address: a.SitusFullAddress ? String(a.SitusFullAddress).replace(/\s+CA\s+\d{5}(-\d{4})?\s*$/, "").replace(a.SitusCity ? new RegExp("\\s+" + String(a.SitusCity).replace(/\s+CA$/, "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*$", "i") : /$^/, "") : null,
+            city: a.SitusCity ? String(a.SitusCity).replace(/\s+CA$/, "") : null, zip: a.SitusZIP ? String(a.SitusZIP).slice(0, 5) : null, use, propType,
+            landValue: a.Roll_LandValue, imprValue: a.Roll_ImpValue,
+            lotSqft: a.Shape__Area ? a.Shape__Area * 10.7639 : null,   // hosted layer area is in m²
+            taxYear: a.Roll_Year, baseYear: a.Roll_LandBaseYear && a.Roll_ImpBaseYear ? Math.max(a.Roll_LandBaseYear, a.Roll_ImpBaseYear) : (a.Roll_LandBaseYear || a.Roll_ImpBaseYear || null),
+            yearBuilt: a.YearBuilt1 || null, units: units || null, bedrooms: a.Bedrooms1 || null, baths: a.Bathrooms1 || null, livingSqft: sqft || null,
+            homeownerExempt: !!a.Roll_HomeOwnersExemp,
+          };
+        },
+      },
+      sales: {
+        // Assessor "PAIS" sales layer: recorded sales with size and bedrooms, which is what makes a $/ft² comps estimate possible
+        url: "https://assessor.gis.lacounty.gov/assessor/rest/services/PAIS/pais_sales_parcels/MapServer/0/query",
+        outFields: ["AIN", "SALEDATE", "SALEPRICE", "SIZE", "BEDROOMS", "YEARBUILT", "USETYPE"],
+        map: (a) => ({ id: a.AIN, date: a.SALEDATE, price: a.SALEPRICE, use: a.USETYPE, type: a.USETYPE, sqft: a.SIZE, bedrooms: a.BEDROOMS, yearBuilt: a.YEARBUILT != null ? Number(a.YEARBUILT) || null : null }),
+      },
+      links: { "Assessor portal": (p) => `https://portal.assessor.lacounty.gov/parceldetail/${p.id}` },
+    },
+
     // Washington State Parcels Project (OCIO), served by DNR: every WA county with digital parcels,
     // normalised fields, updated yearly. Pierce County has no public REST server of its own, so it
     // comes through here, as does anywhere else in the state not covered above.
@@ -235,6 +274,13 @@
       link: m.link || null,
       asOf: m.asOf != null ? Number(m.asOf) : null,
       taxYear: m.taxYear != null ? Number(m.taxYear) || null : null,
+      baseYear: m.baseYear != null ? Number(m.baseYear) || null : null,
+      yearBuilt: m.yearBuilt != null ? Number(m.yearBuilt) || null : null,
+      unitCount: m.units != null ? Number(m.units) || null : null,
+      bedrooms: m.bedrooms != null ? Number(m.bedrooms) || null : null,
+      baths: m.baths != null ? Number(m.baths) || null : null,
+      livingSqft: m.livingSqft != null ? Number(m.livingSqft) || null : null,
+      homeownerExempt: !!m.homeownerExempt,
       landValue: land,
       imprValue: impr,
       totalValue: land == null && impr == null ? null : (land || 0) + (impr || 0),
@@ -258,7 +304,24 @@
       price: num(m.price),
       use: clean(m.use) || null,
       type: clean(m.type) || null,
+      sqft: m.sqft != null ? Number(m.sqft) || null : null,
+      bedrooms: m.bedrooms != null ? Number(m.bedrooms) || null : null,
+      yearBuilt: m.yearBuilt || null,
     };
+  }
+
+  /**
+   * Comparable-sales price per ft² for an area: the median of price/size over
+   * arm's-length sales (price > 0, size > 0) in the last `years`, optionally
+   * restricted to one use type. Returns null with fewer than `min` comps.
+   */
+  function compsPerSqft(sales, opts) {
+    const o = Object.assign({ years: 3, min: 3, now: Date.now() }, opts);
+    const cut = o.now - o.years * 365.25 * 86400e3;
+    const v = sales.filter((s) => s.price > 0 && s.sqft > 0 && s.date && +s.date >= cut && (!o.type || s.type === o.type)).map((s) => s.price / s.sqft).sort((a, b) => a - b);
+    if (v.length < o.min) return null;
+    const mid = Math.floor(v.length / 2), median = v.length % 2 ? v[mid] : (v[mid - 1] + v[mid]) / 2;
+    return { psf: median, n: v.length, low: v[Math.floor(v.length * 0.25)], high: v[Math.floor(v.length * 0.75)] };
   }
 
   /**
@@ -356,8 +419,14 @@
       if (!fb) throw e;
       pr = await queryParcels(fb, lat, lon, radiusM, fetchImpl); used = fb; pr.fellBackFrom = provider.id;
     }
-    const sales = used.sales ? await querySales(used, lat, lon, radiusM, fetchImpl).catch(() => []) : [];
-    return { parcels: groupStacked(joinSales(pr.parcels, sales)), exceeded: pr.exceeded, pages: pr.pages, salesCount: sales.length, provider: used, fellBackFrom: pr.fellBackFrom || null };
+    // sales: for Prop 13 counties widen the circle so a comps estimate has enough arm's-length sales
+    const sales = used.sales ? await querySales(used, lat, lon, used.prop13 ? Math.max(radiusM * 2, 500) : radiusM, fetchImpl).catch(() => []) : [];
+    const parcels = groupStacked(joinSales(pr.parcels, sales));
+    if (used.prop13) {
+      const comps = compsPerSqft(sales, { years: 4 });
+      for (const p of parcels) { p.comps = comps; if (comps && p.livingSqft > 0) p.marketEstimate = Math.round(comps.psf * p.livingSqft); }
+    }
+    return { parcels, exceeded: pr.exceeded, pages: pr.pages, salesCount: sales.length, provider: used, fellBackFrom: pr.fellBackFrom || null };
   }
 
   // ---- Nominatim ---------------------------------------------------------
@@ -377,5 +446,5 @@
     };
   }
 
-  return { PROVIDERS, PROP_TYPES, WA_DOR_USE, MAX_OFFSET_DEG, dorType, typeFromUse, providerFor, groupStacked, onBytes, meter, arcgisParams, normalizeParcel, normalizeSale, joinSales, queryParcels, querySales, fetchArea, reverseGeocode };
+  return { PROVIDERS, PROP_TYPES, WA_DOR_USE, MAX_OFFSET_DEG, dorType, typeFromUse, providerFor, groupStacked, compsPerSqft, onBytes, meter, arcgisParams, normalizeParcel, normalizeSale, joinSales, queryParcels, querySales, fetchArea, reverseGeocode };
 }));

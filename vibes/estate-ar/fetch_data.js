@@ -84,24 +84,31 @@ async function zillowWA() {
     condo: "https://files.zillowstatic.com/research/public_csvs/zhvi/Zip_zhvi_uc_condo_tier_0.33_0.67_sm_sa_month.csv",
     home: "https://files.zillowstatic.com/research/public_csvs/zhvi/Zip_zhvi_uc_sfrcondo_tier_0.33_0.67_sm_sa_month.csv",
   };
+  const STATES = new Set(["WA", "CA"]);   // the states with providers; add here when adding a county
   const byZip = {}; let asOf = null;
   for (const [key, url] of Object.entries(series)) {
     const rows = parseCSV(await (await get(url)).text());
     const h = rows[0], zipI = h.indexOf("RegionName"), stI = h.indexOf("State"), cityI = h.indexOf("City"), cntyI = h.indexOf("CountyName");
     const months = h.slice(9); asOf = months[months.length - 1];
     for (const r of rows.slice(1)) {
-      if (r[stI] !== "WA") continue;
+      if (!STATES.has(r[stI])) continue;
       const vals = r.slice(9).map((v) => (v === "" ? null : Math.round(+v)));
       // last 13 months, so the app can show a 1-year change
       const last13 = vals.slice(-13);
       if (last13.every((v) => v == null)) continue;
-      const z = byZip[r[zipI]] || (byZip[r[zipI]] = { city: r[cityI], county: (r[cntyI] || "").replace(/ County$/, "") });
+      const z = byZip[r[zipI]] || (byZip[r[zipI]] = { state: r[stI], city: r[cityI], county: (r[cntyI] || "").replace(/ County$/, "") });
       z[key] = last13;
     }
   }
-  const doc = { source: "Zillow Research (ZORI all homes + multifamily smoothed; ZHVI condo/co-op mid-tier; ZHVI all homes mid-tier), WA ZIP codes", asOf, months: 13, fetched: new Date().toISOString().slice(0, 10), byZip };
-  fs.writeFileSync(path.join(OUT, "wa_zip_market.json"), JSON.stringify(doc));
-  console.log(`wa_zip_market.json: ${Object.keys(byZip).length} ZIPs, as of ${asOf}, ${(fs.statSync(path.join(OUT, "wa_zip_market.json")).size / 1024).toFixed(0)} KB`);
+  // one file per state so a user only downloads their own (~100 KB WA, ~400 KB CA)
+  for (const st of STATES) {
+    const sub = {}; for (const [zip, row] of Object.entries(byZip)) if (row.state === st) { const { state, ...rest } = row; sub[zip] = rest; }
+    const doc = { source: "Zillow Research (ZORI all homes + multifamily smoothed; ZHVI condo/co-op mid-tier; ZHVI all homes mid-tier)", state: st, asOf, months: 13, fetched: new Date().toISOString().slice(0, 10), byZip: sub };
+    const name = `zip_market_${st.toLowerCase()}.json`;
+    fs.writeFileSync(path.join(OUT, name), JSON.stringify(doc));
+    console.log(`${name}: ${Object.keys(sub).length} ZIPs, as of ${asOf}, ${(fs.statSync(path.join(OUT, name)).size / 1024).toFixed(0)} KB`);
+  }
+  try { fs.unlinkSync(path.join(OUT, "wa_zip_market.json")); } catch (e) { /* old name */ }
 }
 
 (async () => {
