@@ -127,6 +127,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
     <div class="chip" id="chipHdg">HDG —</div>
     <div class="chip" id="chipAis">AIS —</div>
     <div class="chip" id="chipLanes">LANES —</div>
+    <div class="chip" id="chipLand">LAND —</div>
   </div>
 </div>
 <div id="inlane"></div>
@@ -152,6 +153,8 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
     <label><input type="checkbox" value="precaution" checked>precautionary</label><label><input type="checkbox" value="boundary" checked>boundary</label><label><input type="checkbox" value="fairway" checked>fairways</label></span></div>
   <div class="sr"><span>Vessels</span><span class="group">
     <label><input type="checkbox" id="ckHull" checked>hull outlines</label><label><input type="checkbox" id="ckVector" checked>6-min vectors</label><label><input type="checkbox" id="ckMoored">show moored</label></span></div>
+  <div class="sr"><span>Land occlusion</span><span class="group">
+    <label><input type="checkbox" id="ckOcclude" checked>line of sight vs charted land</label><label><input type="checkbox" id="ckHideOcc">hide (not dim) behind land</label></span></div>
   <div class="sr"><span>Units</span><span class="group"><label><input type="radio" name="units" value="nm" checked>NM / kn</label><label><input type="radio" name="units" value="km">km / kn</label></span></div>
   <div class="sr"><span>Compass</span><span class="group"><label><input type="checkbox" id="ckDecl" checked>apply declination <span id="vDecl"></span></label><label>offset <input type="range" id="rOff" min="-30" max="30" value="0" style="width:80px"> <span class="v" id="vOff" style="min-width:34px">0°</span></label></span></div>
   <div class="sr"><span>Demo speed</span><span><input type="range" id="rDemo" min="1" max="30" value="6"><span class="v" id="vDemo">6×</span></span></div>
@@ -160,7 +163,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
     <span style="--c:#c9a0ff">fishing</span><span style="--c:#ffe66d">pleasure</span><span style="--c:#ff8ad8">HSC</span><span style="--c:#fff">special</span><span style="--c:#8a969c">unknown</span>
     <span style="--c:#ff33bf">TSS lane / zone</span><span style="--c:#ffb020">precautionary</span><span style="--c:#3fa0ff">fairway</span>
   </div>
-  <div class="sr" style="font-size:10.5px;color:rgba(255,255,255,.45);line-height:1.5">Lanes: NOAA ENC Direct (S-57 TSSLPT/TSEZNE/PRCARE/TSSBND/FAIRWY). AIS: <span id="attribution">—</span>. Declination: NOAA WMM.</div>
+  <div class="sr" style="font-size:10.5px;color:rgba(255,255,255,.45);line-height:1.5">Lanes + land: NOAA ENC Direct (S-57 TSSLPT/TSEZNE/PRCARE/TSSBND/FAIRWY, LNDARE). AIS: <span id="attribution">—</span>. Declination: NOAA WMM.</div>
 </div>
 
 <div id="info">
@@ -191,6 +194,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
     W: 0, H: 0, hfov: 60, eye: 2, cam: null, camOn: true,
     // data
     lanes: [], laneStore: null, laneKinds: new Set(["lane", "zone", "precaution", "boundary", "fairway"]), showLanes: true,
+    land: [], landStore: null, occlude: true, hideOccluded: false, landLoading: false, landError: null, occlusionAt: 0, occlusion: new Map(),
     table: null, provider: null, providerHandle: null, providerChoice: "auto", proxyBase: "", vessels: [], aisError: null, lastAis: 0,
     rangeM: 15000, labelPx: 12, showHull: true, showVector: true, showMoored: false, nautical: true, demoSpeed: 6,
     selected: null, hits: [], settingsOpen: false, place: null,
@@ -201,6 +205,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       this.vid = $("camera");
       this.table = new Providers.VesselTable({ maxAgeMs: 12 * 60e3 });
       this.laneStore = new Providers.LaneStore({ storage: window.localStorage });
+      this.landStore = new Providers.LandStore({ storage: window.localStorage });
       this.loadPrefs();
       this.resize();
       window.addEventListener("resize", () => this.resize());
@@ -222,12 +227,12 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
     loadPrefs() {
       try {
         const p = JSON.parse(localStorage.getItem("marine-ar:prefs") || "{}");
-        for (const k of ["providerChoice", "proxyBase", "rangeM", "eye", "hfov", "labelPx", "showHull", "showVector", "showMoored", "nautical", "applyDecl", "offset", "demoSpeed"]) if (p[k] != null) this[k] = p[k];
+        for (const k of ["providerChoice", "proxyBase", "rangeM", "eye", "hfov", "labelPx", "showHull", "showVector", "showMoored", "occlude", "hideOccluded", "nautical", "applyDecl", "offset", "demoSpeed"]) if (p[k] != null) this[k] = p[k];
         if (p.laneKinds) this.laneKinds = new Set(p.laneKinds);
       } catch (e) { /* */ }
     },
     savePrefs() {
-      const p = {}; for (const k of ["providerChoice", "proxyBase", "rangeM", "eye", "hfov", "labelPx", "showHull", "showVector", "showMoored", "nautical", "applyDecl", "offset", "demoSpeed"]) p[k] = this[k];
+      const p = {}; for (const k of ["providerChoice", "proxyBase", "rangeM", "eye", "hfov", "labelPx", "showHull", "showVector", "showMoored", "occlude", "hideOccluded", "nautical", "applyDecl", "offset", "demoSpeed"]) p[k] = this[k];
       p.laneKinds = [...this.laneKinds];
       try { localStorage.setItem("marine-ar:prefs", JSON.stringify(p)); } catch (e) { /* */ }
     },
@@ -254,7 +259,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       $("btnSettings").onclick = () => { this.settingsOpen = !this.settingsOpen; $("settings").classList.toggle("vis", this.settingsOpen); $("btnSettings").classList.toggle("on", this.settingsOpen); };
       $("btnLanes").onclick = () => { this.showLanes = !this.showLanes; $("btnLanes").classList.toggle("on", this.showLanes); };
       $("btnCam").onclick = () => this.toggleCamera();
-      $("btnRefresh").onclick = () => { this.laneStore.clear(); this.refreshData(true); this.toast("Refreshing lanes and AIS…"); };
+      $("btnRefresh").onclick = () => { this.laneStore.clear(); this.landStore.clear(); this.refreshData(true); this.toast("Refreshing lanes and AIS…"); };
       $("infoClose").onclick = () => { $("info").classList.remove("vis"); this.selected = null; };
 
       const bind = (rid, vid, prop, fmt, cb) => {
@@ -272,6 +277,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       bind("rDemo", "vDemo", "demoSpeed", (v) => v + "×");
       const ck = (id, prop, cb) => { const c = $(id); c.checked = !!this[prop]; c.onchange = () => { this[prop] = c.checked; this.savePrefs(); if (cb) cb(); }; };
       ck("ckHull", "showHull"); ck("ckVector", "showVector"); ck("ckMoored", "showMoored"); ck("ckDecl", "applyDecl");
+      ck("ckOcclude", "occlude", () => { this.occlusion.clear(); this.occlusionAt = 0; }); ck("ckHideOcc", "hideOccluded");
       document.querySelectorAll("input[name=units]").forEach((r) => { r.checked = (r.value === "nm") === this.nautical; r.onchange = () => { this.nautical = r.value === "nm"; this.savePrefs(); }; });
       $("laneKinds").querySelectorAll("input").forEach((c) => { c.checked = this.laneKinds.has(c.value); c.onchange = () => { if (c.checked) this.laneKinds.add(c.value); else this.laneKinds.delete(c.value); this.savePrefs(); }; });
       $("selProvider").value = this.providerChoice;
@@ -391,6 +397,15 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
         this.lanes = this.laneStore.lanes;
         for (const l of this.lanes) if (l.kind === "lane" && l.ring && l.orient != null && !l.arrows) l.arrows = Geo.laneArrows(l.ring, l.orient, 600);
       }
+      // land for line-of-sight occlusion (same radius as lanes, generalised shoreline)
+      if (force || this.landStore.needsFetch(lat, lon, this.rangeM * 1.5)) {
+        this.landLoading = true;
+        Providers.fetchLand(lat, lon, this.rangeM * 1.5).then((r) => {
+          this.landStore.set(lat, lon, this.rangeM * 1.5, r.land);
+          this.land = r.land; this.landError = null; this.landExceeded = r.exceeded;
+          this.occlusion.clear(); this.occlusionAt = 0;
+        }).catch((e) => { this.landError = e.message; }).finally(() => { this.landLoading = false; });
+      } else if (this.land.length === 0 && this.landStore.land.length) this.land = this.landStore.land;
       if (!this.provider || force || this.providerChoice === "auto" && this.pickProvider() !== this.provider) this.startAis();
       else if (this.providerHandle && this.providerHandle.refresh) this.providerHandle.refresh();
       if (!this.place || Geo.haversine(lat, lon, this.place.lat, this.place.lon) > 1500) this.geocode();
@@ -433,6 +448,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       const step = () => {
         this.updatePose();
         this.vessels = this.table.snapshot();
+        this.updateOcclusion();
         this.draw();
         this.drawRadar();
         this.updateChips();
@@ -459,6 +475,29 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
     },
 
     fmtD(m) { return Geo.fmtDistance(m, this.nautical); },
+
+    /**
+     * Line-of-sight test per vessel against the LNDARE polygons. A few thousand
+     * segment tests per vessel is cheap, but not at 60 fps for 40 vessels, so
+     * it runs twice a second and the result is cached by MMSI; vessels move
+     * metres between passes, land does not move at all.
+     */
+    updateOcclusion() {
+      const now = Date.now();
+      if (!this.occlude || this.land.length === 0) { for (const v of this.vessels) v.occluded = null; for (const l of this.lanes) l.occluded = null; return; }
+      const refresh = now - this.occlusionAt > 500;
+      if (refresh) this.occlusionAt = now;
+      for (const v of this.vessels) {
+        if (refresh || !this.occlusion.has(v.mmsi)) this.occlusion.set(v.mmsi, Geo.landOcclusion(this.lat, this.lon, v.drLat, v.drLon, this.land));
+        v.occluded = this.occlusion.get(v.mmsi);
+      }
+      // lane labels anchor at the centroid; a centroid behind land means the label would float over a hill
+      for (const l of this.lanes) {
+        if (!l.centroid) continue;
+        if (refresh || !this.occlusion.has(l.id)) this.occlusion.set(l.id, Geo.landOcclusion(this.lat, this.lon, l.centroid.lat, l.centroid.lon, this.land));
+        l.occluded = this.occlusion.get(l.id);
+      }
+    },
 
     draw() {
       const cx = this.cx, W = this.W, H = this.H, cam = this.cam;
@@ -526,7 +565,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
           // label at the nearest visible edge midpoint, else centroid
           const c = l.centroid; const { e, n } = Geo.toENU(lat, lon, c.lat, c.lon); const d = Math.hypot(e, n);
           const sp = cam.projectSea(e, n);
-          if (sp && sp.x > -50 && sp.x < this.W + 50 && d < this.rangeM * 1.2) {
+          if (sp && sp.x > -50 && sp.x < this.W + 50 && d < this.rangeM * 1.2 && !(this.occlude && l.occluded)) {
             let text = st.label;
             if (l.kind === "lane" && l.orient != null) text = `${Geo.cardinal(l.orient)}-bound lane ${String(Math.round(l.orient)).padStart(3, "0")}°`;
             if (l.kind === "precaution" && l.inform) text += ` ${l.inform}`;
@@ -565,6 +604,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       for (const v of this.vessels) {
         const moored = v.navStat === 1 || v.navStat === 5 || (v.sog != null && v.sog < 0.3 && v.navStat !== 0);
         if (moored && !this.showMoored && !(this.selected && this.selected.mmsi === v.mmsi)) continue;
+        if (v.occluded && this.hideOccluded && !(this.selected && this.selected.mmsi === v.mmsi)) continue;
         const { e, n } = Geo.toENU(lat, lon, v.drLat, v.drLon);
         const d = Math.hypot(e, n);
         if (d > this.rangeM * 1.3) continue;
@@ -577,10 +617,10 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       for (const it of items) {
         const { v, e, n, d, sp } = it;
         const sel = this.selected && this.selected.mmsi === v.mmsi;
-        const color = v.color;
-        // hull footprint on the water
+        const color = v.color, occ = !!v.occluded;
+        // hull footprint on the water (not for ships behind land: the outline would float on the hillside)
         let hullDrawn = false;
-        if (this.showHull && v.dims && v.length > 0 && d < 8000) {
+        if (this.showHull && !occ && v.dims && v.length > 0 && d < 8000) {
           const hdg = v.heading != null ? v.heading : v.cog;
           const ring = Geo.hullFootprint(v.drLat, v.drLon, hdg == null ? 0 : hdg, v.dims);
           if (ring) {
@@ -597,7 +637,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
           continue;
         }
         // 6-minute course vector on the water
-        if (this.showVector && v.sog > 0.5 && v.cog != null) {
+        if (this.showVector && !occ && v.sog > 0.5 && v.cog != null) {
           const tip = Geo.destination(v.drLat, v.drLon, v.cog, v.sog * Geo.KN * 360);
           const line = [[v.drLon, v.drLat], [tip.lon, tip.lat]];
           const pieces = cam.projectSeaLine(line, lat, lon);
@@ -606,16 +646,18 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
         }
         // marker at the waterline
         const r = Math.max(3, Math.min(9, 60000 / Math.max(d, 200) / 10));
-        cx.beginPath(); cx.arc(sp.x, sp.y, r, 0, Math.PI * 2); cx.fillStyle = hexA(color, 0.9); cx.fill(); cx.strokeStyle = "rgba(0,0,0,.6)"; cx.lineWidth = 1; cx.stroke();
+        if (occ) { cx.beginPath(); cx.arc(sp.x, sp.y, r, 0, Math.PI * 2); cx.strokeStyle = hexA(color, 0.6); cx.lineWidth = 1.2; cx.setLineDash([2, 2]); cx.stroke(); cx.setLineDash([]); }
+        else { cx.beginPath(); cx.arc(sp.x, sp.y, r, 0, Math.PI * 2); cx.fillStyle = hexA(color, 0.9); cx.fill(); cx.strokeStyle = "rgba(0,0,0,.6)"; cx.lineWidth = 1; cx.stroke(); }
         if (v.ageSec > 180) { cx.beginPath(); cx.arc(sp.x, sp.y, r + 3, 0, Math.PI * 2); cx.strokeStyle = "rgba(255,255,255,.4)"; cx.setLineDash([2, 3]); cx.stroke(); cx.setLineDash([]); }
         // stalk height scales inversely with distance so near ships get taller pins
         const stalk = Math.max(28, Math.min(120, 90 - Math.log10(Math.max(d, 10)) * 14));
-        labels.push({ x: sp.x, y: sp.y, stalk, v, d, color, sel, it });
+        labels.push({ x: sp.x, y: sp.y, stalk, v, d, color, sel, it, occ });
         this.hits.push({ x: sp.x, y: sp.y - stalk, r: 22, v });
         this.hits.push({ x: sp.x, y: sp.y, r: 14, v });
       }
       // label cards, nearest first, pushed up when they collide
-      labels.sort((a, b) => a.d - b.d);
+      // visible ships claim label space first; ships behind land take what is left
+      labels.sort((a, b) => (a.occ - b.occ) || (a.d - b.d));
       const placed = [];
       const fs = this.labelPx;
       cx.textAlign = "left"; cx.textBaseline = "middle";
@@ -623,7 +665,8 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
         const v = L.v;
         const name = v.name || ("MMSI " + v.mmsi);
         const l2 = [v.sog != null ? Geo.fmtSpeed(v.sog) : null, v.cog != null ? String(Math.round(v.cog)).padStart(3, "0") + "°" : null, this.fmtD(L.d)].filter(Boolean).join("  ");
-        const l3 = v.shipTypeName && v.shipTypeName !== "Unknown" ? v.shipTypeName + (v.length ? ` · ${v.length} m` : "") : (v.length ? `${v.length} m` : "");
+        const l3 = L.occ ? `behind land · ${this.fmtD(v.occluded.distanceM)} to shore` : v.shipTypeName && v.shipTypeName !== "Unknown" ? v.shipTypeName + (v.length ? ` · ${v.length} m` : "") : (v.length ? `${v.length} m` : "");
+        cx.globalAlpha = L.occ && !L.sel ? 0.42 : 1;
         cx.font = `600 ${fs}px -apple-system,Segoe UI,Roboto,sans-serif`; const w1 = cx.measureText(name).width;
         cx.font = `${fs - 2}px -apple-system,Segoe UI,Roboto,sans-serif`; const w2 = Math.max(cx.measureText(l2).width, cx.measureText(l3).width);
         const w = Math.max(w1, w2) + 16, lines = l3 ? 3 : 2, h = fs * 1.15 + (lines - 1) * (fs - 2) * 1.25 + 10;
@@ -636,12 +679,13 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
         // card
         const x0 = Math.max(4, Math.min(W - w - 4, L.x - w / 2)), y0 = y - h / 2;
         cx.fillStyle = L.sel ? "rgba(10,30,50,.92)" : "rgba(6,14,24,.72)"; roundRect(cx, x0, y0, w, h, 7); cx.fill();
-        cx.strokeStyle = L.sel ? "#fff" : hexA(L.color, 0.8); cx.lineWidth = L.sel ? 1.5 : 1; cx.stroke();
+        cx.strokeStyle = L.sel ? "#fff" : hexA(L.color, 0.8); cx.lineWidth = L.sel ? 1.5 : 1; if (L.occ) cx.setLineDash([3, 3]); cx.stroke(); cx.setLineDash([]);
         cx.fillStyle = "#fff"; cx.font = `600 ${fs}px -apple-system,Segoe UI,Roboto,sans-serif`; cx.fillText(name, x0 + 8, y0 + 5 + fs * 0.6);
         cx.fillStyle = L.color; cx.fillRect(x0 + 8, y0 + 5 + fs * 1.25, Math.min(w - 16, 22), 1.5);
         cx.fillStyle = "rgba(255,255,255,.85)"; cx.font = `${fs - 2}px -apple-system,Segoe UI,Roboto,sans-serif`;
         cx.fillText(l2, x0 + 8, y0 + 5 + fs * 1.25 + (fs - 2) * 0.9 + 1);
-        if (l3) { cx.fillStyle = "rgba(255,255,255,.55)"; cx.fillText(l3, x0 + 8, y0 + 5 + fs * 1.25 + (fs - 2) * 2.15 + 1); }
+        if (l3) { cx.fillStyle = L.occ ? "rgba(255,200,120,.9)" : "rgba(255,255,255,.55)"; cx.fillText(l3, x0 + 8, y0 + 5 + fs * 1.25 + (fs - 2) * 2.15 + 1); }
+        cx.globalAlpha = 1;
         this.hits.push({ x: x0 + w / 2, y, r: Math.max(w, h) / 2, v });
       }
     },
@@ -679,9 +723,11 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
         const [x, y] = toXY(v.drLat, v.drLon); if (Math.hypot(x, y) > R) continue;
         const sel = this.selected && this.selected.mmsi === v.mmsi;
         rx.save(); rx.translate(x, y);
+        rx.globalAlpha = v.occluded ? 0.45 : 1;
         if (v.sog > 0.5 && v.cog != null) { rx.rotate(v.cog * D2R); rx.beginPath(); rx.moveTo(0, -4); rx.lineTo(3, 3); rx.lineTo(-3, 3); rx.closePath(); rx.fillStyle = v.color; rx.fill(); rx.beginPath(); rx.moveTo(0, -4); rx.lineTo(0, -4 - v.sog * Geo.KN * 360 * scale); rx.strokeStyle = hexA(v.color, .8); rx.stroke(); }
         else { rx.beginPath(); rx.arc(0, 0, 2.5, 0, Math.PI * 2); rx.fillStyle = v.color; rx.fill(); }
         if (sel) { rx.beginPath(); rx.arc(0, 0, 7, 0, Math.PI * 2); rx.strokeStyle = "#fff"; rx.lineWidth = 1.5; rx.stroke(); }
+        rx.globalAlpha = 1;
         rx.restore();
       }
       // fov wedge
@@ -708,6 +754,11 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       if (this.aisError) { a.textContent = `AIS ${this.provider ? this.provider.id : ""} error`; a.className = "chip bad"; a.title = this.aisError; }
       else if (!this.lastAis) { a.textContent = `AIS ${this.provider ? this.provider.id : "…"} connecting`; a.className = "chip warn"; }
       else { a.textContent = `AIS ${this.provider.id} · ${this.vessels.length} · ${age < 60 ? Math.round(age) + "s" : Math.round(age / 60) + "m"}`; a.className = "chip " + (age < 60 ? "ok" : "warn"); }
+      const ld = $("chipLand");
+      if (!this.occlude) { ld.textContent = "LAND off"; ld.className = "chip"; }
+      else if (this.landLoading) { ld.textContent = "LAND loading"; ld.className = "chip warn"; }
+      else if (this.landError) { ld.textContent = "LAND error"; ld.className = "chip bad"; ld.title = this.landError; }
+      else { const occ = this.vessels.filter((v) => v.occluded).length; ld.textContent = this.land.length ? `LAND ${this.land.length} rings · ${occ} hidden` : "LAND none charted"; ld.className = "chip " + (this.land.length ? "ok" : ""); }
       const l = $("chipLanes");
       if (this.lanesLoading) { l.textContent = "LANES loading"; l.className = "chip warn"; }
       else if (this.lanesError) { l.textContent = "LANES error"; l.className = "chip bad"; l.title = this.lanesError; }
@@ -731,6 +782,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
         ["Destination", v.destination || null],
         ["CPA · TCPA", c.stationary ? null : `${this.fmtD(c.cpaM)} · ${c.tcpaSec > 0 ? "in " + Geo.fmtDuration(c.tcpaSec) : "opening"}`],
         ["In lane", (() => { const l = Providers.laneAt(v.drLat, v.drLon, this.lanes); return l ? (l.kind === "lane" ? `${Geo.cardinal(l.orient)}-bound lane` : l.style.label) : "no"; })()],
+        ["Line of sight", v.occluded ? `behind land, shore at ${this.fmtD(v.occluded.distanceM)}` : (this.occlude && this.land.length ? "clear" : null)],
         ["Last report", `${Math.round(v.ageSec)} s ago` + (v.posAcc ? " · DGPS" : "")],
       ];
       $("iRows").innerHTML = rows.filter(([, val]) => val != null && val !== "").map(([k, val]) => `<div class="ir"><span class="il">${k}</span><span class="iv">${esc(String(val))}</span></div>`).join("");

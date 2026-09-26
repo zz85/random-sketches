@@ -359,6 +359,76 @@
     return out;
   }
 
+  // ---- land occlusion ----------------------------------------------------------
+
+  /** Proper segment-segment intersection test (affine-invariant, so plain lon/lat is fine). */
+  function segmentsCross(ax, ay, bx, by, cx, cy, dx, dy) {
+    const d1 = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+    const d2 = (bx - ax) * (dy - ay) - (by - ay) * (dx - ax);
+    if ((d1 > 0 && d2 > 0) || (d1 < 0 && d2 < 0)) return false;
+    const d3 = (dx - cx) * (ay - cy) - (dy - cy) * (ax - cx);
+    const d4 = (dx - cx) * (by - cy) - (dy - cy) * (bx - cx);
+    if ((d3 > 0 && d4 > 0) || (d3 < 0 && d4 < 0)) return false;
+    // collinear: only when the projections overlap
+    if (d1 === 0 && d2 === 0 && d3 === 0 && d4 === 0) {
+      const horiz = Math.abs(bx - ax) >= Math.abs(by - ay);
+      const [a0, a1, c0, c1] = horiz ? [ax, bx, cx, dx] : [ay, by, cy, dy];
+      return Math.max(Math.min(a0, a1), Math.min(c0, c1)) <= Math.min(Math.max(a0, a1), Math.max(c0, c1));
+    }
+    return true;
+  }
+
+  /**
+   * All parameters t in [0,1] along a->b where it crosses ring edges, ascending.
+   * Segments start on the water, so the first crossing is where the line of
+   * sight enters land.
+   */
+  function ringCrossings(ax, ay, bx, by, ring, bbox) {
+    if (bbox) {
+      const [w, s, e, n] = bbox;
+      if (Math.max(ax, bx) < w || Math.min(ax, bx) > e || Math.max(ay, by) < s || Math.min(ay, by) > n) return [];
+    }
+    const out = [];
+    const rx = bx - ax, ry = by - ay;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [cx, cy] = ring[j], [dx, dy] = ring[i];
+      if (!segmentsCross(ax, ay, bx, by, cx, cy, dx, dy)) continue;
+      const sx = dx - cx, sy = dy - cy, den = rx * sy - ry * sx;
+      if (Math.abs(den) < 1e-18) continue;
+      const t = ((cx - ax) * sy - (cy - ay) * sx) / den;
+      if (t >= 0 && t <= 1) out.push(t);
+    }
+    return out.sort((p, q) => p - q);
+  }
+
+  /**
+   * Line-of-sight test across land polygons. `land` is [{ring, bbox}]. Returns
+   * null when the view is clear, otherwise {t, distanceM} of the first point
+   * where the sight line from the viewer enters land.
+   *
+   * Standing on land yourself (a pier, a beach, a bluff) is tolerated: for a
+   * ring that contains the viewer the first crossing is the shore in front of
+   * you, not an obstacle, and any crossing within `graceM` of the viewer is
+   * ignored (GPS error, charted shoreline generalisation).
+   */
+  function landOcclusion(lat0, lon0, lat, lon, land, graceM) {
+    graceM = graceM == null ? 60 : graceM;
+    const total = haversine(lat0, lon0, lat, lon);
+    if (total <= graceM) return null;
+    let best = null;
+    for (const L of land) {
+      const ts = ringCrossings(lon0, lat0, lon, lat, L.ring, L.bbox);
+      if (ts.length === 0) continue;
+      const skip = pointInRing(lat0, lon0, L.ring) ? 1 : 0;
+      for (let i = skip; i < ts.length; i++) {
+        if (ts[i] * total < graceM) continue;
+        if (best == null || ts[i] < best) best = ts[i];
+        break;
+      }
+    }
+    return best == null ? null : { t: best, distanceM: best * total };
+  }
+
   // ---- compass / formatting -----------------------------------------------
 
   function smoothHeading(prev, next, alpha) {
@@ -388,6 +458,7 @@
     ringBBox, ringCentroid, outerRing, pointInRing, distanceToRing,
     horizonDip, horizonDistance, seaPitch, Camera,
     hullFootprint, deadReckon, cpa, velocity, laneArrows,
+    segmentsCross, ringCrossings, landOcclusion,
     smoothHeading, cardinal, fmtDistance, fmtSpeed, fmtBearing, fmtDuration,
   };
 }));

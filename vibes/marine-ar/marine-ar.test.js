@@ -258,6 +258,62 @@ describe("AIS providers", () => {
   });
 });
 
+describe("Land occlusion (ENC LNDARE)", () => {
+  const landFixture = require("./fixture_land.json");
+  const land = P.normalizeLand(landFixture.features, "harbour");
+  const ELLIOTT_BAY = { lat: 47.61, lon: -122.37 };       // behind Magnolia from West Point
+  const GOLDEN_GARDENS = { lat: 47.69, lon: -122.43 };    // open water to the north
+  const MID_SOUND = { lat: 47.66, lon: -122.50 };         // due west, open water
+  const LAKE_UNION = { lat: 47.64, lon: -122.335 };       // behind Queen Anne hill from anywhere on the Sound
+
+  test("normalizes every ring with a bbox", () => {
+    expect(land.length).toBeGreaterThan(20);
+    for (const L of land) { expect(L.ring.length).toBeGreaterThanOrEqual(3); expect(L.bbox.length).toBe(4); }
+  });
+  test("segmentsCross: crossing, touching and disjoint", () => {
+    expect(Geo.segmentsCross(0, 0, 2, 2, 0, 2, 2, 0)).toBe(true);
+    expect(Geo.segmentsCross(0, 0, 1, 1, 1, 1, 2, 0)).toBe(true);     // shared endpoint
+    expect(Geo.segmentsCross(0, 0, 1, 1, 2, 2, 3, 3)).toBe(false);    // collinear, disjoint
+    expect(Geo.segmentsCross(0, 0, 1, 0, 0, 1, 1, 1)).toBe(false);    // parallel
+  });
+  test("ringCrossings on a unit square", () => {
+    const sq = [[0, 0], [2, 0], [2, 2], [0, 2]];
+    const ts = Geo.ringCrossings(-1, 1, 3, 1, sq);
+    expect(ts.length).toBe(2); expect(ts[0]).toBeCloseTo(0.25, 6); expect(ts[1]).toBeCloseTo(0.75, 6);
+    expect(Geo.ringCrossings(-1, 3, 3, 3, sq)).toEqual([]);
+    expect(Geo.ringCrossings(-1, 3, 3, 3, sq, Geo.ringBBox(sq))).toEqual([]);   // bbox reject path
+  });
+  test("a ship in Elliott Bay is hidden behind Magnolia from West Point", () => {
+    const o = Geo.landOcclusion(WEST_POINT.lat, WEST_POINT.lon, ELLIOTT_BAY.lat, ELLIOTT_BAY.lon, land);
+    expect(o).not.toBeNull();
+    expect(o.distanceM).toBeGreaterThan(500);                 // the bluff starts a good way off
+    expect(o.distanceM).toBeLessThan(Geo.haversine(WEST_POINT.lat, WEST_POINT.lon, ELLIOTT_BAY.lat, ELLIOTT_BAY.lon));
+  });
+  test("open water to the north and west is clear", () => {
+    expect(Geo.landOcclusion(WEST_POINT.lat, WEST_POINT.lon, GOLDEN_GARDENS.lat, GOLDEN_GARDENS.lon, land)).toBeNull();
+    expect(Geo.landOcclusion(WEST_POINT.lat, WEST_POINT.lon, MID_SOUND.lat, MID_SOUND.lon, land)).toBeNull();
+  });
+  test("viewer standing on land sees past their own shore", () => {
+    const bluff = { lat: 47.655, lon: -122.42 };              // Discovery Park, inside the Magnolia polygon
+    expect(land.some((L) => Geo.pointInRing(bluff.lat, bluff.lon, L.ring))).toBe(true);
+    expect(Geo.landOcclusion(bluff.lat, bluff.lon, MID_SOUND.lat, MID_SOUND.lon, land)).toBeNull();
+    expect(Geo.landOcclusion(bluff.lat, bluff.lon, LAKE_UNION.lat, LAKE_UNION.lon, land)).not.toBeNull();
+  });
+  test("targets closer than the grace distance are never occluded", () => {
+    const near = Geo.destination(WEST_POINT.lat, WEST_POINT.lon, 100, 40);
+    expect(Geo.landOcclusion(WEST_POINT.lat, WEST_POINT.lon, near.lat, near.lon, land)).toBeNull();
+  });
+  test("fetchLand asks for generalised harbour polygons and falls back to coastal", async () => {
+    const calls = [];
+    const fetchImpl = async (url) => { calls.push(url); return { ok: true, json: async () => (url.includes("/233/") ? { features: [] } : landFixture) }; };
+    const r = await P.fetchLand(WEST_POINT.lat, WEST_POINT.lon, 20000, fetchImpl);
+    expect(calls.length).toBe(2);
+    expect(calls[0]).toContain("enc_harbour/MapServer/233/query"); expect(calls[1]).toContain("enc_coastal/MapServer/171/query");
+    expect(new URL(calls[0]).searchParams.get("maxAllowableOffset")).toMatch(/^0\.00027/);   // 30 m at 47.66N
+    expect(r.land.length).toBe(land.length);
+  });
+});
+
 describe("proxy.js: aisstream -> Digitraffic shape", () => {
   test("ingests PositionReport and ShipStaticData", () => {
     Proxy.vessels.clear();

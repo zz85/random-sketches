@@ -164,6 +164,79 @@
     return best;
   }
 
+  // ---- NOAA ENC Direct: land (LNDARE) for line-of-sight occlusion ---------------
+
+  /** Land_Area polygon layers, verified against the MapServer JSON (Sep 2026). */
+  const LAND_LAYERS = { harbour: { service: "enc_harbour", land: 233 }, coastal: { service: "enc_coastal", land: 171 } };
+
+  /**
+   * Land polygons around the viewer, as [{ring, bbox, name}]. Every ring is kept
+   * (islands and holes alike: a hole is water, but the sight line crossing its
+   * edge has already crossed the outer shore first, so counting it is harmless).
+   * `maxAllowableOffset` asks the server to generalise the shoreline to about
+   * `toleranceM` metres, which turns a 600 KB harbour response into ~150 KB.
+   * Harbour cells first; coastal only when no harbour cell covers the area.
+   */
+  async function fetchLand(lat, lon, radiusM, fetchImpl, opts) {
+    const bbox = bboxAround(lat, lon, radiusM);
+    const tolM = (opts && opts.toleranceM) || 30;
+    const tolDeg = tolM / Geo.metresPerDegree(lat).lat;
+    const query = async (scale) => {
+      const L = LAND_LAYERS[scale];
+      const p = envelopeParams(bbox, ["OBJL", "OBJNAM"], true);
+      p.set("maxAllowableOffset", tolDeg.toFixed(6));
+      const d = await arcgisQuery(`${ENC_DIRECT}/${L.service}/MapServer/${L.land}/query`, p, fetchImpl);
+      return { land: normalizeLand(d.features || [], scale), exceeded: !!d.exceededTransferLimit };
+    };
+    let r = await query("harbour");
+    if (r.land.length === 0) r = await query("coastal");
+    return r;
+  }
+
+  function normalizeLand(features, scale) {
+    const out = [];
+    for (const f of features) {
+      const rings = f.geometry && f.geometry.rings;
+      if (!rings) continue;
+      const name = clean(f.attributes && f.attributes.OBJNAM) || null;
+      for (const ring of rings) {
+        if (ring.length < 3) continue;
+        out.push({ ring, bbox: Geo.ringBBox(ring), name, scale });
+      }
+    }
+    return out;
+  }
+
+  class LandStore {
+    constructor(opts) {
+      this.storage = (opts && opts.storage) || null;
+      this.ttlMs = (opts && opts.ttlMs) || 30 * 24 * 3600e3;
+      this.key = (opts && opts.key) || "marine-ar:land";
+      this.center = null; this.radius = 0; this.at = 0; this.land = [];
+      this._load();
+    }
+    _load() {
+      if (!this.storage) return;
+      try {
+        const d = JSON.parse(this.storage.getItem(this.key) || "null");
+        if (!d || Date.now() - d.at > this.ttlMs) return;
+        Object.assign(this, { center: d.center, radius: d.radius, at: d.at, land: d.land || [] });
+      } catch (e) { /* ignore */ }
+    }
+    _save() {
+      if (!this.storage) return;
+      try { this.storage.setItem(this.key, JSON.stringify({ center: this.center, radius: this.radius, at: this.at, land: this.land })); }
+      catch (e) { /* quota: land can exceed 5 MB on busy coasts; fine, refetch next time */ }
+    }
+    needsFetch(lat, lon, radiusM) {
+      if (!this.center || Date.now() - this.at > this.ttlMs) return true;
+      if (radiusM > this.radius * 1.05) return true;
+      return Geo.haversine(lat, lon, this.center.lat, this.center.lon) > this.radius * 0.4;
+    }
+    set(lat, lon, radiusM, land) { this.center = { lat, lon }; this.radius = radiusM; this.at = Date.now(); this.land = land; this._save(); }
+    clear() { this.center = null; this.land = []; if (this.storage) try { this.storage.removeItem(this.key); } catch (e) { /* */ } }
+  }
+
   // ---- AIS code tables (ITU-R M.1371) -------------------------------------
 
   const NAV_STATUS = {
@@ -362,7 +435,7 @@
       });
       // a ferry and a sailboat nearby regardless of lanes
       mk({ mmsi: 366772760, name: "WENATCHEE", shipType: 60, lat: lat + 0.02, lon: lon + 0.01, sog: 17, cog: 250, heading: 250, navStat: 0, dims: { a: 70, b: 70, c: 14, d: 14 }, callSign: "WDC7373", destination: "BAINBRIDGE IS", draught: 5.5 });
-      mk({ mmsi: 338123456, name: "S/V RAVEN", shipType: 36, lat: lat - 0.012, lon: lon + 0.02, sog: 5.5, cog: 20, heading: 15, navStat: 8, dims: { a: 6, b: 6, c: 2, d: 2 }, callSign: "WDK9911", destination: "", draught: 2.1 });
+      mk({ mmsi: 338123456, name: "S/V RAVEN", shipType: 36, lat: lat - 0.05, lon: lon + 0.07, sog: 5.5, cog: 20, heading: 15, navStat: 8, dims: { a: 6, b: 6, c: 2, d: 2 }, callSign: "WDK9911", destination: "", draught: 2.1 });
       mk({ mmsi: 366999000, name: "ISLAND TUG", shipType: 52, lat: lat + 0.03, lon: lon - 0.03, sog: 0, cog: 90, heading: 95, navStat: 1, dims: { a: 15, b: 15, c: 5, d: 5 }, callSign: "WDF1122", destination: "ANCHORED", draught: 4 });
       let last = Date.now();
       function tick() {
@@ -488,6 +561,7 @@
 
   return {
     ENC_DIRECT, LANE_LAYERS, LANE_STYLE, envelopeParams, normalizeLane, bboxAround, fetchLanes, dedupeLanes, laneAt,
+    LAND_LAYERS, fetchLand, normalizeLand, LandStore,
     NAV_STATUS, shipType, CATEGORY_COLOR, flagOf, VesselTable,
     ingestDigitrafficLocations, ingestDigitrafficVessel, restPoller, demoProvider, AIS_PROVIDERS, aisProviderFor,
     reverseGeocode, declination, LaneStore,

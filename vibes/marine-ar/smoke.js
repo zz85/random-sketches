@@ -21,6 +21,7 @@ function waitPort() { return new Promise((res) => { const t = setInterval(() => 
   await waitPort();
   const cases = [
     { name: 'seattle-demo', url: `http://localhost:${PORT}/?lat=47.6603&lon=-122.4412&eye=18&hdg=300&pitch=-6&provider=demo&auto=1&nocam=1` },
+    { name: 'seattle-occlusion', url: `http://localhost:${PORT}/?lat=47.6603&lon=-122.4412&eye=18&hdg=135&pitch=-4&provider=demo&auto=1&nocam=1` },
     { name: 'helsinki-live', url: `http://localhost:${PORT}/?lat=60.153&lon=24.95&eye=12&hdg=200&pitch=-5&provider=digitraffic&auto=1&nocam=1` },
   ];
   let failed = false;
