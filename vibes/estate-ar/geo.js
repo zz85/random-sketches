@@ -172,8 +172,39 @@
     return { lat, lon };
   }
 
+  /**
+   * Sutherland–Hodgman: clip a polygon [[x,y],...] against half-planes
+   * {nx, ny, d} keeping points where nx*x + ny*y >= d. Returns [] when nothing is left.
+   */
+  function clipPolygon(poly, planes) {
+    let out = poly;
+    for (const pl of planes) {
+      const inp = out; out = [];
+      if (!inp.length) break;
+      const side = (p) => pl.nx * p[0] + pl.ny * p[1] - pl.d;
+      for (let i = 0; i < inp.length; i++) {
+        const a = inp[i], b = inp[(i + 1) % inp.length], sa = side(a), sb = side(b);
+        if (sa >= 0) out.push(a);
+        if ((sa >= 0) !== (sb >= 0)) { const t = sa / (sa - sb); out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]); }
+      }
+    }
+    return out;
+  }
+
+  /** Half-planes for the ground-plane view wedge: in front of the camera (by `back` m) and within ±halfDeg of the heading. */
+  function viewWedge(headingDeg, halfDeg, back) {
+    const h = headingDeg * D2R, f = [Math.sin(h), Math.cos(h)];
+    const l = (headingDeg - halfDeg) * D2R, r = (headingDeg + halfDeg) * D2R;
+    // left edge: keep points to the right of the ray at heading-half => normal points right of that ray
+    return [
+      { nx: f[0], ny: f[1], d: back == null ? 0.5 : back },
+      { nx: Math.cos(l), ny: -Math.sin(l), d: 0 },      // right-hand normal of ray at angle l (x=sin, y=cos)
+      { nx: -Math.cos(r), ny: Math.sin(r), d: 0 },     // left-hand normal of ray at angle r
+    ];
+  }
+
   return {
-    R, wrap360, angleDiff, haversine, bearing, metresPerDegree,
+    R, wrap360, clipPolygon, viewWedge, angleDiff, haversine, bearing, metresPerDegree,
     ringCentroid, outerRing, pointInRing, parcelView, project, pitchTo,
     smoothHeading, cardinal, fmtMoney, fmtDistance, mercToLatLon,
   };

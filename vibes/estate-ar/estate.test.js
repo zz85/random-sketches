@@ -117,6 +117,25 @@ describe("Geo: projection", () => {
   });
 });
 
+describe("Geo: clipPolygon / viewWedge", () => {
+  const sq = [[-10, -10], [10, -10], [10, 10], [-10, 10]];
+  test("wedge heading north keeps a triangle ahead", () => {
+    const out = Geo.clipPolygon(sq, Geo.viewWedge(0, 45, 1.5));
+    expect(out.length).toBeGreaterThanOrEqual(3);
+    for (const [x, y] of out) { expect(y).toBeGreaterThanOrEqual(1.5 - 1e-9); expect(Math.abs(x)).toBeLessThanOrEqual(y + 1e-9); }
+  });
+  test("wedge membership at several headings", () => {
+    const inside = (h, x, y) => Geo.viewWedge(h, 45, 0.5).every((pl) => pl.nx * x + pl.ny * y >= pl.d);
+    expect(inside(0, 0, 5)).toBe(true); expect(inside(0, 5, 0)).toBe(false); expect(inside(0, 0, -5)).toBe(false);
+    expect(inside(90, 5, 0)).toBe(true); expect(inside(90, 0, 5)).toBe(false);
+    expect(inside(180, 0, -5)).toBe(true); expect(inside(270, -5, 0)).toBe(true); expect(inside(270, 5, 0)).toBe(false);
+    expect(inside(350, -1, 5)).toBe(true); expect(inside(350, 3, 5)).toBe(true);   // bearing 31°, 41° off a 350° heading: wraps across north
+  });
+  test("polygon entirely behind the camera clips to nothing", () => {
+    expect(Geo.clipPolygon([[-1, -5], [1, -5], [0, -8]], Geo.viewWedge(0, 45, 0.5))).toEqual([]);
+  });
+});
+
 describe("Geo: formatting", () => {
   test("fmtMoney", () => {
     expect(Geo.fmtMoney(2929000)).toBe("$2,929,000");
@@ -419,6 +438,42 @@ describe("ParcelStore: unionArcs", () => {
     const arcs = PS.unionArcs(cs);
     expect(arcs.some((a) => a.x === 0 && a.y === 0)).toBe(false);
     for (const a of arcs) { const mid = (a.a0 + a.a1) / 2, px = a.x + a.r * Math.cos(mid), py = a.y + a.r * Math.sin(mid); for (const c of cs) if (c !== cs.find((q) => q.x === a.x && q.y === a.y)) expect(Math.hypot(px - c.x, py - c.y)).toBeGreaterThan(c.r - 1e-9); }
+  });
+});
+
+describe("ParcelStore: Track, planAhead, allowAuto", () => {
+  const mpd = Geo.metresPerDegree(ME.lat);
+  test("Track: no course until moved enough, then bearing and speed", () => {
+    const t = new PS.Track({ minDist: 25 });
+    t.push(ME.lat, ME.lon, 0); t.push(ME.lat + 5 / mpd.lat, ME.lon, 5000);
+    expect(t.course()).toBeNull();                                        // 5 m: jitter
+    t.push(ME.lat + 60 / mpd.lat, ME.lon, 45000);                           // 60 m north in 45 s
+    const c = t.course(); expect(c.bearing).toBeCloseTo(0, 0); expect(c.speed).toBeCloseTo(60 / 45, 2);
+    t.push(ME.lat + 60 / mpd.lat, ME.lon, 200000);                          // long pause: window drops old fixes
+    expect(t.fixes.length).toBe(1); expect(t.course()).toBeNull();
+  });
+  test("planAhead: corridor heading north, nearest first, skips covered", () => {
+    const plan = PS.planAhead(ME.lat, ME.lon, 0, 800, 260, null, "kingcounty");
+    expect(plan.circles.length).toBe(6);                                    // 2 steps × 3 lanes
+    for (const c of plan.circles) expect(c.lat).toBeGreaterThan(ME.lat);    // all ahead
+    expect(plan.circles[0].dist).toBeLessThanOrEqual(plan.circles[plan.circles.length - 1].dist);
+    const lanes = new Set(plan.circles.map((c) => Math.round((c.lon - ME.lon) * mpd.lon / 10) * 10));
+    expect(lanes.size).toBe(3);                                             // left, centre, right
+    const cov = new PS.Coverage([], 1e9).add(ME.lat + 200 / mpd.lat, ME.lon, 600, "kingcounty");
+    const plan2 = PS.planAhead(ME.lat, ME.lon, 0, 800, 260, cov, "kingcounty");
+    expect(plan2.skipped).toBeGreaterThan(0); expect(plan2.todo.length).toBeLessThan(6);
+    // heading east: circles have larger lon, same-ish lat
+    const east = PS.planAhead(ME.lat, ME.lon, 90, 400, 260, null, "kingcounty");
+    for (const c of east.circles) expect(c.lon).toBeGreaterThan(ME.lon);
+  });
+  test("allowAuto gate", () => {
+    expect(PS.allowAuto("off", { type: "wifi" }, true).ok).toBe(false);
+    expect(PS.allowAuto("wifi", undefined, false).ok).toBe(false);
+    expect(PS.allowAuto("wifi", { type: "wifi" }, true).ok).toBe(true);
+    expect(PS.allowAuto("wifi", { type: "cellular" }, true)).toEqual({ ok: false, why: "cellular" });
+    expect(PS.allowAuto("wifi", { type: "wifi", saveData: true }, true).ok).toBe(false);
+    expect(PS.allowAuto("wifi", undefined, true).ok).toBe(true);           // iOS: no API
+    expect(PS.allowAuto("any", { type: "cellular" }, true).ok).toBe(true);
   });
 });
 

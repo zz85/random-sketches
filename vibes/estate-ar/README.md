@@ -44,9 +44,19 @@ in the U-District with a simulated compass: drag to look around, wheel or arrow 
   The area is tiled with 260 m fetch circles on a hex lattice, nearest first, two requests in
   flight; the map and the radar show amber dots for what is still to come. 0.5 mi around the
   U-District is 19 requests, ~3,000 parcels, 5 MB, a couple of seconds on wifi.
-- **Radar coverage overlay**: the green wash on the radar is the union of what works offline,
-  with its boundary drawn (exact arc segments of the circle union, `unionArcs`) so you can see
-  where cached data ends. While a download runs the radar zooms out to show progress.
+- **Coverage overlay** on the radar and, when tilted down, on the ground plane in the camera
+  view: a green wash over everything cached for offline use with its exact boundary drawn (arc
+  segments of the circle union, `unionArcs`), so the edge of "works offline" is a line on the
+  pavement ahead of you. Circles are clipped to the view wedge in the ground frame
+  (Sutherland–Hodgman, `Geo.clipPolygon`) before projection so nothing behind the camera is
+  ever projected. While a download runs the radar zooms out to show progress.
+- **Auto-precache ahead**: while you move, the GPS track gives a course (needs 30 m of
+  displacement over the last 90 s, so standing still or jitter never triggers it) and a
+  corridor of fetch circles is downloaded ahead along it — three lanes wide so a turn at the
+  next block is covered — before you get there. Off / Wi-Fi only / any connection; Wi-Fi mode
+  reads `navigator.connection` (Chrome/Android) and never runs with Data Saver on. iOS Safari
+  does not expose connection type, so there Wi-Fi mode means "not known to be cellular".
+  Desktop: WASD walks the simulated position.
 - **Price modes**: total assessed, land only, $/ft² lot, or last sale price.
 - Settings for fetch radius, label distance, camera FOV, heading offset and magnetic declination
   (compass on Android is magnetic; Seattle is about 15°E), units, rooftop/OSM toggles,
@@ -109,10 +119,10 @@ sales layer / links. Most US county assessors publish parcels as an ArcGIS REST 
 ## Files
 
 - `index.html` — the app (camera, sensors, overlay, radar, detail sheet, settings, SW registration)
-- `geo.js` — haversine, bearing, centroid, point-in-polygon, angular span, pinhole projection, heading filter, formatting
+- `geo.js` — haversine, bearing, centroid, point-in-polygon, angular span, pinhole projection, polygon clipping / view wedge, heading filter, formatting
 - `providers.js` — provider registry (King, Snohomish, WA statewide), ArcGIS queries, normalisation, sales join, WA DOR use codes, Nominatim
 - `heights.js` — storey/height estimate from use class + value density; Overpass fetch and parcel matching
-- `parcelstore.js` — offline cache: coverage circles + IndexedDB parcel store (memory fallback), hex-lattice precache planner, circle-union boundary
+- `parcelstore.js` — offline cache: coverage circles + IndexedDB parcel store (memory fallback), hex-lattice precache planner, circle-union boundary, GPS track/course, corridor-ahead planner, wifi gate
 - `sw.js`, `manifest.webmanifest`, `icon.svg`, `icon-192.png`, `icon-512.png` — PWA
-- `estate.test.js` — bun tests (53) using `fixture_parcels.json` / `fixture_sales.json` / `fixture_snohomish.json` / `fixture_wastate.json` captured from the live services
+- `estate.test.js` — bun tests (59) using `fixture_parcels.json` / `fixture_sales.json` / `fixture_snohomish.json` / `fixture_wastate.json` captured from the live services
 - `live_check.js` — live smoke test

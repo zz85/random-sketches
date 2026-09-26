@@ -146,6 +146,7 @@
   <div class="row"><label>Label the parcel you stand on</label><input type="checkbox" class="sw" id="s-inside"></div>
   <div class="row"><label>Only parcels with a price</label><input type="checkbox" class="sw" id="s-priced"></div>
   <div class="row"><label>Radar heading-up</label><input type="checkbox" class="sw" id="s-radarup"></div>
+  <div class="row"><label>Coverage on the ground<small>Green wash on the ground plane where parcels are cached; its edge is where offline stops</small></label><input type="checkbox" class="sw" id="s-groundcov"></div>
   <div class="row"><label>Radar shows offline coverage<small>Green = areas already cached; amber dots = being downloaded</small></label><input type="checkbox" class="sw" id="s-radarcov"></div>
   <div class="row"><label>Simulate location<small>Desktop testing: fixed position in the U-District, drag to look around, wheel to tilt</small></label><input type="checkbox" class="sw" id="s-sim"></div>
   <div class="row"><label>Offline cache<small id="cacheinfo">—</small></label></div>
@@ -153,6 +154,9 @@
   <canvas id="covmap" width="660" height="360" style="width:100%;height:180px;border-radius:12px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);margin-top:6px" aria-label="Offline coverage map"></canvas>
   <button class="primary" id="precache" style="margin-top:10px">Download neighbourhood</button>
   <div class="sub" id="pre-status" style="margin-top:8px"></div>
+  <div class="row"><label>Auto-precache ahead<small id="auto-sub">While you move, fetch a corridor ahead along your course so the next blocks are cached before you get there</small></label>
+    <div class="seg" data-set="auto"><button data-v="off">Off</button><button data-v="wifi">Wi-Fi</button><button data-v="any">Any</button></div></div>
+  <div class="row"><label>Look-ahead distance</label><input type="range" id="s-autoahead" min="200" max="1500" step="100"><output id="o-autoahead"></output></div>
   <button class="ghost" id="clearcache">Clear cached parcels</button>
   <p class="sub" style="margin-top:14px" id="about"></p>
 </div>
@@ -181,7 +185,7 @@
   const D2R = Math.PI / 180;
 
   // ---- settings ----------------------------------------------------------
-  const DEFAULTS = { priceMode: "total", units: "imperial", radius: 220, maxdist: 200, maxlabels: 12, fov: 58, hoff: 0, decl: 15.3, ground: true, rooftop: true, osm: true, inside: false, priced: true, radarup: true, radarcov: true, prearea: 1000, sim: false };
+  const DEFAULTS = { priceMode: "total", units: "imperial", radius: 220, maxdist: 200, maxlabels: 12, fov: 58, hoff: 0, decl: 15.3, ground: true, rooftop: true, osm: true, inside: false, priced: true, radarup: true, radarcov: true, groundcov: true, prearea: 1000, auto: "wifi", autoahead: 600, sim: false };
   const S = Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem("estate-ar:settings") || "{}"));
   const saveS = () => localStorage.setItem("estate-ar:settings", JSON.stringify(S));
 
@@ -256,10 +260,19 @@
     if (!navigator.geolocation) { toast("No geolocation in this browser"); return; }
     navigator.geolocation.watchPosition((pos) => {
       st.lat = pos.coords.latitude; st.lon = pos.coords.longitude; st.acc = pos.coords.accuracy; st.fixAt = Date.now();
-      maybeFetch(); maybeGeocode();
+      if (st.acc == null || st.acc < 60) track.push(st.lat, st.lon, st.fixAt);
+      maybeFetch(); maybeGeocode(); maybeAutoPrecache();
     }, (err) => { toast("Location: " + err.message); $("gpsdot").className = "dot bad"; $("loctxt").textContent = "Location denied"; },
     { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 });
   }
+  /** Move the simulated position `m` metres along `brg`, as if a GPS fix arrived. */
+  function simWalk(brg, m) {
+    const mpd = Geo.metresPerDegree(st.lat);
+    st.lat += Math.cos(brg * D2R) * m / mpd.lat; st.lon += Math.sin(brg * D2R) * m / mpd.lon; st.fixAt = Date.now();
+    track.push(st.lat, st.lon, st.fixAt);
+    maybeFetch(); maybeGeocode(); maybeAutoPrecache();
+  }
+  window.__simWalk = simWalk;
   function startSim() {
     st.lat = SIM.lat; st.lon = SIM.lon; st.acc = 5; st.fixAt = Date.now(); st.hasCompass = true; st.hasOrient = true;
     let drag = null;
@@ -273,7 +286,11 @@
     lbls.addEventListener("touchmove", (e) => onMove(e.touches[0].clientX, e.touches[0].clientY), { passive: true });
     lbls.addEventListener("touchend", () => { drag = null; });
     window.addEventListener("wheel", (e) => { st.sim.pitch = Math.max(-89, Math.min(89, st.sim.pitch - e.deltaY * 0.05)); }, { passive: true });
-    window.addEventListener("keydown", (e) => { if (e.key === "ArrowLeft") st.sim.heading -= 3; if (e.key === "ArrowRight") st.sim.heading += 3; if (e.key === "ArrowUp") st.sim.pitch += 2; if (e.key === "ArrowDown") st.sim.pitch -= 2; });
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowLeft") st.sim.heading -= 3; if (e.key === "ArrowRight") st.sim.heading += 3; if (e.key === "ArrowUp") st.sim.pitch += 2; if (e.key === "ArrowDown") st.sim.pitch -= 2;
+      const step = { w: 0, s: 180, a: 270, d: 90 }[e.key.toLowerCase()];
+      if (step != null) simWalk(Geo.wrap360(st.sim.heading + step), 8);
+    });
     maybeFetch(); maybeGeocode();
   }
 
@@ -337,7 +354,7 @@
     return v;
   }
   function currentHeading() {
-    if (S.sim) return st.sim.heading;
+    if (S.sim) return Geo.wrap360(st.sim.heading);
     if (st.headingRaw == null) return null;
     const trueHdg = Geo.wrap360(st.headingRaw + S.decl + S.hoff);
     st.heading = Geo.smoothHeading(st.heading, trueHdg, 0.25);
@@ -364,7 +381,7 @@
     if (st.lat != null) {
       $("gpsdot").className = "dot " + (st.acc == null ? "" : st.acc <= 15 ? "ok" : st.acc <= 40 ? "" : "bad");
       $("loctxt").textContent = st.place || `${st.lat.toFixed(5)}, ${st.lon.toFixed(5)}`;
-      $("locsub").textContent = `${st.parcels.length} parcels${st.source === "cache" ? " (cached)" : ""}${navigator.onLine === false ? " · OFFLINE" : ""}${st.offlineGap ? " · no data here yet" : ""}${st.osmCount > 0 ? ` · ${st.osmCount} OSM heights` : ""} · ±${Geo.fmtDistance(st.acc || 0, imperial())} · ${st.provider ? st.provider.name : "no provider"}${S.sim ? " · SIMULATED" : ""}`;
+      $("locsub").textContent = `${st.parcels.length} parcels${st.source === "cache" ? " (cached)" : ""}${navigator.onLine === false ? " · OFFLINE" : ""}${st.offlineGap ? " · no data here yet" : ""}${st.osmCount > 0 ? ` · ${st.osmCount} OSM heights` : ""}${st.precache && st.precache.running && st.precache.kind === "auto" ? ` · caching ahead ${st.precache.done}/${st.precache.total}` : autoNote ? " · " + autoNote : ""} · ±${Geo.fmtDistance(st.acc || 0, imperial())} · ${st.provider ? st.provider.name : "no provider"}${S.sim ? " · SIMULATED" : ""}`;
     }
     // horizon line
     const hp = Geo.project(hdg || 0, 0, hdg || 0, pitch, S.fov, st.w, st.h, 0);
@@ -461,6 +478,7 @@
         if (!started) { gctx.moveTo(a.x, a.y); started = true; } else gctx.lineTo(a.x, a.y);
       }
     };
+    if (S.groundcov) drawGroundCoverage(hdg, pitch, proj);
     gctx.lineWidth = 1.5; gctx.lineJoin = "round";
     for (const p of st.parcels) {
       const v = viewOf(p);
@@ -485,6 +503,48 @@
   }
 
   let radarZoom = 1;   // >1 = zoomed out; eases toward target
+  /**
+   * The offline coverage union on the ground plane: each circle becomes a polygon of
+   * ground points (clipped to what is in front of the camera), filled together with
+   * the nonzero rule so overlaps stay flat; the boundary arcs from unionArcs are
+   * stroked so the edge of "works offline" is a visible line on the pavement.
+   */
+  function drawGroundCoverage(hdg, pitch, proj) {
+    const mpd = Geo.metresPerDegree(st.lat);
+    const circles = store.coverage.fresh().filter((cv) => Geo.haversine(st.lat, st.lon, cv.lat, cv.lon) - cv.radius <= Math.max(S.maxdist, 400) * 2);
+    if (!circles.length) return;
+    // planar frame in metres around the viewer, x east / y north; everything is clipped to the ground
+    // wedge in front of the camera before projecting, so no point ever lands behind the eye
+    const cs = circles.map((cv) => ({ x: (cv.lon - st.lon) * mpd.lon, y: (cv.lat - st.lat) * mpd.lat, r: cv.radius }));
+    const wedge = Geo.viewWedge(hdg, Math.min(80, S.fov / 2 + 30), 1.5);
+    const inWedge = (x, y) => wedge.every((pl) => pl.nx * x + pl.ny * y >= pl.d);
+    // points are already clipped to the wedge, so project with a wide margin (the shared proj() rejects beyond fov/2+25)
+    const P = (x, y) => { const d = Math.hypot(x, y); return Geo.project(Math.atan2(x, y) / D2R, Geo.pitchTo(d, -EYE), hdg, pitch, S.fov, st.w, st.h, 90); };
+    // a vertex on the near clip plane is ground right under the camera: pin it to the bottom of the screen so the wash has no visible near edge
+    const nearPlane = wedge[0], onNear = (x, y) => Math.abs(nearPlane.nx * x + nearPlane.ny * y - nearPlane.d) < 1e-6;
+    const polyPts = (c, a0, a1) => { const n = Math.max(8, Math.ceil((a1 - a0) / (Math.PI / 36))), pts = []; for (let i = 0; i <= n; i++) { const a = a0 + (a1 - a0) * i / n; pts.push([c.x + c.r * Math.cos(a), c.y + c.r * Math.sin(a)]); } return pts; };
+    gctx.save();
+    gctx.beginPath();
+    for (const c of cs) {
+      const clipped = Geo.clipPolygon(polyPts(c, 0, Math.PI * 2).slice(0, -1), wedge);
+      if (clipped.length < 3) continue;
+      clipped.forEach(([x, y], i) => { const q = P(x, y); if (!q) return; const yy = onNear(x, y) && q.y > st.h / 2 ? st.h * 3 : q.y; i ? gctx.lineTo(q.x, yy) : gctx.moveTo(q.x, yy); });
+      gctx.closePath();
+    }
+    gctx.fillStyle = "rgba(53,224,122,.13)"; gctx.fill("nonzero");
+    gctx.lineWidth = 2; gctx.strokeStyle = "rgba(53,224,122,.75)"; gctx.beginPath();
+    for (const seg of ParcelStore.unionArcs(cs)) {
+      let started = false;
+      for (const [x, y] of polyPts(seg, seg.a0, seg.a1)) {
+        const q = inWedge(x, y) ? P(x, y) : null;
+        if (!q) { started = false; continue; }
+        if (!started) { gctx.moveTo(q.x, q.y); started = true; } else gctx.lineTo(q.x, q.y);
+      }
+    }
+    gctx.stroke();
+    gctx.restore();
+  }
+
   function drawRadar(hdg, vis) {
     const zoomTarget = st.precache && st.precache.running ? Math.max(1, (S.prearea + 260) / S.radius) : 1;
     radarZoom += (zoomTarget - radarZoom) * 0.12;
@@ -588,9 +648,9 @@
   function bindSwitch(id, key, cb) { const el = $("s-" + id); el.checked = !!S[key]; el.onchange = () => { S[key] = el.checked; saveS(); cb && cb(); }; }
   function bindSeg(key) { const seg = document.querySelector(`.seg[data-set="${key}"]`); const paint = () => [...seg.children].forEach((b) => b.classList.toggle("on", b.dataset.v === S[key])); paint(); seg.onclick = (e) => { if (!e.target.dataset.v) return; S[key] = e.target.dataset.v; saveS(); paint(); refreshRanges(); }; }
   const dist = (m) => Geo.fmtDistance(m, imperial());
-  function refreshRanges() { bindRange("radius", "radius", dist); bindRange("maxdist", "maxdist", dist); bindRange("maxlabels", "maxlabels", (v) => String(v)); bindRange("fov", "fov", (v) => v + "°"); bindRange("hoff", "hoff", (v) => (v > 0 ? "+" : "") + v + "°"); bindRange("decl", "decl", (v) => v.toFixed(1) + "°"); bindRange("prearea", "prearea", dist); $("s-prearea").addEventListener("input", () => updatePrecacheEstimate()); }
+  function refreshRanges() { bindRange("radius", "radius", dist); bindRange("maxdist", "maxdist", dist); bindRange("maxlabels", "maxlabels", (v) => String(v)); bindRange("fov", "fov", (v) => v + "°"); bindRange("hoff", "hoff", (v) => (v > 0 ? "+" : "") + v + "°"); bindRange("decl", "decl", (v) => v.toFixed(1) + "°"); bindRange("prearea", "prearea", dist); bindRange("autoahead", "autoahead", dist); $("s-prearea").addEventListener("input", () => updatePrecacheEstimate()); }
   refreshRanges(); bindSeg("priceMode"); bindSeg("units");
-  bindSwitch("ground", "ground"); bindSwitch("rooftop", "rooftop"); bindSwitch("osm", "osm", () => maybeFetch(true)); bindSwitch("inside", "inside"); bindSwitch("priced", "priced"); bindSwitch("radarup", "radarup"); bindSwitch("radarcov", "radarcov");
+  bindSwitch("ground", "ground"); bindSwitch("rooftop", "rooftop"); bindSwitch("osm", "osm", () => maybeFetch(true)); bindSwitch("inside", "inside"); bindSwitch("priced", "priced"); bindSwitch("radarup", "radarup"); bindSwitch("radarcov", "radarcov"); bindSwitch("groundcov", "groundcov"); bindSeg("auto");
   bindSwitch("sim", "sim", () => location.reload());
   $("clearcache").onclick = async () => { await store.clear(); lastLoadKey = ""; st.parcels = []; st.views.clear(); updateCacheInfo(); maybeFetch(true); toast("Cache cleared", true); };
   async function updateCacheInfo() {
@@ -603,6 +663,12 @@
     } catch (e) { $("cacheinfo").textContent = "Offline cache unavailable"; }
   }
   $("gear").addEventListener("click", () => { updateCacheInfo(); updatePrecacheEstimate(); });
+  setInterval(() => {
+    if (!$("settings").classList.contains("open")) return;
+    const g = S.auto === "off" ? null : ParcelStore.allowAuto(S.auto, navigator.connection, navigator.onLine), c = track.course();
+    $("auto-sub").textContent = S.auto === "off" ? "While you move, fetch a corridor ahead along your course so the next blocks are cached before you get there"
+      : `${g.ok ? "Allowed" : "Paused"} (${g.why})` + (c ? ` · moving ${Geo.cardinal(c.bearing)} at ${(c.speed * (imperial() ? 2.237 : 3.6)).toFixed(1)} ${imperial() ? "mph" : "km/h"}` : " · not moving") + (navigator.connection ? "" : " · this browser does not report connection type");
+  }, 1000);
 
   // ---- coverage map in the settings sheet -----------------------------------------
   const covmap = $("covmap"), cctx = covmap.getContext("2d");
@@ -650,14 +716,10 @@
     $("pre-est").textContent = `${plan.todo.length} request${plan.todo.length === 1 ? "" : "s"} of ${Geo.fmtDistance(PRE_FETCH_R, imperial())} each` + (plan.skipped ? `, ${plan.skipped} already cached` : "") + ` · ~${Math.round(plan.todo.length * 1.2)} s on a good connection`;
     $("precache").disabled = !!(st.precache && st.precache.running);
   }
-  $("precache").onclick = async () => {
-    if (st.precache && st.precache.running) { st.precache.cancel = true; $("precache").textContent = "Stopping…"; return; }
-    if (st.lat == null || !st.provider) { toast("Need a GPS fix first"); return; }
-    const prov = st.provider, plan = ParcelStore.planPrecache(st.lat, st.lon, S.prearea, PRE_FETCH_R, store.coverage, prov.id);
-    if (!plan.todo.length) { $("pre-status").textContent = "Already fully cached."; return; }
-    st.precache = { running: true, cancel: false, done: 0, total: plan.todo.length, todo: plan.todo.slice(), parcels: 0, failed: 0 };
-    $("precache").textContent = "Stop"; $("precache").style.background = "var(--warn)";
-    const status = () => { $("pre-status").textContent = `${st.precache.done}/${st.precache.total} areas · ${st.precache.parcels.toLocaleString()} parcels${st.precache.failed ? ` · ${st.precache.failed} failed` : ""}`; };
+  /** Run a list of fetch circles through the store. One run at a time; auto runs never interrupt a manual one. */
+  async function runPrecache(prov, todo, kind) {
+    st.precache = { running: true, kind, cancel: false, done: 0, total: todo.length, todo: todo.slice(), parcels: 0, failed: 0 };
+    const status = () => { if (kind === "manual") $("pre-status").textContent = `${st.precache.done}/${st.precache.total} areas · ${st.precache.parcels.toLocaleString()} parcels${st.precache.failed ? ` · ${st.precache.failed} failed` : ""}`; };
     status();
     // two requests in flight at a time: fast enough, polite to the county's server
     const worker = async () => {
@@ -674,13 +736,44 @@
       }
     };
     await Promise.all([worker(), worker()]);
-    const cancelled = st.precache.cancel;
+    const out = { cancelled: st.precache.cancel, parcels: st.precache.parcels, failed: st.precache.failed, done: st.precache.done };
     st.precache.running = false;
+    lastLoadKey = ""; updateCacheInfo(); updatePrecacheEstimate(); maybeFetch();
+    return out;
+  }
+
+  $("precache").onclick = async () => {
+    if (st.precache && st.precache.running) { st.precache.cancel = true; $("precache").textContent = "Stopping…"; return; }
+    if (st.lat == null || !st.provider) { toast("Need a GPS fix first"); return; }
+    const prov = st.provider, plan = ParcelStore.planPrecache(st.lat, st.lon, S.prearea, PRE_FETCH_R, store.coverage, prov.id);
+    if (!plan.todo.length) { $("pre-status").textContent = "Already fully cached."; return; }
+    $("precache").textContent = "Stop"; $("precache").style.background = "var(--warn)";
+    const r = await runPrecache(prov, plan.todo, "manual");
     $("precache").textContent = "Download neighbourhood"; $("precache").style.background = "";
     const unique = await store.count();
-    $("pre-status").textContent = (cancelled ? "Stopped. " : "Done. ") + `${unique.toLocaleString()} parcels in the offline cache${st.precache.failed ? `, ${st.precache.failed} area${st.precache.failed === 1 ? "" : "s"} failed or hit the 1000-feature cap` : ""}.`;
-    lastLoadKey = ""; updateCacheInfo(); updatePrecacheEstimate(); maybeFetch();
+    $("pre-status").textContent = (r.cancelled ? "Stopped. " : "Done. ") + `${unique.toLocaleString()} parcels in the offline cache${r.failed ? `, ${r.failed} area${r.failed === 1 ? "" : "s"} failed or hit the 1000-feature cap` : ""}.`;
   };
+
+  // ---- auto-precache along the route --------------------------------------------------
+  const track = new ParcelStore.Track({ windowMs: 90e3, minDist: 30 });
+  let autoLast = 0, autoNote = "";
+  async function maybeAutoPrecache() {
+    if (S.auto === "off" || st.lat == null || !st.provider) { st.auto = null; return; }
+    const gate = ParcelStore.allowAuto(S.auto, navigator.connection, navigator.onLine);
+    const course = track.course();
+    st.auto = { gate, course };
+    if (!gate.ok || !course) return;
+    if (course.speed > 40) return;                                   // > 90 mph: not a route anyone is looking at buildings on
+    if (st.precache && st.precache.running) return;
+    if (Date.now() - autoLast < 8000) return;
+    const plan = ParcelStore.planAhead(st.lat, st.lon, course.bearing, S.autoahead, PRE_FETCH_R, store.coverage, st.provider.id);
+    if (!plan.todo.length) return;
+    autoLast = Date.now();
+    const r = await runPrecache(st.provider, plan.todo, "auto");
+    autoNote = `auto: +${r.parcels.toLocaleString()} parcels ahead (${Geo.cardinal(course.bearing)})`;
+    setTimeout(() => { if (autoNote.startsWith("auto:")) autoNote = ""; }, 6000);
+  }
+  if (navigator.connection && navigator.connection.addEventListener) navigator.connection.addEventListener("change", () => maybeAutoPrecache());
   $("gear").onclick = () => $("settings").classList.toggle("open");
   $("sx").onclick = () => $("settings").classList.remove("open");
   $("refresh").onclick = () => maybeFetch(true);

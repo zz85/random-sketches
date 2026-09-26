@@ -11,6 +11,9 @@
  *                                       within radius -> render offline
  *   planPrecache(...)                   hex-tile a neighbourhood with fetch
  *                                       circles, skipping what is covered
+ *   Track / planAhead / allowAuto       course from GPS fixes, a corridor of
+ *                                       circles ahead of it, and the
+ *                                       wifi/data-saver gate for auto mode
  *
  * So walking back along a street you already looked at is instant and works
  * with no signal; a new block needs one fetch and is then kept for `ttlMs`.
@@ -223,10 +226,73 @@
     return out;
   }
 
+  // ---- auto-precache along the route -----------------------------------------------
+  /**
+   * Course of travel from GPS fixes. Keeps the last few fixes, reports speed and
+   * bearing once the track is long enough to trust (GPS jitter at walking pace is
+   * a few metres, so we need tens of metres of displacement).
+   */
+  class Track {
+    constructor(opts) { this.fixes = []; this.windowMs = (opts && opts.windowMs) || 90e3; this.minDist = (opts && opts.minDist) || 25; }
+    push(lat, lon, at) {
+      const t = at ?? Date.now();
+      this.fixes.push({ lat, lon, t });
+      while (this.fixes.length && t - this.fixes[0].t > this.windowMs) this.fixes.shift();
+      if (this.fixes.length > 60) this.fixes.shift();
+      return this;
+    }
+    /** {bearing, speed (m/s), distance} over the window, or null when not moving enough. */
+    course() {
+      if (this.fixes.length < 2) return null;
+      const a = this.fixes[0], b = this.fixes[this.fixes.length - 1];
+      const d = Geo.haversine(a.lat, a.lon, b.lat, b.lon), dt = (b.t - a.t) / 1000;
+      if (d < this.minDist || dt <= 0) return null;
+      return { bearing: Geo.bearing(a.lat, a.lon, b.lat, b.lon), speed: d / dt, distance: d };
+    }
+    reset() { this.fixes = []; }
+  }
+
+  /**
+   * Fetch circles ahead of a moving viewer: a corridor of `fetchM` circles along
+   * the course, `lookaheadM` long and ~2 circles wide (so a turn at the next
+   * block is still covered), skipping what coverage already has. Nearest first.
+   */
+  function planAhead(lat, lon, bearingDeg, lookaheadM, fetchM, coverage, providerId, now) {
+    const mpd = Geo.metresPerDegree(lat), b = bearingDeg * Math.PI / 180;
+    const fx = Math.sin(b), fy = Math.cos(b), rx = fy, ry = -fx;       // forward and right unit vectors (x east, y north)
+    const step = fetchM * 1.5, side = fetchM * 1.6;
+    const out = [];
+    for (let s = step * 0.5; s <= lookaheadM; s += step) {
+      for (const k of [0, -1, 1]) {
+        const x = fx * s + rx * side * k * 0.5, y = fy * s + ry * side * k * 0.5;
+        const cl = lat + y / mpd.lat, co = lon + x / mpd.lon;
+        const covered = coverage ? coverage.covers(cl, co, fetchM, providerId, now) : false;
+        out.push({ lat: cl, lon: co, radius: fetchM, dist: Math.hypot(x, y), covered });
+      }
+    }
+    out.sort((p, q) => p.dist - q.dist);
+    return { circles: out, todo: out.filter((c) => !c.covered), skipped: out.filter((c) => c.covered).length };
+  }
+
+  /**
+   * Should we auto-precache now? `conn` is navigator.connection (may be undefined).
+   * mode: "off" | "wifi" | "any". Unmetered is inferred from type/saveData; browsers
+   * without the API (iOS Safari) cannot tell, so "wifi" there means "not saveData
+   * and not known cellular", which is the best available answer.
+   */
+  function allowAuto(mode, conn, online) {
+    if (mode === "off" || online === false) return { ok: false, why: online === false ? "offline" : "off" };
+    if (conn && conn.saveData) return { ok: false, why: "data saver on" };
+    if (mode === "any") return { ok: true, why: "any connection" };
+    if (!conn || !conn.type || conn.type === "unknown") return { ok: true, why: "connection type unknown, assuming ok" };
+    if (conn.type === "wifi" || conn.type === "ethernet") return { ok: true, why: conn.type };
+    return { ok: false, why: conn.type };
+  }
+
   function open(opts) {
     const useIDB = typeof indexedDB !== "undefined" && !(opts && opts.memory);
     return new Store(useIDB ? new ParcelDB(opts && opts.name) : new MemoryDB(), opts);
   }
 
-  return { Coverage, MemoryDB, ParcelDB, Store, open, freeze, thaw, planPrecache, unionArcs, DEFAULT_TTL };
+  return { Coverage, MemoryDB, ParcelDB, Store, open, freeze, thaw, planPrecache, planAhead, unionArcs, Track, allowAuto, DEFAULT_TTL };
 }));
