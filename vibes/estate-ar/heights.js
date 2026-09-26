@@ -112,9 +112,17 @@
     throw lastErr || new Error("Overpass unavailable");
   }
 
-  /** Attach heights. OSM buildings are assigned to the parcel whose ring contains their centroid; tallest wins per parcel. */
-  function applyHeights(parcels, osm) {
-    for (const p of parcels) { const e = estimateHeight(p); p.height = e.height; p.storeys = e.storeys; p.heightSource = "estimate"; }
+  /**
+   * Attach heights. Priority: assessor storey count (King County apartment
+   * complexes, via `lookup(pin)` -> {stories}) > OSM building matched by
+   * centroid containment (tallest wins) > the value-density estimate.
+   */
+  function applyHeights(parcels, osm, lookup) {
+    for (const p of parcels) {
+      const a = lookup ? lookup(p.id) : null;
+      if (a && a.stories > 0) { p.storeys = a.stories; p.height = a.stories * STOREY_M + (a.stories > 3 ? 1.5 : 0.8); p.heightSource = "assessor"; continue; }
+      const e = estimateHeight(p); p.height = e.height; p.storeys = e.storeys; p.heightSource = "estimate";
+    }
     if (!osm || !osm.length) return parcels;
     const matched = new Map();
     for (const b of osm) {
@@ -128,7 +136,8 @@
     }
     for (const p of parcels) {
       const b = matched.get(p.id);
-      if (b) { p.height = b.height; p.storeys = b.storeys; p.heightSource = "osm"; if (!p.name && b.name) p.name = b.name; }
+      if (b && p.heightSource !== "assessor") { p.height = b.height; p.storeys = b.storeys; p.heightSource = "osm"; }
+      if (b && !p.name && b.name) p.name = b.name;
     }
     return parcels;
   }

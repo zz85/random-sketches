@@ -115,7 +115,7 @@
         outFields: [
           "GDBA.CADASTRAL__parcels.PARCEL_ID", "GDBA.CADASTRAL__parcels.SITUSLINE1", "GDBA.CADASTRAL__parcels.SITUSCITY", "GDBA.CADASTRAL__parcels.SITUSZIP",
           "GDBA.CADASTRAL__parcels.USECODE", "GDBA.CADASTRAL__parcels.MKLND", "GDBA.CADASTRAL__parcels.MKIMP", "GDBA.CADASTRAL__parcels.GIS_SQ_FT", "GDBA.CADASTRAL__parcels.GIS_ACRES",
-          "GDBA.CADASTRAL__parcels.XMPTDESCR", "SCD_GDBA.AMANDA_PROP_DATA.Zoning", "SCD_GDBA.AMANDA_PROP_DATA.Zoning_Desc", "SCD_GDBA.AMANDA_PROP_DATA.Assessor_Link",
+          "GDBA.CADASTRAL__parcels.XMPTDESCR", "GDBA.CADASTRAL__parcels.TAX_YEAR", "SCD_GDBA.AMANDA_PROP_DATA.Zoning", "SCD_GDBA.AMANDA_PROP_DATA.Zoning_Desc", "SCD_GDBA.AMANDA_PROP_DATA.Assessor_Link",
         ],
         map: (a) => {
           const g = (k) => a["GDBA.CADASTRAL__parcels." + k], m = (k) => a["SCD_GDBA.AMANDA_PROP_DATA." + k];
@@ -124,7 +124,7 @@
           return {
             id: g("PARCEL_ID"), address: g("SITUSLINE1"), city: g("SITUSCITY"), zip: g("SITUSZIP"), use, zoning,
             propType: g("XMPTDESCR") ? "X" : typeFromUse(use), name: g("XMPTDESCR"),
-            landValue: g("MKLND"), imprValue: g("MKIMP"), lotSqft: g("GIS_SQ_FT"), acres: g("GIS_ACRES"), link: m("Assessor_Link"),
+            landValue: g("MKLND"), imprValue: g("MKIMP"), lotSqft: g("GIS_SQ_FT"), acres: g("GIS_ACRES"), link: m("Assessor_Link"), taxYear: g("TAX_YEAR"),
           };
         },
       },
@@ -234,6 +234,7 @@
       county: clean(m.county) || null,
       link: m.link || null,
       asOf: m.asOf != null ? Number(m.asOf) : null,
+      taxYear: m.taxYear != null ? Number(m.taxYear) || null : null,
       landValue: land,
       imprValue: impr,
       totalValue: land == null && impr == null ? null : (land || 0) + (impr || 0),

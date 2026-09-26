@@ -10,8 +10,8 @@
  *               this layer just makes the raw responses survive too.
  *   Everything else  passthrough.
  */
-const VERSION = "estate-ar-v5";
-const SHELL = ["./", "./index.html", "./geo.js", "./providers.js", "./heights.js", "./parcelstore.js", "./manifest.webmanifest", "./icon.svg", "./icon-192.png", "./icon-512.png"];
+const VERSION = "estate-ar-v6";
+const SHELL = ["./", "./index.html", "./geo.js", "./providers.js", "./heights.js", "./parcelstore.js", "./market.js", "./manifest.webmanifest", "./icon.svg", "./icon-192.png", "./icon-512.png"];
 const DATA_HOSTS = ["gismaps.kingcounty.gov", "gis.snoco.org", "gis.dnr.wa.gov", "nominatim.openstreetmap.org", "overpass-api.de", "overpass.kumi.systems"];
 const DATA_CACHE = VERSION + "-data";
 const DATA_MAX = 120;   // responses kept

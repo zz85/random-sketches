@@ -4,6 +4,7 @@ const Geo = require("./geo.js");
 const P = require("./providers.js");
 const H = require("./heights.js");
 const PS = require("./parcelstore.js");
+const M = require("./market.js");
 const parcelsFx = require("./fixture_parcels.json");   // live King County response, 120 m around ME
 const salesFx = require("./fixture_sales.json");       // live sales layer, 250 m around ME
 
@@ -437,6 +438,62 @@ describe("Heights: OSM", () => {
     expect(decodeURIComponent(calls[1].body)).toContain('way["building"]["building"!="no"](around:150,47.660000,-122.310000)');
     expect(out).toEqual([{ lat: 1, lon: 2, height: 20, storeys: 6, name: null }]);
     await expect(H.fetchOsmHeights(0, 0, 10, async () => ({ ok: false, status: 500 }), ["https://a/"])).rejects.toThrow("HTTP 500");
+  });
+});
+
+describe("Market: bundled datasets", () => {
+  M.set("apts", require("./data/kc_apartments.json")); M.set("zips", require("./data/wa_zip_market.json"));
+  const parcels = parcelsFx.features.map((f) => P.normalizeParcel(f, KC));
+  const by = (addr) => parcels.find((p) => p.address === addr);
+  test("apartment record: The Standard is 211 units / 25 storeys / 2022", () => {
+    const a = M.apartment("8817400054");
+    expect(a.units).toBe(211); expect(a.stories).toBe(25); expect(a.yearBuilt).toBe(2022); expect(a.avgUnitSqft).toBe(799);
+    expect(a.bedroomMix.S).toBe(43); expect(a.bedroomMix["0"]).toBeUndefined();
+    expect(M.apartment("nope")).toBeNull();
+  });
+  test("zip: 98105 has rent, condo, home with a 1y change", () => {
+    const z = M.zip("98105");
+    expect(z.rent.value).toBeGreaterThan(1500); expect(z.rent.value).toBeLessThan(3500);
+    expect(z.condo.value).toBeGreaterThan(200000); expect(z.home.value).toBeGreaterThan(z.condo.value);
+    expect(typeof z.rent.change).toBe("number"); expect(z.asOf).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(M.zip("00000")).toBeNull(); expect(M.zip(null)).toBeNull();
+  });
+  test("estimateRent scales with size and age", () => {
+    const base = M.estimateRent("98105", M.TYPICAL_RENTAL_SQFT, 1990, 2026).monthly;
+    expect(base).toBeCloseTo(M.zip("98105").rent.value, -2);
+    expect(M.estimateRent("98105", 425, 1990, 2026).monthly).toBeLessThan(base);
+    expect(M.estimateRent("98105", 425, 1990, 2026).monthly).toBeGreaterThan(base * 0.5);     // not linear in size
+    expect(M.estimateRent("98105", 850, 2024, 2026).monthly).toBeGreaterThan(base);
+    expect(M.estimateRent("00000", 850, 2024)).toBeNull();
+  });
+  test("summary for an apartment parcel", () => {
+    const m = M.summary(by("4515 BROOKLYN AVE NE"), 2026);
+    expect(m.kind).toBe("apartment"); expect(m.perUnit).toBeCloseTo(124945700 / 211, -3);
+    expect(m.perSqft).toBe(Math.round(124945700 / (211 * 799)));
+    expect(m.rent.monthly).toBeGreaterThan(1500); expect(m.grossYield).toBeGreaterThan(0.02); expect(m.grossYield).toBeLessThan(0.12);
+    expect(m.mix[0]).toBe("43 × studio"); expect(m.zip.city).toBe("Seattle");
+  });
+  test("summary for stacked condo units averages the unit values", () => {
+    const p = { id: "x", zip: "98105", units: [{ totalValue: 400000 }, { totalValue: 600000 }, { totalValue: 0 }], totalValue: 1000000 };
+    const m = M.summary(p, 2026);
+    expect(m.kind).toBe("condo"); expect(m.perUnit).toBe(500000); expect(m.unitCount).toBe(3); expect(m.rent.monthly).toBeGreaterThan(0);
+  });
+  test("summary for a plain parcel has no kind but still carries the ZIP market", () => {
+    const m = M.summary(by("4557 BROOKLYN AVE NE"), 2026);   // vacant lot
+    expect(m.kind).toBeNull(); expect(m.zip.rent.value).toBeGreaterThan(0);
+  });
+  test("applyHeights prefers the assessor storey count over the estimate and OSM", () => {
+    const ps = parcelsFx.features.map((f) => P.normalizeParcel(f, KC));
+    H.applyHeights(ps, [{ lat: by("4515 BROOKLYN AVE NE").centroid.lat, lon: by("4515 BROOKLYN AVE NE").centroid.lon, height: 10, storeys: 3, name: "The Standard" }], M.apartment);
+    const std = ps.find((p) => p.address === "4515 BROOKLYN AVE NE");
+    expect(std.storeys).toBe(25); expect(std.heightSource).toBe("assessor"); expect(std.name).toBe("The Standard");
+    expect(ps.filter((p) => p.heightSource === "assessor").length).toBe(10);
+    expect(ps.find((p) => p.address === "4557 BROOKLYN AVE NE").heightSource).toBe("estimate");
+  });
+  test("bundled data files are reasonably small", () => {
+    const fs = require("fs");
+    expect(fs.statSync(__dirname + "/data/kc_apartments.json").size).toBeLessThan(600 * 1024);
+    expect(fs.statSync(__dirname + "/data/wa_zip_market.json").size).toBeLessThan(200 * 1024);
   });
 });
 

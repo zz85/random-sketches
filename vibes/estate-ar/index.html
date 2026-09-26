@@ -132,7 +132,7 @@
   <div class="grab"></div><button class="x" id="sx" aria-label="Close">✕</button>
   <h2>Settings</h2>
   <div class="row"><label>Price shown<small>Assessed values are the county's; sale is the last recorded non-zero price</small></label>
-    <div class="seg" data-set="priceMode"><button data-v="total">Total</button><button data-v="land">Land</button><button data-v="psf">$/ft²</button><button data-v="sale">Sale</button></div></div>
+    <div class="seg" data-set="priceMode"><button data-v="total">Total</button><button data-v="land">Land</button><button data-v="psf">$/ft²</button><button data-v="unit">Per unit</button><button data-v="sale">Sale</button></div></div>
   <div class="row"><label>Units</label><div class="seg" data-set="units"><button data-v="imperial">ft / mi</button><button data-v="metric">m / km</button></div></div>
   <div class="row"><label>Fetch radius<small>Parcels loaded around you (1000 max per request)</small></label><input type="range" id="s-radius" min="80" max="600" step="20"><output id="o-radius"></output></div>
   <div class="row"><label>Label distance<small>Hide parcels farther than this</small></label><input type="range" id="s-maxdist" min="40" max="600" step="10"><output id="o-maxdist"></output></div>
@@ -179,6 +179,7 @@
 <script src="providers.js"></script>
 <script src="heights.js"></script>
 <script src="parcelstore.js"></script>
+<script src="market.js"></script>
 <script>
 (() => {
   "use strict";
@@ -219,6 +220,7 @@
     switch (S.priceMode) {
       case "land": return { v: p.landValue, tag: "land" };
       case "psf": return { v: p.lotSqft ? p.totalValue / p.lotSqft : null, tag: "/ft² lot", psf: true };
+      case "unit": { const m = Market.summary(p); return m.perUnit ? { v: m.perUnit, tag: m.kind === "condo" ? `avg of ${m.unitCount} units` : `per unit · ${m.apt.units} units` } : { v: p.totalValue, tag: "assessed" }; }
       case "sale": return p.lastSale ? { v: p.lastSale.price, tag: "sold " + p.lastSale.date.getFullYear() } : { v: p.totalValue, tag: "assessed" };
       default: return { v: p.totalValue, tag: "assessed" };
     }
@@ -302,7 +304,7 @@
     track.push(st.lat, st.lon, st.fixAt);
     maybeFetch(); maybeGeocode(); maybeAutoPrecache();
   }
-  window.__simWalk = simWalk;
+  window.__simWalk = simWalk; window.__st = st;
   function startSim() {
     st.lat = SIM.lat; st.lon = SIM.lon; st.acc = 5; st.fixAt = Date.now(); st.hasCompass = true; st.hasOrient = true;
     let drag = null;
@@ -329,7 +331,12 @@
     if (st.lat == null || st.fetching) return;
     const prov = Providers.providerFor(st.lat, st.lon);
     if (!prov) { st.provider = null; st.parcels = []; $("hint").className = ""; $("hint").textContent = "No parcel data source for this location yet. Providers: " + Object.values(Providers.PROVIDERS).map((p) => p.name).join(", "); return; }
-    if (st.provider !== prov) { st.provider = prov; if (S.decl === DEFAULTS.decl && prov.declination != null) S.decl = prov.declination; }
+    if (st.provider !== prov) {
+      st.provider = prov; if (S.decl === DEFAULTS.decl && prov.declination != null) S.decl = prov.declination;
+      // bundled market data: ~100 KB of ZIP indices for all of WA, ~430 KB of apartment records for King County
+      Market.load("zips").then(() => { dirty = true; }).catch(() => {});
+      if (prov.id === "kingcounty") Market.load("apts").then(() => { if (st.parcels.length) setParcels(st.parcels, st.source); }).catch(() => {});
+    }
     st.fetching = true;
     try {
       const covered = !force && !(await store.needsFetch(st.lat, st.lon, S.radius, prov.id));
@@ -348,7 +355,7 @@
       $("refresh").classList.add("spin"); st.lastFetchAt = Date.now();
       const r = await Providers.fetchArea(prov, st.lat, st.lon, S.radius);
       if (r.fellBackFrom) toast(`${prov.name} is not answering — showing the statewide parcel layer instead`, true);
-      Heights.applyHeights(r.parcels, null);
+      Heights.applyHeights(r.parcels, null, Market.apartment);
       await store.put(st.lat, st.lon, S.radius, prov.id, r.parcels);
       st.offlineGap = false;
       // merge with neighbours already cached so the edge of the fetched circle is not the edge of the world
@@ -360,7 +367,7 @@
       // (cached from before), when we are over budget, or on low battery
       if (S.osm && !st.lowPower && !overBudget() && !mine.some((p) => p.heightSource === "osm")) Heights.fetchOsmHeights(st.lat, st.lon, S.radius).then(async (osm) => {
         if (st.parcels !== mine) return;
-        Heights.applyHeights(mine, osm); await store.put(st.lat, st.lon, S.radius, prov.id, mine);
+        Heights.applyHeights(mine, osm, Market.apartment); await store.put(st.lat, st.lon, S.radius, prov.id, mine);
         st.osmCount = mine.filter((p) => p.heightSource === "osm").length;
       }).catch(() => { st.osmCount = -1; });
       if (r.exceeded) toast("Dense area: only the first 1000 parcels loaded — reduce the radius", true);
@@ -368,7 +375,7 @@
     finally { st.fetching = false; $("refresh").classList.remove("spin"); }
   }
   function setParcels(list, source) {
-    for (const p of list) if (p.height == null) Heights.applyHeights([p], null);
+    for (const p of list) if (p.height == null || (p.heightSource === "estimate" && Market.apartment(p.id))) Heights.applyHeights([p], null, Market.apartment);
     // one-time conversion to a metric frame around the current position; everything per frame is then plain arithmetic
     st.frame = Geo.frame(st.lat, st.lon);
     for (const p of list) {
@@ -725,6 +732,27 @@
     const v = viewOf(p), imp = imperial(), prov = st.provider || Providers.PROVIDERS.kingcounty;
     const area = p.lotSqft ? (imp ? p.lotSqft.toLocaleString() + " ft²" + (p.acres >= 0.25 ? ` (${p.acres.toFixed(2)} ac)` : "") : Math.round(p.lotSqft * 0.0929).toLocaleString() + " m²") : "—";
     const psf = p.lotSqft && p.totalValue ? "$" + Math.round(p.totalValue / p.lotSqft) + " /ft² lot" : "";
+    const m = Market.summary(p);
+    const pct = (x) => (x == null ? "" : `<span class="${x >= 0 ? "" : "z"}" style="color:${x >= 0 ? "var(--ok)" : "var(--bad)"}">${x >= 0 ? "+" : ""}${(x * 100).toFixed(1)}%</span> 1y`);
+    const marketHtml = (m.kind || (m.zip && (p.propType === "R" || p.propType === "K" || m.kind))) ? `
+      <h3 style="font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:.6px;margin:14px 0 4px">${m.kind === "apartment" ? "Apartment building" : m.kind === "condo" ? "Condominium" : "Housing market"}</h3>
+      ${m.kind === "apartment" ? `<div class="big" style="--c:${colorOf(p)}">
+        <div><div class="k">Assessed per unit</div><div class="v total">${Geo.fmtMoney(m.perUnit, true)}</div><div class="sub">${m.apt.units} units${m.apt.avgUnitSqft ? ` · avg ${m.apt.avgUnitSqft.toLocaleString()} ft²` : ""}${m.perSqft ? ` · $${m.perSqft}/ft²` : ""}</div></div>
+        <div><div class="k">Est. rent / unit</div><div class="v">${m.rent ? "$" + m.rent.monthly.toLocaleString() + "<span style=\"font-size:12px;color:var(--dim)\">/mo</span>" : "—"}</div><div class="sub">${m.grossYield ? (m.grossYield * 100).toFixed(1) + "% gross yield" : ""}</div></div>
+      </div>
+      <table class="kv">
+        ${m.apt.yearBuilt ? `<tr><td>Built</td><td>${m.apt.yearBuilt}${m.apt.stories ? ` · ${m.apt.stories} storeys` : ""}${m.apt.buildings > 1 ? ` · ${m.apt.buildings} buildings` : ""}${m.apt.elevator ? " · elevator" : ""}</td></tr>` : ""}
+        ${m.mix ? `<tr><td>Unit mix</td><td>${esc(m.mix.join(", "))}</td></tr>` : ""}
+      </table>` : ""}
+      ${m.kind === "condo" ? `<div class="big" style="--c:${colorOf(p)}">
+        <div><div class="k">Avg assessed per unit</div><div class="v total">${Geo.fmtMoney(m.perUnit, true)}</div><div class="sub">${m.unitCount} units on this footprint</div></div>
+        <div><div class="k">Est. rent (typical unit)</div><div class="v">${m.rent ? "$" + m.rent.monthly.toLocaleString() + "<span style=\"font-size:12px;color:var(--dim)\">/mo</span>" : "—"}</div></div>
+      </div>` : ""}
+      ${m.zip ? `<table class="kv">
+        ${m.zip.rent ? `<tr><td>ZIP typical rent</td><td>$${m.zip.rent.value.toLocaleString()}/mo ${pct(m.zip.rent.change)}</td></tr>` : ""}
+        ${m.zip.condo ? `<tr><td>ZIP typical condo</td><td>${Geo.fmtMoney(m.zip.condo.value)} ${pct(m.zip.condo.change)}</td></tr>` : ""}
+        ${m.zip.home ? `<tr><td>ZIP typical home</td><td>${Geo.fmtMoney(m.zip.home.value)} ${pct(m.zip.home.change)}</td></tr>` : ""}
+      </table><div class="sub">Zillow Research indices for ${esc(p.zip || "")}, ${m.zip.asOf}. Rent per unit is an estimate: ZIP typical rent scaled by unit size and building age.</div>` : ""}` : "";
     const salesHtml = prov.sales && p.sales.length ? `<div class="sales"><h3 style="font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:.6px;margin:14px 0 2px">Recorded sales (3 yrs)</h3><ul>${p.sales.map((s) => `<li><span>${s.date ? s.date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "—"} <span class="z">${s.use || ""}</span></span><b class="${s.price > 0 ? "" : "z"}">${s.price > 0 ? Geo.fmtMoney(s.price) : "transfer / $0"}</b></li>`).join("")}</ul></div>` : "";
     $("dbody").innerHTML = `
       <h2>${esc(p.address || p.name || "(no address)")}</h2>
@@ -741,14 +769,15 @@
         <tr><td>Type</td><td>${esc(p.propTypeName || p.propType || "—")}</td></tr>
         <tr><td>Zoning</td><td>${esc(p.zoning || "—")}</td></tr>
         <tr><td>Lot</td><td>${area}</td></tr>
-        ${p.height > 0 ? `<tr><td>Height</td><td>${p.storeys} ${p.storeys === 1 ? "storey" : "storeys"} · ${imp ? Math.round(p.height * 3.28084) + " ft" : Math.round(p.height) + " m"} <span style="color:var(--dim)">(${p.heightSource === "osm" ? "OpenStreetMap" : "estimated from assessed value"})</span></td></tr>` : ""}
+        ${p.height > 0 ? `<tr><td>Height</td><td>${p.storeys} ${p.storeys === 1 ? "storey" : "storeys"} · ${imp ? Math.round(p.height * 3.28084) + " ft" : Math.round(p.height) + " m"} <span style="color:var(--dim)">(${p.heightSource === "osm" ? "OpenStreetMap" : p.heightSource === "assessor" ? "assessor record" : "estimated from assessed value"})</span></td></tr>` : ""}
         ${p.name ? `<tr><td>Name</td><td>${esc(p.name)}</td></tr>` : ""}
         ${p.plat ? `<tr><td>Plat</td><td>${esc(p.plat)}</td></tr>` : ""}
       </table>
+      ${marketHtml}
       ${salesHtml}
       ${p.units ? `<div class="sales"><h3 style="font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:.6px;margin:14px 0 2px">Units (${p.units.length})</h3><ul>${p.units.slice(0, 12).map((u) => `<li><span>${esc(u.address || u.id)} <span class="z">${esc(u.use || "")}</span></span><b>${Geo.fmtMoney(u.totalValue, true)}</b></li>`).join("")}${p.units.length > 12 ? `<li><span class="z">… ${p.units.length - 12} more</span></li>` : ""}</ul></div>` : ""}
       <div class="links">${prov.links ? Object.entries(prov.links).map(([k, fn]) => { const u = fn(p); return u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(k)}</a>` : ""; }).join("") : ""}</div>
-      <div class="sub" style="margin-top:12px">${esc(prov.attribution)}${p.asOf ? ", data as of " + new Date(p.asOf).toLocaleDateString() : ""}. Assessed values are for taxation and are not a market appraisal.</div>`;
+      <div class="sub" style="margin-top:12px">${esc(prov.attribution)}${p.asOf ? ", data as of " + new Date(p.asOf).toLocaleDateString() : ""}. <b style="color:#fff">Assessed value</b> is the assessor's estimate of market value on 1 January of the assessment year${p.taxYear ? ` (${p.taxYear})` : ""}, set annually for taxation — not the last sale price and not a current listing estimate; it typically runs a year behind and below the market.</div>`;
     $("detail").classList.add("open");
   }
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -844,7 +873,7 @@
         const c = st.precache.todo.shift();
         try {
           const r = await Providers.fetchArea(prov, c.lat, c.lon, c.radius);
-          Heights.applyHeights(r.parcels, null);
+          Heights.applyHeights(r.parcels, null, Market.apartment);
           await store.put(c.lat, c.lon, c.radius, prov.id, r.parcels);
           st.precache.parcels += r.parcels.length;
           if (r.exceeded) st.precache.failed++;   // partial: count it so the user knows to shrink the radius

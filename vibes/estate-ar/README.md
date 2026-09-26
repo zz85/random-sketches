@@ -12,6 +12,7 @@ cd vibes/estate-ar && python3 -m http.server 8000   # http://localhost:8000 (cam
 bun test                                            # geometry + provider parsing against a captured live response
 bun live_check.js [lat lon [radius_m]]              # live query: parcels around a point, who you are standing on
 bun live_check.js --all                             # one point per provider: Seattle, Everett, Tacoma
+bun fetch_data.js                                   # refresh data/ (King County apartment records, Zillow ZIP indices)
 ```
 
 On a phone, serve it over https (any static host works: GitHub Pages, S3, `npx serve --ssl`),
@@ -90,6 +91,37 @@ tower. On the Brooklyn Ave test block it puts The Standard at 24, Hub U District
 Graduate Hotel at 9 (actually 8) and the walk-ups at 5-6 — good enough to put a label near
 the roof line rather than at street level. It is an estimate and the detail sheet says so.
 
+## What the prices are
+
+The label shows the county's **assessed value** (land + improvements): the assessor's mass-appraisal
+estimate of market value as of 1 January of the assessment year, set once a year for taxation. It
+is not the last sale price and not a live listing estimate; it typically runs a year behind and
+below the market. The "Sale" price mode (King County) shows the last recorded transaction instead.
+Snohomish's `TAX_YEAR` is shown when present; the WA statewide layer carries the county's file date.
+
+## Apartments, condos and rents
+
+For large residential buildings the total is not very meaningful, so the app adds a per-unit view:
+
+- **King County apartment buildings.** The assessor publishes nightly extracts of every apartment
+  complex (units, average unit ft², storeys, year built, elevator) and its unit breakdown (bedroom
+  mix). `fetch_data.js` folds these into `data/kc_apartments.json` (430 KB, 9,170 buildings, keyed
+  by PIN), loaded lazily when you are in King County. From it: **assessed value per unit**,
+  **$/ft² of living area**, unit mix, year built. The storey count also replaces the height
+  estimate (The Standard on Brooklyn Ave: 211 units, 25 storeys — the estimate said 24).
+- **Stacked condominiums.** The assessor values each condo unit, so the merged footprint shows the
+  average assessed value per unit directly.
+- **Rents.** No rent API is callable from a browser without a key, so `fetch_data.js` extracts the
+  Washington rows of Zillow Research's public CSVs — ZORI (typical asking rent, all homes +
+  multifamily) and ZHVI (typical condo value, typical home value) by ZIP, last 13 months — into
+  `data/wa_zip_market.json` (105 KB, 485 ZIPs). The detail sheet shows the ZIP typical rent, condo
+  and home values with 1-year change, and an **estimated rent for a unit in this building**: ZIP
+  typical rent × (unit size / 850 ft²)^0.6 × an age factor (new buildings +18%, pre-1985 −8%),
+  with the implied gross yield against the assessed value per unit. On the Brooklyn Ave test block
+  this gives studios ~$1,300, new towers ~$2,300, yields 4–9%, which matches asking rents there.
+  It is an estimate and is labelled as one; the ZIP figures are Zillow's, as of the month shown.
+- A "Per unit" price mode puts the per-unit figure on the labels.
+
 ## Cost: bandwidth, CPU, battery
 
 - **Bandwidth.** Parcel geometry is generalised by the server (`maxAllowableOffset` ≈ 0.5 m,
@@ -137,6 +169,8 @@ the roof line rather than at street level. It is an estimate and the detail shee
 | `gis.dnr.wa.gov/site2/rest/services/Public_Forest_Practices/WADNR_PUBLIC_OCIO_Parcels/MapServer/0` | All of Washington (used for Pierce and anywhere not above) | WA State Parcels Project: normalised statewide layer with situs address, DOR land use code, land + building value, link to the county's record, county FIPS | Updated yearly from each assessor; values matched King County exactly in tests. Pierce County's own GIS has no public REST endpoint |
 | `nominatim.openstreetmap.org/reverse` | — | City + neighbourhood for the header | Once per 300 m of movement |
 | `overpass-api.de` / `overpass.kumi.systems` | — | OSM buildings with `height` or `building:levels` near you | Best effort; shared volunteer servers. Matched to parcels by building centroid |
+| `aqua.kingcounty.gov/extranet/assessor/*.zip` | King County | Apartment Complex + Unit Breakdown extracts | No CORS, so bundled by `fetch_data.js` into `data/kc_apartments.json` |
+| `files.zillowstatic.com/research/public_csvs/…` | WA ZIPs | ZORI rent, ZHVI condo and home value indices | 10–120 MB CSVs, so bundled by `fetch_data.js` into `data/wa_zip_market.json` |
 
 Assessed values are the county's taxation values (typically a year behind and below market),
 not a market appraisal. Snohomish publishes "market" land/improvement values, which are its
@@ -159,7 +193,9 @@ sales layer / links. Most US county assessors publish parcels as an ArcGIS REST 
 - `geo.js` — haversine, bearing, centroid, point-in-polygon, angular span, metric frame + planar view + ring decimation, pinhole projection, polygon clipping / view wedge, heading filter, formatting
 - `providers.js` — provider registry (King, Snohomish, WA statewide) with fallback, ArcGIS queries (generalised, paged, byte-metered), normalisation, sales join, stacked-parcel grouping, WA DOR use codes, Nominatim
 - `heights.js` — storey/height estimate from use class + value density; Overpass fetch and parcel matching
+- `market.js` — apartment records and ZIP market indices: per-unit value, rent estimate, yield
+- `fetch_data.js` — refreshes `data/` from the assessor extracts and Zillow Research CSVs
 - `parcelstore.js` — offline cache: coverage circles + IndexedDB parcel store (memory fallback), hex-lattice precache planner, circle-union boundary, GPS track/course, corridor-ahead planner, wifi gate, 24 h data meter
 - `sw.js`, `manifest.webmanifest`, `icon.svg`, `icon-192.png`, `icon-512.png` — PWA
-- `estate.test.js` — bun tests (68) using `fixture_parcels.json` / `fixture_sales.json` / `fixture_snohomish.json` / `fixture_wastate.json` captured from the live services
+- `estate.test.js` — bun tests (76) using `fixture_parcels.json` / `fixture_sales.json` / `fixture_snohomish.json` / `fixture_wastate.json` captured from the live services
 - `live_check.js` — live smoke test
