@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Marine AR — vessels and traffic lanes</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
+  font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',Roboto,sans-serif;
+  touch-action:none;-webkit-user-select:none;user-select:none}
+#camera{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;z-index:1;background:#0b1a2a}
+#camera.off{display:none}
+#sky{position:fixed;inset:0;z-index:0;--hz:50%;background:linear-gradient(#183a5e 0%,#3f7fb0 calc(var(--hz) - 6%),#7fb2d4 calc(var(--hz) - 0.5%),#2c5d80 calc(var(--hz) + 0.5%),#153a58 100%)}
+#canvas{position:fixed;inset:0;width:100%;height:100%;z-index:2}
+
+/* splash */
+#splash{position:fixed;inset:0;z-index:20;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  background:radial-gradient(120% 80% at 50% 110%,#0e3b5c 0%,#071726 55%,#03080f 100%);transition:opacity .5s}
+#splash.hidden{opacity:0;pointer-events:none}
+#splash svg{width:70%;max-width:360px;margin-bottom:28px;opacity:.5}
+#splash h1{font-size:26px;font-weight:200;letter-spacing:6px;text-transform:uppercase}
+#splash .sub{font-size:11px;color:rgba(255,255,255,.45);letter-spacing:3px;margin:6px 0 40px;text-align:center;line-height:1.7}
+.btn{padding:14px 40px;font-size:13px;font-weight:600;letter-spacing:2px;text-transform:uppercase;color:#fff;
+  background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.28);border-radius:28px;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.btn:active{background:rgba(255,255,255,.2)}
+.btn.small{padding:8px 14px;font-size:11px;letter-spacing:1px;text-transform:none;border-radius:8px}
+#status{margin-top:18px;font-size:11px;color:rgba(255,255,255,.5);text-align:center;min-height:34px;padding:0 30px;line-height:1.5}
+#splash .presets{display:flex;gap:8px;margin-top:22px;flex-wrap:wrap;justify-content:center;padding:0 20px}
+#splash .presets button{background:none;border:1px solid rgba(255,255,255,.15);color:rgba(255,255,255,.6);font-size:11px;padding:6px 10px;border-radius:14px;cursor:pointer}
+#splash .presets button.on{border-color:#3fd0ff;color:#3fd0ff}
+
+/* HUD */
+.hud{position:fixed;z-index:4;pointer-events:none}
+#top{top:env(safe-area-inset-top,0px);left:0;right:0;padding:10px 12px;display:none;justify-content:space-between;align-items:flex-start;gap:8px}
+#top.vis{display:flex}
+.card{background:rgba(6,14,24,.62);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);
+  border:1px solid rgba(255,255,255,.14);border-radius:12px;padding:8px 11px;pointer-events:auto}
+#place{font-size:13px;font-weight:600}
+#place small{display:block;font-weight:400;font-size:10.5px;color:rgba(255,255,255,.55);margin-top:2px;letter-spacing:.3px}
+#chips{display:flex;flex-direction:column;gap:5px;align-items:flex-end}
+.chip{font-size:10px;letter-spacing:.4px;padding:3px 8px;border-radius:10px;background:rgba(6,14,24,.62);border:1px solid rgba(255,255,255,.14);
+  -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);white-space:nowrap}
+.chip.ok{border-color:rgba(111,227,111,.5);color:#bff5bf}
+.chip.warn{border-color:rgba(255,176,32,.6);color:#ffd68a}
+.chip.bad{border-color:rgba(255,92,92,.6);color:#ffb3b3}
+
+#inlane{position:fixed;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top,0px) + 66px);z-index:4;display:none;
+  font-size:11px;letter-spacing:.5px;padding:5px 12px;border-radius:12px;background:rgba(255,51,191,.18);border:1px solid rgba(255,51,191,.6);color:#ffc6ec}
+#inlane.vis{display:block}
+
+#controls{position:fixed;right:0;bottom:0;z-index:5;padding:14px;padding-bottom:calc(14px + env(safe-area-inset-bottom,0px));display:none;flex-direction:column;gap:10px}
+#controls.vis{display:flex}
+.cb{width:42px;height:42px;border-radius:21px;background:rgba(6,14,24,.55);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);
+  border:1px solid rgba(255,255,255,.2);color:#fff;font-size:17px;display:flex;align-items:center;justify-content:center;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.cb.on{border-color:#3fd0ff;color:#3fd0ff}
+.cb:active{background:rgba(255,255,255,.15)}
+
+#radar{position:fixed;left:12px;bottom:calc(12px + env(safe-area-inset-bottom,0px));z-index:4;width:150px;height:150px;border-radius:50%;
+  background:rgba(6,14,24,.6);border:1px solid rgba(255,255,255,.18);display:none}
+#radar.vis{display:block}
+
+/* settings */
+#settings{position:fixed;left:0;right:0;bottom:0;z-index:6;padding:16px 16px calc(16px + env(safe-area-inset-bottom,0px));
+  background:linear-gradient(transparent,rgba(3,8,15,.92) 25%);display:none;flex-direction:column;gap:11px;max-height:70vh;overflow-y:auto;pointer-events:auto}
+#settings.vis{display:flex}
+.sr{display:flex;align-items:center;justify-content:space-between;color:rgba(255,255,255,.8);font-size:12px;gap:10px}
+.sr input[type=range]{width:130px;accent-color:#3fd0ff}
+.sr .v{min-width:56px;text-align:right;color:#fff;font-variant-numeric:tabular-nums}
+.sr select,.sr input[type=text]{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.2);color:#fff;border-radius:6px;padding:4px 6px;font-size:12px}
+.sr label.tg{display:flex;gap:6px;align-items:center}
+.sr .group{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.sr .group label{display:flex;gap:4px;align-items:center;font-size:11px}
+.legend{display:flex;gap:10px;flex-wrap:wrap;font-size:10.5px;color:rgba(255,255,255,.7)}
+.legend span::before{content:"";display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px;background:var(--c);vertical-align:-1px}
+
+/* vessel info */
+#info{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:8;min-width:280px;max-width:92vw;
+  background:rgba(6,14,24,.93);-webkit-backdrop-filter:blur(24px);backdrop-filter:blur(24px);border:1px solid rgba(255,255,255,.16);border-radius:14px;padding:18px 20px;display:none}
+#info.vis{display:block}
+#info h3{font-size:17px;font-weight:600;display:flex;align-items:center;gap:8px}
+#info h3 i{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--c)}
+#info .type{font-size:11px;color:rgba(255,255,255,.55);margin:2px 0 12px;letter-spacing:.3px}
+.ir{display:flex;justify-content:space-between;gap:14px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.07);font-size:12px}
+.ir .il{color:rgba(255,255,255,.5)}
+.ir .iv{text-align:right;font-variant-numeric:tabular-nums}
+#info .links{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+#info .links a{font-size:11px;color:#3fd0ff;text-decoration:none;border:1px solid rgba(63,208,255,.4);padding:5px 9px;border-radius:7px}
+#infoClose{margin-top:12px;width:100%;padding:9px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);border-radius:8px;color:#fff;font-size:13px;cursor:pointer}
+#toast{position:fixed;left:50%;bottom:calc(90px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:9;font-size:12px;padding:8px 14px;border-radius:10px;
+  background:rgba(6,14,24,.85);border:1px solid rgba(255,255,255,.2);opacity:0;transition:opacity .3s;pointer-events:none;max-width:86vw;text-align:center}
+#toast.vis{opacity:1}
+</style>
+</head>
+<body>
+<div id="sky"></div>
+<video id="camera" autoplay playsinline muted></video>
+<canvas id="canvas"></canvas>
+
+<div id="splash">
+  <svg viewBox="0 0 400 120" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="rgba(255,255,255,.7)" stroke-width="1.3">
+    <path d="M0,80 H400" stroke-dasharray="2 4"/>
+    <path d="M120,80 L135,62 L250,62 L270,80 Z"/><path d="M160,62 V44 H210 V62"/><path d="M185,44 V30"/>
+    <path d="M40,95 Q200,110 360,95" stroke="rgba(255,51,191,.8)" stroke-dasharray="6 5"/>
+    <path d="M60,108 Q200,122 340,108" stroke="rgba(255,51,191,.8)" stroke-dasharray="6 5"/>
+    <path d="M300,101 l14,-2 l-4,5 M110,102 l-14,2 l4,-5" stroke="rgba(255,51,191,.9)"/>
+  </svg>
+  <h1>Marine AR</h1>
+  <p class="sub">POINT AT THE WATER<br>vessels · courses · traffic lanes</p>
+  <button class="btn" id="startBtn">Start AR view</button>
+  <div class="presets" id="presets">
+    <button data-loc="gps" class="on">📍 my GPS</button>
+    <button data-loc="47.6603,-122.4412,18">Seattle · West Point</button>
+    <button data-loc="47.6070,-122.3400,25">Seattle · waterfront</button>
+    <button data-loc="60.1530,24.9500,12">Helsinki · live AIS</button>
+    <button data-loc="59.4400,24.7600,20">Tallinn · live AIS</button>
+  </div>
+  <div id="status"></div>
+</div>
+
+<div id="top" class="hud">
+  <div class="card" id="place">Locating…<small id="placeSub"></small></div>
+  <div id="chips">
+    <div class="chip" id="chipGps">GPS —</div>
+    <div class="chip" id="chipHdg">HDG —</div>
+    <div class="chip" id="chipAis">AIS —</div>
+    <div class="chip" id="chipLanes">LANES —</div>
+  </div>
+</div>
+<div id="inlane"></div>
+
+<canvas id="radar" width="300" height="300"></canvas>
+
+<div id="controls">
+  <button class="cb" id="btnSettings" title="Settings">⚙</button>
+  <button class="cb on" id="btnLanes" title="Toggle lanes">⇅</button>
+  <button class="cb" id="btnCam" title="Toggle camera">◐</button>
+  <button class="cb" id="btnRefresh" title="Refresh data">↻</button>
+</div>
+
+<div id="settings">
+  <div class="sr"><span>AIS source</span><select id="selProvider"><option value="auto">Auto</option><option value="digitraffic">Digitraffic (Finland)</option><option value="proxy">Local proxy (aisstream)</option><option value="demo">Demo traffic</option></select></div>
+  <div class="sr"><span>Proxy URL</span><input type="text" id="inProxy" placeholder="http://localhost:8788" size="18"></div>
+  <div class="sr"><span>Range</span><span><input type="range" id="rRange" min="2" max="40" value="15"><span class="v" id="vRange">15 km</span></span></div>
+  <div class="sr"><span>Eye height</span><span><input type="range" id="rEye" min="1" max="60" step="0.5" value="2"><span class="v" id="vEye">2.0 m</span></span></div>
+  <div class="sr"><span>Field of view</span><span><input type="range" id="rFov" min="35" max="90" value="60"><span class="v" id="vFov">60°</span></span></div>
+  <div class="sr"><span>Label size</span><span><input type="range" id="rLabel" min="9" max="18" value="12"><span class="v" id="vLabel">12 px</span></span></div>
+  <div class="sr"><span>Lane layers</span><span class="group" id="laneKinds">
+    <label><input type="checkbox" value="lane" checked>lanes</label><label><input type="checkbox" value="zone" checked>zones</label>
+    <label><input type="checkbox" value="precaution" checked>precautionary</label><label><input type="checkbox" value="boundary" checked>boundary</label><label><input type="checkbox" value="fairway" checked>fairways</label></span></div>
+  <div class="sr"><span>Vessels</span><span class="group">
+    <label><input type="checkbox" id="ckHull" checked>hull outlines</label><label><input type="checkbox" id="ckVector" checked>6-min vectors</label><label><input type="checkbox" id="ckMoored">show moored</label></span></div>
+  <div class="sr"><span>Units</span><span class="group"><label><input type="radio" name="units" value="nm" checked>NM / kn</label><label><input type="radio" name="units" value="km">km / kn</label></span></div>
+  <div class="sr"><span>Compass</span><span class="group"><label><input type="checkbox" id="ckDecl" checked>apply declination <span id="vDecl"></span></label><label>offset <input type="range" id="rOff" min="-30" max="30" value="0" style="width:80px"> <span class="v" id="vOff" style="min-width:34px">0°</span></label></span></div>
+  <div class="sr"><span>Demo speed</span><span><input type="range" id="rDemo" min="1" max="30" value="6"><span class="v" id="vDemo">6×</span></span></div>
+  <div class="legend">
+    <span style="--c:#3fd0ff">passenger</span><span style="--c:#6fe36f">cargo</span><span style="--c:#ff5c5c">tanker</span><span style="--c:#ffb020">tug</span>
+    <span style="--c:#c9a0ff">fishing</span><span style="--c:#ffe66d">pleasure</span><span style="--c:#ff8ad8">HSC</span><span style="--c:#fff">special</span><span style="--c:#8a969c">unknown</span>
+    <span style="--c:#ff33bf">TSS lane / zone</span><span style="--c:#ffb020">precautionary</span><span style="--c:#3fa0ff">fairway</span>
+  </div>
+  <div class="sr" style="font-size:10.5px;color:rgba(255,255,255,.45);line-height:1.5">Lanes: NOAA ENC Direct (S-57 TSSLPT/TSEZNE/PRCARE/TSSBND/FAIRWY). AIS: <span id="attribution">—</span>. Declination: NOAA WMM.</div>
+</div>
+
+<div id="info">
+  <h3><i id="iDot"></i><span id="iName"></span></h3>
+  <div class="type" id="iType"></div>
+  <div id="iRows"></div>
+  <div class="links" id="iLinks"></div>
+  <button id="infoClose">Close</button>
+</div>
+<div id="toast"></div>
+
+<script src="geo.js"></script>
+<script src="providers.js"></script>
+<script>
+(function () {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const D2R = Math.PI / 180, R2D = 180 / Math.PI;
+
+  const A = {
+    // viewer
+    lat: 47.6603, lon: -122.4412, alt: null, gpsAcc: null, gpsSpeed: null, gpsCourse: null, hasGps: false, useGps: true,
+    // orientation
+    heading: 0, pitch: 0, roll: 0, rawHeading: null, rawPitch: 0, rawRoll: 0, hasOri: false, manual: false, mH: 340, mP: -4,
+    declination: 0, applyDecl: !IOS, offset: 0,
+    // camera
+    W: 0, H: 0, hfov: 60, eye: 2, cam: null, camOn: true,
+    // data
+    lanes: [], laneStore: null, laneKinds: new Set(["lane", "zone", "precaution", "boundary", "fairway"]), showLanes: true,
+    table: null, provider: null, providerHandle: null, providerChoice: "auto", proxyBase: "", vessels: [], aisError: null, lastAis: 0,
+    rangeM: 15000, labelPx: 12, showHull: true, showVector: true, showMoored: false, nautical: true, demoSpeed: 6,
+    selected: null, hits: [], settingsOpen: false, place: null,
+
+    init() {
+      this.cv = $("canvas"); this.cx = this.cv.getContext("2d");
+      this.rv = $("radar"); this.rx = this.rv.getContext("2d");
+      this.vid = $("camera");
+      this.table = new Providers.VesselTable({ maxAgeMs: 12 * 60e3 });
+      this.laneStore = new Providers.LaneStore({ storage: window.localStorage });
+      this.loadPrefs();
+      this.resize();
+      window.addEventListener("resize", () => this.resize());
+      window.addEventListener("orientationchange", () => setTimeout(() => this.resize(), 250));
+      this.wireUI();
+      $("startBtn").onclick = () => this.start();
+      // URL params: ?lat=47.66&lon=-122.44&eye=18&hdg=340&provider=demo&auto=1&nocam=1
+      const q = new URLSearchParams(location.search);
+      if (q.has("lat") && q.has("lon")) { this.useGps = false; this.lat = +q.get("lat"); this.lon = +q.get("lon"); [...$("presets").children].forEach((x) => x.classList.remove("on")); }
+      if (q.has("eye")) { this.eye = +q.get("eye"); $("rEye").value = this.eye; $("vEye").textContent = this.eye.toFixed(1) + " m"; }
+      if (q.has("hdg")) this.mH = +q.get("hdg");
+      if (q.has("pitch")) this.mP = +q.get("pitch");
+      if (q.has("provider")) { this.providerChoice = q.get("provider"); $("selProvider").value = this.providerChoice; }
+      if (q.has("proxy")) { this.proxyBase = q.get("proxy"); $("inProxy").value = this.proxyBase; }
+      this.noCam = q.has("nocam");
+      if (q.has("auto")) this.start();
+    },
+
+    loadPrefs() {
+      try {
+        const p = JSON.parse(localStorage.getItem("marine-ar:prefs") || "{}");
+        for (const k of ["providerChoice", "proxyBase", "rangeM", "eye", "hfov", "labelPx", "showHull", "showVector", "showMoored", "nautical", "applyDecl", "offset", "demoSpeed"]) if (p[k] != null) this[k] = p[k];
+        if (p.laneKinds) this.laneKinds = new Set(p.laneKinds);
+      } catch (e) { /* */ }
+    },
+    savePrefs() {
+      const p = {}; for (const k of ["providerChoice", "proxyBase", "rangeM", "eye", "hfov", "labelPx", "showHull", "showVector", "showMoored", "nautical", "applyDecl", "offset", "demoSpeed"]) p[k] = this[k];
+      p.laneKinds = [...this.laneKinds];
+      try { localStorage.setItem("marine-ar:prefs", JSON.stringify(p)); } catch (e) { /* */ }
+    },
+
+    resize() {
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      this.W = window.innerWidth; this.H = window.innerHeight;
+      this.cv.width = this.W * dpr; this.cv.height = this.H * dpr;
+      this.cv.style.width = this.W + "px"; this.cv.style.height = this.H + "px";
+      this.cx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      // portrait phones: hfov is the narrow axis. Keep the user's setting as horizontal FOV.
+      this.cam = new Geo.Camera({ width: this.W, height: this.H, hfov: this.hfov, eyeHeight: this.eye, heading: this.heading, pitch: this.pitch, roll: this.roll });
+    },
+
+    wireUI() {
+      // presets on the splash
+      $("presets").onclick = (e) => {
+        const b = e.target.closest("button"); if (!b) return;
+        [...$("presets").children].forEach((x) => x.classList.toggle("on", x === b));
+        if (b.dataset.loc === "gps") { this.useGps = true; return; }
+        const [lat, lon, eye] = b.dataset.loc.split(",").map(Number);
+        this.useGps = false; this.lat = lat; this.lon = lon; if (eye) { this.eye = eye; $("rEye").value = eye; $("vEye").textContent = eye.toFixed(1) + " m"; }
+      };
+      $("btnSettings").onclick = () => { this.settingsOpen = !this.settingsOpen; $("settings").classList.toggle("vis", this.settingsOpen); $("btnSettings").classList.toggle("on", this.settingsOpen); };
+      $("btnLanes").onclick = () => { this.showLanes = !this.showLanes; $("btnLanes").classList.toggle("on", this.showLanes); };
+      $("btnCam").onclick = () => this.toggleCamera();
+      $("btnRefresh").onclick = () => { this.laneStore.clear(); this.refreshData(true); this.toast("Refreshing lanes and AIS…"); };
+      $("infoClose").onclick = () => { $("info").classList.remove("vis"); this.selected = null; };
+
+      const bind = (rid, vid, prop, fmt, cb) => {
+        const r = $(rid); r.value = this[prop];
+        $(vid).textContent = fmt(r.value);
+        r.oninput = () => { this[prop] = +r.value; $(vid).textContent = fmt(r.value); this.savePrefs(); if (cb) cb(); };
+      };
+      // range slider is in km; store metres
+      $("rRange").value = this.rangeM / 1000; $("vRange").textContent = (this.rangeM / 1000).toFixed(0) + " km";
+      $("rRange").oninput = () => { this.rangeM = +$("rRange").value * 1000; $("vRange").textContent = $("rRange").value + " km"; this.savePrefs(); this.refreshData(); };
+      bind("rEye", "vEye", "eye", (v) => (+v).toFixed(1) + " m", () => this.resize());
+      bind("rFov", "vFov", "hfov", (v) => v + "°", () => this.resize());
+      bind("rLabel", "vLabel", "labelPx", (v) => v + " px");
+      bind("rOff", "vOff", "offset", (v) => (v > 0 ? "+" : "") + v + "°");
+      bind("rDemo", "vDemo", "demoSpeed", (v) => v + "×");
+      const ck = (id, prop, cb) => { const c = $(id); c.checked = !!this[prop]; c.onchange = () => { this[prop] = c.checked; this.savePrefs(); if (cb) cb(); }; };
+      ck("ckHull", "showHull"); ck("ckVector", "showVector"); ck("ckMoored", "showMoored"); ck("ckDecl", "applyDecl");
+      document.querySelectorAll("input[name=units]").forEach((r) => { r.checked = (r.value === "nm") === this.nautical; r.onchange = () => { this.nautical = r.value === "nm"; this.savePrefs(); }; });
+      $("laneKinds").querySelectorAll("input").forEach((c) => { c.checked = this.laneKinds.has(c.value); c.onchange = () => { if (c.checked) this.laneKinds.add(c.value); else this.laneKinds.delete(c.value); this.savePrefs(); }; });
+      $("selProvider").value = this.providerChoice;
+      $("selProvider").onchange = () => { this.providerChoice = $("selProvider").value; this.savePrefs(); this.startAis(); };
+      $("inProxy").value = this.proxyBase;
+      $("inProxy").onchange = () => { this.proxyBase = $("inProxy").value.replace(/\/$/, ""); this.savePrefs(); if (this.provider && this.provider.id === "proxy") this.startAis(); };
+      this.wireTouch();
+    },
+
+    wireTouch() {
+      let sx = 0, sy = 0, sh = 0, sp = 0, dragging = false, moved = false;
+      const start = (x, y) => { sx = x; sy = y; sh = this.mH; sp = this.mP; dragging = true; moved = false; };
+      const move = (x, y) => {
+        if (!dragging) return;
+        if (Math.hypot(x - sx, y - sy) > 6) moved = true;
+        if (this.manual && moved) { this.mH = Geo.wrap360(sh - (x - sx) * (this.hfov / this.W)); this.mP = Math.max(-80, Math.min(60, sp + (y - sy) * (this.hfov / this.W))); }
+      };
+      const end = (x, y) => { if (dragging && !moved) this.tap(x, y); dragging = false; };
+      this.cv.addEventListener("touchstart", (e) => { if (e.touches.length === 1) start(e.touches[0].clientX, e.touches[0].clientY); }, { passive: true });
+      this.cv.addEventListener("touchmove", (e) => { if (e.touches.length === 1) { e.preventDefault(); move(e.touches[0].clientX, e.touches[0].clientY); } }, { passive: false });
+      this.cv.addEventListener("touchend", (e) => { const t = e.changedTouches[0]; end(t.clientX, t.clientY); });
+      this.cv.addEventListener("mousedown", (e) => start(e.clientX, e.clientY));
+      window.addEventListener("mousemove", (e) => move(e.clientX, e.clientY));
+      window.addEventListener("mouseup", (e) => end(e.clientX, e.clientY));
+      window.addEventListener("wheel", (e) => { if (this.manual) this.mP = Math.max(-80, Math.min(60, this.mP - e.deltaY * 0.02)); }, { passive: true });
+    },
+
+    tap(x, y) {
+      if (this.settingsOpen) { this.settingsOpen = false; $("settings").classList.remove("vis"); $("btnSettings").classList.remove("on"); return; }
+      let best = null, bd = 28;
+      for (const h of this.hits) { const d = Math.hypot(x - h.x, y - h.y); if (d < bd + h.r) { bd = d; best = h; } }
+      if (best) this.showInfo(best.v);
+    },
+
+    toast(msg, ms) { const t = $("toast"); t.textContent = msg; t.classList.add("vis"); clearTimeout(this._toastT); this._toastT = setTimeout(() => t.classList.remove("vis"), ms || 2600); },
+
+    // ---- start: permissions ---------------------------------------------------
+    async start() {
+      const st = $("status");
+      try {
+        st.textContent = "Requesting camera…";
+        try {
+          if (this.noCam) throw new Error("disabled by ?nocam");
+          const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } } });
+          this.vid.srcObject = s; await this.vid.play(); this.camOn = true;
+        } catch (e) { console.warn("camera", e); this.camOn = false; this.vid.classList.add("off"); st.textContent = "No camera — synthetic horizon"; await sleep(600); }
+        st.textContent = "Requesting compass…";
+        try {
+          if (typeof DeviceOrientationEvent !== "undefined" && typeof DeviceOrientationEvent.requestPermission === "function") {
+            const p = await DeviceOrientationEvent.requestPermission(); if (p !== "granted") throw new Error("denied");
+          }
+          this.bindOrientation();
+          await sleep(700);
+          if (!this.hasOri) throw new Error("no events");
+        } catch (e) { console.warn("orientation", e); this.manual = true; st.textContent = "No compass — drag to look around"; await sleep(600); }
+        st.textContent = "Getting position…";
+        if (this.useGps) await this.locate(); else { this.hasGps = false; }
+        $("splash").classList.add("hidden");
+        $("top").classList.add("vis"); $("controls").classList.add("vis"); $("radar").classList.add("vis");
+        this.refreshData(true);
+        this.loop();
+      } catch (e) { st.textContent = "Error: " + e.message; }
+    },
+
+    toggleCamera() {
+      this.camOn = !this.camOn; this.vid.classList.toggle("off", !this.camOn); $("btnCam").classList.toggle("on", !this.camOn);
+    },
+
+    // ---- sensors --------------------------------------------------------------
+    bindOrientation() {
+      const onEvent = (e, absolute) => {
+        if (e.alpha == null && e.webkitCompassHeading == null) return;
+        this.hasOri = true;
+        const o = orientationFromEvent(e, screenAngle());
+        this.rawPitch = o.pitch; this.rawRoll = o.roll;
+        if (e.webkitCompassHeading != null && isFinite(e.webkitCompassHeading)) {
+          // iOS: compass heading of the device, already screen-orientation aware in portrait; it is the direction the back camera faces when the phone is upright.
+          this.rawHeading = Geo.wrap360(e.webkitCompassHeading + (this.pitchUprightCorrection(o)));
+          this.headingSource = "iOS compass";
+        } else if (absolute || e.absolute) { this.rawHeading = o.heading; this.headingSource = "absolute"; }
+        else if (this.rawHeading == null) { this.rawHeading = o.heading; this.headingSource = "relative"; }
+      };
+      if ("ondeviceorientationabsolute" in window) window.addEventListener("deviceorientationabsolute", (e) => onEvent(e, true), true);
+      window.addEventListener("deviceorientation", (e) => onEvent(e, false), true);
+    },
+    /** webkitCompassHeading follows the device's top edge (+y) when flat; when the phone is held upright the projection of +y is the look direction, so no correction is needed in practice. Placeholder kept for tuning. */
+    pitchUprightCorrection() { return 0; },
+
+    async locate() {
+      return new Promise((res) => {
+        if (!("geolocation" in navigator)) return res();
+        let done = false;
+        const ok = (p) => {
+          this.lat = p.coords.latitude; this.lon = p.coords.longitude; this.gpsAcc = p.coords.accuracy;
+          this.alt = p.coords.altitude; this.gpsSpeed = p.coords.speed; this.gpsCourse = p.coords.heading; this.hasGps = true; this.gpsAt = Date.now();
+          if (!done) { done = true; res(); }
+          this.refreshData();
+        };
+        navigator.geolocation.watchPosition(ok, (err) => { console.warn("gps", err); if (!done) { done = true; res(); } }, { enableHighAccuracy: true, maximumAge: 2000, timeout: 12000 });
+        setTimeout(() => { if (!done) { done = true; res(); } }, 12000);
+      });
+    },
+
+    // ---- data -----------------------------------------------------------------
+    async refreshData(force) {
+      const { lat, lon } = this;
+      if (force || this.laneStore.needsFetch(lat, lon, this.rangeM * 1.5)) {
+        this.lanesLoading = true;
+        try {
+          const lanes = await Providers.fetchLanes(lat, lon, this.rangeM * 1.5);
+          this.laneStore.set(lat, lon, this.rangeM * 1.5, lanes);
+          this.lanes = lanes; this.lanesError = null;
+          for (const l of lanes) if (l.kind === "lane" && l.ring && l.orient != null) l.arrows = Geo.laneArrows(l.ring, l.orient, 600);
+        } catch (e) { this.lanesError = e.message; }
+        this.lanesLoading = false;
+      } else if (this.lanes.length === 0 && this.laneStore.lanes.length) {
+        this.lanes = this.laneStore.lanes;
+        for (const l of this.lanes) if (l.kind === "lane" && l.ring && l.orient != null && !l.arrows) l.arrows = Geo.laneArrows(l.ring, l.orient, 600);
+      }
+      if (!this.provider || force || this.providerChoice === "auto" && this.pickProvider() !== this.provider) this.startAis();
+      else if (this.providerHandle && this.providerHandle.refresh) this.providerHandle.refresh();
+      if (!this.place || Geo.haversine(lat, lon, this.place.lat, this.place.lon) > 1500) this.geocode();
+      if (this.declAt == null || Geo.haversine(lat, lon, this.declAt.lat, this.declAt.lon) > 50000) {
+        this.declAt = { lat, lon };
+        Providers.declination(lat, lon).then((d) => { if (d != null) { this.declination = d; $("vDecl").textContent = (d >= 0 ? "+" : "") + d.toFixed(1) + "°"; } }).catch(() => {});
+      }
+    },
+    pickProvider() {
+      if (this.providerChoice !== "auto") return Providers.AIS_PROVIDERS[this.providerChoice];
+      return Providers.aisProviderFor(this.lat, this.lon) || (this.proxyBase || location.port === "8788" ? Providers.AIS_PROVIDERS.proxy : Providers.AIS_PROVIDERS.demo);
+    },
+    startAis() {
+      if (this.providerHandle) this.providerHandle.stop();
+      this.table.clear(); this.vessels = []; this.aisError = null; this.lastAis = 0;
+      const p = this.pickProvider(); this.provider = p;
+      $("attribution").textContent = p.attribution;
+      const ctx = {
+        table: this.table, lanes: this.lanes, pollMs: p.pollMs, proxyBase: this.proxyBase || (location.port === "8788" ? location.origin : ""),
+        getCenter: () => ({ lat: this.lat, lon: this.lon, radiusM: this.rangeM }),
+        onUpdate: () => { this.lastAis = Date.now(); this.aisError = null; },
+        onError: (e) => { this.aisError = e.message; if (p.id === "proxy" && /503|Failed to fetch/.test(e.message) && this.providerChoice === "auto") { this.toast("Proxy has no AIS key — switching to demo traffic"); this.providerChoice = "demo"; $("selProvider").value = "demo"; setTimeout(() => this.startAis(), 0); } },
+      };
+      Object.defineProperty(ctx, "demoSpeed", { get: () => this.demoSpeed });
+      // demo needs lanes to seed ships; wait briefly if they are still loading
+      const go = () => { ctx.lanes = this.lanes; this.providerHandle = p.start(ctx); };
+      if (p.id === "demo" && this.lanesLoading) setTimeout(go, 1500); else go();
+    },
+    async geocode() {
+      this.place = { lat: this.lat, lon: this.lon };
+      try {
+        const g = await Providers.reverseGeocode(this.lat, this.lon);
+        $("place").firstChild.textContent = g.water || g.city || "Marine AR";
+        $("placeSub").textContent = [g.neighbourhood, g.city && g.city !== g.water ? g.city : null].filter(Boolean).join(" · ");
+      } catch (e) { $("place").firstChild.textContent = this.lat.toFixed(4) + ", " + this.lon.toFixed(4); }
+    },
+
+    // ---- main loop --------------------------------------------------------------
+    loop() {
+      const step = () => {
+        this.updatePose();
+        this.vessels = this.table.snapshot();
+        this.draw();
+        this.drawRadar();
+        this.updateChips();
+        requestAnimationFrame(step);
+      };
+      step();
+    },
+
+    updatePose() {
+      if (this.manual) { this.heading = this.mH; this.pitch = this.mP; this.roll = 0; }
+      else {
+        let h = this.rawHeading == null ? this.heading : this.rawHeading;
+        if (this.applyDecl && this.headingSource !== "iOS compass") h += this.declination;   // Android absolute alpha is magnetic
+        h += this.offset;
+        this.heading = Geo.smoothHeading(this.heading, h, 0.25);
+        this.pitch += (this.rawPitch - this.pitch) * 0.3;
+        this.roll += (this.rawRoll - this.roll) * 0.3;
+      }
+      const eye = this.eye;
+      this.cam.eyeHeight = eye;
+      this.cam.setOrientation(this.heading, this.pitch, this.roll);
+      // synthetic sky/sea split follows the horizon when the camera is off
+      if (!this.camOn) { const p = this.cam.projectDirection(this.heading, -Geo.horizonDip(eye)); $("sky").style.setProperty("--hz", (p ? Math.max(0, Math.min(100, p.y / this.H * 100)) : (this.pitch > 0 ? 100 : 0)) + "%"); }
+    },
+
+    fmtD(m) { return Geo.fmtDistance(m, this.nautical); },
+
+    draw() {
+      const cx = this.cx, W = this.W, H = this.H, cam = this.cam;
+      cx.clearRect(0, 0, W, H);
+      this.hits = [];
+      this.drawHorizon();
+      if (this.showLanes) this.drawLanes();
+      this.drawVessels();
+      this.drawCrosshair();
+    },
+
+    drawHorizon() {
+      const cx = this.cx, cam = this.cam;
+      const dip = -Geo.horizonDip(this.eye);
+      // horizon line: sample directions across the view
+      cx.save(); cx.lineWidth = 1; cx.strokeStyle = "rgba(255,255,255,.35)"; cx.setLineDash([6, 6]);
+      cx.beginPath(); let started = false;
+      for (let d = -this.hfov * 0.75; d <= this.hfov * 0.75; d += 5) {
+        const p = cam.projectDirection(this.heading + d, dip); if (!p) continue;
+        if (!started) { cx.moveTo(p.x, p.y); started = true; } else cx.lineTo(p.x, p.y);
+      }
+      cx.stroke(); cx.setLineDash([]);
+      // compass tape on the horizon
+      cx.font = `600 ${this.labelPx - 1}px -apple-system,Segoe UI,Roboto,sans-serif`; cx.textAlign = "center"; cx.textBaseline = "bottom";
+      const start = Math.floor((this.heading - this.hfov) / 5) * 5, end = this.heading + this.hfov;
+      for (let b = start; b <= end; b += 5) {
+        const bb = Geo.wrap360(b);
+        const p = cam.projectDirection(bb, dip); if (!p) continue;
+        const major = bb % 30 === 0, card = bb % 90 === 0;
+        cx.strokeStyle = card ? "#3fd0ff" : "rgba(255,255,255,.55)"; cx.lineWidth = card ? 2 : 1;
+        // tick perpendicular to horizon (roll-aware): use direction to a point slightly above
+        const q = cam.projectDirection(bb, dip + 1); if (!q) continue;
+        const ux = (q.x - p.x), uy = (q.y - p.y), l = Math.hypot(ux, uy) || 1, len = major ? 12 : 6;
+        cx.beginPath(); cx.moveTo(p.x, p.y); cx.lineTo(p.x + ux / l * len, p.y + uy / l * len); cx.stroke();
+        if (major) {
+          cx.fillStyle = card ? "#3fd0ff" : "rgba(255,255,255,.8)";
+          cx.save(); cx.translate(p.x + ux / l * (len + 3), p.y + uy / l * (len + 3)); cx.rotate(Math.atan2(uy, ux) + Math.PI / 2);
+          cx.fillText(card ? Geo.cardinal(bb) : String(bb).padStart(3, "0"), 0, 0); cx.restore();
+        }
+      }
+      cx.restore();
+    },
+
+    drawLanes() {
+      const cx = this.cx, cam = this.cam, lat = this.lat, lon = this.lon;
+      const labels = [];
+      const order = { fairway: 0, precaution: 1, lane: 2, zone: 3, boundary: 4 };
+      const lanes = this.lanes.filter((l) => this.laneKinds.has(l.kind)).sort((a, b) => order[a.kind] - order[b.kind]);
+      for (const l of lanes) {
+        const st = l.style || Providers.LANE_STYLE[l.kind];
+        if (l.ring) {
+          const poly = cam.projectSeaRing(l.ring, lat, lon);
+          if (poly.length < 3) continue;
+          cx.beginPath(); poly.forEach((p, i) => (i ? cx.lineTo(p.x, p.y) : cx.moveTo(p.x, p.y))); cx.closePath();
+          if (st.fill) { cx.fillStyle = st.fill; cx.fill(); }
+          cx.strokeStyle = st.stroke; cx.lineWidth = l.kind === "zone" ? 1 : 1.5; cx.setLineDash(l.kind === "lane" ? [10, 6] : []); cx.stroke(); cx.setLineDash([]);
+          // direction arrows
+          if (l.arrows && l.kind === "lane") {
+            cx.strokeStyle = "rgba(255,120,220,.9)"; cx.lineWidth = 1.5; cx.lineJoin = "round";
+            for (const ar of l.arrows) {
+              const pieces = cam.projectSeaLine(ar, lat, lon);
+              for (const pc of pieces) { if (pc.length < 2 || pc[0].depth > 12000) continue; cx.beginPath(); pc.forEach((p, i) => (i ? cx.lineTo(p.x, p.y) : cx.moveTo(p.x, p.y))); cx.stroke(); }
+            }
+          }
+          // label at the nearest visible edge midpoint, else centroid
+          const c = l.centroid; const { e, n } = Geo.toENU(lat, lon, c.lat, c.lon); const d = Math.hypot(e, n);
+          const sp = cam.projectSea(e, n);
+          if (sp && sp.x > -50 && sp.x < this.W + 50 && d < this.rangeM * 1.2) {
+            let text = st.label;
+            if (l.kind === "lane" && l.orient != null) text = `${Geo.cardinal(l.orient)}-bound lane ${String(Math.round(l.orient)).padStart(3, "0")}°`;
+            if (l.kind === "precaution" && l.inform) text += ` ${l.inform}`;
+            labels.push({ x: sp.x, y: sp.y, text, color: st.stroke, sub: this.fmtD(d) + (Geo.pointInRing(lat, lon, l.ring) ? " · you are inside" : ""), d });
+          }
+        } else if (l.line) {
+          const pieces = cam.projectSeaLine(l.line, lat, lon);
+          cx.strokeStyle = st.stroke; cx.lineWidth = 2; cx.setLineDash([4, 4]);
+          for (const pc of pieces) { if (pc.length < 2) continue; cx.beginPath(); pc.forEach((p, i) => (i ? cx.lineTo(p.x, p.y) : cx.moveTo(p.x, p.y))); cx.stroke(); }
+          cx.setLineDash([]);
+        }
+      }
+      // lane labels: small, dimmer than vessel labels, decluttered
+      labels.sort((a, b) => a.d - b.d);
+      const placed = [];
+      cx.font = `500 ${this.labelPx - 2}px -apple-system,Segoe UI,Roboto,sans-serif`; cx.textAlign = "center"; cx.textBaseline = "middle";
+      for (const L of labels.slice(0, 12)) {
+        const w = Math.max(cx.measureText(L.text).width, cx.measureText(L.sub).width) + 14, h = (this.labelPx - 2) * 2 + 10;
+        let y = L.y, tries = 0;
+        while (tries++ < 8 && placed.some((p) => Math.abs(p.x - L.x) < (p.w + w) / 2 && Math.abs(p.y - y) < (p.h + h) / 2)) y -= h + 2;
+        placed.push({ x: L.x, y, w, h });
+        cx.fillStyle = "rgba(6,14,24,.55)"; roundRect(cx, L.x - w / 2, y - h / 2, w, h, 6); cx.fill();
+        cx.strokeStyle = L.color; cx.lineWidth = 1; cx.stroke();
+        cx.fillStyle = L.color; cx.fillText(L.text, L.x, y - (this.labelPx - 2) / 2 - 1);
+        cx.fillStyle = "rgba(255,255,255,.75)"; cx.fillText(L.sub, L.x, y + (this.labelPx - 2) / 2 + 2);
+      }
+      // own position vs lanes
+      const inl = Providers.laneAt(lat, lon, this.lanes);
+      const el = $("inlane");
+      if (inl) { el.textContent = "You are in: " + (inl.kind === "lane" ? `${Geo.cardinal(inl.orient)}-bound traffic lane` : inl.style.label.toLowerCase()); el.classList.add("vis"); } else el.classList.remove("vis");
+    },
+
+    drawVessels() {
+      const cx = this.cx, cam = this.cam, lat = this.lat, lon = this.lon, W = this.W, H = this.H;
+      const items = [];
+      for (const v of this.vessels) {
+        const moored = v.navStat === 1 || v.navStat === 5 || (v.sog != null && v.sog < 0.3 && v.navStat !== 0);
+        if (moored && !this.showMoored && !(this.selected && this.selected.mmsi === v.mmsi)) continue;
+        const { e, n } = Geo.toENU(lat, lon, v.drLat, v.drLon);
+        const d = Math.hypot(e, n);
+        if (d > this.rangeM * 1.3) continue;
+        const sp = cam.projectSea(e, n);
+        const brg = Geo.wrap360(Math.atan2(e, n) * R2D);
+        items.push({ v, e, n, d, sp, brg, moored });
+      }
+      items.sort((a, b) => b.d - a.d);   // far first so near hulls paint on top
+      const labels = [];
+      for (const it of items) {
+        const { v, e, n, d, sp } = it;
+        const sel = this.selected && this.selected.mmsi === v.mmsi;
+        const color = v.color;
+        // hull footprint on the water
+        let hullDrawn = false;
+        if (this.showHull && v.dims && v.length > 0 && d < 8000) {
+          const hdg = v.heading != null ? v.heading : v.cog;
+          const ring = Geo.hullFootprint(v.drLat, v.drLon, hdg == null ? 0 : hdg, v.dims);
+          if (ring) {
+            const poly = cam.projectSeaRing(ring, lat, lon);
+            if (poly.length >= 3) {
+              cx.beginPath(); poly.forEach((p, i) => (i ? cx.lineTo(p.x, p.y) : cx.moveTo(p.x, p.y))); cx.closePath();
+              cx.fillStyle = hexA(color, sel ? 0.45 : 0.25); cx.fill(); cx.strokeStyle = color; cx.lineWidth = sel ? 2 : 1.2; cx.stroke();
+              hullDrawn = true;
+            }
+          }
+        }
+        if (!sp || sp.x < -80 || sp.x > W + 80) {
+          // off-screen: edge indicator handled by radar; skip
+          continue;
+        }
+        // 6-minute course vector on the water
+        if (this.showVector && v.sog > 0.5 && v.cog != null) {
+          const tip = Geo.destination(v.drLat, v.drLon, v.cog, v.sog * Geo.KN * 360);
+          const line = [[v.drLon, v.drLat], [tip.lon, tip.lat]];
+          const pieces = cam.projectSeaLine(line, lat, lon);
+          cx.strokeStyle = hexA(color, 0.9); cx.lineWidth = 1.5;
+          for (const pc of pieces) { if (pc.length < 2) continue; cx.beginPath(); pc.forEach((p, i) => (i ? cx.lineTo(p.x, p.y) : cx.moveTo(p.x, p.y))); cx.stroke(); }
+        }
+        // marker at the waterline
+        const r = Math.max(3, Math.min(9, 60000 / Math.max(d, 200) / 10));
+        cx.beginPath(); cx.arc(sp.x, sp.y, r, 0, Math.PI * 2); cx.fillStyle = hexA(color, 0.9); cx.fill(); cx.strokeStyle = "rgba(0,0,0,.6)"; cx.lineWidth = 1; cx.stroke();
+        if (v.ageSec > 180) { cx.beginPath(); cx.arc(sp.x, sp.y, r + 3, 0, Math.PI * 2); cx.strokeStyle = "rgba(255,255,255,.4)"; cx.setLineDash([2, 3]); cx.stroke(); cx.setLineDash([]); }
+        // stalk height scales inversely with distance so near ships get taller pins
+        const stalk = Math.max(28, Math.min(120, 90 - Math.log10(Math.max(d, 10)) * 14));
+        labels.push({ x: sp.x, y: sp.y, stalk, v, d, color, sel, it });
+        this.hits.push({ x: sp.x, y: sp.y - stalk, r: 22, v });
+        this.hits.push({ x: sp.x, y: sp.y, r: 14, v });
+      }
+      // label cards, nearest first, pushed up when they collide
+      labels.sort((a, b) => a.d - b.d);
+      const placed = [];
+      const fs = this.labelPx;
+      cx.textAlign = "left"; cx.textBaseline = "middle";
+      for (const L of labels.slice(0, 40)) {
+        const v = L.v;
+        const name = v.name || ("MMSI " + v.mmsi);
+        const l2 = [v.sog != null ? Geo.fmtSpeed(v.sog) : null, v.cog != null ? String(Math.round(v.cog)).padStart(3, "0") + "°" : null, this.fmtD(L.d)].filter(Boolean).join("  ");
+        const l3 = v.shipTypeName && v.shipTypeName !== "Unknown" ? v.shipTypeName + (v.length ? ` · ${v.length} m` : "") : (v.length ? `${v.length} m` : "");
+        cx.font = `600 ${fs}px -apple-system,Segoe UI,Roboto,sans-serif`; const w1 = cx.measureText(name).width;
+        cx.font = `${fs - 2}px -apple-system,Segoe UI,Roboto,sans-serif`; const w2 = Math.max(cx.measureText(l2).width, cx.measureText(l3).width);
+        const w = Math.max(w1, w2) + 16, lines = l3 ? 3 : 2, h = fs * 1.15 + (lines - 1) * (fs - 2) * 1.25 + 10;
+        let y = L.y - L.stalk - h / 2, tries = 0;
+        while (tries++ < 10 && placed.some((p) => Math.abs(p.x - L.x) < (p.w + w) / 2 + 2 && Math.abs(p.y - y) < (p.h + h) / 2 + 2)) y -= h + 3;
+        if (y - h / 2 < 60) { y = 60 + h / 2; }
+        placed.push({ x: L.x, y, w, h });
+        // stalk
+        cx.strokeStyle = hexA(L.color, 0.7); cx.lineWidth = 1; cx.beginPath(); cx.moveTo(L.x, L.y); cx.lineTo(L.x, y + h / 2); cx.stroke();
+        // card
+        const x0 = Math.max(4, Math.min(W - w - 4, L.x - w / 2)), y0 = y - h / 2;
+        cx.fillStyle = L.sel ? "rgba(10,30,50,.92)" : "rgba(6,14,24,.72)"; roundRect(cx, x0, y0, w, h, 7); cx.fill();
+        cx.strokeStyle = L.sel ? "#fff" : hexA(L.color, 0.8); cx.lineWidth = L.sel ? 1.5 : 1; cx.stroke();
+        cx.fillStyle = "#fff"; cx.font = `600 ${fs}px -apple-system,Segoe UI,Roboto,sans-serif`; cx.fillText(name, x0 + 8, y0 + 5 + fs * 0.6);
+        cx.fillStyle = L.color; cx.fillRect(x0 + 8, y0 + 5 + fs * 1.25, Math.min(w - 16, 22), 1.5);
+        cx.fillStyle = "rgba(255,255,255,.85)"; cx.font = `${fs - 2}px -apple-system,Segoe UI,Roboto,sans-serif`;
+        cx.fillText(l2, x0 + 8, y0 + 5 + fs * 1.25 + (fs - 2) * 0.9 + 1);
+        if (l3) { cx.fillStyle = "rgba(255,255,255,.55)"; cx.fillText(l3, x0 + 8, y0 + 5 + fs * 1.25 + (fs - 2) * 2.15 + 1); }
+        this.hits.push({ x: x0 + w / 2, y, r: Math.max(w, h) / 2, v });
+      }
+    },
+
+    drawCrosshair() {
+      const cx = this.cx, W = this.W, H = this.H;
+      cx.strokeStyle = "rgba(255,255,255,.35)"; cx.lineWidth = 1;
+      cx.beginPath(); cx.moveTo(W / 2 - 10, H / 2); cx.lineTo(W / 2 - 3, H / 2); cx.moveTo(W / 2 + 3, H / 2); cx.lineTo(W / 2 + 10, H / 2);
+      cx.moveTo(W / 2, H / 2 - 10); cx.lineTo(W / 2, H / 2 - 3); cx.moveTo(W / 2, H / 2 + 3); cx.lineTo(W / 2, H / 2 + 10); cx.stroke();
+      cx.fillStyle = "rgba(255,255,255,.75)"; cx.font = `600 ${this.labelPx}px -apple-system,Segoe UI,Roboto,sans-serif`; cx.textAlign = "center"; cx.textBaseline = "top";
+      cx.fillText(String(Math.round(this.heading)).padStart(3, "0") + "° " + Geo.cardinal(this.heading), W / 2, H / 2 + 14);
+      if (this.manual) { cx.fillStyle = "rgba(255,255,255,.4)"; cx.font = `${this.labelPx - 2}px -apple-system,Segoe UI,Roboto,sans-serif`; cx.fillText("drag to look around · scroll to tilt", W / 2, H / 2 + 14 + this.labelPx * 1.4); }
+    },
+
+    drawRadar() {
+      const rx = this.rx, S = 300, c = S / 2, R = c - 8;
+      rx.clearRect(0, 0, S, S);
+      const scale = R / this.rangeM;
+      rx.save(); rx.translate(c, c);
+      // range rings
+      rx.strokeStyle = "rgba(255,255,255,.15)"; rx.lineWidth = 1;
+      for (const f of [0.25, 0.5, 0.75, 1]) { rx.beginPath(); rx.arc(0, 0, R * f, 0, Math.PI * 2); rx.stroke(); }
+      rx.rotate(-this.heading * D2R);   // heading-up
+      const toXY = (lat, lon) => { const { e, n } = Geo.toENU(this.lat, this.lon, lat, lon); return [e * scale, -n * scale]; };
+      // lanes
+      if (this.showLanes) for (const l of this.lanes) {
+        if (!this.laneKinds.has(l.kind)) continue;
+        const st = l.style || Providers.LANE_STYLE[l.kind]; const pts = l.ring || l.line; if (!pts) continue;
+        rx.beginPath(); pts.forEach(([lo, la], i) => { const [x, y] = toXY(la, lo); i ? rx.lineTo(x, y) : rx.moveTo(x, y); });
+        if (l.ring) { rx.closePath(); if (st.fill) { rx.fillStyle = st.fill; rx.fill(); } }
+        rx.strokeStyle = hexA(st.stroke, 0.7); rx.lineWidth = 1; rx.stroke();
+      }
+      // vessels
+      for (const v of this.vessels) {
+        const [x, y] = toXY(v.drLat, v.drLon); if (Math.hypot(x, y) > R) continue;
+        const sel = this.selected && this.selected.mmsi === v.mmsi;
+        rx.save(); rx.translate(x, y);
+        if (v.sog > 0.5 && v.cog != null) { rx.rotate(v.cog * D2R); rx.beginPath(); rx.moveTo(0, -4); rx.lineTo(3, 3); rx.lineTo(-3, 3); rx.closePath(); rx.fillStyle = v.color; rx.fill(); rx.beginPath(); rx.moveTo(0, -4); rx.lineTo(0, -4 - v.sog * Geo.KN * 360 * scale); rx.strokeStyle = hexA(v.color, .8); rx.stroke(); }
+        else { rx.beginPath(); rx.arc(0, 0, 2.5, 0, Math.PI * 2); rx.fillStyle = v.color; rx.fill(); }
+        if (sel) { rx.beginPath(); rx.arc(0, 0, 7, 0, Math.PI * 2); rx.strokeStyle = "#fff"; rx.lineWidth = 1.5; rx.stroke(); }
+        rx.restore();
+      }
+      // fov wedge
+      rx.fillStyle = "rgba(63,208,255,.12)"; rx.beginPath(); rx.moveTo(0, 0); rx.arc(0, 0, R, (-90 - this.hfov / 2) * D2R, (-90 + this.hfov / 2) * D2R); rx.closePath(); rx.fill();
+      // north
+      rx.fillStyle = "#3fd0ff"; rx.font = "600 12px sans-serif"; rx.textAlign = "center"; rx.textBaseline = "middle"; rx.fillText("N", 0, -R + 12);
+      rx.restore();
+      // own ship
+      rx.fillStyle = "#fff"; rx.beginPath(); rx.moveTo(c, c - 6); rx.lineTo(c + 4, c + 4); rx.lineTo(c - 4, c + 4); rx.closePath(); rx.fill();
+      rx.fillStyle = "rgba(255,255,255,.6)"; rx.font = "10px sans-serif"; rx.textAlign = "right"; rx.textBaseline = "bottom"; rx.fillText(this.fmtD(this.rangeM), S - 10, S - 8);
+    },
+
+    updateChips() {
+      const now = Date.now();
+      const g = $("chipGps");
+      if (!this.useGps) { g.textContent = "FIXED " + this.lat.toFixed(3) + ", " + this.lon.toFixed(3); g.className = "chip warn"; }
+      else if (this.hasGps) { g.textContent = `GPS ±${Math.round(this.gpsAcc || 0)} m`; g.className = "chip " + (this.gpsAcc < 30 ? "ok" : "warn"); }
+      else { g.textContent = "GPS no fix"; g.className = "chip bad"; }
+      const h = $("chipHdg");
+      if (this.manual) { h.textContent = "HDG manual"; h.className = "chip warn"; }
+      else { h.textContent = `HDG ${this.headingSource || "…"}` + (this.applyDecl && this.headingSource !== "iOS compass" ? ` +${this.declination.toFixed(0)}°` : ""); h.className = "chip " + (this.headingSource === "relative" ? "warn" : "ok"); }
+      const a = $("chipAis");
+      const age = this.lastAis ? (now - this.lastAis) / 1000 : null;
+      if (this.aisError) { a.textContent = `AIS ${this.provider ? this.provider.id : ""} error`; a.className = "chip bad"; a.title = this.aisError; }
+      else if (!this.lastAis) { a.textContent = `AIS ${this.provider ? this.provider.id : "…"} connecting`; a.className = "chip warn"; }
+      else { a.textContent = `AIS ${this.provider.id} · ${this.vessels.length} · ${age < 60 ? Math.round(age) + "s" : Math.round(age / 60) + "m"}`; a.className = "chip " + (age < 60 ? "ok" : "warn"); }
+      const l = $("chipLanes");
+      if (this.lanesLoading) { l.textContent = "LANES loading"; l.className = "chip warn"; }
+      else if (this.lanesError) { l.textContent = "LANES error"; l.className = "chip bad"; l.title = this.lanesError; }
+      else { const n = this.lanes.length; l.textContent = n ? `LANES ${n} features` : "LANES none charted"; l.className = "chip " + (n ? "ok" : ""); }
+    },
+
+    showInfo(v) {
+      this.selected = v;
+      $("iDot").style.setProperty("--c", v.color);
+      $("iName").textContent = v.name || "MMSI " + v.mmsi;
+      $("iType").textContent = [v.shipTypeName, v.flag ? "flag " + v.flag : null, v.navStatName].filter(Boolean).join(" · ");
+      const own = { lat: this.lat, lon: this.lon, sog: this.gpsSpeed ? this.gpsSpeed / Geo.KN : 0, cog: this.gpsCourse || 0 };
+      const c = Geo.cpa(own, { lat: v.drLat, lon: v.drLon, sog: v.sog || 0, cog: v.cog || 0 });
+      const rows = [
+        ["MMSI", v.mmsi], ["Call sign", v.callSign], ["IMO", v.imo || null],
+        ["Range · bearing", `${this.fmtD(c.rangeM)} · ${Geo.fmtBearing(c.bearing)}`],
+        ["Speed · course", `${Geo.fmtSpeed(v.sog)} · ${v.cog != null ? String(Math.round(v.cog)).padStart(3, "0") + "°" : "—"}`],
+        ["Heading", v.heading != null ? String(Math.round(v.heading)).padStart(3, "0") + "°" : null],
+        ["Rate of turn", v.rot != null && v.rot !== 0 && v.rot !== -128 ? (v.rot > 0 ? "→ " : "← ") + Math.abs(v.rot) + "°/min" : null],
+        ["Size", v.length ? `${v.length} × ${v.beam} m` : null], ["Draught", v.draught ? v.draught.toFixed(1) + " m" : null],
+        ["Destination", v.destination || null],
+        ["CPA · TCPA", c.stationary ? null : `${this.fmtD(c.cpaM)} · ${c.tcpaSec > 0 ? "in " + Geo.fmtDuration(c.tcpaSec) : "opening"}`],
+        ["In lane", (() => { const l = Providers.laneAt(v.drLat, v.drLon, this.lanes); return l ? (l.kind === "lane" ? `${Geo.cardinal(l.orient)}-bound lane` : l.style.label) : "no"; })()],
+        ["Last report", `${Math.round(v.ageSec)} s ago` + (v.posAcc ? " · DGPS" : "")],
+      ];
+      $("iRows").innerHTML = rows.filter(([, val]) => val != null && val !== "").map(([k, val]) => `<div class="ir"><span class="il">${k}</span><span class="iv">${esc(String(val))}</span></div>`).join("");
+      $("iLinks").innerHTML = [
+        `<a target="_blank" rel="noopener" href="https://www.marinetraffic.com/en/ais/details/ships/mmsi:${v.mmsi}">MarineTraffic</a>`,
+        `<a target="_blank" rel="noopener" href="https://www.vesselfinder.com/vessels/details/${v.imo || v.mmsi}">VesselFinder</a>`,
+        `<a target="_blank" rel="noopener" href="https://www.google.com/maps?q=${v.drLat.toFixed(5)},${v.drLon.toFixed(5)}">Map</a>`,
+      ].join("");
+      $("info").classList.add("vis");
+    },
+  };
+
+  // ---- helpers ----------------------------------------------------------------
+  function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+  function esc(s) { return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+  function hexA(hex, a) { const m = hex.replace("#", ""); const n = parseInt(m.length === 3 ? m.split("").map((c) => c + c).join("") : m, 16); return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`; }
+  function roundRect(cx, x, y, w, h, r) { cx.beginPath(); cx.moveTo(x + r, y); cx.arcTo(x + w, y, x + w, y + h, r); cx.arcTo(x + w, y + h, x, y + h, r); cx.arcTo(x, y + h, x, y, r); cx.arcTo(x, y, x + w, y, r); cx.closePath(); }
+  function screenAngle() { return (screen.orientation && screen.orientation.angle) || window.orientation || 0; }
+
+  /**
+   * Device orientation (alpha, beta, gamma; W3C Z-X'-Y'' intrinsic) -> heading /
+   * pitch / roll of the BACK camera, corrected for screen rotation. Heading is
+   * clockwise from north when alpha is absolute (Android), pitch is up
+   * positive, roll is clockwise positive (right edge down).
+   */
+  function orientationFromEvent(e, screenAng) {
+    const a = (e.alpha || 0) * D2R, b = (e.beta || 0) * D2R, g = (e.gamma || 0) * D2R;
+    const cA = Math.cos(a), sA = Math.sin(a), cB = Math.cos(b), sB = Math.sin(b), cG = Math.cos(g), sG = Math.sin(g);
+    // R = Rz(a) Rx(b) Ry(g), columns are device axes in world (x east, y north, z up)
+    const m = [
+      cA * cG - sA * sB * sG, -sA * cB, cA * sG + sA * sB * cG,
+      sA * cG + cA * sB * sG, cA * cB, sA * sG - cA * sB * cG,
+      -cB * sG, sB, cB * cG,
+    ];
+    const mul = (v) => [m[0] * v[0] + m[1] * v[1] + m[2] * v[2], m[3] * v[0] + m[4] * v[1] + m[5] * v[2], m[6] * v[0] + m[7] * v[1] + m[8] * v[2]];
+    const s = screenAng * D2R;
+    const look = mul([0, 0, -1]);                                   // back camera
+    const right = mul([Math.cos(s), Math.sin(s), 0]);               // screen right, in device frame rotated by screen angle
+    const heading = Geo.wrap360(Math.atan2(look[0], look[1]) * R2D);
+    const pitch = Math.asin(Math.max(-1, Math.min(1, look[2]))) * R2D;
+    const roll = -Math.asin(Math.max(-1, Math.min(1, right[2]))) * R2D;
+    return { heading, pitch, roll };
+  }
+
+  A.init();
+  window.MarineAR = A;
+})();
+</script>
+</body>
+</html>

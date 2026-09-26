@@ -1,0 +1,16 @@
+{
+  "callSign" : "OJ3724",
+  "destination" : "HELSINKI RUOHOLAHTI",
+  "draught" : 21,
+  "eta" : 642240,
+  "imo" : 0,
+  "mmsi" : 230941940,
+  "name" : "VARTIOLAIVA 55   ",
+  "posType" : 1,
+  "referencePointA" : 16,
+  "referencePointB" : 19,
+  "referencePointC" : 2,
+  "referencePointD" : 4,
+  "shipType" : 20,
+  "timestamp" : 1790400238709
+}
