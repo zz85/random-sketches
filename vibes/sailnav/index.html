@@ -1,0 +1,1101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0b1220">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>SailNav - Puget Sound chart plotter</title>
+<link rel="stylesheet" href="vendor/leaflet.css">
+<link rel="manifest" href="manifest.webmanifest">
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  :root {
+    --bg: #ffffff; --fg: #0b1220; --fg-dim: #5b6572; --panel: rgba(255,255,255,0.94); --line: #d3d9e0;
+    --accent: #0a58ca; --good: #0a7d2c; --warn: #b35900; --bad: #c81e1e; --route: #dc4025; --mob: #d40000;
+    --shadow: 0 4px 18px rgba(0,0,0,0.18);
+  }
+  body.night {
+    --bg: #05080d; --fg: #d9e2ec; --fg-dim: #8593a3; --panel: rgba(8,12,20,0.94); --line: #26303c;
+    --accent: #38bdf8; --good: #3fb950; --warn: #e3a008; --bad: #ff5a52; --route: #fb7185;
+  }
+  html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--fg);
+    font-family: -apple-system, "Segoe UI", Roboto, system-ui, sans-serif; -webkit-user-select: none; user-select: none; }
+  #app { height: 100%; display: flex; flex-direction: column;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+
+  /* ---- Top bar ---- */
+  #topbar { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 2px solid var(--line); flex: 0 0 auto; background: var(--bg); z-index: 20; }
+  #title { font-weight: 900; font-size: 14px; letter-spacing: 0.5px; }
+  .chip { font-size: 11px; font-weight: 700; padding: 3px 7px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); white-space: nowrap; }
+  .chip.good { color: var(--good); border-color: var(--good); }
+  .chip.warn { color: var(--warn); border-color: var(--warn); }
+  .chip.bad  { color: var(--bad);  border-color: var(--bad); }
+  #chip-net { color: var(--warn); border-color: var(--warn); }
+  #spacer { flex: 1; }
+  .iconbtn { font-size: 11px; font-weight: 800; padding: 6px 9px; border-radius: 6px; background: var(--bg); color: var(--fg); border: 1px solid var(--line); cursor: pointer; }
+  .iconbtn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .iconbtn:active { transform: scale(0.95); }
+
+  /* ---- Map ---- */
+  #mapwrap { flex: 1 1 auto; min-height: 0; position: relative; }
+  #map { position: absolute; inset: 0; background: #d4eaee; }
+  body.night #map { background: #070707; }
+  .leaflet-container { font: inherit; }
+  .leaflet-control-attribution { font-size: 9px; opacity: 0.7; }
+  .leaflet-bar a { color: #000; }
+
+  /* HUD overlays on the map */
+  .hud { position: absolute; z-index: 500; pointer-events: none; }
+  .hud > * { pointer-events: auto; }
+  #hud-tl { top: 8px; left: 8px; display: flex; flex-direction: column; gap: 6px; }
+  #hud-tr { top: 8px; right: 8px; display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+  #hud-bl { bottom: 8px; left: 8px; }
+  #hud-br { bottom: 8px; right: 8px; display: flex; flex-direction: column; gap: 6px; }
+
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); padding: 8px 10px; }
+  #sogcard { line-height: 1; min-width: 96px; }
+  #sogcard .big { font-size: 34px; font-weight: 900; font-variant-numeric: tabular-nums; }
+  #sogcard .unit { font-size: 12px; font-weight: 800; margin-left: 3px; color: var(--fg-dim); }
+  #sogcard .sub { font-size: 12px; font-weight: 700; color: var(--fg-dim); margin-top: 4px; font-variant-numeric: tabular-nums; }
+
+  /* Depth readout: hero of the app */
+  #depthcard { min-width: 150px; cursor: pointer; }
+  #depthcard .k { font-size: 10px; font-weight: 800; letter-spacing: 1.5px; color: var(--fg-dim); }
+  #depthcard .big { font-size: 40px; font-weight: 900; font-variant-numeric: tabular-nums; line-height: 1; }
+  #depthcard .unit { font-size: 14px; font-weight: 800; color: var(--fg-dim); margin-left: 3px; }
+  #depthcard .sub { font-size: 11px; color: var(--fg-dim); margin-top: 4px; line-height: 1.35; }
+  #depthcard.shallow .big { color: var(--bad); }
+  #depthcard.caution .big { color: var(--warn); }
+  #depthcard.safe .big { color: var(--good); }
+
+  .mapbtn { width: 40px; height: 40px; border-radius: 9px; border: 1px solid var(--line); background: var(--panel); color: var(--fg);
+    font-size: 17px; font-weight: 900; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: var(--shadow); }
+  .mapbtn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .mapbtn:active { transform: scale(0.93); }
+  .mapbtn.mob { background: var(--mob); color: #fff; border-color: var(--mob); font-size: 11px; }
+
+  /* Nav pill (active waypoint) */
+  #navpill { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 500;
+    background: var(--accent); color: #fff; padding: 6px 12px; border-radius: 999px; display: none; align-items: center; gap: 10px; max-width: 70%; box-shadow: var(--shadow); }
+  body.night #navpill { color: #001018; }
+  #navpill.show { display: flex; }
+  #navpill .arrow { font-size: 22px; line-height: 1; transition: transform 0.3s; }
+  #navpill .col { display: flex; flex-direction: column; line-height: 1.15; min-width: 0; }
+  #navpill .name { font-size: 14px; font-weight: 900; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #navpill .sub { font-size: 11px; font-weight: 700; opacity: 0.9; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  #navpill .xte { font-size: 11px; font-weight: 900; font-variant-numeric: tabular-nums; }
+
+  /* MOB banner */
+  #mob-banner { display: none; flex: 0 0 auto; align-items: center; gap: 14px; background: var(--mob); color: #fff; padding: 8px 14px; font-weight: 900; }
+  #mob-banner.active { display: flex; }
+  #mob-banner .stat { font-size: 24px; font-variant-numeric: tabular-nums; }
+  #mob-banner .lbl { font-size: 10px; opacity: 0.85; letter-spacing: 1px; }
+  #mob-banner .col { display: flex; flex-direction: column; }
+  #mob-banner button { margin-left: auto; background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.6); color: #fff; font-weight: 800; padding: 8px 12px; border-radius: 6px; cursor: pointer; }
+
+  /* ---- Bottom sheet: route panel ---- */
+  #sheet { flex: 0 0 auto; border-top: 2px solid var(--line); background: var(--bg); max-height: 46vh; display: flex; flex-direction: column; }
+  #sheet.collapsed #sheet-body { display: none; }
+  #sheet-head { display: flex; align-items: center; gap: 8px; padding: 6px 10px; cursor: pointer; }
+  #sheet-head .t { font-weight: 900; font-size: 13px; letter-spacing: 0.5px; }
+  #sheet-head .s { font-size: 12px; color: var(--fg-dim); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #sheet-body { overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 0 10px 10px; }
+  .row { display: flex; gap: 6px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
+  .row label { font-size: 11px; font-weight: 800; color: var(--fg-dim); letter-spacing: 0.4px; }
+  input[type=text], input[type=number], select { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); font-size: 14px; -webkit-user-select: text; user-select: text; }
+  input[type=text] { flex: 1; min-width: 120px; font-family: ui-monospace, Menlo, monospace; }
+  input[type=number] { width: 74px; text-align: right; font-variant-numeric: tabular-nums; }
+  .btn { padding: 9px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); font-weight: 800; font-size: 13px; cursor: pointer; }
+  .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .btn.danger { color: var(--bad); }
+  .btn:active { transform: scale(0.97); }
+  .btn:disabled { opacity: 0.45; }
+  .pick { font-size: 11px; font-weight: 800; padding: 5px 8px; border-radius: 6px; border: 1px dashed var(--accent); background: transparent; color: var(--accent); cursor: pointer; }
+  .pick.armed { background: var(--accent); color: #fff; border-style: solid; }
+  #legs { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12px; font-variant-numeric: tabular-nums; }
+  #legs th { text-align: left; color: var(--fg-dim); font-size: 10px; letter-spacing: 1px; font-weight: 800; padding: 3px 4px; border-bottom: 1px solid var(--line); }
+  #legs td { padding: 4px; border-bottom: 1px solid var(--line); }
+  #legs tr.active td { color: var(--accent); font-weight: 800; }
+  #legs tr td:first-child { cursor: pointer; }
+  #status { font-size: 12px; color: var(--fg-dim); margin-top: 6px; min-height: 16px; }
+  #status.err { color: var(--bad); font-weight: 700; }
+  .marks { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .mark { font-size: 11px; font-weight: 800; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); cursor: pointer; }
+  .mark:active { transform: scale(0.95); }
+
+  /* Tide strip */
+  #tide { display: flex; align-items: center; gap: 10px; font-size: 12px; font-variant-numeric: tabular-nums; }
+  #tide canvas { width: 130px; height: 34px; }
+  #tide .tv { font-weight: 900; font-size: 16px; }
+  #tide .tl { color: var(--fg-dim); font-size: 10px; letter-spacing: 1px; font-weight: 800; }
+
+  /* Popup styling */
+  .leaflet-popup-content { font-size: 13px; line-height: 1.4; margin: 10px 12px; }
+  .leaflet-popup-content b { font-size: 16px; }
+  .leaflet-popup-content .acts { display: flex; gap: 6px; margin-top: 8px; }
+  .leaflet-popup-content .acts button { flex: 1; padding: 7px 8px; border-radius: 6px; border: 1px solid #ccd; background: #fff; font-weight: 800; font-size: 12px; cursor: pointer; }
+  .leaflet-popup-content .acts button.p { background: #0a58ca; color: #fff; border-color: #0a58ca; }
+
+  /* Boat marker */
+  .boat { width: 0; height: 0; }
+  .boat svg { position: absolute; left: -16px; top: -16px; width: 32px; height: 32px; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.5)); }
+  .wpicon { width: 14px; height: 14px; border-radius: 50%; background: var(--route); border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,0.4); }
+  .wpicon.active { background: var(--accent); width: 18px; height: 18px; }
+  .wplabel { background: transparent; border: none; box-shadow: none; font-size: 11px; font-weight: 800; color: #111; text-shadow: 0 0 3px #fff, 0 0 3px #fff; white-space: nowrap; }
+  body.night .wplabel { color: #eee; text-shadow: 0 0 3px #000, 0 0 3px #000; }
+  .mobicon { width: 22px; height: 22px; border-radius: 50%; background: #d40000; border: 3px solid #fff; box-shadow: 0 0 0 2px #d40000; animation: pulse 1s infinite alternate; }
+  @keyframes pulse { from { transform: scale(1); } to { transform: scale(1.25); } }
+  .cursor-pick { cursor: crosshair !important; }
+
+  /* ---- Charts drawer (offline ENC cells) ---- */
+  #charts { position: absolute; top: 8px; right: 56px; z-index: 600; width: min(340px, calc(100% - 70px)); display: none; }
+  #charts.show { display: block; }
+  #charts h3 { font-size: 13px; font-weight: 900; letter-spacing: 0.5px; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+  #charts h3 span { flex: 1; }
+  #charts p { font-size: 11px; color: var(--fg-dim); line-height: 1.4; }
+  #charts a { color: var(--accent); }
+  #dropzone { margin-top: 8px; border: 2px dashed var(--line); border-radius: 10px; padding: 12px; text-align: center; font-size: 12px; font-weight: 700; color: var(--fg-dim); cursor: pointer; }
+  #dropzone.over { border-color: var(--accent); color: var(--accent); }
+  #cell-list { margin-top: 8px; max-height: 30vh; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+  .cell-row { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; }
+  .cell-row .n { font-weight: 800; font-family: ui-monospace, Menlo, monospace; }
+  .cell-row .d { color: var(--fg-dim); font-size: 11px; flex: 1; }
+  .cell-row button { font-size: 11px; font-weight: 800; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--bad); cursor: pointer; }
+  #charts-status { font-size: 11px; margin-top: 6px; min-height: 14px; color: var(--fg-dim); }
+  .chip.local { color: var(--good); border-color: var(--good); }
+
+  /* Overlay */
+  #overlay { position: fixed; inset: 0; background: var(--bg); color: var(--fg); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; text-align: center; padding: 24px; z-index: 2000; }
+  #overlay h1 { font-size: 26px; font-weight: 900; }
+  #overlay p { font-size: 14px; color: var(--fg-dim); max-width: 440px; line-height: 1.5; }
+  #overlay .big { font-size: 18px; font-weight: 900; padding: 16px 36px; border-radius: 14px; background: var(--accent); color: #fff; border: none; cursor: pointer; }
+  #overlay .small { font-size: 13px; font-weight: 700; padding: 10px 18px; border-radius: 10px; background: var(--panel); color: var(--fg); border: 1px solid var(--line); cursor: pointer; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="topbar">
+    <span id="title">SAILNAV</span>
+    <span id="chip-gps" class="chip warn">GPS ...</span>
+    <span id="chip-acc" class="chip">±-- m</span>
+    <span id="chip-net" class="chip hidden">OFFLINE</span>
+    <span id="spacer"></span>
+    <button id="btn-units" class="iconbtn" title="Depth units">m</button>
+    <button id="btn-follow" class="iconbtn active" title="Follow boat">FOLLOW</button>
+    <button id="btn-theme" class="iconbtn">NIGHT</button>
+  </div>
+
+  <div id="mob-banner">
+    <span id="mob-arrow" style="font-size:28px">&uarr;</span>
+    <div class="col"><span class="lbl">MOB BRG</span><span class="stat"><span id="mob-brg">--</span>&deg;</span></div>
+    <div class="col"><span class="lbl">DIST</span><span class="stat" id="mob-dist">--</span></div>
+    <div class="col"><span class="lbl">ELAPSED</span><span class="stat" id="mob-time">0:00</span></div>
+    <button id="mob-clear">CLEAR</button>
+  </div>
+
+  <div id="mapwrap">
+    <div id="map"></div>
+
+    <div id="navpill">
+      <span class="arrow" id="np-arrow">&#8593;</span>
+      <div class="col">
+        <span class="name" id="np-name">--</span>
+        <span class="sub"><span id="np-dtg">--</span> &middot; BRG <span id="np-brg">--</span> &middot; TTG <span id="np-ttg">--</span></span>
+      </div>
+      <span class="xte" id="np-xte">XTE --</span>
+    </div>
+
+    <div class="hud" id="hud-tl">
+      <div class="card" id="depthcard" title="Tap for details">
+        <div class="k">CHARTED DEPTH <span id="depth-src"></span></div>
+        <div><span class="big" id="depth-val">--</span><span class="unit" id="depth-unit">m</span></div>
+        <div class="sub" id="depth-sub">waiting for position</div>
+      </div>
+      <div class="card" id="sogcard">
+        <div><span class="big" id="sog">0.0</span><span class="unit">kn</span></div>
+        <div class="sub">COG <span id="cog">--</span>&deg; &middot; <span id="pos">--</span></div>
+      </div>
+    </div>
+
+    <div class="hud" id="hud-tr">
+      <button class="mapbtn" id="btn-center" title="Center on boat">&#9678;</button>
+      <button class="mapbtn" id="btn-grid" title="Show routing grid (blocked cells)" style="font-size:11px">GRID</button>
+      <button class="mapbtn" id="btn-layers" title="Chart layer: NOAA online / offline vector / OpenSeaMap">&#9776;</button>
+      <button class="mapbtn" id="btn-charts" title="Offline charts (load NOAA ENC cells)" style="font-size:10px">ENC</button>
+      <button class="mapbtn mob" id="btn-mob" title="Man overboard">MOB</button>
+    </div>
+
+    <div class="card" id="charts">
+      <h3><span>OFFLINE CHARTS</span><span id="charts-count" class="chip"></span><button class="iconbtn" id="charts-close">X</button></h3>
+      <p>Load official NOAA ENC cells to use depth, routing and a vector chart with no signal. Download the zip for a cell from
+        <a href="https://charts.noaa.gov/ENCs/ENCsIndv.shtml" target="_blank" rel="noopener">charts.noaa.gov</a> (e.g. <b>US5SEAGK</b> Shilshole/West Point, <b>US5WA12M</b>, <b>US5WA13M</b>, <b>US5WA14M</b> Seattle) and drop it here. Parsed in the browser (ISO 8211 / S-57), stored in IndexedDB.</p>
+      <div class="row" style="margin-top:6px"><button class="btn" id="btn-load-bundled" style="flex:1">LOAD ALL BUNDLED CELLS</button><button class="btn danger" id="btn-clear-cells">CLEAR</button></div>
+      <p id="bundled-info" style="margin-top:6px"></p>
+      <div id="dropzone">Drop .zip / .000 here or tap to choose<input type="file" id="cell-file" accept=".zip,.000,application/zip" multiple hidden></div>
+      <div id="charts-status"></div>
+      <div id="cell-list"></div>
+    </div>
+    <div class="hud" id="hud-bl">
+      <div class="card" id="tide">
+        <canvas id="tide-canvas" width="260" height="68"></canvas>
+        <div><div class="tl" id="tide-station">TIDE</div><div class="tv"><span id="tide-h">--</span> <span style="font-size:11px">m</span> <span id="tide-trend"></span></div><div class="tl" id="tide-next">--</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="sheet" class="collapsed">
+    <div id="sheet-head">
+      <span class="t">ROUTE</span>
+      <span class="s" id="sheet-sum">Tap to plan a route between two points</span>
+      <span id="sheet-chev">&#9650;</span>
+    </div>
+    <div id="sheet-body">
+      <div class="row">
+        <label style="width:36px">FROM</label>
+        <input type="text" id="from" placeholder="lat, lon  or  47°41.06'N 122°24.68'W">
+        <button class="pick" id="pick-from" title="Tap on the chart">MAP</button>
+        <button class="pick" id="from-boat" title="Use boat position">BOAT</button>
+      </div>
+      <div class="row">
+        <label style="width:36px">TO</label>
+        <input type="text" id="to" placeholder="destination">
+        <button class="pick" id="pick-to" title="Tap on the chart">MAP</button>
+      </div>
+      <div class="marks" id="marks"></div>
+      <div class="row">
+        <label>DRAFT</label><input type="number" id="draft" value="1.8" step="0.1" min="0"><span style="font-size:11px" id="draft-u">m</span>
+        <label>CLEARANCE</label><input type="number" id="clearance" value="1.0" step="0.1" min="0"><span style="font-size:11px" id="clr-u">m</span>
+        <label>SHORE MARGIN</label><input type="number" id="margin" value="80" step="10" min="0"><span style="font-size:11px">m</span>
+        <label>SPEED</label><input type="number" id="speed" value="5.5" step="0.5" min="0.5"><span style="font-size:11px">kn</span>
+      </div>
+      <div class="row">
+        <button class="btn primary" id="btn-route">ROUTE</button>
+        <button class="btn" id="btn-direct">DIRECT LEG</button>
+        <button class="btn" id="btn-activate" disabled>ACTIVATE</button>
+        <button class="btn" id="btn-reverse" disabled>REVERSE</button>
+        <button class="btn" id="btn-gpx" disabled>GPX</button>
+        <button class="btn danger" id="btn-clear">CLEAR</button>
+      </div>
+      <div id="status"></div>
+      <table id="legs"></table>
+    </div>
+  </div>
+</div>
+
+<div id="overlay">
+  <h1>SailNav</h1>
+  <p>Official NOAA ENC charts, charted depth under the boat, tides, and automatic water routing for Puget Sound. Charts and depth data are for planning only; never rely on a phone for primary navigation.</p>
+  <button class="big" id="start-gps">START GPS</button>
+  <button class="small" id="start-demo">Plan without GPS (Shilshole)</button>
+  <p style="font-size:12px">Chart tiles: NOAA ENC Online. Depths: NOAA ENC Direct (metres below MLLW). Tides: NOAA CO-OPS. Your position never leaves the device.</p>
+</div>
+
+<script src="vendor/leaflet.js"></script>
+<script src="nav.js"></script>
+<script src="chart.js"></script>
+<script src="router.js"></script>
+<script src="s57.js"></script>
+<script src="chartstore.js"></script>
+<script>
+"use strict";
+
+// ---------- STYC race marks (shared with sailing-dash) ----------
+const MARKS = {
+  N: { name: "Shilshole start", lat: 47.68440, lon: -122.41132 },
+  B: { name: "Ballard Sails", lat: 47.67142, lon: -122.42237 },
+  M: { name: "Meadow Pt", lat: 47.69638, lon: -122.40972 },
+  W: { name: "West Pt", lat: 47.66028, lon: -122.44112 },
+  K: { name: "Blakely Rock", lat: 47.59500, lon: -122.48000 },
+  I: { name: "Blake Is", lat: 47.52667, lon: -122.50000 },
+  D: { name: "Duwamish Hd", lat: 47.59888, lon: -122.38778 },
+  P: { name: "Wing Pt", lat: 47.61228, lon: -122.48570 },
+  S: { name: "Skiff Pt", lat: 47.66200, lon: -122.49650 },
+  O: { name: "Pt Monroe", lat: 47.71000, lon: -122.50750 },
+  Z: { name: "Jefferson Hd", lat: 47.74000, lon: -122.49000 },
+  U: { name: "Richmond Bch", lat: 47.76127, lon: -122.39722 },
+  E: { name: "Eagle Harbor", lat: 47.6205, lon: -122.5100 },
+  T: { name: "Elliott Bay Mar.", lat: 47.6300, lon: -122.3950 },
+  Q: { name: "Poulsbo", lat: 47.7350, lon: -122.6450 },
+  V: { name: "Kingston", lat: 47.7960, lon: -122.4980 },
+};
+
+const $ = id => document.getElementById(id);
+const store = {
+  get(k, d) { try { const v = localStorage.getItem("sn_" + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { localStorage.setItem("sn_" + k, JSON.stringify(v)); },
+};
+
+const state = {
+  night: store.get("night", false),
+  depthUnit: store.get("depthUnit", "m"),
+  follow: true,
+  pos: null, acc: null, sog: 0, cog: null, lastFix: null, fixTime: 0,
+  depth: null, depthQueryAt: 0, depthPos: null,
+  route: store.get("route", null),      // {waypoints:[{lat,lon,name}], source}
+  activeIdx: null,                        // index of active waypoint in route.waypoints
+  legStart: null,                         // {lat,lon} where the current leg began
+  mob: store.get("mob", null),
+  tide: null, tideStation: null,
+  picking: null,                          // "from" | "to" | null
+  track: [],
+  chartLayer: store.get("chartLayer", "enc"),   // "enc" (NOAA online) | "local" (offline vector) | "osm"
+  routingData: null,                      // cached ENC features for last bbox
+  simulate: false,
+};
+
+// ---------- Theme / units ----------
+function applyTheme() {
+  document.body.classList.toggle("night", state.night);
+  $("btn-theme").textContent = state.night ? "DAY" : "NIGHT";
+  document.querySelector('meta[name="theme-color"]').setAttribute("content", state.night ? "#000000" : "#ffffff");
+  rebuildChartLayer();
+  renderDepth();
+}
+$("btn-theme").onclick = () => { state.night = !state.night; store.set("night", state.night); applyTheme(); };
+
+function applyUnits() {
+  const u = state.depthUnit;
+  $("btn-units").textContent = u;
+  $("depth-unit").textContent = u;
+  $("draft-u").textContent = u; $("clr-u").textContent = u;
+  renderDepth();
+}
+$("btn-units").onclick = () => {
+  const order = ["m", "ft", "fm"];
+  const cur = state.depthUnit;
+  const next = order[(order.indexOf(cur) + 1) % 3];
+  // convert draft/clearance inputs to keep the same physical value
+  for (const id of ["draft", "clearance"]) {
+    const m = Nav.depthToMetres(parseFloat($(id).value) || 0, cur);
+    $(id).value = (+Nav.fmtDepth(m, next)).toString();
+  }
+  state.depthUnit = next; store.set("depthUnit", next); applyUnits(); rebuildChartLayer();
+};
+
+// ---------- Map ----------
+const map = L.map("map", { zoomControl: false, attributionControl: true, rotate: false, zoomSnap: 0.5, worldCopyJump: false })
+  .setView([47.66, -122.44], 12);
+L.control.scale({ imperial: false, nautic: false, metric: true, position: "bottomright" }).addTo(map);
+
+// Nautical miles scale (Leaflet only ships metric/imperial)
+const nmScale = L.control({ position: "bottomright" });
+nmScale.onAdd = function () {
+  const div = L.DomUtil.create("div", "leaflet-control-scale");
+  this._line = L.DomUtil.create("div", "leaflet-control-scale-line", div);
+  return div;
+};
+nmScale.update = function () {
+  const y = map.getSize().y / 2;
+  const maxM = map.distance(map.containerPointToLatLng([0, y]), map.containerPointToLatLng([100, y]));
+  const nm = maxM / Nav.NM;
+  const nice = [0.02, 0.05, 0.1, 0.2, 0.25, 0.5, 1, 2, 5, 10, 20].reduce((a, v) => v <= nm ? v : a, 0.01);
+  this._line.style.width = Math.round(100 * nice / nm) + "px";
+  this._line.textContent = nice < 1 ? nice.toFixed(2) + " NM" : nice + " NM";
+};
+nmScale.addTo(map);
+map.on("move zoom", () => nmScale.update());
+
+// Base + chart layers. ENC Online export is used as a tile source through a
+// custom TileLayer so we can pass ECDIS display parameters (palette, safety
+// contour, depth units). OpenSeaMap seamarks are an alternative on top of OSM.
+const osm = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "&copy; OpenStreetMap" });
+const seamark = L.tileLayer("https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png", { maxZoom: 18, attribution: "OpenSeaMap" });
+let encLayer = null;
+
+const EncTiles = L.TileLayer.extend({
+  getTileUrl(coords) {
+    const req = requiredDepthM();
+    const safety = Math.max(1, Math.round(req));
+    return Chart.encTileUrl(coords.x, coords.y, coords.z, {
+      scheme: state.night ? 2 : 0,
+      safety, shallow: Math.max(1, Math.round(safety / 2)), deep: Math.max(safety + 5, 20),
+      safetyDepth: safety,
+      units: state.depthUnit === "ft" ? 2 : state.depthUnit === "fm" ? 3 : 1,
+    });
+  },
+});
+
+function rebuildChartLayer() {
+  if (encLayer) { map.removeLayer(encLayer); encLayer = null; }
+  map.removeLayer(osm); map.removeLayer(seamark); map.removeLayer(vectorLayer);
+  const mode = state.chartLayer === "local" && !ChartStore.list().length ? "enc" : state.chartLayer; // cells may still be loading
+  if (mode === "enc") {
+    encLayer = new EncTiles("", { maxZoom: 18, minZoom: 8, tileSize: 256, attribution: "NOAA ENC Online (not for navigation)", keepBuffer: 2, updateWhenIdle: true });
+    encLayer.addTo(map);
+  } else if (mode === "local") {
+    renderVectorChart(); vectorLayer.addTo(map);
+  } else {
+    osm.addTo(map); seamark.addTo(map);
+  }
+  $("btn-layers").textContent = mode === "enc" ? "\u2630" : mode === "local" ? "VEC" : "OSM";
+  $("btn-layers").style.fontSize = mode === "enc" ? "17px" : "11px";
+}
+$("btn-layers").onclick = () => {
+  const order = ChartStore.list().length ? ["enc", "local", "osm"] : ["enc", "osm"];
+  state.chartLayer = order[(order.indexOf(state.chartLayer) + 1) % order.length];
+  store.set("chartLayer", state.chartLayer);
+  rebuildChartLayer();
+};
+
+// ---------- Offline vector chart (S-52 colours, drawn from parsed S-57) ----------
+const vectorLayer = L.layerGroup();
+function s52() { return Chart.S52[state.night ? "NIGHT" : "DAY"]; }
+function renderVectorChart() {
+  vectorLayer.clearLayers();
+  const data = ChartStore.data(); if (!data) return;
+  const P = s52(), req = requiredDepthM();
+  const safety = Math.max(1, Math.round(req)), shallow = Math.max(1, Math.round(safety / 2)), deep = Math.max(safety + 5, 20);
+  const bg = L.rectangle([[-90, -180], [90, 180]], { stroke: false, fillColor: P.NODTA, fillOpacity: 1, interactive: false });
+  vectorLayer.addLayer(bg);
+  // Coverage areas as "deep water" fallback so gaps between DEPARE polygons read as water
+  for (const c of data.cells) for (const f of c.features) if (f.objl === S57.OBJL.M_COVR && Number(f.properties.CATCOV) === 1)
+    vectorLayer.addLayer(L.geoJSON(f, { style: { stroke: false, fillColor: P.DEPDW, fillOpacity: 1 }, interactive: false }));
+  const areaStyle = f => ({ stroke: false, fillOpacity: 1, fillColor: P[Chart.depthBand(f.properties.DRVAL1, f.properties.DRVAL2, shallow, safety, deep)] });
+  vectorLayer.addLayer(L.geoJSON({ type: "FeatureCollection", features: data.depthAreas }, { style: areaStyle, interactive: false }));
+  vectorLayer.addLayer(L.geoJSON({ type: "FeatureCollection", features: data.dredgedAreas }, { style: f => Object.assign(areaStyle(f), { stroke: true, color: P.CHGRD, weight: 1, dashArray: "4 3" }), interactive: false }));
+  vectorLayer.addLayer(L.geoJSON({ type: "FeatureCollection", features: data.land }, { style: { color: P.CSTLN, weight: 1.2, fillColor: P.LANDA, fillOpacity: 1 }, interactive: false }));
+  for (const c of data.cells) {
+    const contours = c.features.filter(f => f.objl === S57.OBJL.DEPCNT);
+    vectorLayer.addLayer(L.geoJSON({ type: "FeatureCollection", features: contours }, { style: f => Number(f.properties.VALDCO) === safety ? { color: P.DEPSC, weight: 2 } : { color: P.DEPCN, weight: 1, opacity: 0.8 }, interactive: false }));
+    const aids = c.features.filter(f => [S57.OBJL.LIGHTS, S57.OBJL.BOYLAT, S57.OBJL.BOYSPP, S57.OBJL.BOYCAR, S57.OBJL.BOYSAW, S57.OBJL.BOYISD, S57.OBJL.BCNLAT, S57.OBJL.BCNSPP, S57.OBJL.DAYMAR].includes(f.objl) && f.geometry.type === "Point");
+    for (const f of aids) {
+      const [lon, lat] = f.geometry.coordinates;
+      const isLight = f.objl === S57.OBJL.LIGHTS;
+      vectorLayer.addLayer(L.circleMarker([lat, lon], { radius: isLight ? 4 : 5, color: isLight ? P.CHMGD : P.CHBLK, fillColor: isLight ? P.CHYLW : P.CHWHT, fillOpacity: 1, weight: 1.5 })
+        .bindTooltip(`${f.klass}${f.properties.OBJNAM ? " " + f.properties.OBJNAM : ""}${f.properties.LITCHR ? " lit" : ""}`));
+    }
+  }
+  // Hazards and soundings (soundings only when zoomed in; refreshed on zoomend)
+  drawVectorDetail();
+}
+const detailLayer = L.layerGroup().addTo(vectorLayer);
+function drawVectorDetail() {
+  detailLayer.clearLayers();
+  const data = ChartStore.data(); if (!data || !map.hasLayer(vectorLayer)) return;
+  const P = s52(), req = requiredDepthM(), z = map.getZoom(), b = map.getBounds().pad(0.2), u = state.depthUnit;
+  for (const h of data.hazards) {
+    if (!b.contains([h.lat, h.lon])) continue;
+    const danger = h.depth < req;
+    detailLayer.addLayer(L.circleMarker([h.lat, h.lon], { radius: danger ? 6 : 4, color: danger ? P.ISDNG : P.CHBLK, fillColor: danger ? P.DNGHL : "transparent", fillOpacity: 0.9, weight: 1.5 })
+      .bindTooltip(`${h.kind}${h.props.VALSOU != null ? " " + Nav.fmtDepth(h.props.VALSOU, u) + " " + u : ""}${h.props.WATLEV ? " (" + (S57.WATLEV[h.props.WATLEV] || "") + ")" : ""}`));
+  }
+  if (z >= 13) {
+    const shallowCol = P.SNDG2, deepCol = P.SNDG1;
+    for (const s of data.soundings) {
+      if (!b.contains([s.lat, s.lon])) continue;
+      const txt = Nav.fmtDepth(s.depth, u);
+      detailLayer.addLayer(L.marker([s.lat, s.lon], { interactive: false, icon: L.divIcon({ className: "wplabel", html: `<span style="color:${s.depth <= req ? shallowCol : deepCol};font-weight:${s.depth <= req ? 900 : 600}">${txt}</span>`, iconSize: [0, 0] }) }));
+    }
+  }
+}
+map.on("zoomend moveend", () => { if (state.chartLayer === "local") drawVectorDetail(); });
+
+// Layers for our own features
+const trackLine = L.polyline([], { color: "#0a58ca", weight: 3, opacity: 0.7 }).addTo(map);
+const routeLine = L.polyline([], { color: "#dc4025", weight: 3, opacity: 0.9, dashArray: "8 6" }).addTo(map);
+const legLine = L.polyline([], { color: "#0a58ca", weight: 3, opacity: 0.9 }).addTo(map);
+const cogLine = L.polyline([], { color: "#0a58ca", weight: 2, opacity: 0.8, dashArray: "10 6" }).addTo(map);
+const wpLayer = L.layerGroup().addTo(map);
+const gridLayer = L.layerGroup();  // routing grid debug (blocked cells)
+let boatMarker = null, mobMarker = null, pickMarkers = { from: null, to: null };
+
+function boatIcon(headingDeg, lowAcc) {
+  const color = lowAcc ? "#f4da48" : (state.night ? "#e2e8f0" : "#111");
+  const stroke = state.night ? "#000" : "#fff";
+  return L.divIcon({ className: "boat", html:
+    `<svg viewBox="-16 -16 32 32" style="transform:rotate(${headingDeg}deg)"><path d="M0,-13 L-8,10 L0,6 L8,10 Z" fill="${color}" stroke="${stroke}" stroke-width="1.5"/></svg>` });
+}
+
+// ---------- GPS ----------
+function startGps() {
+  $("overlay").classList.add("hidden");
+  if (!("geolocation" in navigator)) { setGpsChip("bad", "GPS n/a"); return; }
+  navigator.geolocation.watchPosition(onPosition, onGpsError, { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 });
+  requestWakeLock();
+}
+function startDemo() {
+  $("overlay").classList.add("hidden");
+  state.simulate = true;
+  setGpsChip("warn", "NO GPS");
+  onPosition({ coords: { latitude: 47.6844, longitude: -122.41132, accuracy: 5, speed: 0, heading: null }, timestamp: Date.now() });
+  $("sheet").classList.remove("collapsed");
+  $("from").value = Nav.fmtPos(47.6844, -122.41132);
+  $("to").value = Nav.fmtPos(MARKS.I.lat, MARKS.I.lon);
+}
+function setGpsChip(cls, txt) { $("chip-gps").className = "chip " + cls; $("chip-gps").textContent = txt; }
+function onGpsError(err) {
+  if (err.code === 1) { setGpsChip("bad", "GPS denied"); $("overlay").classList.remove("hidden"); return; }
+  setGpsChip("warn", state.pos ? "GPS weak" : "GPS ...");
+}
+async function requestWakeLock() {
+  try { if ("wakeLock" in navigator) await navigator.wakeLock.request("screen"); } catch (e) { /* ignore */ }
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") requestWakeLock(); });
+
+function onPosition(p) {
+  const c = p.coords, now = p.timestamp || Date.now();
+  if (!state.simulate) setGpsChip("good", "GPS \u25CF");
+  state.acc = c.accuracy;
+  $("chip-acc").className = "chip " + (c.accuracy > 30 ? "bad" : c.accuracy > 12 ? "warn" : "good");
+  $("chip-acc").textContent = "\u00B1" + Math.round(c.accuracy) + " m";
+
+  let speed = (c.speed != null && c.speed >= 0) ? c.speed : null;
+  if (speed == null && state.lastFix) {
+    const dt = (now - state.lastFix.t) / 1000;
+    if (dt > 0.2) speed = Nav.haversine(state.lastFix.lat, state.lastFix.lon, c.latitude, c.longitude) / dt;
+  }
+  if (speed == null) speed = 0;
+  state.sog = 0.35 * speed + 0.65 * state.sog;
+  if (state.sog < 0.15) state.sog = 0;
+  if (c.heading != null && !isNaN(c.heading) && speed > 0.5) state.cog = c.heading;
+  else if (state.lastFix && speed > 0.5) state.cog = Nav.bearing(state.lastFix.lat, state.lastFix.lon, c.latitude, c.longitude);
+
+  state.pos = { lat: c.latitude, lon: c.longitude };
+  state.fixTime = now;
+  if (c.accuracy < 30) {
+    const last = state.track[state.track.length - 1];
+    if (!last || Nav.haversine(last.lat, last.lon, c.latitude, c.longitude) > 5) {
+      state.track.push({ lat: c.latitude, lon: c.longitude, t: now });
+      if (state.track.length > 3000) state.track.shift();
+      trackLine.setLatLngs(state.track.map(q => [q.lat, q.lon]));
+    }
+  }
+  state.lastFix = { lat: c.latitude, lon: c.longitude, t: now };
+
+  if (!boatMarker) {
+    boatMarker = L.marker([c.latitude, c.longitude], { icon: boatIcon(0, false), zIndexOffset: 1000, interactive: false }).addTo(map);
+    map.setView([c.latitude, c.longitude], 14);
+    if (!state.tideStation) loadTide();
+  }
+  render();
+  maybeQueryDepth();
+  ensureChartsAround(state.pos);
+}
+
+// ---------- Depth under the boat ----------
+function requiredDepthM() {
+  const draft = Nav.depthToMetres(parseFloat($("draft").value) || 0, state.depthUnit);
+  const clr = Nav.depthToMetres(parseFloat($("clearance").value) || 0, state.depthUnit);
+  return draft + clr;
+}
+async function maybeQueryDepth(force) {
+  if (!state.pos) return;
+  const now = Date.now();
+  const moved = state.depthPos ? Nav.haversine(state.depthPos.lat, state.depthPos.lon, state.pos.lat, state.pos.lon) : Infinity;
+  if (!force && (now - state.depthQueryAt < 8000 || moved < 25)) return;
+  state.depthQueryAt = now; state.depthPos = { ...state.pos };
+  try {
+    if (!ChartStore.covers(state.pos.lat, state.pos.lon) && ChartStore.bundledCovers(state.pos.lat, state.pos.lon)) {
+      const p = { ...state.pos }; await ChartStore.ensureCoverage([p.lon, p.lat, p.lon, p.lat]); if (ChartStore.list().length) onCellsChanged();
+    }
+    state.depth = ChartStore.depthAt(state.pos.lat, state.pos.lon, { soundingRadiusM: 200 }) ||
+      await Chart.depthAt(state.pos.lat, state.pos.lon, { soundingRadiusM: 200 });
+    state.depth.error = null;
+  } catch (e) {
+    state.depth = state.depth || {}; state.depth.error = e.message;
+  }
+  renderDepth();
+}
+function renderDepth() {
+  const d = state.depth, card = $("depthcard"), u = state.depthUnit;
+  card.className = "card";
+  if (!d) { $("depth-val").textContent = "--"; $("depth-sub").textContent = state.pos ? "querying NOAA ENC..." : "waiting for position"; return; }
+  if (d.error) { $("depth-val").textContent = "?"; $("depth-sub").textContent = "chart query failed: " + d.error; return; }
+  const tideH = state.tide ? Chart.tideAt(state.tide, Date.now()) : null;
+  let charted = null, label = "";
+  if (d.land) { $("depth-val").textContent = "LAND"; $("depth-sub").textContent = "position is on charted land"; card.classList.add("shallow"); return; }
+  if (d.sounding && d.sounding.distM < 120) { charted = d.sounding.depth; label = `sounding ${Math.round(d.sounding.distM)} m away`; }
+  else if (d.band) { charted = d.band.min; label = `depth area ${Nav.fmtDepth(d.band.min, u)}\u2013${Nav.fmtDepth(d.band.max, u)} ${u}`; }
+  else if (d.dredged) { charted = d.dredged.min; label = "dredged area"; }
+  if (charted == null) { $("depth-val").textContent = "--"; $("depth-sub").textContent = "no depth data here"; return; }
+  const actual = tideH != null ? charted + tideH : charted;
+  $("depth-val").textContent = Nav.fmtDepth(actual, u);
+  $("depth-src").textContent = (tideH != null ? "(+TIDE)" : "(MLLW)") + (d.scale && String(d.scale).startsWith("local") ? " \u00B7 OFFLINE" : "");
+  const req = requiredDepthM();
+  card.classList.add(actual < req ? "shallow" : actual < req * 2 ? "caution" : "safe");
+  let sub = label;
+  if (tideH != null) sub += ` \u00B7 chart ${Nav.fmtDepth(charted, u)} + tide ${tideH >= 0 ? "+" : ""}${tideH.toFixed(1)} m`;
+  if (d.band && d.sounding && d.sounding.distM < 120) sub += ` \u00B7 area ${Nav.fmtDepth(d.band.min, u)}\u2013${Nav.fmtDepth(d.band.max, u)}`;
+  $("depth-sub").textContent = sub;
+}
+$("depthcard").onclick = () => {
+  const d = state.depth; if (!d || !state.pos) return;
+  const u = state.depthUnit;
+  const lines = [`<b>Charted depth</b>`, Nav.fmtPos(state.pos.lat, state.pos.lon)];
+  if (d.band) lines.push(`Depth area: ${Nav.fmtDepth(d.band.min, u)}\u2013${Nav.fmtDepth(d.band.max, u)} ${u}`);
+  if (d.dredged) lines.push(`Dredged to ${Nav.fmtDepth(d.dredged.min, u)} ${u}`);
+  if (d.sounding) lines.push(`Nearest sounding: ${Nav.fmtDepth(d.sounding.depth, u)} ${u} (${Math.round(d.sounding.distM)} m, surveyed ${d.sounding.date || "?"})`);
+  if (d.cell) lines.push(`ENC cell ${d.cell} (${d.scale}${String(d.scale).startsWith("local") ? ", offline" : ""})`);
+  lines.push(`<span style="font-size:11px;opacity:.7">Depths below MLLW; tide from ${state.tideStation ? state.tideStation.name : "n/a"}</span>`);
+  L.popup().setLatLng([state.pos.lat, state.pos.lon]).setContent(lines.join("<br>")).openOn(map);
+};
+
+// Tap anywhere: show charted depth at that point (and handle picking)
+map.on("click", async (e) => {
+  const { lat, lng } = e.latlng;
+  if (state.picking) { setPick(state.picking, { lat, lon: lng }); return; }
+  const popup = L.popup().setLatLng(e.latlng).setContent("Querying NOAA ENC\u2026").openOn(map);
+  try {
+    if (!ChartStore.covers(lat, lng) && ChartStore.bundledCovers(lat, lng)) { await ChartStore.ensureCoverage([lng, lat, lng, lat]); renderCellList(); }
+    const d = ChartStore.depthAt(lat, lng, { soundingRadiusM: 200 }) || await Chart.depthAt(lat, lng, { soundingRadiusM: 200 });
+    const u = state.depthUnit, tideH = state.tide ? Chart.tideAt(state.tide, Date.now()) : null;
+    let html = `<b>${d.land ? "Land" : d.band ? Nav.fmtDepth(d.band.min, u) + "\u2013" + Nav.fmtDepth(d.band.max, u) + " " + u : "no depth data"}</b><br>${Nav.fmtPos(lat, lng)}`;
+    if (d.sounding) html += `<br>Nearest sounding ${Nav.fmtDepth(d.sounding.depth, u)} ${u} (${Math.round(d.sounding.distM)} m)`;
+    if (d.dredged) html += `<br>Dredged ${Nav.fmtDepth(d.dredged.min, u)} ${u}`;
+    if (tideH != null && !d.land) html += `<br>Tide now ${tideH >= 0 ? "+" : ""}${tideH.toFixed(2)} m`;
+    if (d.cell) html += `<br><span style="font-size:11px;opacity:.7">${d.cell} ${String(d.scale).startsWith("local") ? "(offline)" : ""}</span>`;
+    if (state.pos) { const r = Nav.rhumb(state.pos.lat, state.pos.lon, lat, lng); html += `<br>${Nav.fmtNm(r.distance)} @ ${Nav.fmtBrg(r.bearing)} from boat`; }
+    html += `<div class="acts"><button class="p" data-a="to">Route here</button><button data-a="from">From here</button><button data-a="wp">+ WP</button></div>`;
+    popup.setContent(html);
+    popup.getElement().querySelectorAll("button[data-a]").forEach(b => b.onclick = () => {
+      const a = b.dataset.a;
+      if (a === "wp") { addWaypoint({ lat, lon: lng }); map.closePopup(); return; }
+      if (a === "to" && !$("from").value && state.pos) setPick("from", state.pos);
+      setPick(a, { lat, lon: lng });
+      $("sheet").classList.remove("collapsed");
+      map.closePopup();
+      if (a === "to" && $("from").value) planRoute();
+    });
+  } catch (err) { popup.setContent("Chart query failed: " + err.message); }
+});
+
+// ---------- Route planning ----------
+function setPick(which, p) {
+  $(which).value = Nav.fmtPos(p.lat, p.lon);
+  state.picking = null;
+  $("pick-from").classList.remove("armed"); $("pick-to").classList.remove("armed");
+  L.DomUtil.removeClass(map.getContainer(), "cursor-pick");
+  if (pickMarkers[which]) map.removeLayer(pickMarkers[which]);
+  pickMarkers[which] = L.circleMarker([p.lat, p.lon], { radius: 6, color: which === "from" ? "#0a7d2c" : "#dc4025", weight: 3, fillOpacity: 0.3 }).addTo(map);
+}
+for (const w of ["from", "to"]) {
+  $("pick-" + w).onclick = () => {
+    state.picking = state.picking === w ? null : w;
+    $("pick-from").classList.toggle("armed", state.picking === "from");
+    $("pick-to").classList.toggle("armed", state.picking === "to");
+    if (state.picking) { L.DomUtil.addClass(map.getContainer(), "cursor-pick"); setStatus("Tap the chart to set " + w.toUpperCase()); }
+    else L.DomUtil.removeClass(map.getContainer(), "cursor-pick");
+  };
+}
+$("from-boat").onclick = () => { if (state.pos) setPick("from", state.pos); else setStatus("No GPS fix yet", true); };
+function collapseSheet(collapsed) {
+  $("sheet").classList.toggle("collapsed", collapsed);
+  $("sheet-chev").innerHTML = collapsed ? "&#9650;" : "&#9660;";
+  setTimeout(() => map.invalidateSize(), 50);
+}
+$("sheet-head").onclick = () => collapseSheet(!$("sheet").classList.contains("collapsed"));
+
+// Preset destination chips
+(function buildMarks() {
+  const box = $("marks");
+  for (const k of Object.keys(MARKS)) {
+    const b = document.createElement("button"); b.className = "mark"; b.textContent = MARKS[k].name;
+    b.title = "Set as destination (long-press: origin)";
+    let timer = null;
+    b.onpointerdown = () => { timer = setTimeout(() => { timer = null; setPick("from", MARKS[k]); }, 550); };
+    b.onpointerup = () => { if (timer) { clearTimeout(timer); timer = null; setPick("to", MARKS[k]); if (!$("from").value && state.pos) setPick("from", state.pos); } };
+    b.onpointerleave = () => { if (timer) { clearTimeout(timer); timer = null; } };
+    box.appendChild(b);
+  }
+})();
+
+function setStatus(msg, isErr) { const s = $("status"); s.textContent = msg || ""; s.className = isErr ? "err" : ""; }
+function readEndpoints() {
+  const a = Nav.parseLatLon($("from").value), b = Nav.parseLatLon($("to").value);
+  if (!a) { setStatus("Enter or pick a FROM position", true); return null; }
+  if (!b) { setStatus("Enter or pick a TO position", true); return null; }
+  return { a, b };
+}
+
+async function planRoute() {
+  const ep = readEndpoints(); if (!ep) return;
+  const { a, b } = ep;
+  const req = requiredDepthM();
+  const bbox = Router.routingBbox(a, b, 0.3, 2500);
+  $("btn-route").disabled = true;
+  try {
+    let routingData, source;
+    if (ChartStore.catalogCovering(bbox).length) {
+      setStatus("Loading bundled charts\u2026");
+      const got = await ChartStore.ensureCoverage(bbox, (name, i, total) => setStatus(`Loading bundled chart ${name} (${i}/${total})\u2026`));
+      if (got.length) { renderCellList(); if (state.chartLayer === "local") renderVectorChart(); }
+    }
+    const local = ChartStore.data();
+    if (local && ChartStore.covers(a.lat, a.lon) && ChartStore.covers(b.lat, b.lon)) {
+      // Both ends are on loaded cells: route offline, clipping the search box to what we have.
+      const lb = local.bbox;
+      const clipped = [Math.max(bbox[0], lb[0]), Math.max(bbox[1], lb[1]), Math.min(bbox[2], lb[2]), Math.min(bbox[3], lb[3])];
+      routingData = Object.assign({}, local, { bbox: clipped }); source = "offline cells" + (ChartStore.coversBbox(bbox) ? "" : " (search area clipped to loaded charts)");
+    } else {
+      const cacheOk = state.routingData && bboxContains(state.routingData.bbox, bbox);
+      if (!cacheOk) {
+        setStatus("Downloading NOAA ENC depth areas\u2026");
+        state.routingData = await Chart.fetchRoutingData(bbox, (stage, n) => setStatus(`Downloading ENC: ${stage} ${n}\u2026`));
+      }
+      routingData = state.routingData; source = "NOAA ENC Direct";
+    }
+    setStatus("Routing\u2026");
+    await new Promise(r => setTimeout(r, 10));
+    const margin = parseFloat($("margin").value) || 0;
+    const res = Router.route(routingData, a, b, { requiredDepth: req, marginM: margin, comfortM: Math.max(margin * 3, 250), cellM: 40, maxCells: 1.2e6 });
+    if (res.error) { setStatus(res.error, true); return; }
+    setRoute(res.waypoints.map((w, i) => ({ ...w, name: i === 0 ? "Start" : i === res.waypoints.length - 1 ? "Dest" : "WP" + i })), "auto");
+    const s = res.stats;
+    let msg = `${res.waypoints.length - 1} legs, ${Nav.fmtNm(Nav.routeLength(res.waypoints))}. Min charted depth ${Nav.fmtDepth(s.minChartedDepth, state.depthUnit)} ${state.depthUnit} (need ${Nav.fmtDepth(req, state.depthUnit)}). ${s.ms} ms, ${source}.`;
+    if (s.endMovedM > 50) msg += ` Destination moved ${Math.round(s.endMovedM)} m to reach navigable water.`;
+    if (s.startMovedM > 50) msg += ` Start moved ${Math.round(s.startMovedM)} m.`;
+    setStatus(msg);
+    drawGridDebug(res);
+    collapseSheet(true);
+    map.fitBounds(routeLine.getBounds().pad(0.15));
+  } catch (e) {
+    setStatus("Routing failed: " + e.message, true);
+  } finally { $("btn-route").disabled = false; }
+}
+function bboxContains(outer, inner) { return outer[0] <= inner[0] && outer[1] <= inner[1] && outer[2] >= inner[2] && outer[3] >= inner[3]; }
+$("btn-route").onclick = planRoute;
+$("btn-direct").onclick = () => {
+  const ep = readEndpoints(); if (!ep) return;
+  setRoute([{ ...ep.a, name: "Start" }, { ...ep.b, name: "Dest" }], "direct");
+  setStatus("Direct rhumb line, not checked against the chart.");
+  collapseSheet(true);
+  map.fitBounds(routeLine.getBounds().pad(0.15));
+};
+
+let showGrid = false;
+function drawGridDebug(res) {
+  gridLayer.clearLayers();
+  if (!showGrid || !res) return;
+  const g = res.grid, m = res.mask, step = Math.max(1, Math.round(g.cols / 220));
+  for (let y = 0; y < g.rows; y += step) for (let x = 0; x < g.cols; x += step) {
+    const i = y * g.cols + x;
+    if (m.ok[i]) continue;
+    const c = Router.cellCenter(g, x, y), half = g.dLat * step / 2, halfL = g.dLon * step / 2;
+    L.rectangle([[c.lat - half, c.lon - halfL], [c.lat + half, c.lon + halfL]], { stroke: false, fillColor: "#f15469", fillOpacity: 0.25, interactive: false }).addTo(gridLayer);
+  }
+  gridLayer.addTo(map);
+}
+
+function setRoute(waypoints, source) {
+  state.route = waypoints.length >= 2 ? { waypoints, source } : null;
+  state.activeIdx = null; state.legStart = null;
+  store.set("route", state.route);
+  renderRoute();
+}
+function addWaypoint(p) {
+  const wps = state.route ? state.route.waypoints.slice() : [];
+  wps.push({ ...p, name: "WP" + (wps.length + 1) });
+  if (wps.length === 1) { setStatus("Add another point to make a route"); state.route = { waypoints: wps, source: "manual" }; store.set("route", state.route); renderRoute(); return; }
+  setRoute(wps, "manual");
+}
+function renderRoute() {
+  wpLayer.clearLayers();
+  const r = state.route;
+  if (!r) { routeLine.setLatLngs([]); legLine.setLatLngs([]); $("legs").innerHTML = ""; $("sheet-sum").textContent = "Tap to plan a route between two points";
+    for (const id of ["btn-activate", "btn-reverse", "btn-gpx"]) $(id).disabled = true; return; }
+  routeLine.setLatLngs(r.waypoints.map(w => [w.lat, w.lon]));
+  routeLine.setStyle({ color: state.night ? "#fb7185" : "#dc4025" });
+  r.waypoints.forEach((w, i) => {
+    const active = i === state.activeIdx;
+    const mk = L.marker([w.lat, w.lon], { icon: L.divIcon({ className: "wpicon" + (active ? " active" : ""), iconSize: active ? [18, 18] : [14, 14] }), draggable: true });
+    mk.bindTooltip(w.name, { permanent: true, direction: "right", className: "wplabel", offset: [8, 0] });
+    mk.on("dragend", () => { const ll = mk.getLatLng(); w.lat = ll.lat; w.lon = ll.lng; r.source = "manual"; store.set("route", r); renderRoute(); });
+    mk.on("click", () => {
+      const html = `<b>${w.name}</b><br>${Nav.fmtPos(w.lat, w.lon)}<div class="acts"><button class="p" data-a="go">GO TO</button><button data-a="del">DELETE</button></div>`;
+      const pp = L.popup().setLatLng([w.lat, w.lon]).setContent(html).openOn(map);
+      pp.getElement().querySelectorAll("button").forEach(b => b.onclick = () => {
+        if (b.dataset.a === "go") activate(i);
+        else { r.waypoints.splice(i, 1); if (r.waypoints.length < 2) setRoute([], null); else setRoute(r.waypoints, "manual"); }
+        map.closePopup();
+      });
+    });
+    wpLayer.addLayer(mk);
+  });
+  for (const id of ["btn-activate", "btn-reverse", "btn-gpx"]) $(id).disabled = false;
+  $("btn-activate").textContent = state.activeIdx == null ? "ACTIVATE" : "DEACTIVATE";
+  renderLegs();
+}
+function renderLegs() {
+  const r = state.route; if (!r) return;
+  const legs = Nav.routeLegs(r.waypoints);
+  const spd = (parseFloat($("speed").value) || 5) / Nav.MS_TO_KN;
+  const total = legs.length ? legs[legs.length - 1].cumulative : 0;
+  $("sheet-sum").textContent = `${legs.length} legs \u00B7 ${Nav.fmtNm(total)} \u00B7 ${Nav.fmtDuration(total / spd)} @ ${$("speed").value} kn`;
+  let html = `<tr><th>#</th><th>TO</th><th>BRG</th><th>DIST</th><th>CUM</th><th>ETE</th></tr>`;
+  legs.forEach((l, i) => {
+    html += `<tr class="${i + 1 === state.activeIdx ? "active" : ""}" data-i="${i + 1}"><td>${i + 1}</td><td>${l.to.name || ""}</td><td>${Nav.fmtBrg(l.bearing)}</td><td>${Nav.fmtNm(l.distance)}</td><td>${Nav.fmtNm(l.cumulative)}</td><td>${Nav.fmtDuration(l.cumulative / spd)}</td></tr>`;
+  });
+  $("legs").innerHTML = html;
+  $("legs").querySelectorAll("tr[data-i]").forEach(tr => tr.onclick = () => { const i = +tr.dataset.i; map.panTo([r.waypoints[i].lat, r.waypoints[i].lon]); });
+}
+$("speed").oninput = renderLegs;
+["draft", "clearance"].forEach(id => $(id).onchange = () => { renderDepth(); if (encLayer) encLayer.redraw(); if (state.chartLayer === "local") renderVectorChart(); });
+
+$("btn-reverse").onclick = () => { if (!state.route) return; setRoute(state.route.waypoints.slice().reverse(), state.route.source); };
+$("btn-clear").onclick = () => {
+  setRoute([], null); $("from").value = ""; $("to").value = ""; setStatus("");
+  for (const k of ["from", "to"]) if (pickMarkers[k]) { map.removeLayer(pickMarkers[k]); pickMarkers[k] = null; }
+  gridLayer.clearLayers();
+};
+$("btn-gpx").onclick = () => {
+  const r = state.route; if (!r) return;
+  const esc = s => String(s).replace(/[<>&'"]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", "'": "&apos;", '"': "&quot;" }[c]));
+  const out = ['<?xml version="1.0" encoding="UTF-8"?>', '<gpx version="1.1" creator="SailNav" xmlns="http://www.topografix.com/GPX/1/1">', "  <rte><name>SailNav route</name>"];
+  for (const w of r.waypoints) out.push(`    <rtept lat="${w.lat}" lon="${w.lon}"><name>${esc(w.name || "WP")}</name></rtept>`);
+  out.push("  </rte>", "</gpx>");
+  const blob = new Blob([out.join("\n")], { type: "application/gpx+xml" });
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "sailnav-route.gpx"; document.body.appendChild(a); a.click(); a.remove();
+};
+
+// ---------- Active navigation (OpenCPN Routeman semantics) ----------
+function activate(idx) {
+  const r = state.route; if (!r) return;
+  if (idx == null) {
+    // pick the best first waypoint: closest by dist/cos(brg-cog), like FindBestActivatePoint
+    idx = 1;
+    if (state.pos) {
+      let best = Infinity;
+      r.waypoints.forEach((w, i) => {
+        if (i === 0) return;
+        const rb = Nav.rhumb(state.pos.lat, state.pos.lon, w.lat, w.lon);
+        const cosv = state.cog == null ? 1 : Math.max(0.2, Math.cos((rb.bearing - state.cog) * Math.PI / 180));
+        const score = rb.distance / cosv;
+        if (score < best) { best = score; idx = i; }
+      });
+    }
+  }
+  state.activeIdx = idx;
+  // OpenCPN's virtual "Begin" point: the leg starts at the boat's position when activated
+  state.legStart = state.pos ? { ...state.pos } : { ...r.waypoints[idx - 1] };
+  renderRoute();
+  if (navigator.vibrate) navigator.vibrate(40);
+}
+function deactivate() { state.activeIdx = null; state.legStart = null; legLine.setLatLngs([]); $("navpill").classList.remove("show"); renderRoute(); }
+$("btn-activate").onclick = () => state.activeIdx == null ? activate(null) : deactivate();
+
+function updateActiveLeg() {
+  const r = state.route;
+  if (!r || state.activeIdx == null || !state.pos) { $("navpill").classList.remove("show"); return; }
+  const wp = r.waypoints[state.activeIdx];
+  const from = state.legStart || r.waypoints[state.activeIdx - 1];
+  const arrivalRadius = Math.max(50, Math.min(0.1 * Nav.NM, 0.05 * Nav.NM + state.sog * 20));
+  const p = Nav.legProgress(from, wp, { ...state.pos, sog: state.sog, cog: state.cog }, arrivalRadius);
+  legLine.setLatLngs([[state.pos.lat, state.pos.lon], [wp.lat, wp.lon]]);
+  $("np-name").textContent = wp.name || ("WP" + state.activeIdx);
+  $("np-dtg").textContent = Nav.fmtNm(p.dtg);
+  $("np-brg").textContent = Nav.fmtBrg(p.brg);
+  $("np-ttg").textContent = Nav.fmtDuration(p.ttgSec);
+  $("np-xte").textContent = "XTE " + (Math.abs(p.xte) < 5 ? "0" : (p.xte > 0 ? "\u25C0 " : "") + Nav.fmtNm(Math.abs(p.xte)) + (p.xte < 0 ? " \u25B6" : ""));
+  const rel = state.cog == null ? p.brg : Nav.wrap360(p.brg - state.cog);
+  $("np-arrow").style.transform = `rotate(${rel}deg)`;
+  $("navpill").classList.add("show");
+  if (p.arrived) {
+    if (navigator.vibrate) navigator.vibrate([120, 60, 120]);
+    if (state.activeIdx < r.waypoints.length - 1) {
+      state.legStart = { ...wp };
+      state.activeIdx++;
+      renderRoute();
+    } else { setStatus("Arrived at " + (wp.name || "destination")); deactivate(); }
+  }
+}
+
+// ---------- MOB ----------
+function dropMob() {
+  if (!state.pos) return;
+  state.mob = { lat: state.pos.lat, lon: state.pos.lon, t: Date.now() };
+  store.set("mob", state.mob);
+  if (navigator.vibrate) navigator.vibrate([200, 80, 200]);
+  renderMob();
+}
+function renderMob() {
+  const b = $("mob-banner");
+  if (!state.mob) { b.classList.remove("active"); if (mobMarker) { map.removeLayer(mobMarker); mobMarker = null; } return; }
+  b.classList.add("active");
+  if (!mobMarker) mobMarker = L.marker([state.mob.lat, state.mob.lon], { icon: L.divIcon({ className: "mobicon", iconSize: [22, 22] }), zIndexOffset: 2000 }).addTo(map);
+  if (state.pos) {
+    const r = Nav.rhumb(state.pos.lat, state.pos.lon, state.mob.lat, state.mob.lon);
+    $("mob-brg").textContent = Math.round(r.bearing);
+    $("mob-dist").textContent = r.distance < 1000 ? Math.round(r.distance) + " m" : Nav.fmtNm(r.distance);
+    $("mob-arrow").style.transform = `rotate(${state.cog == null ? r.bearing : Nav.wrap360(r.bearing - state.cog)}deg)`;
+  }
+  $("mob-time").textContent = Nav.fmtDuration((Date.now() - state.mob.t) / 1000);
+}
+$("btn-mob").onclick = dropMob;
+$("mob-clear").onclick = () => { if (confirm("Clear MOB marker?")) { state.mob = null; store.set("mob", null); renderMob(); } };
+
+// ---------- Tides ----------
+async function loadTide() {
+  if (!state.pos) return;
+  state.tideStation = Chart.nearestTideStation(state.pos.lat, state.pos.lon);
+  $("tide-station").textContent = "TIDE \u00B7 " + state.tideStation.name.toUpperCase();
+  try { state.tide = await Chart.fetchTide(state.tideStation.id); } catch (e) { $("tide-next").textContent = "unavailable"; return; }
+  renderTide(); renderDepth();
+}
+function renderTide() {
+  const t = state.tide; if (!t || !t.series.length) return;
+  const now = Date.now(), h = Chart.tideAt(t, now), h1 = Chart.tideAt(t, now + 30 * 60000);
+  $("tide-h").textContent = h.toFixed(2);
+  $("tide-trend").textContent = h1 > h + 0.02 ? "\u25B2 rising" : h1 < h - 0.02 ? "\u25BC falling" : "\u25CF slack";
+  const next = t.extremes.find(e => e.t > now);
+  if (next) { const d = new Date(next.t); $("tide-next").textContent = `${next.type === "H" ? "HIGH" : "LOW"} ${next.h.toFixed(1)} m @ ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; }
+  // sparkline: -6h .. +18h
+  const cv = $("tide-canvas"), ctx = cv.getContext("2d"), W = cv.width, H = cv.height;
+  ctx.clearRect(0, 0, W, H);
+  const t0 = now - 6 * 3600e3, t1 = now + 18 * 3600e3;
+  const pts = t.series.filter(p => p.t >= t0 && p.t <= t1);
+  if (pts.length < 2) return;
+  const min = Math.min(...pts.map(p => p.h)), max = Math.max(...pts.map(p => p.h));
+  const X = tt => (tt - t0) / (t1 - t0) * W, Y = hh => H - 6 - (hh - min) / (max - min || 1) * (H - 12);
+  ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(X(p.t), Y(p.h)) : ctx.moveTo(X(p.t), Y(p.h)));
+  ctx.lineTo(X(pts[pts.length - 1].t), H); ctx.lineTo(X(pts[0].t), H); ctx.closePath();
+  ctx.fillStyle = state.night ? "rgba(56,189,248,0.25)" : "rgba(10,88,202,0.18)"; ctx.fill();
+  ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(X(p.t), Y(p.h)) : ctx.moveTo(X(p.t), Y(p.h)));
+  ctx.strokeStyle = state.night ? "#38bdf8" : "#0a58ca"; ctx.lineWidth = 2.5; ctx.stroke();
+  ctx.strokeStyle = state.night ? "#fb7185" : "#dc4025"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(X(now), 0); ctx.lineTo(X(now), H); ctx.stroke();
+  ctx.fillStyle = state.night ? "#d9e2ec" : "#0b1220"; ctx.font = "bold 11px sans-serif";
+  ctx.fillText(max.toFixed(1), 3, 12); ctx.fillText(min.toFixed(1), 3, H - 2);
+}
+
+// ---------- Render loop ----------
+function render() {
+  if (state.pos) {
+    $("sog").textContent = Nav.fmtKn(state.sog);
+    $("cog").textContent = state.cog == null ? "--" : String(Math.round(state.cog)).padStart(3, "0");
+    $("pos").textContent = Nav.fmtPos(state.pos.lat, state.pos.lon);
+    if (boatMarker) {
+      boatMarker.setLatLng([state.pos.lat, state.pos.lon]);
+      boatMarker.setIcon(boatIcon(state.cog || 0, state.acc > 30));
+      if (state.cog != null && state.sog > 0.3) {
+        // COG predictor: 10 minutes ahead (OpenCPN default style)
+        const ahead = Nav.destination(state.pos.lat, state.pos.lon, state.cog, state.sog * 600);
+        cogLine.setLatLngs([[state.pos.lat, state.pos.lon], [ahead.lat, ahead.lon]]);
+      } else cogLine.setLatLngs([]);
+      if (state.follow) {
+        // look-ahead: offset the view a quarter screen along COG when moving (OpenCPN DoCanvasUpdate)
+        let center = state.pos;
+        if (state.cog != null && state.sog > 1) {
+          const y = map.getSize().y;
+          const mPerPx = map.distance(map.containerPointToLatLng([0, y / 2]), map.containerPointToLatLng([1, y / 2]));
+          center = Nav.destination(state.pos.lat, state.pos.lon, state.cog, mPerPx * y * 0.2);
+        }
+        map.panTo([center.lat, center.lon], { animate: true, duration: 0.5 });
+      }
+    }
+  }
+  updateActiveLeg();
+  renderMob();
+}
+setInterval(() => { render(); if (state.tide) renderTide(); }, 1000);
+setInterval(() => { if (state.tide) renderDepth(); }, 60000);
+
+$("btn-center").onclick = () => { state.follow = true; $("btn-follow").classList.add("active"); if (state.pos) map.setView([state.pos.lat, state.pos.lon], Math.max(map.getZoom(), 14)); };
+$("btn-follow").onclick = () => { state.follow = !state.follow; $("btn-follow").classList.toggle("active", state.follow); };
+map.on("dragstart", () => { state.follow = false; $("btn-follow").classList.remove("active"); });
+$("btn-grid").onclick = () => { showGrid = !showGrid; $("btn-grid").classList.toggle("active", showGrid); if (showGrid && state.route) planRoute(); else gridLayer.clearLayers(); };
+
+// Keyboard: Ctrl-N next waypoint (OpenCPN), M = MOB
+window.addEventListener("keydown", (e) => {
+  if (e.key === "n" && e.ctrlKey && state.activeIdx != null && state.route) { e.preventDefault(); if (state.activeIdx < state.route.waypoints.length - 1) { state.legStart = { ...state.route.waypoints[state.activeIdx] }; state.activeIdx++; renderRoute(); } }
+});
+
+// ---------- Offline charts drawer ----------
+$("btn-charts").onclick = () => { $("charts").classList.toggle("show"); renderCellList(); };
+$("charts-close").onclick = () => $("charts").classList.remove("show");
+const dz = $("dropzone"), cellFile = $("cell-file");
+dz.onclick = () => cellFile.click();
+cellFile.onchange = () => importCells([...cellFile.files]);
+dz.ondragover = e => { e.preventDefault(); dz.classList.add("over"); };
+dz.ondragleave = () => dz.classList.remove("over");
+dz.ondrop = e => { e.preventDefault(); dz.classList.remove("over"); importCells([...e.dataTransfer.files]); };
+document.body.addEventListener("dragover", e => { e.preventDefault(); $("charts").classList.add("show"); });
+document.body.addEventListener("drop", e => { if (e.target !== dz && !dz.contains(e.target)) { e.preventDefault(); importCells([...e.dataTransfer.files]); } });
+async function importCells(files) {
+  const st = $("charts-status");
+  for (const f of files) {
+    try {
+      st.textContent = "Parsing " + f.name + "\u2026";
+      const t = Date.now();
+      const cells = await ChartStore.importFile(f);
+      st.textContent = `${cells.map(c => c.dsnm).join(", ")}: ${cells.reduce((n, c) => n + c.features.length, 0)} features in ${Date.now() - t} ms`;
+    } catch (e) { st.textContent = f.name + ": " + e.message; }
+  }
+  onCellsChanged();
+}
+function onCellsChanged() {
+  renderCellList();
+  state.depthPos = null; maybeQueryDepth(true);
+  if (ChartStore.list().length && state.chartLayer !== "local") { state.chartLayer = "local"; store.set("chartLayer", "local"); }
+  rebuildChartLayer();
+  const cells = ChartStore.list();
+  if (cells.length && !state.pos) map.fitBounds([[cells[0].bounds[1], cells[0].bounds[0]], [cells[0].bounds[3], cells[0].bounds[2]]]);
+}
+$("btn-load-bundled").onclick = async () => {
+  const cat = ChartStore.catalogCells(); if (!cat.length) { $("charts-status").textContent = "No bundled catalog found"; return; }
+  const box = cat.reduce((b, c) => [Math.min(b[0], c.bbox[0]), Math.min(b[1], c.bbox[1]), Math.max(b[2], c.bbox[2]), Math.max(b[3], c.bbox[3])], [180, 90, -180, -90]);
+  const got = await ChartStore.ensureCoverage(box, (name, i, total) => { $("charts-status").textContent = `Loading ${name} (${i}/${total})`; renderCellList(); });
+  $("charts-status").textContent = got.length ? `Loaded ${got.length} cells` : "All bundled cells already loaded";
+  onCellsChanged();
+};
+$("btn-clear-cells").onclick = async () => { if (confirm("Remove all offline cells from this device?")) { await ChartStore.clear(); onCellsChanged(); } };
+function renderCellList() {
+  const list = ChartStore.list();
+  const cat = ChartStore.catalogCells();
+  $("bundled-info").textContent = cat.length ? `${cat.length} cells bundled with the app (${(cat.reduce((s, c) => s + c.bytes, 0) / 1048576).toFixed(1)} MB, NOAA ${ChartStore.catalogCells().length && cat[0].fetched}). Cells near the boat or a route load automatically and stay cached.` : "";
+  $("charts-count").textContent = list.length ? list.length + " cell" + (list.length > 1 ? "s" : "") : "none";
+  $("charts-count").className = "chip" + (list.length ? " local" : "");
+  $("cell-list").innerHTML = list.length ? "" : '<div class="cell-row"><span class="d">No offline cells loaded. Online NOAA services are used.</span></div>';
+  for (const c of list) {
+    const row = document.createElement("div"); row.className = "cell-row";
+    row.innerHTML = `<span class="n">${c.dsnm.replace(/\.000$/, "")}</span><span class="d">1:${c.scale} \u00B7 ed ${c.edition}.${c.update} \u00B7 ${c.features} feat \u00B7 ${(c.bytes / 1024).toFixed(0)} KB</span>`;
+    const zoom = document.createElement("button"); zoom.textContent = "VIEW"; zoom.style.color = "var(--accent)";
+    zoom.onclick = () => { state.follow = false; $("btn-follow").classList.remove("active"); map.fitBounds([[c.bounds[1], c.bounds[0]], [c.bounds[3], c.bounds[2]]]); };
+    const del = document.createElement("button"); del.textContent = "DEL";
+    del.onclick = async () => { await ChartStore.remove(c.dsnm); onCellsChanged(); };
+    row.appendChild(zoom); row.appendChild(del);
+    $("cell-list").appendChild(row);
+  }
+}
+
+// ---------- Init ----------
+$("start-gps").onclick = startGps;
+$("start-demo").onclick = startDemo;
+applyTheme(); applyUnits(); renderRoute(); renderMob();
+
+// ---------- Offline app shell ----------
+// sw.js caches the shell (html, js, css, Leaflet) on install and the bundled chart zips as they are
+// fetched, so the whole app works with no signal once it has been opened once online.
+if ("serviceWorker" in navigator && location.protocol !== "file:") {
+  navigator.serviceWorker.register("sw.js").catch(e => console.warn("service worker failed", e));
+}
+function updateNetChip() {
+  $("chip-net").classList.toggle("hidden", navigator.onLine);
+  if (!navigator.onLine && state.chartLayer === "enc" && ChartStore.list().length) { state.chartLayer = "local"; rebuildChartLayer(); }
+}
+window.addEventListener("online", updateNetChip); window.addEventListener("offline", updateNetChip); updateNetChip();
+ChartStore.open().then(async cells => {
+  await ChartStore.loadCatalog("charts/catalog.json");
+  renderCellList();
+  if (cells.length) rebuildChartLayer();
+  if (state.pos) ensureChartsAround(state.pos);
+}).catch(() => {});
+
+// Pull bundled cells for ~6 NM around a position (first fix, and as the boat moves into new cells).
+let lastEnsure = null;
+async function ensureChartsAround(pos) {
+  if (!ChartStore.catalogCells().length) return;
+  if (lastEnsure && Nav.haversine(lastEnsure.lat, lastEnsure.lon, pos.lat, pos.lon) < 2000) return;
+  lastEnsure = { ...pos };
+  const pad = 6 * Nav.NM;
+  const n = Nav.destination(pos.lat, pos.lon, 0, pad), s = Nav.destination(pos.lat, pos.lon, 180, pad);
+  const e = Nav.destination(pos.lat, pos.lon, 90, pad), w = Nav.destination(pos.lat, pos.lon, 270, pad);
+  const got = await ChartStore.ensureCoverage([w.lon, s.lat, e.lon, n.lat], (name, i, total) => { $("charts-status").textContent = `Loading bundled chart ${name} (${i}/${total})`; });
+  if (got.length) { $("charts-status").textContent = `Loaded ${got.length} bundled cell${got.length > 1 ? "s" : ""}`; onCellsChanged(); }
+}
+window.addEventListener("resize", () => map.invalidateSize());
+</script>
+</body>
+</html>

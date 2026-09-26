@@ -1,0 +1,3 @@
+{ "name": "SailNav", "short_name": "SailNav", "start_url": "./", "display": "standalone", "orientation": "any",
+  "background_color": "#ffffff", "theme_color": "#0b1220", "description": "Puget Sound chart plotter: NOAA ENC charts, depth, tides, routing. Offline capable.",
+  "icons": [{ "src": "vendor/icon.svg", "sizes": "any", "type": "image/svg+xml" }] }
