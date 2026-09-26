@@ -376,6 +376,52 @@ describe("ParcelStore: coverage", () => {
   });
 });
 
+describe("ParcelStore: planPrecache", () => {
+  const mpd = Geo.metresPerDegree(ME.lat);
+  const inside = (plan, la, lo) => plan.circles.some((c) => Geo.haversine(la, lo, c.lat, c.lon) <= c.radius);
+  test("hex tiling covers the whole area for several sizes", () => {
+    for (const [A, F] of [[300, 260], [600, 260], [1000, 220], [2000, 300]]) {
+      const plan = PS.planPrecache(ME.lat, ME.lon, A, F, null, "kingcounty");
+      let miss = 0;
+      for (let k = 0; k < 2000; k++) { const a = k * 2.399963, r = A * Math.sqrt((k + 0.5) / 2000); if (!inside(plan, ME.lat + r * Math.sin(a) / mpd.lat, ME.lon + r * Math.cos(a) / mpd.lon)) miss++; }
+      expect(miss).toBe(0);
+      expect(plan.circles.length).toBeLessThan(2.2 * (A / F + 1) ** 2 + 4);   // not absurdly many
+      expect(plan.circles[0].dist).toBe(0);                                    // nearest first
+      for (let i = 1; i < plan.circles.length; i++) expect(plan.circles[i].dist).toBeGreaterThanOrEqual(plan.circles[i - 1].dist);
+    }
+  });
+  test("skips circles already inside fresh coverage of the same provider", () => {
+    const cov = new PS.Coverage([], 1e9).add(ME.lat, ME.lon, 400, "kingcounty");
+    const plan = PS.planPrecache(ME.lat, ME.lon, 600, 260, cov, "kingcounty");
+    expect(plan.skipped).toBeGreaterThan(0); expect(plan.todo.length + plan.skipped).toBe(plan.circles.length);
+    expect(plan.todo.every((c) => !c.covered)).toBe(true);
+    expect(PS.planPrecache(ME.lat, ME.lon, 600, 260, cov, "snohomish").skipped).toBe(0);
+    const full = new PS.Coverage([], 1e9).add(ME.lat, ME.lon, 2000, "kingcounty");
+    expect(PS.planPrecache(ME.lat, ME.lon, 600, 260, full, "kingcounty").todo.length).toBe(0);
+  });
+});
+
+describe("ParcelStore: unionArcs", () => {
+  const deg = (arcs) => arcs.reduce((t, a) => t + a.a1 - a.a0, 0) * 180 / Math.PI;
+  test("two unit circles at distance 1 leave 240° each", () => {
+    const arcs = PS.unionArcs([{ x: 0, y: 0, r: 1 }, { x: 1, y: 0, r: 1 }]);
+    expect(deg(arcs)).toBeCloseTo(480, 6);
+    expect(deg(arcs.filter((a) => a.x === 0))).toBeCloseTo(240, 6);
+    for (const a of arcs) { const mid = (a.a0 + a.a1) / 2, px = a.x + Math.cos(mid), py = a.y + Math.sin(mid); const other = a.x === 0 ? { x: 1, y: 0 } : { x: 0, y: 0 }; expect(Math.hypot(px - other.x, py - other.y)).toBeGreaterThan(1); }
+  });
+  test("disjoint, contained, identical", () => {
+    expect(deg(PS.unionArcs([{ x: 0, y: 0, r: 1 }, { x: 5, y: 0, r: 1 }]))).toBeCloseTo(720, 6);
+    expect(PS.unionArcs([{ x: 0, y: 0, r: 1 }, { x: 0, y: 0, r: 3 }])).toEqual([{ x: 0, y: 0, r: 3, a0: 0, a1: Math.PI * 2 }]);
+    expect(deg(PS.unionArcs([{ x: 0, y: 0, r: 1 }, { x: 0, y: 0, r: 1 }]))).toBeCloseTo(360, 6);   // one of the two survives
+  });
+  test("hex ring swallows the centre; every remaining arc midpoint is outside all other circles", () => {
+    const cs = [{ x: 0, y: 0, r: 1 }]; for (let k = 0; k < 6; k++) cs.push({ x: 1.6 * Math.cos(k * Math.PI / 3), y: 1.6 * Math.sin(k * Math.PI / 3), r: 1 });
+    const arcs = PS.unionArcs(cs);
+    expect(arcs.some((a) => a.x === 0 && a.y === 0)).toBe(false);
+    for (const a of arcs) { const mid = (a.a0 + a.a1) / 2, px = a.x + a.r * Math.cos(mid), py = a.y + a.r * Math.sin(mid); for (const c of cs) if (c !== cs.find((q) => q.x === a.x && q.y === a.y)) expect(Math.hypot(px - c.x, py - c.y)).toBeGreaterThan(c.r - 1e-9); }
+  });
+});
+
 describe("ParcelStore: Store with MemoryDB", () => {
   test("put / near / needsFetch / thawed dates / clear", async () => {
     const store = new PS.Store(new PS.MemoryDB(), { ttlMs: 1e9 });

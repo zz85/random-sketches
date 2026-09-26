@@ -146,8 +146,13 @@
   <div class="row"><label>Label the parcel you stand on</label><input type="checkbox" class="sw" id="s-inside"></div>
   <div class="row"><label>Only parcels with a price</label><input type="checkbox" class="sw" id="s-priced"></div>
   <div class="row"><label>Radar heading-up</label><input type="checkbox" class="sw" id="s-radarup"></div>
+  <div class="row"><label>Radar shows offline coverage<small>Green = areas already cached; amber dots = being downloaded</small></label><input type="checkbox" class="sw" id="s-radarcov"></div>
   <div class="row"><label>Simulate location<small>Desktop testing: fixed position in the U-District, drag to look around, wheel to tilt</small></label><input type="checkbox" class="sw" id="s-sim"></div>
   <div class="row"><label>Offline cache<small id="cacheinfo">—</small></label></div>
+  <div class="row"><label>Precache around me<small id="pre-est">Downloads every parcel within this distance so the whole neighbourhood works with no signal</small></label><input type="range" id="s-prearea" min="300" max="3000" step="100"><output id="o-prearea"></output></div>
+  <canvas id="covmap" width="660" height="360" style="width:100%;height:180px;border-radius:12px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);margin-top:6px" aria-label="Offline coverage map"></canvas>
+  <button class="primary" id="precache" style="margin-top:10px">Download neighbourhood</button>
+  <div class="sub" id="pre-status" style="margin-top:8px"></div>
   <button class="ghost" id="clearcache">Clear cached parcels</button>
   <p class="sub" style="margin-top:14px" id="about"></p>
 </div>
@@ -176,7 +181,7 @@
   const D2R = Math.PI / 180;
 
   // ---- settings ----------------------------------------------------------
-  const DEFAULTS = { priceMode: "total", units: "imperial", radius: 220, maxdist: 200, maxlabels: 12, fov: 58, hoff: 0, decl: 15.3, ground: true, rooftop: true, osm: true, inside: false, priced: true, radarup: true, sim: false };
+  const DEFAULTS = { priceMode: "total", units: "imperial", radius: 220, maxdist: 200, maxlabels: 12, fov: 58, hoff: 0, decl: 15.3, ground: true, rooftop: true, osm: true, inside: false, priced: true, radarup: true, radarcov: true, prearea: 1000, sim: false };
   const S = Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem("estate-ar:settings") || "{}"));
   const saveS = () => localStorage.setItem("estate-ar:settings", JSON.stringify(S));
 
@@ -185,7 +190,7 @@
     lat: null, lon: null, acc: null, fixAt: 0,
     headingRaw: null, heading: null, pitch: 0, hasCompass: false, hasOrient: false, iOSCompass: false,
     provider: null, parcels: [], views: new Map(), fetching: false, lastFetchAt: 0, lastGeocodeAt: null, place: "",
-    selected: null, insideId: null, osmCount: 0, source: null, offlineGap: false, camOK: false, w: innerWidth, h: innerHeight,
+    selected: null, insideId: null, osmCount: 0, source: null, offlineGap: false, precache: null, camOK: false, w: innerWidth, h: innerHeight,
     sim: { heading: 20, pitch: 0 },
   };
   const store = ParcelStore.open();
@@ -479,8 +484,11 @@
     gctx.globalAlpha = 1;
   }
 
+  let radarZoom = 1;   // >1 = zoomed out; eases toward target
   function drawRadar(hdg, vis) {
-    const W = radar.width, c = W / 2, R = c - 6, scale = R / S.radius;
+    const zoomTarget = st.precache && st.precache.running ? Math.max(1, (S.prearea + 260) / S.radius) : 1;
+    radarZoom += (zoomTarget - radarZoom) * 0.12;
+    const W = radar.width, c = W / 2, R = c - 6, scale = R / (S.radius * radarZoom);
     rctx.clearRect(0, 0, W, W);
     const rot = S.radarup && hdg != null ? -hdg * D2R : 0;
     const mpd = Geo.metresPerDegree(st.lat || 47.6);
@@ -490,6 +498,24 @@
     rctx.strokeStyle = "rgba(255,255,255,.08)"; rctx.lineWidth = 1;
     for (const f of [1 / 3, 2 / 3, 1]) { rctx.beginPath(); rctx.arc(c, c, R * f, 0, Math.PI * 2); rctx.stroke(); }
     if (st.lat != null) {
+      // offline coverage: union of fresh fetched circles as one flat green wash (no stacking where they overlap)
+      // plus its outline, so the edge of "works offline" is visible. Dotted amber = precache still to do.
+      if (S.radarcov) {
+        const circles = store.coverage.fresh().filter((cv) => Geo.haversine(st.lat, st.lon, cv.lat, cv.lon) - cv.radius <= S.radius * 1.2 * radarZoom);
+        if (circles.length) {
+          const cs = circles.map((cv) => { const [x, y] = toXY(cv.lon, cv.lat); return { x, y, r: cv.radius * scale }; });
+          rctx.beginPath(); for (const c of cs) { rctx.moveTo(c.x + c.r, c.y); rctx.arc(c.x, c.y, c.r, 0, Math.PI * 2); }
+          rctx.fillStyle = "rgba(53,224,122,.10)"; rctx.fill();
+          rctx.lineWidth = 1.5; rctx.strokeStyle = "rgba(53,224,122,.6)"; rctx.beginPath();
+          for (const s of ParcelStore.unionArcs(cs)) { rctx.moveTo(s.x + s.r * Math.cos(s.a0), s.y + s.r * Math.sin(s.a0)); rctx.arc(s.x, s.y, s.r, s.a0, s.a1); }
+          rctx.stroke();
+        }
+        if (st.precache && st.precache.running) {
+          rctx.setLineDash([3, 3]); rctx.strokeStyle = "rgba(255,176,32,.7)"; rctx.lineWidth = 1;
+          for (const cv of st.precache.todo) { const [x, y] = toXY(cv.lon, cv.lat); rctx.beginPath(); rctx.arc(x, y, cv.radius * scale, 0, Math.PI * 2); rctx.stroke(); }
+          rctx.setLineDash([]);
+        }
+      }
       // view cone
       if (hdg != null) {
         const a0 = (S.radarup ? 0 : hdg) * D2R - S.fov / 2 * D2R - Math.PI / 2, a1 = a0 + S.fov * D2R;
@@ -502,7 +528,7 @@
         rctx.closePath();
         const sel = st.selected === p.id, on = visIds.has(p.id);
         rctx.fillStyle = hexOf(p); rctx.globalAlpha = sel ? .85 : on ? .5 : .16; rctx.fill();
-        rctx.globalAlpha = sel ? 1 : .45; rctx.strokeStyle = sel ? "#fff" : hexOf(p); rctx.lineWidth = sel ? 2 : 1; rctx.stroke();
+        if (radarZoom < 2.5 || sel) { rctx.globalAlpha = sel ? 1 : .45; rctx.strokeStyle = sel ? "#fff" : hexOf(p); rctx.lineWidth = sel ? 2 : 1; rctx.stroke(); }
       }
       rctx.globalAlpha = 1;
       // north tick
@@ -514,7 +540,8 @@
     }
     rctx.restore();
     rctx.fillStyle = "rgba(255,255,255,.5)"; rctx.font = "16px -apple-system, sans-serif"; rctx.textAlign = "left"; rctx.textBaseline = "bottom";
-    rctx.fillText(Geo.fmtDistance(S.radius, imperial()), 10, W - 10);
+    rctx.fillText(Geo.fmtDistance(S.radius * radarZoom, imperial()), 10, W - 10);
+    if (st.precache && st.precache.running) { rctx.textAlign = "right"; rctx.fillStyle = "#ffb020"; rctx.fillText(`${st.precache.done}/${st.precache.total}`, W - 10, W - 10); }
   }
 
   // ---- detail sheet ------------------------------------------------------
@@ -561,9 +588,9 @@
   function bindSwitch(id, key, cb) { const el = $("s-" + id); el.checked = !!S[key]; el.onchange = () => { S[key] = el.checked; saveS(); cb && cb(); }; }
   function bindSeg(key) { const seg = document.querySelector(`.seg[data-set="${key}"]`); const paint = () => [...seg.children].forEach((b) => b.classList.toggle("on", b.dataset.v === S[key])); paint(); seg.onclick = (e) => { if (!e.target.dataset.v) return; S[key] = e.target.dataset.v; saveS(); paint(); refreshRanges(); }; }
   const dist = (m) => Geo.fmtDistance(m, imperial());
-  function refreshRanges() { bindRange("radius", "radius", dist); bindRange("maxdist", "maxdist", dist); bindRange("maxlabels", "maxlabels", (v) => String(v)); bindRange("fov", "fov", (v) => v + "°"); bindRange("hoff", "hoff", (v) => (v > 0 ? "+" : "") + v + "°"); bindRange("decl", "decl", (v) => v.toFixed(1) + "°"); }
+  function refreshRanges() { bindRange("radius", "radius", dist); bindRange("maxdist", "maxdist", dist); bindRange("maxlabels", "maxlabels", (v) => String(v)); bindRange("fov", "fov", (v) => v + "°"); bindRange("hoff", "hoff", (v) => (v > 0 ? "+" : "") + v + "°"); bindRange("decl", "decl", (v) => v.toFixed(1) + "°"); bindRange("prearea", "prearea", dist); $("s-prearea").addEventListener("input", () => updatePrecacheEstimate()); }
   refreshRanges(); bindSeg("priceMode"); bindSeg("units");
-  bindSwitch("ground", "ground"); bindSwitch("rooftop", "rooftop"); bindSwitch("osm", "osm", () => maybeFetch(true)); bindSwitch("inside", "inside"); bindSwitch("priced", "priced"); bindSwitch("radarup", "radarup");
+  bindSwitch("ground", "ground"); bindSwitch("rooftop", "rooftop"); bindSwitch("osm", "osm", () => maybeFetch(true)); bindSwitch("inside", "inside"); bindSwitch("priced", "priced"); bindSwitch("radarup", "radarup"); bindSwitch("radarcov", "radarcov");
   bindSwitch("sim", "sim", () => location.reload());
   $("clearcache").onclick = async () => { await store.clear(); lastLoadKey = ""; st.parcels = []; st.views.clear(); updateCacheInfo(); maybeFetch(true); toast("Cache cleared", true); };
   async function updateCacheInfo() {
@@ -575,7 +602,85 @@
       $("cacheinfo").textContent = `${n.toLocaleString()} parcels from ${circles} area${circles === 1 ? "" : "s"} kept for offline use${quota}`;
     } catch (e) { $("cacheinfo").textContent = "Offline cache unavailable"; }
   }
-  $("gear").addEventListener("click", updateCacheInfo);
+  $("gear").addEventListener("click", () => { updateCacheInfo(); updatePrecacheEstimate(); });
+
+  // ---- coverage map in the settings sheet -----------------------------------------
+  const covmap = $("covmap"), cctx = covmap.getContext("2d");
+  function drawCovMap() {
+    if (!$("settings").classList.contains("open")) return;
+    const W = covmap.width, Hh = covmap.height; cctx.clearRect(0, 0, W, Hh);
+    if (st.lat == null) { cctx.fillStyle = "rgba(255,255,255,.4)"; cctx.font = "24px -apple-system, sans-serif"; cctx.textAlign = "center"; cctx.fillText("Waiting for GPS", W / 2, Hh / 2); return; }
+    const range = S.prearea * 1.25, scale = (Hh / 2 - 8) / range, mpd = Geo.metresPerDegree(st.lat);
+    const toXY = (lon, lat) => [W / 2 + (lon - st.lon) * mpd.lon * scale, Hh / 2 - (lat - st.lat) * mpd.lat * scale];
+    // coverage union
+    const circles = store.coverage.fresh().filter((cv) => Geo.haversine(st.lat, st.lon, cv.lat, cv.lon) - cv.radius <= range * 1.5);
+    if (circles.length) {
+      const cs = circles.map((cv) => { const [x, y] = toXY(cv.lon, cv.lat); return { x, y, r: cv.radius * scale }; });
+      cctx.beginPath(); for (const c of cs) { cctx.moveTo(c.x + c.r, c.y); cctx.arc(c.x, c.y, c.r, 0, Math.PI * 2); }
+      cctx.fillStyle = "rgba(53,224,122,.14)"; cctx.fill();
+      cctx.lineWidth = 2; cctx.strokeStyle = "rgba(53,224,122,.75)"; cctx.beginPath();
+      for (const s of ParcelStore.unionArcs(cs)) { cctx.moveTo(s.x + s.r * Math.cos(s.a0), s.y + s.r * Math.sin(s.a0)); cctx.arc(s.x, s.y, s.r, s.a0, s.a1); }
+      cctx.stroke();
+    }
+    // planned area
+    cctx.setLineDash([6, 6]); cctx.strokeStyle = "rgba(255,255,255,.35)"; cctx.lineWidth = 2;
+    cctx.beginPath(); cctx.arc(W / 2, Hh / 2, S.prearea * scale, 0, Math.PI * 2); cctx.stroke(); cctx.setLineDash([]);
+    // precache plan: dotted amber for what is still to fetch
+    if (st.precache && st.precache.running) {
+      cctx.setLineDash([4, 4]); cctx.strokeStyle = "rgba(255,176,32,.8)"; cctx.lineWidth = 1.5;
+      for (const cv of st.precache.todo) { const [x, y] = toXY(cv.lon, cv.lat); cctx.beginPath(); cctx.arc(x, y, cv.radius * scale, 0, Math.PI * 2); cctx.stroke(); }
+      cctx.setLineDash([]);
+    }
+    // loaded parcels as dots, me, north, scale
+    cctx.fillStyle = "rgba(255,255,255,.5)";
+    for (const p of st.parcels) { const [x, y] = toXY(p.centroid.lon, p.centroid.lat); cctx.fillRect(x - 1, y - 1, 2, 2); }
+    cctx.fillStyle = "#fff"; cctx.beginPath(); cctx.arc(W / 2, Hh / 2, 5, 0, Math.PI * 2); cctx.fill();
+    cctx.font = "bold 22px -apple-system, sans-serif"; cctx.textAlign = "left"; cctx.textBaseline = "top"; cctx.fillText("N ↑", 12, 10);
+    cctx.font = "20px -apple-system, sans-serif"; cctx.textAlign = "right"; cctx.textBaseline = "bottom"; cctx.fillStyle = "rgba(255,255,255,.6)";
+    cctx.fillText(`dashed = ${Geo.fmtDistance(S.prearea, imperial())} precache area · green = cached`, W - 12, Hh - 8);
+  }
+  setInterval(drawCovMap, 250);
+
+  // ---- precache a neighbourhood ------------------------------------------------
+  const PRE_FETCH_R = 260;   // metres per request; keeps well under the 1000-feature cap in dense blocks
+  async function updatePrecacheEstimate() {
+    if (st.lat == null || !st.provider) { $("pre-est").textContent = "Needs a GPS fix first"; return; }
+    await store.ready;
+    const plan = ParcelStore.planPrecache(st.lat, st.lon, S.prearea, PRE_FETCH_R, store.coverage, st.provider.id);
+    $("pre-est").textContent = `${plan.todo.length} request${plan.todo.length === 1 ? "" : "s"} of ${Geo.fmtDistance(PRE_FETCH_R, imperial())} each` + (plan.skipped ? `, ${plan.skipped} already cached` : "") + ` · ~${Math.round(plan.todo.length * 1.2)} s on a good connection`;
+    $("precache").disabled = !!(st.precache && st.precache.running);
+  }
+  $("precache").onclick = async () => {
+    if (st.precache && st.precache.running) { st.precache.cancel = true; $("precache").textContent = "Stopping…"; return; }
+    if (st.lat == null || !st.provider) { toast("Need a GPS fix first"); return; }
+    const prov = st.provider, plan = ParcelStore.planPrecache(st.lat, st.lon, S.prearea, PRE_FETCH_R, store.coverage, prov.id);
+    if (!plan.todo.length) { $("pre-status").textContent = "Already fully cached."; return; }
+    st.precache = { running: true, cancel: false, done: 0, total: plan.todo.length, todo: plan.todo.slice(), parcels: 0, failed: 0 };
+    $("precache").textContent = "Stop"; $("precache").style.background = "var(--warn)";
+    const status = () => { $("pre-status").textContent = `${st.precache.done}/${st.precache.total} areas · ${st.precache.parcels.toLocaleString()} parcels${st.precache.failed ? ` · ${st.precache.failed} failed` : ""}`; };
+    status();
+    // two requests in flight at a time: fast enough, polite to the county's server
+    const worker = async () => {
+      while (st.precache.todo.length && !st.precache.cancel) {
+        const c = st.precache.todo.shift();
+        try {
+          const r = await Providers.fetchArea(prov, c.lat, c.lon, c.radius);
+          Heights.applyHeights(r.parcels, null);
+          await store.put(c.lat, c.lon, c.radius, prov.id, r.parcels);
+          st.precache.parcels += r.parcels.length;
+          if (r.exceeded) st.precache.failed++;   // partial: count it so the user knows to shrink the radius
+        } catch (e) { st.precache.failed++; st.precache.todo.push(c); if (st.precache.failed > 8) st.precache.cancel = true; await new Promise((res) => setTimeout(res, 1500)); }
+        st.precache.done++; status();
+      }
+    };
+    await Promise.all([worker(), worker()]);
+    const cancelled = st.precache.cancel;
+    st.precache.running = false;
+    $("precache").textContent = "Download neighbourhood"; $("precache").style.background = "";
+    const unique = await store.count();
+    $("pre-status").textContent = (cancelled ? "Stopped. " : "Done. ") + `${unique.toLocaleString()} parcels in the offline cache${st.precache.failed ? `, ${st.precache.failed} area${st.precache.failed === 1 ? "" : "s"} failed or hit the 1000-feature cap` : ""}.`;
+    lastLoadKey = ""; updateCacheInfo(); updatePrecacheEstimate(); maybeFetch();
+  };
   $("gear").onclick = () => $("settings").classList.toggle("open");
   $("sx").onclick = () => $("settings").classList.remove("open");
   $("refresh").onclick = () => maybeFetch(true);

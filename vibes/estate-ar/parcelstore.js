@@ -9,6 +9,8 @@
  *                                       fetched recently? -> no network needed
  *   store.near(lat, lon, radius)        every cached parcel whose centroid is
  *                                       within radius -> render offline
+ *   planPrecache(...)                   hex-tile a neighbourhood with fetch
+ *                                       circles, skipping what is covered
  *
  * So walking back along a street you already looked at is instant and works
  * with no signal; a new block needs one fetch and is then kept for `ttlMs`.
@@ -156,10 +158,75 @@
     async clear() { await this.db.clear(); this.coverage = new Coverage([], this.ttlMs); }
   }
 
+  // ---- precaching a neighbourhood -----------------------------------------------
+  /**
+   * Tile a circle of `areaM` around (lat, lon) with fetch circles of radius
+   * `fetchM` on a hexagonal lattice so the whole area is covered with modest
+   * overlap. Circles already fully inside fresh coverage are skipped. Returns
+   * the centres ordered nearest-first so the walkable part is cached first.
+   */
+  function planPrecache(lat, lon, areaM, fetchM, coverage, providerId, now) {
+    const mpd = Geo.metresPerDegree(lat);
+    const dx = fetchM * Math.sqrt(3) * 0.92, dy = fetchM * 1.5 * 0.92;   // hex lattice, 8% tighter than touching so gaps close
+    const out = [];
+    const rows = Math.ceil(areaM / dy) + 1;
+    for (let j = -rows; j <= rows; j++) {
+      const y = j * dy, off = (j % 2) ? dx / 2 : 0;
+      const cols = Math.ceil(areaM / dx) + 1;
+      for (let i = -cols; i <= cols; i++) {
+        const x = i * dx + off, r = Math.hypot(x, y);
+        if (r - fetchM > areaM) continue;                       // circle does not touch the area
+        const cl = lat + y / mpd.lat, co = lon + x / mpd.lon;
+        const covered = coverage ? coverage.covers(cl, co, fetchM, providerId, now) : false;
+        out.push({ lat: cl, lon: co, radius: fetchM, dist: r, covered });
+      }
+    }
+    out.sort((a, b) => a.dist - b.dist);
+    return { circles: out, todo: out.filter((c) => !c.covered), skipped: out.filter((c) => c.covered).length };
+  }
+
+  /**
+   * Boundary of a union of circles as arc segments: for each circle, the angular
+   * intervals of its perimeter not inside any other circle. Input/output in a
+   * planar frame ({x, y, r} in the same units). Returns [{x, y, r, a0, a1}].
+   */
+  function unionArcs(circles) {
+    const out = [];
+    for (let i = 0; i < circles.length; i++) {
+      const c = circles[i];
+      let covered = [];   // [a0, a1] intervals (radians, may exceed 2π)
+      let swallowed = false;
+      for (let j = 0; j < circles.length; j++) {
+        if (i === j) continue;
+        const o = circles[j], dx = o.x - c.x, dy = o.y - c.y, d = Math.hypot(dx, dy);
+        if (d >= c.r + o.r) continue;                        // disjoint
+        if (d + c.r <= o.r && (d + c.r < o.r || j < i)) { swallowed = true; break; }   // c inside o (identical circles: lowest index survives)
+        if (d + o.r <= c.r) continue;                        // o inside c
+        const ang = Math.atan2(dy, dx), half = Math.acos((c.r * c.r + d * d - o.r * o.r) / (2 * c.r * d));
+        covered.push([ang - half, ang + half]);
+      }
+      if (swallowed) continue;
+      if (!covered.length) { out.push({ x: c.x, y: c.y, r: c.r, a0: 0, a1: Math.PI * 2 }); continue; }
+      // normalise to [0, 2π), split wrapping intervals, merge, complement
+      const iv = [];
+      for (const [a0, a1] of covered) {
+        const T = Math.PI * 2, len = a1 - a0; let a = ((a0 % T) + T) % T;
+        if (a + len <= T) iv.push([a, a + len]); else { iv.push([a, T]); iv.push([0, a + len - T]); }
+      }
+      iv.sort((p, q) => p[0] - q[0]);
+      const merged = [];
+      for (const s of iv) { const l = merged[merged.length - 1]; if (l && s[0] <= l[1]) l[1] = Math.max(l[1], s[1]); else merged.push([s[0], s[1]]); }
+      let cur = 0;
+      for (const [a, b] of merged) { if (a > cur + 1e-9) out.push({ x: c.x, y: c.y, r: c.r, a0: cur, a1: a }); cur = Math.max(cur, b); }
+      if (cur < Math.PI * 2 - 1e-9) out.push({ x: c.x, y: c.y, r: c.r, a0: cur, a1: Math.PI * 2 });
+    }
+    return out;
+  }
+
   function open(opts) {
     const useIDB = typeof indexedDB !== "undefined" && !(opts && opts.memory);
     return new Store(useIDB ? new ParcelDB(opts && opts.name) : new MemoryDB(), opts);
   }
 
-  return { Coverage, MemoryDB, ParcelDB, Store, open, freeze, thaw, DEFAULT_TTL };
+  return { Coverage, MemoryDB, ParcelDB, Store, open, freeze, thaw, planPrecache, unionArcs, DEFAULT_TTL };
 }));

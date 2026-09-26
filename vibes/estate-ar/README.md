@@ -39,6 +39,14 @@ in the U-District with a simulated compass: drag to look around, wheel or arrow 
   in IndexedDB together with the circles that were fetched. Standing inside a fetched circle
   never hits the network; walking into a new block fetches once and merges with the cached
   neighbours. Install from the browser menu for a full-screen standalone app.
+- **Precache a neighbourhood** from the settings sheet: pick a distance (0.2-2 mi), see how
+  many requests it needs and what is already cached on a small coverage map, and download.
+  The area is tiled with 260 m fetch circles on a hex lattice, nearest first, two requests in
+  flight; the map and the radar show amber dots for what is still to come. 0.5 mi around the
+  U-District is 19 requests, ~3,000 parcels, 5 MB, a couple of seconds on wifi.
+- **Radar coverage overlay**: the green wash on the radar is the union of what works offline,
+  with its boundary drawn (exact arc segments of the circle union, `unionArcs`) so you can see
+  where cached data ends. While a download runs the radar zooms out to show progress.
 - **Price modes**: total assessed, land only, $/ft² lot, or last sale price.
 - Settings for fetch radius, label distance, camera FOV, heading offset and magnetic declination
   (compass on Android is magnetic; Seattle is about 15°E), units, rooftop/OSM toggles,
@@ -104,7 +112,7 @@ sales layer / links. Most US county assessors publish parcels as an ArcGIS REST 
 - `geo.js` — haversine, bearing, centroid, point-in-polygon, angular span, pinhole projection, heading filter, formatting
 - `providers.js` — provider registry (King, Snohomish, WA statewide), ArcGIS queries, normalisation, sales join, WA DOR use codes, Nominatim
 - `heights.js` — storey/height estimate from use class + value density; Overpass fetch and parcel matching
-- `parcelstore.js` — offline cache: coverage circles + IndexedDB parcel store (memory fallback)
+- `parcelstore.js` — offline cache: coverage circles + IndexedDB parcel store (memory fallback), hex-lattice precache planner, circle-union boundary
 - `sw.js`, `manifest.webmanifest`, `icon.svg`, `icon-192.png`, `icon-512.png` — PWA
-- `estate.test.js` — bun tests (48) using `fixture_parcels.json` / `fixture_sales.json` / `fixture_snohomish.json` / `fixture_wastate.json` captured from the live services
+- `estate.test.js` — bun tests (53) using `fixture_parcels.json` / `fixture_sales.json` / `fixture_snohomish.json` / `fixture_wastate.json` captured from the live services
 - `live_check.js` — live smoke test
