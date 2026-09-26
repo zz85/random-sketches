@@ -14,8 +14,8 @@ tier (aisstream.io) forbids browser connections.
 ```
 open index.html                       # any static server, or
 node proxy.js                         # http://localhost:8788  (also serves the files)
-bun test                              # geometry, providers, proxy, occlusion: 40 tests, fixtures included
-node smoke.js                         # headless Chromium: 3 scenes against live NOAA / Digitraffic
+bun test                              # geometry, providers, proxy, occlusion, AtoN: 53 tests, fixtures included
+node smoke.js                         # headless Chromium over CDP: 4 scenes against live NOAA / Digitraffic, page state + console
 ```
 
 ## Data sources (all CORS, verified Sep 2026)
@@ -26,7 +26,8 @@ node smoke.js                         # headless Chromium: 3 scenes against live
 | AIS vessels — Finland / Baltic | **Digitraffic** `meri.digitraffic.fi/api/ais/v1` | Public REST, `Access-Control-Allow-Origin: *`, no key. `/locations?latitude&longitude&radius` polled every 10 s, `/vessels/{mmsi}` for static data. Also has MQTT-over-WebSocket (not used; polling is enough). |
 | AIS vessels — worldwide | **aisstream.io** via `proxy.js` | Free API key, server-side only. The proxy holds one WebSocket for a box around the viewer and re-serves the table in the exact Digitraffic shape, so the browser has one code path. `AISSTREAM_API_KEY=… node proxy.js`. |
 | AIS vessels — nowhere | **demo** provider | Simulated ships seeded *inside the charted lanes* running along `ORIENT`, plus a ferry, a sailboat and an anchored tug. Auto-selected outside Digitraffic coverage when no proxy is configured, so Puget Sound is usable without a key. |
-| Land, for line-of-sight occlusion | NOAA **ENC Direct** `Land_Area` (S-57 LNDARE), harbour then coastal | Fetched with `maxAllowableOffset` (~30 m generalisation) so a 45 km box is ~150 KB. Each vessel's sight line is tested against the polygons twice a second; ships behind land are drawn dimmed and dashed with "behind land · distance to shore" (or hidden, per setting). Lane labels whose centroid is behind land are dropped. Cached 30 days. |
+| Land, for line-of-sight occlusion | NOAA **ENC Direct** `Land_Area` (S-57 LNDARE) + `Land_Elevation_point` (LNDELV), harbour then coastal | Fetched with `maxAllowableOffset` (~30 m generalisation) so a 45 km box is ~150 KB. Each vessel's sight line is tested against the polygons twice a second; ships behind land are drawn dimmed and dashed with "behind land · distance to shore" (or hidden, per setting). Lane labels whose centroid is behind land are dropped. Cached 30 days. |
+| Aids to navigation | NOAA **ENC Direct** point layers BOYLAT/BOYSPP/BOYCAR/BOYISD/BOYSAW, BCNLAT/BCNSPP/BCNSAW, DAYMAR, LIGHTS, LITFLT | Buoys drawn as cones in their charted colours, beacons as posts, loose lights as stars; the LIGHTS object at the same position is merged onto its structure and rendered as "Fl G 4s 5M" from LITCHR/COLOUR/SIGGRP/SIGPER/VALNMR. Tap for lateral meaning, height, nominal range, sector. Same occlusion treatment as vessels. Harbour layers first (11 requests), coastal only where harbour charted nothing. Cached 30 days. |
 | Magnetic declination | NOAA WMM `geomag-web` calculator | CORS. Applied to Android compass headings; iOS `webkitCompassHeading` is already true. |
 | Place name | Nominatim reverse geocode | Header only. |
 
@@ -58,19 +59,22 @@ compass heading that `alpha` alone gives.
 ## Files
 
 - `index.html` — the app. URL params for testing: `?lat=&lon=&eye=&hdg=&pitch=&provider=demo|digitraffic|proxy&proxy=http://…&auto=1&nocam=1`
-- `geo.js` — spherical + ENU geometry, `Camera`, horizon, hull footprint, dead reckoning, CPA/TCPA, lane arrows, land line-of-sight (`landOcclusion`)
-- `providers.js` — ENC Direct lane queries, AIS provider registry, `VesselTable`, ITU ship-type / nav-status tables, `LaneStore`
+- `geo.js` — spherical + ENU geometry, `Camera`, horizon, hull footprint, dead reckoning, CPA/TCPA, lane arrows, land line-of-sight (`landOcclusion`, elevation-aware), `estimateAirDraught`
+- `providers.js` — ENC Direct lane / land / LNDELV / AtoN queries, S-57 colour and light-character tables, AIS provider registry, `VesselTable`, ITU ship-type / nav-status tables, `LaneStore` / `LandStore` / `BoxStore`
 - `proxy.js` — static server + aisstream.io → Digitraffic-shaped `/ais/*`
 - `marine-ar.test.js` — `bun test`; uses the `fixture_*.json` captured from the live endpoints
 - `smoke.js` — renders two scenes in headless Chromium and fails on console errors
 
 ## Not done / ideas
 
-- Land occlusion is a map-plane test: a sight line that crosses a charted land
-  polygon counts as blocked, at any land height. Right on the water, wrong for a
-  cruise-ship superstructure peeking over a low spit or a viewer high on a bluff;
-  adding the elevation term (LNDELV / a DEM) would fix both.
+- Occlusion is elevation-aware where the chart allows: each land ring takes the
+  highest LNDELV spot height inside it, the target height is a rough air draught
+  from AIS length and type (or the charted HEIGHT of a light), and the sight line
+  from your eye height is compared with the land over each stretch it crosses,
+  earth curvature included. ENCs chart spot heights sparsely (26 of 359 rings
+  around Seattle; none on Magnolia), so rings without a height are opaque by
+  default; the "uncharted land" slider assumes a height for them instead. A
+  proper fix is a DEM (SRTM/3DEP) sampled along the sight line.
 - Own-ship SOG/COG for CPA comes from `geolocation.speed/heading`; on foot it is ~0,
   which is correct, but on a moving boat give it a moment to settle.
 - Digitraffic MQTT (`wss://meri.digitraffic.fi:443/mqtt`) for sub-second updates.
-- AtoN (buoys, lights) from ENC Direct as extra AR pins.

@@ -128,6 +128,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
     <div class="chip" id="chipAis">AIS —</div>
     <div class="chip" id="chipLanes">LANES —</div>
     <div class="chip" id="chipLand">LAND —</div>
+    <div class="chip" id="chipAton">ATON —</div>
   </div>
 </div>
 <div id="inlane"></div>
@@ -155,6 +156,12 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
     <label><input type="checkbox" id="ckHull" checked>hull outlines</label><label><input type="checkbox" id="ckVector" checked>6-min vectors</label><label><input type="checkbox" id="ckMoored">show moored</label></span></div>
   <div class="sr"><span>Land occlusion</span><span class="group">
     <label><input type="checkbox" id="ckOcclude" checked>line of sight vs charted land</label><label><input type="checkbox" id="ckHideOcc">hide (not dim) behind land</label></span></div>
+  <div class="sr"><span>Land height</span><span class="group">
+    <label><input type="checkbox" id="ckElev" checked>use LNDELV spot heights + ship height</label>
+    <label>uncharted land <input type="range" id="rUnk" min="0" max="120" step="5" value="0" style="width:80px"> <span class="v" id="vUnk" style="min-width:52px">opaque</span></label></span></div>
+  <div class="sr"><span>Aids to navigation</span><span class="group">
+    <label><input type="checkbox" id="ckAton" checked>buoys, beacons, lights</label>
+    <label>within <input type="range" id="rAton" min="1" max="15" value="6" style="width:80px"> <span class="v" id="vAton" style="min-width:40px">6 km</span></label></span></div>
   <div class="sr"><span>Units</span><span class="group"><label><input type="radio" name="units" value="nm" checked>NM / kn</label><label><input type="radio" name="units" value="km">km / kn</label></span></div>
   <div class="sr"><span>Compass</span><span class="group"><label><input type="checkbox" id="ckDecl" checked>apply declination <span id="vDecl"></span></label><label>offset <input type="range" id="rOff" min="-30" max="30" value="0" style="width:80px"> <span class="v" id="vOff" style="min-width:34px">0°</span></label></span></div>
   <div class="sr"><span>Demo speed</span><span><input type="range" id="rDemo" min="1" max="30" value="6"><span class="v" id="vDemo">6×</span></span></div>
@@ -163,7 +170,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
     <span style="--c:#c9a0ff">fishing</span><span style="--c:#ffe66d">pleasure</span><span style="--c:#ff8ad8">HSC</span><span style="--c:#fff">special</span><span style="--c:#8a969c">unknown</span>
     <span style="--c:#ff33bf">TSS lane / zone</span><span style="--c:#ffb020">precautionary</span><span style="--c:#3fa0ff">fairway</span>
   </div>
-  <div class="sr" style="font-size:10.5px;color:rgba(255,255,255,.45);line-height:1.5">Lanes + land: NOAA ENC Direct (S-57 TSSLPT/TSEZNE/PRCARE/TSSBND/FAIRWY, LNDARE). AIS: <span id="attribution">—</span>. Declination: NOAA WMM.</div>
+  <div class="sr" style="font-size:10.5px;color:rgba(255,255,255,.45);line-height:1.5">Lanes, land, AtoN: NOAA ENC Direct (S-57 TSSLPT/TSEZNE/PRCARE/TSSBND/FAIRWY, LNDARE/LNDELV, BOY*/BCN*/LIGHTS). AIS: <span id="attribution">—</span>. Declination: NOAA WMM.</div>
 </div>
 
 <div id="info">
@@ -194,7 +201,8 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
     W: 0, H: 0, hfov: 60, eye: 2, cam: null, camOn: true,
     // data
     lanes: [], laneStore: null, laneKinds: new Set(["lane", "zone", "precaution", "boundary", "fairway"]), showLanes: true,
-    land: [], landStore: null, occlude: true, hideOccluded: false, landLoading: false, landError: null, occlusionAt: 0, occlusion: new Map(),
+    land: [], landSpots: [], landStore: null, occlude: true, hideOccluded: false, elevAware: true, unknownElevM: 0, landLoading: false, landError: null, occlusionAt: 0, occlusion: new Map(),
+    aton: [], atonStore: null, showAton: true, atonRangeM: 6000, atonLoading: false, atonError: null,
     table: null, provider: null, providerHandle: null, providerChoice: "auto", proxyBase: "", vessels: [], aisError: null, lastAis: 0,
     rangeM: 15000, labelPx: 12, showHull: true, showVector: true, showMoored: false, nautical: true, demoSpeed: 6,
     selected: null, hits: [], settingsOpen: false, place: null,
@@ -206,6 +214,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       this.table = new Providers.VesselTable({ maxAgeMs: 12 * 60e3 });
       this.laneStore = new Providers.LaneStore({ storage: window.localStorage });
       this.landStore = new Providers.LandStore({ storage: window.localStorage });
+      this.atonStore = new Providers.BoxStore({ storage: window.localStorage, key: "marine-ar:aton" });
       this.loadPrefs();
       this.resize();
       window.addEventListener("resize", () => this.resize());
@@ -227,12 +236,12 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
     loadPrefs() {
       try {
         const p = JSON.parse(localStorage.getItem("marine-ar:prefs") || "{}");
-        for (const k of ["providerChoice", "proxyBase", "rangeM", "eye", "hfov", "labelPx", "showHull", "showVector", "showMoored", "occlude", "hideOccluded", "nautical", "applyDecl", "offset", "demoSpeed"]) if (p[k] != null) this[k] = p[k];
+        for (const k of ["providerChoice", "proxyBase", "rangeM", "eye", "hfov", "labelPx", "showHull", "showVector", "showMoored", "occlude", "hideOccluded", "elevAware", "unknownElevM", "showAton", "atonRangeM", "nautical", "applyDecl", "offset", "demoSpeed"]) if (p[k] != null) this[k] = p[k];
         if (p.laneKinds) this.laneKinds = new Set(p.laneKinds);
       } catch (e) { /* */ }
     },
     savePrefs() {
-      const p = {}; for (const k of ["providerChoice", "proxyBase", "rangeM", "eye", "hfov", "labelPx", "showHull", "showVector", "showMoored", "occlude", "hideOccluded", "nautical", "applyDecl", "offset", "demoSpeed"]) p[k] = this[k];
+      const p = {}; for (const k of ["providerChoice", "proxyBase", "rangeM", "eye", "hfov", "labelPx", "showHull", "showVector", "showMoored", "occlude", "hideOccluded", "elevAware", "unknownElevM", "showAton", "atonRangeM", "nautical", "applyDecl", "offset", "demoSpeed"]) p[k] = this[k];
       p.laneKinds = [...this.laneKinds];
       try { localStorage.setItem("marine-ar:prefs", JSON.stringify(p)); } catch (e) { /* */ }
     },
@@ -259,7 +268,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       $("btnSettings").onclick = () => { this.settingsOpen = !this.settingsOpen; $("settings").classList.toggle("vis", this.settingsOpen); $("btnSettings").classList.toggle("on", this.settingsOpen); };
       $("btnLanes").onclick = () => { this.showLanes = !this.showLanes; $("btnLanes").classList.toggle("on", this.showLanes); };
       $("btnCam").onclick = () => this.toggleCamera();
-      $("btnRefresh").onclick = () => { this.laneStore.clear(); this.landStore.clear(); this.refreshData(true); this.toast("Refreshing lanes and AIS…"); };
+      $("btnRefresh").onclick = () => { this.laneStore.clear(); this.landStore.clear(); this.atonStore.clear(); this.refreshData(true); this.toast("Refreshing lanes and AIS…"); };
       $("infoClose").onclick = () => { $("info").classList.remove("vis"); this.selected = null; };
 
       const bind = (rid, vid, prop, fmt, cb) => {
@@ -278,6 +287,10 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       const ck = (id, prop, cb) => { const c = $(id); c.checked = !!this[prop]; c.onchange = () => { this[prop] = c.checked; this.savePrefs(); if (cb) cb(); }; };
       ck("ckHull", "showHull"); ck("ckVector", "showVector"); ck("ckMoored", "showMoored"); ck("ckDecl", "applyDecl");
       ck("ckOcclude", "occlude", () => { this.occlusion.clear(); this.occlusionAt = 0; }); ck("ckHideOcc", "hideOccluded");
+      ck("ckElev", "elevAware", () => { this.occlusion.clear(); this.occlusionAt = 0; }); ck("ckAton", "showAton");
+      bind("rUnk", "vUnk", "unknownElevM", (v) => (+v === 0 ? "opaque" : v + " m"), () => { this.occlusion.clear(); this.occlusionAt = 0; });
+      $("rAton").value = this.atonRangeM / 1000; $("vAton").textContent = $("rAton").value + " km";
+      $("rAton").oninput = () => { this.atonRangeM = +$("rAton").value * 1000; $("vAton").textContent = $("rAton").value + " km"; this.savePrefs(); this.refreshData(); };
       document.querySelectorAll("input[name=units]").forEach((r) => { r.checked = (r.value === "nm") === this.nautical; r.onchange = () => { this.nautical = r.value === "nm"; this.savePrefs(); }; });
       $("laneKinds").querySelectorAll("input").forEach((c) => { c.checked = this.laneKinds.has(c.value); c.onchange = () => { if (c.checked) this.laneKinds.add(c.value); else this.laneKinds.delete(c.value); this.savePrefs(); }; });
       $("selProvider").value = this.providerChoice;
@@ -309,7 +322,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       if (this.settingsOpen) { this.settingsOpen = false; $("settings").classList.remove("vis"); $("btnSettings").classList.remove("on"); return; }
       let best = null, bd = 28;
       for (const h of this.hits) { const d = Math.hypot(x - h.x, y - h.y); if (d < bd + h.r) { bd = d; best = h; } }
-      if (best) this.showInfo(best.v);
+      if (best) { if (best.a) this.showAtonInfo(best.a); else this.showInfo(best.v); }
     },
 
     toast(msg, ms) { const t = $("toast"); t.textContent = msg; t.classList.add("vis"); clearTimeout(this._toastT); this._toastT = setTimeout(() => t.classList.remove("vis"), ms || 2600); },
@@ -401,11 +414,18 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       if (force || this.landStore.needsFetch(lat, lon, this.rangeM * 1.5)) {
         this.landLoading = true;
         Providers.fetchLand(lat, lon, this.rangeM * 1.5).then((r) => {
-          this.landStore.set(lat, lon, this.rangeM * 1.5, r.land);
-          this.land = r.land; this.landError = null; this.landExceeded = r.exceeded;
+          this.landStore.set(lat, lon, this.rangeM * 1.5, r.land, r.spots);
+          this.land = r.land; this.landSpots = r.spots; this.landError = null; this.landExceeded = r.exceeded;
           this.occlusion.clear(); this.occlusionAt = 0;
         }).catch((e) => { this.landError = e.message; }).finally(() => { this.landLoading = false; });
-      } else if (this.land.length === 0 && this.landStore.land.length) this.land = this.landStore.land;
+      } else if (this.land.length === 0 && this.landStore.land.length) { this.land = this.landStore.land; this.landSpots = this.landStore.spots; }
+      // aids to navigation: buoys, beacons, lights
+      const ar = Math.max(this.atonRangeM, 3000) * 1.5;
+      if (force || this.atonStore.needsFetch(lat, lon, ar)) {
+        this.atonLoading = true;
+        Providers.fetchAton(lat, lon, ar).then((items) => { this.atonStore.set(lat, lon, ar, items); this.aton = items; this.atonError = null; })
+          .catch((e) => { this.atonError = e.message; }).finally(() => { this.atonLoading = false; });
+      } else if (this.aton.length === 0 && this.atonStore.items.length) this.aton = this.atonStore.items;
       if (!this.provider || force || this.providerChoice === "auto" && this.pickProvider() !== this.provider) this.startAis();
       else if (this.providerHandle && this.providerHandle.refresh) this.providerHandle.refresh();
       if (!this.place || Geo.haversine(lat, lon, this.place.lat, this.place.lon) > 1500) this.geocode();
@@ -484,17 +504,23 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
      */
     updateOcclusion() {
       const now = Date.now();
-      if (!this.occlude || this.land.length === 0) { for (const v of this.vessels) v.occluded = null; for (const l of this.lanes) l.occluded = null; return; }
+      if (!this.occlude || this.land.length === 0) { for (const v of this.vessels) v.occluded = null; for (const l of this.lanes) l.occluded = null; for (const a of this.aton) a.occluded = null; return; }
       const refresh = now - this.occlusionAt > 500;
       if (refresh) this.occlusionAt = now;
+      // elevation-aware: eye height vs land height vs the target's height above water
+      const opts = (targetM) => this.elevAware ? { eyeM: this.eye, targetM, unknownElevM: this.unknownElevM > 0 ? this.unknownElevM : null, spots: this.landSpots } : undefined;
       for (const v of this.vessels) {
-        if (refresh || !this.occlusion.has(v.mmsi)) this.occlusion.set(v.mmsi, Geo.landOcclusion(this.lat, this.lon, v.drLat, v.drLon, this.land));
+        if (refresh || !this.occlusion.has(v.mmsi)) this.occlusion.set(v.mmsi, Geo.landOcclusion(this.lat, this.lon, v.drLat, v.drLon, this.land, opts(Geo.estimateAirDraught(v.length, v.category))));
         v.occluded = this.occlusion.get(v.mmsi);
+      }
+      for (const a of this.aton) {
+        if (refresh || !this.occlusion.has(a.id)) this.occlusion.set(a.id, Geo.landOcclusion(this.lat, this.lon, a.lat, a.lon, this.land, opts(a.heightM || (a.kind.startsWith("BOY") ? 3 : 8))));
+        a.occluded = this.occlusion.get(a.id);
       }
       // lane labels anchor at the centroid; a centroid behind land means the label would float over a hill
       for (const l of this.lanes) {
         if (!l.centroid) continue;
-        if (refresh || !this.occlusion.has(l.id)) this.occlusion.set(l.id, Geo.landOcclusion(this.lat, this.lon, l.centroid.lat, l.centroid.lon, this.land));
+        if (refresh || !this.occlusion.has(l.id)) this.occlusion.set(l.id, Geo.landOcclusion(this.lat, this.lon, l.centroid.lat, l.centroid.lon, this.land, opts(0)));
         l.occluded = this.occlusion.get(l.id);
       }
     },
@@ -505,6 +531,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       this.hits = [];
       this.drawHorizon();
       if (this.showLanes) this.drawLanes();
+      if (this.showAton) this.drawAton();
       this.drawVessels();
       this.drawCrosshair();
     },
@@ -596,6 +623,74 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       const inl = Providers.laneAt(lat, lon, this.lanes);
       const el = $("inlane");
       if (inl) { el.textContent = "You are in: " + (inl.kind === "lane" ? `${Geo.cardinal(inl.orient)}-bound traffic lane` : inl.style.label.toLowerCase()); el.classList.add("vis"); } else el.classList.remove("vis");
+    },
+
+    drawAton() {
+      const cx = this.cx, cam = this.cam, lat = this.lat, lon = this.lon, W = this.W;
+      const fs = this.labelPx - 2;
+      const items = [];
+      for (const a of this.aton) {
+        const { e, n } = Geo.toENU(lat, lon, a.lat, a.lon); const d = Math.hypot(e, n);
+        if (d > this.atonRangeM || (a.occluded && this.hideOccluded)) continue;
+        const sp = cam.projectSea(e, n); if (!sp || sp.x < -40 || sp.x > W + 40) continue;
+        items.push({ a, d, sp });
+      }
+      items.sort((p, q) => q.d - p.d);
+      cx.textAlign = "center"; cx.textBaseline = "bottom"; cx.font = `500 ${fs}px -apple-system,Segoe UI,Roboto,sans-serif`;
+      const placed = [];
+      for (const it of items) {
+        const { a, d, sp } = it, occ = !!a.occluded;
+        cx.globalAlpha = occ ? 0.4 : 1;
+        // glyph: buoy = cone, beacon/daymark = post with topmark, loose light = star; sized by distance
+        const s = Math.max(4, Math.min(12, 2500 / Math.max(d, 150)));
+        const col = a.color, isBuoy = a.kind.startsWith("BOY") || a.kind === "LITFLT";
+        cx.fillStyle = col; cx.strokeStyle = "rgba(0,0,0,.7)"; cx.lineWidth = 1;
+        if (isBuoy) {
+          cx.beginPath(); cx.moveTo(sp.x, sp.y - s * 2); cx.lineTo(sp.x + s * 0.7, sp.y); cx.lineTo(sp.x - s * 0.7, sp.y); cx.closePath(); cx.fill(); cx.stroke();
+          if (a.colours.length > 1) { cx.fillStyle = Providers.S57_COLOUR[a.colours[1]]; cx.beginPath(); cx.moveTo(sp.x, sp.y - s * 2); cx.lineTo(sp.x + s * 0.35, sp.y - s); cx.lineTo(sp.x - s * 0.35, sp.y - s); cx.closePath(); cx.fill(); }
+        } else if (a.kind === "LIGHTS") {
+          cx.beginPath(); for (let i = 0; i < 10; i++) { const r = i % 2 ? s * 0.5 : s * 1.2, an = -Math.PI / 2 + i * Math.PI / 5; cx.lineTo(sp.x + Math.cos(an) * r, sp.y - s * 1.2 + Math.sin(an) * r); } cx.closePath(); cx.fill(); cx.stroke();
+        } else {
+          cx.fillRect(sp.x - s * 0.25, sp.y - s * 2.2, s * 0.5, s * 2.2); cx.beginPath(); cx.moveTo(sp.x - s * 0.8, sp.y - s * 2.2); cx.lineTo(sp.x + s * 0.8, sp.y - s * 2.2); cx.lineTo(sp.x, sp.y - s * 3.4); cx.closePath(); cx.fill(); cx.stroke();
+        }
+        if (a.light && !occ) { cx.beginPath(); cx.arc(sp.x, sp.y - s * 2.6, s * 0.45, 0, Math.PI * 2); cx.fillStyle = a.light.colour; cx.fill(); cx.strokeStyle = "rgba(0,0,0,.6)"; cx.stroke(); }
+        this.hits.push({ x: sp.x, y: sp.y - s, r: s + 10, a });
+        // label: short name (drop the "Lighted Buoy" boilerplate) + light character, only when close enough
+        if (d < this.atonRangeM * 0.7) {
+          const name = a.name ? a.name.replace(/\s*(Lighted\s+)?(Buoy|Light|Daybeacon|Beacon)\s*/i, " ").replace(/\s+/g, " ").trim() : a.kindName;
+          const text = a.light ? `${name} · ${a.light.character}` : name;
+          const w = cx.measureText(text).width + 10, h = fs + 8;
+          let y = sp.y - s * 3.6 - 4, tries = 0;
+          while (tries++ < 6 && placed.some((p) => Math.abs(p.x - sp.x) < (p.w + w) / 2 && Math.abs(p.y - y) < h)) y -= h + 2;
+          placed.push({ x: sp.x, y, w });
+          cx.fillStyle = "rgba(6,14,24,.6)"; roundRect(cx, sp.x - w / 2, y - h, w, h, 4); cx.fill();
+          cx.fillStyle = occ ? "rgba(255,255,255,.7)" : col; cx.fillText(text, sp.x, y - 4);
+        }
+        cx.globalAlpha = 1;
+      }
+    },
+
+    showAtonInfo(a) {
+      this.selected = null;
+      $("iDot").style.setProperty("--c", a.color);
+      $("iName").textContent = a.name || a.kindName;
+      $("iType").textContent = [a.kindName, a.lateral, a.shape].filter(Boolean).join(" · ");
+      const d = Geo.haversine(this.lat, this.lon, a.lat, a.lon), b = Geo.bearing(this.lat, this.lon, a.lat, a.lon);
+      const names = { 1: "white", 2: "black", 3: "red", 4: "green", 5: "blue", 6: "yellow", 7: "grey", 8: "brown", 9: "amber", 10: "violet", 11: "orange", 12: "magenta", 13: "pink" };
+      const rows = [
+        ["Range · bearing", `${this.fmtD(d)} · ${Geo.fmtBearing(b)}`],
+        ["Colour", a.colours.map((c) => names[c]).join(" / ") || null],
+        ["Light", a.light ? a.light.character : null],
+        ["Light height", a.light && a.light.heightM != null ? a.light.heightM.toFixed(1) + " m" : null],
+        ["Nominal range", a.light && a.light.rangeNM != null ? a.light.rangeNM + " NM" : null],
+        ["Sector", a.light && a.light.sector ? `${a.light.sector[0]}° – ${a.light.sector[1]}°` : null],
+        ["Note", a.inform],
+        ["Line of sight", a.occluded ? `behind land, shore at ${this.fmtD(a.occluded.distanceM)}` : (this.occlude && this.land.length ? "clear" : null)],
+        ["Chart cell", a.cell],
+      ];
+      $("iRows").innerHTML = rows.filter(([, val]) => val != null && val !== "").map(([k, val]) => `<div class="ir"><span class="il">${k}</span><span class="iv">${esc(String(val))}</span></div>`).join("");
+      $("iLinks").innerHTML = `<a target="_blank" rel="noopener" href="https://www.google.com/maps?q=${a.lat.toFixed(5)},${a.lon.toFixed(5)}">Map</a>`;
+      $("info").classList.add("vis");
     },
 
     drawVessels() {
@@ -718,6 +813,11 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
         if (l.ring) { rx.closePath(); if (st.fill) { rx.fillStyle = st.fill; rx.fill(); } }
         rx.strokeStyle = hexA(st.stroke, 0.7); rx.lineWidth = 1; rx.stroke();
       }
+      // aids to navigation
+      if (this.showAton) for (const a of this.aton) {
+        const [x, y] = toXY(a.lat, a.lon); if (Math.hypot(x, y) > R) continue;
+        rx.fillStyle = a.color; rx.globalAlpha = a.occluded ? 0.4 : 0.9; rx.beginPath(); rx.moveTo(x, y - 3); rx.lineTo(x + 2.5, y + 2); rx.lineTo(x - 2.5, y + 2); rx.closePath(); rx.fill(); rx.globalAlpha = 1;
+      }
       // vessels
       for (const v of this.vessels) {
         const [x, y] = toXY(v.drLat, v.drLon); if (Math.hypot(x, y) > R) continue;
@@ -759,6 +859,11 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       else if (this.landLoading) { ld.textContent = "LAND loading"; ld.className = "chip warn"; }
       else if (this.landError) { ld.textContent = "LAND error"; ld.className = "chip bad"; ld.title = this.landError; }
       else { const occ = this.vessels.filter((v) => v.occluded).length; ld.textContent = this.land.length ? `LAND ${this.land.length} rings · ${occ} hidden` : "LAND none charted"; ld.className = "chip " + (this.land.length ? "ok" : ""); }
+      const at = $("chipAton");
+      if (!this.showAton) { at.textContent = "ATON off"; at.className = "chip"; }
+      else if (this.atonLoading) { at.textContent = "ATON loading"; at.className = "chip warn"; }
+      else if (this.atonError) { at.textContent = "ATON error"; at.className = "chip bad"; at.title = this.atonError; }
+      else { at.textContent = this.aton.length ? `ATON ${this.aton.length}` : "ATON none charted"; at.className = "chip " + (this.aton.length ? "ok" : ""); }
       const l = $("chipLanes");
       if (this.lanesLoading) { l.textContent = "LANES loading"; l.className = "chip warn"; }
       else if (this.lanesError) { l.textContent = "LANES error"; l.className = "chip bad"; l.title = this.lanesError; }
@@ -782,7 +887,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
         ["Destination", v.destination || null],
         ["CPA · TCPA", c.stationary ? null : `${this.fmtD(c.cpaM)} · ${c.tcpaSec > 0 ? "in " + Geo.fmtDuration(c.tcpaSec) : "opening"}`],
         ["In lane", (() => { const l = Providers.laneAt(v.drLat, v.drLon, this.lanes); return l ? (l.kind === "lane" ? `${Geo.cardinal(l.orient)}-bound lane` : l.style.label) : "no"; })()],
-        ["Line of sight", v.occluded ? `behind land, shore at ${this.fmtD(v.occluded.distanceM)}` : (this.occlude && this.land.length ? "clear" : null)],
+        ["Line of sight", v.occluded ? `behind land, shore at ${this.fmtD(v.occluded.distanceM)}` + (v.occluded.opaque ? " (height uncharted)" : ` (${Math.round(v.occluded.elevM)} m high)`) : (this.occlude && this.land.length ? "clear" : null)],
         ["Last report", `${Math.round(v.ageSec)} s ago` + (v.posAcc ? " · DGPS" : "")],
       ];
       $("iRows").innerHTML = rows.filter(([, val]) => val != null && val !== "").map(([k, val]) => `<div class="ir"><span class="il">${k}</span><span class="iv">${esc(String(val))}</span></div>`).join("");

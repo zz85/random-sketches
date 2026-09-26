@@ -402,31 +402,78 @@
   }
 
   /**
-   * Line-of-sight test across land polygons. `land` is [{ring, bbox}]. Returns
-   * null when the view is clear, otherwise {t, distanceM} of the first point
-   * where the sight line from the viewer enters land.
+   * Line-of-sight test across land polygons. `land` is [{ring, bbox, elev?}]
+   * where `elev` is the land's height in metres when charted (ENC LNDELV spot
+   * heights), else null. Returns null when the view is clear, otherwise
+   * {t, distanceM, elevM, opaque} for the first stretch of land that blocks.
+   *
+   * `opts` (or a bare number = graceM for the map-plane test):
+   *   graceM       crossings closer than this are ignored (default 60)
+   *   eyeM         viewer eye height above the sea. With targetM, enables the
+   *   targetM      elevation test: the sight line from eye to target top is
+   *                compared with the land height over each stretch it crosses,
+   *                earth curvature included. Land with no charted height is
+   *                treated as `unknownElevM` high, or opaque when that is null.
+   *   unknownElevM see above (default null = opaque)
+   *   spots        optional [{lat, lon, elev}] spot heights; used for rings
+   *                without their own `elev`, within 800 m of the entry point
    *
    * Standing on land yourself (a pier, a beach, a bluff) is tolerated: for a
    * ring that contains the viewer the first crossing is the shore in front of
-   * you, not an obstacle, and any crossing within `graceM` of the viewer is
-   * ignored (GPS error, charted shoreline generalisation).
+   * you, not an obstacle. Likewise a target on land (a lighthouse) is not
+   * hidden by the shore it stands on.
    */
-  function landOcclusion(lat0, lon0, lat, lon, land, graceM) {
-    graceM = graceM == null ? 60 : graceM;
+  function landOcclusion(lat0, lon0, lat, lon, land, opts) {
+    if (typeof opts === "number" || opts == null) opts = { graceM: opts };
+    const graceM = opts.graceM == null ? 60 : opts.graceM;
     const total = haversine(lat0, lon0, lat, lon);
     if (total <= graceM) return null;
+    const elevAware = opts.eyeM != null && opts.targetM != null;
+    // straight-line height above the sea at fraction t, in a frame where the
+    // viewer's tangent plane is level and everything else drops with curvature
+    const drop = (d) => d * d / (2 * R) * 0.86;
+    const los = (t) => opts.eyeM + (opts.targetM - drop(total) - opts.eyeM) * t;
     let best = null;
     for (const L of land) {
       const ts = ringCrossings(lon0, lat0, lon, lat, L.ring, L.bbox);
       if (ts.length === 0) continue;
-      const skip = pointInRing(lat0, lon0, L.ring) ? 1 : 0;
-      for (let i = skip; i < ts.length; i++) {
-        if (ts[i] * total < graceM) continue;
-        if (best == null || ts[i] < best) best = ts[i];
-        break;
+      let i = pointInRing(lat0, lon0, L.ring) ? 1 : 0;
+      // a target standing on land (a lighthouse, a beacon on a pier) makes the
+      // last crossing of its own ring the shore in front of it, not an obstacle
+      const targetInside = pointInRing(lat, lon, L.ring);
+      const last = targetInside ? ts.length - 1 : ts.length;
+      for (; i < last; i += 2) {
+        const tin = ts[i], tout = ts[i + 1] == null || i + 1 >= last ? 1 : ts[i + 1];
+        if (tin * total < graceM) continue;
+        if (best != null && tin >= best.t) break;
+        if (!elevAware) { best = { t: tin, opaque: true }; break; }
+        let elev = L.elev;
+        if (elev == null && opts.spots) {
+          const pe = { lat: lat0 + (lat - lat0) * tin, lon: lon0 + (lon - lon0) * tin };
+          for (const sp of opts.spots) { if (haversine(pe.lat, pe.lon, sp.lat, sp.lon) < 800 && (elev == null || sp.elev > elev)) elev = sp.elev; }
+        }
+        if (elev == null) elev = opts.unknownElevM;
+        if (elev == null) { best = { t: tin, opaque: true }; break; }
+        // conservative: the land is assumed `elev` high over the whole stretch, so
+        // compare against the lowest the sight line gets across it
+        const lowestLos = Math.min(los(tin) + drop(tin * total), los(tout) + drop(tout * total));
+        if (elev > lowestLos) { best = { t: tin, elevM: elev, opaque: false }; break; }
       }
     }
-    return best == null ? null : { t: best, distanceM: best * total };
+    if (best == null) return null;
+    best.distanceM = best.t * total;
+    return best;
+  }
+
+  /**
+   * Rough height of a vessel's highest structure above the waterline, from
+   * AIS length and type. Cruise ships and ferries are tall for their length;
+   * bulkers and tankers are low. Used as the occlusion target height.
+   */
+  function estimateAirDraught(lengthM, category) {
+    if (!lengthM || !isFinite(lengthM)) return 5;
+    const f = category === "passenger" || category === "hsc" ? 0.2 : category === "pleasure" ? 0.4 : category === "tug" || category === "fishing" ? 0.25 : 0.12;
+    return Math.max(4, Math.min(70, lengthM * f));
   }
 
   // ---- compass / formatting -----------------------------------------------
@@ -458,7 +505,7 @@
     ringBBox, ringCentroid, outerRing, pointInRing, distanceToRing,
     horizonDip, horizonDistance, seaPitch, Camera,
     hullFootprint, deadReckon, cpa, velocity, laneArrows,
-    segmentsCross, ringCrossings, landOcclusion,
+    segmentsCross, ringCrossings, landOcclusion, estimateAirDraught,
     smoothHeading, cardinal, fmtDistance, fmtSpeed, fmtBearing, fmtDuration,
   };
 }));

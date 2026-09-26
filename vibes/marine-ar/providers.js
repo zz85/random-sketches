@@ -167,7 +167,7 @@
   // ---- NOAA ENC Direct: land (LNDARE) for line-of-sight occlusion ---------------
 
   /** Land_Area polygon layers, verified against the MapServer JSON (Sep 2026). */
-  const LAND_LAYERS = { harbour: { service: "enc_harbour", land: 233 }, coastal: { service: "enc_coastal", land: 171 } };
+  const LAND_LAYERS = { harbour: { service: "enc_harbour", land: 233, elev: 39 }, coastal: { service: "enc_coastal", land: 171, elev: 36 } };
 
   /**
    * Land polygons around the viewer, as [{ring, bbox, name}]. Every ring is kept
@@ -188,9 +188,39 @@
       const d = await arcgisQuery(`${ENC_DIRECT}/${L.service}/MapServer/${L.land}/query`, p, fetchImpl);
       return { land: normalizeLand(d.features || [], scale), exceeded: !!d.exceededTransferLimit };
     };
-    let r = await query("harbour");
-    if (r.land.length === 0) r = await query("coastal");
+    // LNDELV spot heights (both scales; sparse, so take everything) alongside
+    const elevQuery = (scale) => {
+      const L = LAND_LAYERS[scale];
+      return arcgisQuery(`${ENC_DIRECT}/${L.service}/MapServer/${L.elev}/query`, envelopeParams(bbox, ["ELEVAT", "OBJNAM"], true), fetchImpl)
+        .then((d) => (d.features || []).filter((f) => f.geometry && f.attributes && f.attributes.ELEVAT != null)
+          .map((f) => ({ lat: f.geometry.y, lon: f.geometry.x, elev: Number(f.attributes.ELEVAT), name: clean(f.attributes.OBJNAM) || null })))
+        .catch((e) => { console.warn("lndelv", scale, e.message); return []; });
+    };
+    const [rh, spotsH, spotsC] = await Promise.all([query("harbour"), elevQuery("harbour"), elevQuery("coastal")]);
+    const r = rh.land.length ? rh : await query("coastal");
+    r.spots = dedupeSpots(spotsH.concat(spotsC));
+    attachElevations(r.land, r.spots);
     return r;
+  }
+
+  function dedupeSpots(spots) {
+    const seen = new Set(), out = [];
+    for (const sp of spots) { const k = sp.lat.toFixed(4) + "," + sp.lon.toFixed(4); if (seen.has(k)) continue; seen.add(k); out.push(sp); }
+    return out;
+  }
+
+  /** ring.elev = highest charted spot height inside the ring (null when none). */
+  function attachElevations(land, spots) {
+    for (const L of land) {
+      let e = null;
+      for (const sp of spots) {
+        const [w, s, ee, n] = L.bbox;
+        if (sp.lon < w || sp.lon > ee || sp.lat < s || sp.lat > n) continue;
+        if (Geo.pointInRing(sp.lat, sp.lon, L.ring) && (e == null || sp.elev > e)) e = sp.elev;
+      }
+      L.elev = e;
+    }
+    return land;
   }
 
   function normalizeLand(features, scale) {
@@ -212,7 +242,7 @@
       this.storage = (opts && opts.storage) || null;
       this.ttlMs = (opts && opts.ttlMs) || 30 * 24 * 3600e3;
       this.key = (opts && opts.key) || "marine-ar:land";
-      this.center = null; this.radius = 0; this.at = 0; this.land = [];
+      this.center = null; this.radius = 0; this.at = 0; this.land = []; this.spots = [];
       this._load();
     }
     _load() {
@@ -220,12 +250,12 @@
       try {
         const d = JSON.parse(this.storage.getItem(this.key) || "null");
         if (!d || Date.now() - d.at > this.ttlMs) return;
-        Object.assign(this, { center: d.center, radius: d.radius, at: d.at, land: d.land || [] });
+        Object.assign(this, { center: d.center, radius: d.radius, at: d.at, land: d.land || [], spots: d.spots || [] });
       } catch (e) { /* ignore */ }
     }
     _save() {
       if (!this.storage) return;
-      try { this.storage.setItem(this.key, JSON.stringify({ center: this.center, radius: this.radius, at: this.at, land: this.land })); }
+      try { this.storage.setItem(this.key, JSON.stringify({ center: this.center, radius: this.radius, at: this.at, land: this.land, spots: this.spots })); }
       catch (e) { /* quota: land can exceed 5 MB on busy coasts; fine, refetch next time */ }
     }
     needsFetch(lat, lon, radiusM) {
@@ -233,8 +263,131 @@
       if (radiusM > this.radius * 1.05) return true;
       return Geo.haversine(lat, lon, this.center.lat, this.center.lon) > this.radius * 0.4;
     }
-    set(lat, lon, radiusM, land) { this.center = { lat, lon }; this.radius = radiusM; this.at = Date.now(); this.land = land; this._save(); }
-    clear() { this.center = null; this.land = []; if (this.storage) try { this.storage.removeItem(this.key); } catch (e) { /* */ } }
+    set(lat, lon, radiusM, land, spots) { this.center = { lat, lon }; this.radius = radiusM; this.at = Date.now(); this.land = land; this.spots = spots || []; this._save(); }
+    clear() { this.center = null; this.land = []; this.spots = []; if (this.storage) try { this.storage.removeItem(this.key); } catch (e) { /* */ } }
+  }
+
+  // ---- NOAA ENC Direct: aids to navigation ------------------------------------------
+
+  /**
+   * Point layers for buoys, beacons, daymarks and lights, verified against the
+   * MapServer JSON (Sep 2026). S-57 acronyms in the key. A light (LIGHTS) is a
+   * separate object sitting on the same point as its buoy or beacon, so
+   * fetchAton merges lights onto structures by position.
+   */
+  const ATON_LAYERS = {
+    harbour: { service: "enc_harbour", BCNLAT: 1, BCNSAW: 2, BCNSPP: 3, BOYCAR: 4, BOYISD: 5, BOYLAT: 6, BOYSAW: 7, BOYSPP: 8, DAYMAR: 9, LIGHTS: 11, LITFLT: 12 },
+    coastal: { service: "enc_coastal", BCNLAT: 1, BCNSAW: 2, BCNSPP: 3, BOYISD: 4, BOYLAT: 5, BOYSAW: 6, BOYSPP: 7, DAYMAR: 8, LIGHTS: 10, LITFLT: 11 },
+  };
+  const ATON_KIND = {
+    BCNLAT: "Lateral beacon", BCNSAW: "Safe water beacon", BCNSPP: "Special purpose beacon", BOYCAR: "Cardinal buoy", BOYISD: "Isolated danger buoy",
+    BOYLAT: "Lateral buoy", BOYSAW: "Safe water buoy", BOYSPP: "Special purpose buoy", DAYMAR: "Daymark", LIGHTS: "Light", LITFLT: "Light float",
+  };
+  /** S-57 COLOUR codes -> css. */
+  const S57_COLOUR = { 1: "#ffffff", 2: "#222222", 3: "#ff3b3b", 4: "#31d158", 5: "#3a7bff", 6: "#ffd60a", 7: "#9a9a9a", 8: "#8b5a2b", 9: "#ffb020", 10: "#b46cff", 11: "#ff8c1a", 12: "#ff3fd0", 13: "#ff9ec8" };
+  const S57_COLOUR_NAME = { 1: "W", 2: "B", 3: "R", 4: "G", 5: "Bu", 6: "Y", 7: "Gy", 8: "Br", 9: "Am", 10: "Vi", 11: "Or", 12: "Mg", 13: "Pk" };
+  /** S-57 LITCHR codes -> IHO abbreviation. */
+  const LITCHR = { 1: "F", 2: "Fl", 3: "LFl", 4: "Q", 5: "VQ", 6: "UQ", 7: "Iso", 8: "Oc", 9: "IQ", 10: "IVQ", 11: "IUQ", 12: "Mo", 13: "FFl", 14: "FlLFl", 15: "OcFl", 16: "FLFl", 17: "OcAlt", 18: "LFlAlt", 19: "AlFl", 20: "AlFF", 25: "Q+LFl", 26: "VQ+LFl", 27: "UQ+LFl", 28: "Al", 29: "AlFFl" };
+  const CATLAM = { 1: "port hand", 2: "starboard hand", 3: "preferred channel to starboard", 4: "preferred channel to port" };
+
+  /** "Fl G 4s 5M" from a LIGHTS record. */
+  function lightCharacter(a) {
+    const chr = LITCHR[a.LITCHR] || "";
+    const col = String(a.COLOUR || "").split(",").map((c) => S57_COLOUR_NAME[Number(c)] || "").filter(Boolean).join("");
+    const grp = a.SIGGRP && a.SIGGRP !== "(1)" ? a.SIGGRP : "";
+    const per = a.SIGPER != null && isFinite(a.SIGPER) ? `${Number(a.SIGPER)}s` : "";
+    const rng = a.VALNMR != null && isFinite(a.VALNMR) ? `${Number(a.VALNMR)}M` : "";
+    return [chr + grp, col, per, rng].filter(Boolean).join(" ");
+  }
+
+  function normalizeAton(feature, kind, scale) {
+    const a = feature.attributes || {}, g = feature.geometry;
+    if (!g || g.x == null) return null;
+    const colours = String(a.COLOUR || "").split(",").map((c) => Number(c)).filter((c) => S57_COLOUR[c]);
+    return {
+      id: `${scale}:${kind}:${a.OBJECTID}`, kind, kindName: ATON_KIND[kind], scale,
+      lat: g.y, lon: g.x,
+      name: clean(a.OBJNAM) || null,
+      colours, color: colours.length ? S57_COLOUR[colours[0]] : "#ffd60a",
+      shape: clean(a.BOYSHP || a.BCNSHP) || null,
+      lateral: a.CATLAM != null ? CATLAM[Number(a.CATLAM)] || null : null,
+      heightM: a.HEIGHT != null ? Number(a.HEIGHT) : (a.VERLEN != null ? Number(a.VERLEN) : null),
+      inform: clean(a.INFORM) || null,
+      cell: clean(a.DSNM) || null,
+      light: kind === "LIGHTS" || kind === "LITFLT" ? { character: lightCharacter(a), colour: colours.length ? S57_COLOUR[colours[0]] : "#ffffff", heightM: a.HEIGHT != null ? Number(a.HEIGHT) : null, rangeNM: a.VALNMR != null ? Number(a.VALNMR) : null, sector: a.SECTR1 != null ? [Number(a.SECTR1), Number(a.SECTR2)] : null } : null,
+    };
+  }
+
+  /**
+   * Buoys, beacons, daymarks and lights within radiusM. Lights are merged onto
+   * the structure at the same position (within ~3 m); a light with no structure
+   * (a lighthouse charted as LIGHTS on a LNDMRK, a pier light) stays as its own
+   * "Light" entry. Harbour scale wins over coastal at the same position.
+   */
+  async function fetchAton(lat, lon, radiusM, fetchImpl, opts) {
+    const bbox = bboxAround(lat, lon, radiusM);
+    const tasksFor = (scale) => {
+      const L = ATON_LAYERS[scale];
+      return Object.keys(L).filter((k) => k !== "service").map((kind) => () =>
+        arcgisQuery(`${ENC_DIRECT}/${L.service}/MapServer/${L[kind]}/query`, envelopeParams(bbox, ["*"], true), fetchImpl)
+          .then((d) => (d.features || []).map((f) => normalizeAton(f, kind, scale)).filter(Boolean))
+          .catch((e) => { console.warn("aton", scale, kind, e.message); return []; }));
+    };
+    // Browsers allow ~6 connections per host and every layer is its own request,
+    // so: harbour cells first (11 requests), coastal (10 more) only where no
+    // harbour cell charted anything, which is the open-water case.
+    const limit = (opts && opts.concurrency) || 6;
+    const harbour = (await runLimited(tasksFor("harbour"), limit)).flat();
+    if (harbour.length > 0 && !(opts && opts.coastal)) return mergeAton(harbour);
+    const coastal = (await runLimited(tasksFor("coastal"), limit)).flat();
+    return mergeAton(harbour.concat(coastal));
+  }
+
+  async function runLimited(tasks, limit) {
+    const results = new Array(tasks.length); let next = 0;
+    async function worker() { while (next < tasks.length) { const i = next++; results[i] = await tasks[i](); } }
+    await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, worker));
+    return results;
+  }
+
+  function mergeAton(items) {
+    const key = (a) => a.lat.toFixed(4) + "," + a.lon.toFixed(4);     // ~10 m
+    const byPos = new Map();
+    // structures first, harbour before coastal
+    const structures = items.filter((a) => !a.light).sort((a, b) => (a.scale === "harbour" ? 0 : 1) - (b.scale === "harbour" ? 0 : 1));
+    for (const a of structures) { const k = key(a); if (!byPos.has(k)) byPos.set(k, a); }
+    const lights = items.filter((a) => a.light).sort((a, b) => (a.scale === "harbour" ? 0 : 1) - (b.scale === "harbour" ? 0 : 1));
+    const loose = new Map();
+    for (const l of lights) {
+      const k = key(l), s = byPos.get(k);
+      if (s) { if (!s.light) { s.light = l.light; if (!s.name) s.name = l.name; if (s.heightM == null) s.heightM = l.light.heightM; } }
+      else if (!loose.has(k)) loose.set(k, l);
+    }
+    return [...byPos.values(), ...loose.values()];
+  }
+
+  /** Generic bbox-keyed cache for point sets (AtoN). */
+  class BoxStore {
+    constructor(opts) {
+      this.storage = (opts && opts.storage) || null;
+      this.ttlMs = (opts && opts.ttlMs) || 30 * 24 * 3600e3;
+      this.key = (opts && opts.key) || "marine-ar:box";
+      this.center = null; this.radius = 0; this.at = 0; this.items = [];
+      if (this.storage) try {
+        const d = JSON.parse(this.storage.getItem(this.key) || "null");
+        if (d && Date.now() - d.at <= this.ttlMs) Object.assign(this, { center: d.center, radius: d.radius, at: d.at, items: d.items || [] });
+      } catch (e) { /* ignore */ }
+    }
+    needsFetch(lat, lon, radiusM) {
+      if (!this.center || Date.now() - this.at > this.ttlMs) return true;
+      if (radiusM > this.radius * 1.05) return true;
+      return Geo.haversine(lat, lon, this.center.lat, this.center.lon) > this.radius * 0.4;
+    }
+    set(lat, lon, radiusM, items) {
+      this.center = { lat, lon }; this.radius = radiusM; this.at = Date.now(); this.items = items;
+      if (this.storage) try { this.storage.setItem(this.key, JSON.stringify({ center: this.center, radius: this.radius, at: this.at, items })); } catch (e) { /* quota */ }
+    }
+    clear() { this.center = null; this.items = []; if (this.storage) try { this.storage.removeItem(this.key); } catch (e) { /* */ } }
   }
 
   // ---- AIS code tables (ITU-R M.1371) -------------------------------------
@@ -561,7 +714,8 @@
 
   return {
     ENC_DIRECT, LANE_LAYERS, LANE_STYLE, envelopeParams, normalizeLane, bboxAround, fetchLanes, dedupeLanes, laneAt,
-    LAND_LAYERS, fetchLand, normalizeLand, LandStore,
+    LAND_LAYERS, fetchLand, normalizeLand, attachElevations, LandStore,
+    ATON_LAYERS, ATON_KIND, S57_COLOUR, LITCHR, lightCharacter, normalizeAton, fetchAton, mergeAton, BoxStore,
     NAV_STATUS, shipType, CATEGORY_COLOR, flagOf, VesselTable,
     ingestDigitrafficLocations, ingestDigitrafficVessel, restPoller, demoProvider, AIS_PROVIDERS, aisProviderFor,
     reverseGeocode, declination, LaneStore,

@@ -299,6 +299,14 @@ describe("Land occlusion (ENC LNDARE)", () => {
     expect(Geo.landOcclusion(bluff.lat, bluff.lon, MID_SOUND.lat, MID_SOUND.lon, land)).toBeNull();
     expect(Geo.landOcclusion(bluff.lat, bluff.lon, LAKE_UNION.lat, LAKE_UNION.lon, land)).not.toBeNull();
   });
+  test("a lighthouse on the shore is not hidden by its own shore", () => {
+    const wpLight = { lat: 47.66185, lon: -122.43508 };       // West Point Light, on the point
+    expect(land.some((L) => Geo.pointInRing(wpLight.lat, wpLight.lon, L.ring))).toBe(true);
+    const fromSea = Geo.destination(WEST_POINT.lat, WEST_POINT.lon, 270, 800);
+    expect(Geo.landOcclusion(fromSea.lat, fromSea.lon, wpLight.lat, wpLight.lon, land)).toBeNull();
+    // but a light in Lake Union is behind Queen Anne from the same spot
+    expect(Geo.landOcclusion(fromSea.lat, fromSea.lon, LAKE_UNION.lat, LAKE_UNION.lon, land)).not.toBeNull();
+  });
   test("targets closer than the grace distance are never occluded", () => {
     const near = Geo.destination(WEST_POINT.lat, WEST_POINT.lon, 100, 40);
     expect(Geo.landOcclusion(WEST_POINT.lat, WEST_POINT.lon, near.lat, near.lon, land)).toBeNull();
@@ -307,10 +315,109 @@ describe("Land occlusion (ENC LNDARE)", () => {
     const calls = [];
     const fetchImpl = async (url) => { calls.push(url); return { ok: true, json: async () => (url.includes("/233/") ? { features: [] } : landFixture) }; };
     const r = await P.fetchLand(WEST_POINT.lat, WEST_POINT.lon, 20000, fetchImpl);
-    expect(calls.length).toBe(2);
-    expect(calls[0]).toContain("enc_harbour/MapServer/233/query"); expect(calls[1]).toContain("enc_coastal/MapServer/171/query");
+    expect(calls.length).toBe(4);   // harbour land + harbour/coastal LNDELV, then coastal land fallback
+    expect(calls[0]).toContain("enc_harbour/MapServer/233/query"); expect(calls[3]).toContain("enc_coastal/MapServer/171/query");
+    expect(calls.some((u) => u.includes("enc_harbour/MapServer/39/query"))).toBe(true);
     expect(new URL(calls[0]).searchParams.get("maxAllowableOffset")).toMatch(/^0\.00027/);   // 30 m at 47.66N
     expect(r.land.length).toBe(land.length);
+  });
+});
+
+describe("Elevation-aware occlusion (ENC LNDELV)", () => {
+  // a 2 km long, 1 km wide island 3 km north of the viewer, on the way to a target 8 km north
+  const V = { lat: 47.5, lon: -122.5 };
+  const mk = (e, n) => { const p = Geo.fromENU(V.lat, V.lon, e, n); return [p.lon, p.lat]; };
+  const island = { ring: [mk(-500, 3000), mk(500, 3000), mk(500, 5000), mk(-500, 5000)] };
+  island.bbox = Geo.ringBBox(island.ring);
+  const T = Geo.fromENU(V.lat, V.lon, 0, 8000);
+
+  test("map-plane call (no heights) is unchanged: the island blocks", () => {
+    const o = Geo.landOcclusion(V.lat, V.lon, T.lat, T.lon, [island]);
+    expect(o).not.toBeNull(); expect(o.opaque).toBe(true); expect(o.distanceM).toBeCloseTo(3000, -1);
+  });
+  test("uncharted height is opaque by default, or assumed unknownElevM", () => {
+    expect(Geo.landOcclusion(V.lat, V.lon, T.lat, T.lon, [island], { eyeM: 2, targetM: 30 }).opaque).toBe(true);
+    // a 2 m sand spit: eye at 2 m, 30 m ship at 8 km -> line of sight is ~13 m up at 3 km, clear
+    expect(Geo.landOcclusion(V.lat, V.lon, T.lat, T.lon, [island], { eyeM: 2, targetM: 30, unknownElevM: 2 })).toBeNull();
+  });
+  test("a charted 20 m island hides a 5 m boat but not a 60 m cruise ship", () => {
+    const low = { ...island, elev: 20 };
+    const boat = Geo.landOcclusion(V.lat, V.lon, T.lat, T.lon, [low], { eyeM: 2, targetM: 5 });
+    expect(boat).not.toBeNull(); expect(boat.opaque).toBe(false); expect(boat.elevM).toBe(20);
+    expect(Geo.landOcclusion(V.lat, V.lon, T.lat, T.lon, [low], { eyeM: 2, targetM: 60 })).toBeNull();
+  });
+  test("a viewer on a 100 m bluff sees over a 20 m island", () => {
+    const low = { ...island, elev: 20 };
+    expect(Geo.landOcclusion(V.lat, V.lon, T.lat, T.lon, [low], { eyeM: 100, targetM: 5 })).toBeNull();
+    // but not over a 90 m one (line of sight is ~40 m up at the island's far side)
+    expect(Geo.landOcclusion(V.lat, V.lon, T.lat, T.lon, [{ ...island, elev: 90 }], { eyeM: 100, targetM: 5 })).not.toBeNull();
+  });
+  test("spot heights near the entry point stand in for a ring without elev", () => {
+    const spots = [{ lat: island.ring[0][1], lon: island.ring[0][0], elev: 150 }];
+    const o = Geo.landOcclusion(V.lat, V.lon, T.lat, T.lon, [island], { eyeM: 2, targetM: 60, unknownElevM: 2, spots });
+    expect(o).not.toBeNull(); expect(o.elevM).toBe(150);
+  });
+  test("curvature: a 20 km sight line to a 10 m target from 2 m is blocked by an 8 m islet at 15 km", () => {
+    const far = Geo.fromENU(V.lat, V.lon, 0, 20000);
+    const islet = { ring: [mk(-200, 15000), mk(200, 15000), mk(200, 15400), mk(-200, 15400)], elev: 8 };
+    islet.bbox = Geo.ringBBox(islet.ring);
+    // flat earth would clear this (los ≈ 8 m at 15 km); the 15 m curvature drop does not
+    expect(Geo.landOcclusion(V.lat, V.lon, far.lat, far.lon, [islet], { eyeM: 2, targetM: 10 })).not.toBeNull();
+  });
+  test("estimateAirDraught", () => {
+    expect(Geo.estimateAirDraught(300, "passenger")).toBe(60);
+    expect(Geo.estimateAirDraught(300, "cargo")).toBe(36);
+    expect(Geo.estimateAirDraught(null)).toBe(5);
+    expect(Geo.estimateAirDraught(12, "pleasure")).toBeCloseTo(4.8, 5);
+  });
+  test("attachElevations puts Puget Sound spot heights on their rings", () => {
+    const land = P.normalizeLand(require("./fixture_land.json").features, "harbour");
+    const spots = require("./fixture_lndelv.json").features.map((f) => ({ lat: f.geometry.y, lon: f.geometry.x, elev: f.attributes.ELEVAT }));
+    expect(spots.length).toBe(70);
+    P.attachElevations(land, spots);
+    // the West Point fixture box holds no LNDELV spot heights (Seattle cells chart none), so every ring stays unknown
+    expect(land.every((L) => L.elev == null)).toBe(true);
+    // a synthetic ring around the 150 m hill at 47.38N picks it up
+    const hill = { ring: [[-122.42, 47.37], [-122.40, 47.37], [-122.40, 47.39], [-122.42, 47.39]] }; hill.bbox = Geo.ringBBox(hill.ring);
+    P.attachElevations([hill], spots);
+    expect(hill.elev).toBe(150);
+  });
+});
+
+describe("Aids to navigation (ENC Direct)", () => {
+  const lights = require("./fixture_aton_lights.json").features.map((f) => P.normalizeAton(f, "LIGHTS", "harbour"));
+  const boys = require("./fixture_aton_boylat.json").features.map((f) => P.normalizeAton(f, "BOYLAT", "harbour"));
+  const bcns = require("./fixture_aton_bcnlat.json").features.map((f) => P.normalizeAton(f, "BCNLAT", "harbour"));
+  test("normalizes buoys with colour, shape and lateral meaning", () => {
+    const wp = boys.find((b) => /West Point Lighted Buoy 1/.test(b.name));
+    expect(wp).toBeDefined(); expect(wp.color).toBe("#31d158"); expect(wp.shape).toBe("pillar"); expect(wp.lateral).toBe("port hand");
+    expect(Geo.haversine(wp.lat, wp.lon, WEST_POINT.lat, WEST_POINT.lon)).toBeLessThan(60);
+  });
+  test("light characters read like the chart", () => {
+    const c = lights.map((l) => l.light.character);
+    expect(c).toContain("Fl R 4s 4M");
+    expect(c).toContain("Fl(5) Y 20s");
+  });
+  test("mergeAton puts lights on their structures and keeps loose lights", () => {
+    const all = P.mergeAton([...boys, ...bcns, ...lights]);
+    const shil = all.find((a) => a.name === "Shilshole Bay Light 8");
+    expect(shil.kind).toBe("BCNLAT"); expect(shil.light.character).toBe("Fl R 4s 4M"); expect(shil.heightM).toBeCloseTo(4.6, 5);
+    const loose = all.filter((a) => a.kind === "LIGHTS");
+    expect(loose.length).toBeGreaterThan(0); expect(loose.length).toBeLessThan(lights.length);
+    // overlapping cells chart the same buoy twice; one per position survives
+    const positions = (xs) => new Set(xs.map((a) => a.lat.toFixed(4) + "," + a.lon.toFixed(4))).size;
+    expect(all.filter((a) => a.kind === "BOYLAT").length).toBe(positions(boys));
+    expect(positions(boys)).toBeLessThan(boys.length);
+  });
+  test("fetchAton queries every harbour + coastal point layer", async () => {
+    const calls = [];
+    const fetchImpl = async (url) => { calls.push(url); return { ok: true, json: async () => (url.includes("enc_harbour/MapServer/11/") ? require("./fixture_aton_lights.json") : { features: [] }) }; };
+    const r = await P.fetchAton(WEST_POINT.lat, WEST_POINT.lon, 5000, fetchImpl);
+    expect(calls.length).toBe(11);                                   // harbour answered, coastal skipped
+    expect(calls.every((u) => u.includes("enc_harbour/"))).toBe(true);
+    const empty = []; await P.fetchAton(WEST_POINT.lat, WEST_POINT.lon, 5000, async (u) => { empty.push(u); return { ok: true, json: async () => ({ features: [] }) }; });
+    expect(empty.length).toBe(21);                                   // nothing at harbour scale -> coastal too
+    expect(r.length).toBe(new Set(lights.map((a) => a.lat.toFixed(4) + "," + a.lon.toFixed(4))).size);
   });
 });
 
