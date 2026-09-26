@@ -172,6 +172,58 @@
     return { lat, lon };
   }
 
+  // ---- planar frame: the per-frame hot path ---------------------------------
+  //
+  // Trig per vertex per frame is what burns the CPU. Instead each parcel ring is
+  // converted ONCE to metres in a local equirectangular frame around an origin
+  // (a fixed reference near the viewer; error < 0.1% within 5 km), and every
+  // view computation after that is a subtraction, a hypot and an atan2.
+
+  /** Build a frame: {lat0, lon0, mpd} and a converter to metres. */
+  function frame(lat0, lon0) {
+    const mpd = metresPerDegree(lat0);
+    return { lat0, lon0, mpd, toXY: (lon, lat) => [(lon - lon0) * mpd.lon, (lat - lat0) * mpd.lat] };
+  }
+
+  /**
+   * Decimate a metric ring for drawing: drop vertices closer than `tol` metres
+   * to the chord of their neighbours (a one-pass Visvalingam-lite). Keeps at
+   * least a triangle. Cadastral rings carry curb arcs at 10–30 cm spacing that
+   * are invisible at AR scale.
+   */
+  function decimate(xy, tol) {
+    if (xy.length <= 4) return xy;
+    const out = [xy[0]];
+    for (let i = 1; i < xy.length - 1; i++) {
+      const a = out[out.length - 1], b = xy[i], c = xy[i + 1];
+      const abx = c[0] - a[0], aby = c[1] - a[1], L = Math.hypot(abx, aby) || 1e-9;
+      const dist = Math.abs(abx * (a[1] - b[1]) - (a[0] - b[0]) * aby) / L;
+      if (dist >= tol) out.push(b);
+    }
+    out.push(xy[xy.length - 1]);
+    return out.length >= 3 ? out : xy;
+  }
+
+  /**
+   * Same result as parcelView(), from a planar ring: bearing/distance to the
+   * centroid, nearest vertex, angular span, inside test, plus the bearing of the
+   * span edges so a large parcel can anchor its label where you are looking.
+   */
+  function parcelViewXY(vx, vy, xy, cx, cy) {
+    const dx = cx - vx, dy = cy - vy;
+    const brg = wrap360(Math.atan2(dx, dy) * R2D);
+    let minD = Infinity, lo = 0, hi = 0, inside = false;
+    for (let i = 0, j = xy.length - 1; i < xy.length; j = i++) {
+      const [xi, yi] = xy[i], [xj, yj] = xy[j];
+      const ex = xi - vx, ey = yi - vy, d = Math.hypot(ex, ey);
+      if (d < minD) minD = d;
+      const off = angleDiff(Math.atan2(ex, ey) * R2D, brg);
+      if (off < lo) lo = off; if (off > hi) hi = off;
+      if ((yi > vy) !== (yj > vy) && vx < (xj - xi) * (vy - yi) / (yj - yi) + xi) inside = !inside;
+    }
+    return { bearing: brg, distance: Math.hypot(dx, dy), nearest: minD, spanDeg: Math.min(hi - lo, 359), spanLo: brg + lo, spanHi: brg + hi, inside };
+  }
+
   /**
    * Sutherland–Hodgman: clip a polygon [[x,y],...] against half-planes
    * {nx, ny, d} keeping points where nx*x + ny*y >= d. Returns [] when nothing is left.
@@ -204,7 +256,7 @@
   }
 
   return {
-    R, wrap360, clipPolygon, viewWedge, angleDiff, haversine, bearing, metresPerDegree,
+    R, wrap360, clipPolygon, viewWedge, frame, decimate, parcelViewXY, angleDiff, haversine, bearing, metresPerDegree,
     ringCentroid, outerRing, pointInRing, parcelView, project, pitchTo,
     smoothHeading, cardinal, fmtMoney, fmtDistance, mercToLatLon,
   };

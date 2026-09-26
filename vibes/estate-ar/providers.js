@@ -79,6 +79,7 @@
       attribution: "King County Assessor's Office, King County GIS Center",
       bbox: [-122.55, 47.26, -121.06, 47.78],   // [minLon, minLat, maxLon, maxLat]; King/Pierce line is ~47.255 at the Sound
       declination: 15.3,                        // deg east, Seattle 2026
+      fallback: "wastate",
       parcels: {
         url: "https://gismaps.kingcounty.gov/arcgis/rest/services/Property/KingCo_PropertyInfo/MapServer/2/query",
         outFields: ["PIN", "ADDR_FULL", "CTYNAME", "ZIP5", "PREUSE_DESC", "KCA_ZONING", "PROPTYPE", "PROP_NAME", "PLAT_NAME", "APPRLNDVAL", "APPR_IMPR", "LOTSQFT", "KCA_ACRES"],
@@ -105,9 +106,12 @@
       attribution: "Snohomish County Assessor / Planning & Development Services",
       bbox: [-122.45, 47.78, -120.9, 48.30],
       declination: 15.4,
+      fallback: "wastate",
       parcels: {
         // The PDS "property report" service: cadastral parcels joined to assessor market values.
         url: "https://gis.snoco.org/scd/rest/services/MapService/pds_prop_report/MapServer/0/query",
+        paging: false,       // advancedQueryCapabilities.supportsPagination is false here
+        generalize: false,   // maxAllowableOffset makes this joined view return "Failed to execute query"; rings are decimated client-side instead
         outFields: [
           "GDBA.CADASTRAL__parcels.PARCEL_ID", "GDBA.CADASTRAL__parcels.SITUSLINE1", "GDBA.CADASTRAL__parcels.SITUSCITY", "GDBA.CADASTRAL__parcels.SITUSZIP",
           "GDBA.CADASTRAL__parcels.USECODE", "GDBA.CADASTRAL__parcels.MKLND", "GDBA.CADASTRAL__parcels.MKIMP", "GDBA.CADASTRAL__parcels.GIS_SQ_FT", "GDBA.CADASTRAL__parcels.GIS_ACRES",
@@ -162,7 +166,17 @@
 
   // ---- ArcGIS REST -------------------------------------------------------
 
-  function arcgisParams(lat, lon, radiusM, outFields, withGeometry) {
+  /**
+   * Geometry generalisation asked of the server, in degrees (~0.5 m). Parcel
+   * rings straight from the cadastre carry curb-return arcs at centimetre
+   * spacing; at AR scale nothing under half a metre is visible, and this cuts
+   * the payload by roughly two thirds (52 KB -> 18 KB gzipped for a 260 m
+   * circle in the U-District, 7000 -> 1250 vertices).
+   */
+  const MAX_OFFSET_DEG = 0.000005;
+  const PAGE_LIMIT = 3;   // at most this many pages (x maxRecordCount features) per query
+
+  function arcgisParams(lat, lon, radiusM, outFields, withGeometry, offset, generalize) {
     const q = new URLSearchParams({
       geometry: `${lon.toFixed(6)},${lat.toFixed(6)}`,
       geometryType: "esriGeometryPoint",
@@ -173,17 +187,26 @@
       outFields: outFields.join(","),
       returnGeometry: withGeometry ? "true" : "false",
       outSR: "4326",
-      geometryPrecision: "6",
+      geometryPrecision: "5",
       f: "json",
     });
+    if (withGeometry && generalize !== false) q.set("maxAllowableOffset", String(MAX_OFFSET_DEG));
+    if (offset) q.set("resultOffset", String(offset));
     return q;
   }
+
+  /** Bytes received on the wire, approximated by response text length (UTF-8, almost all ASCII). Listeners get (bytes, url). */
+  const meter = { bytes: 0, listeners: [] };
+  function onBytes(fn) { meter.listeners.push(fn); }
+  function countBytes(n, url) { meter.bytes += n; for (const fn of meter.listeners) { try { fn(n, url); } catch (e) { /* */ } } }
 
   async function arcgisQuery(url, params, fetchImpl) {
     const f = fetchImpl || fetch;
     const res = await f(`${url}?${params}`, { headers: { Accept: "application/json" } });
     if (!res.ok) throw new Error(`ArcGIS HTTP ${res.status}`);
-    const data = await res.json();
+    const text = await res.text();
+    countBytes(text.length, url);
+    const data = JSON.parse(text);
     if (data.error) throw new Error(`ArcGIS ${data.error.code}: ${data.error.message}`);
     return data;
   }
@@ -237,6 +260,48 @@
     };
   }
 
+  /**
+   * Collapse parcels that share one footprint — condominium units, air-rights
+   * lots, parking stalls under a tower — into a single parcel so a large
+   * commercial building gets one label, not fifty. Footprints match when the
+   * centroids are within 1.5 m and the areas within 5%. The survivor keeps the
+   * summed value, a `units` list for the detail sheet, and the first address
+   * with the unit suffix stripped.
+   */
+  function groupStacked(parcels) {
+    const byKey = new Map();
+    for (const p of parcels) {
+      const c = p.centroid; if (!c) continue;
+      const key = `${Math.round(c.lat * 40000)}:${Math.round(c.lon * 40000)}`;   // ~2.5 m cells; neighbours checked below
+      let group = null;
+      for (const k of [key, ...neighbours(key)]) { const g = byKey.get(k); if (g && sameFootprint(g[0], p)) { group = g; break; } }
+      if (group) group.push(p); else byKey.set(key, [p]);
+    }
+    const out = [];
+    for (const g of byKey.values()) {
+      if (g.length === 1) { out.push(g[0]); continue; }
+      const base = g.reduce((a, b) => ((b.totalValue || 0) > (a.totalValue || 0) ? b : a), g[0]);
+      const merged = { ...base,
+        address: base.address ? base.address.replace(/\s+(UNIT|#|APT|STE|SUITE)\s*\S+$/i, "") : base.address,
+        landValue: g.reduce((s, p) => s + (p.landValue || 0), 0),
+        imprValue: g.reduce((s, p) => s + (p.imprValue || 0), 0),
+        units: g.map((p) => ({ id: p.id, address: p.address, use: p.use, totalValue: p.totalValue, lastSale: p.lastSale })).sort((a, b) => (b.totalValue || 0) - (a.totalValue || 0)),
+        sales: g.flatMap((p) => p.sales || []).sort((x, y) => (y.date || 0) - (x.date || 0)),
+      };
+      merged.totalValue = merged.landValue + merged.imprValue;
+      merged.lastSale = merged.sales.find((s) => s.price > 0) || null;
+      if (g.some((p) => p.propType === "K")) { merged.propType = "K"; merged.propTypeName = PROP_TYPES.K; }
+      out.push(merged);
+    }
+    return out;
+  }
+  function neighbours(key) { const [a, b] = key.split(":").map(Number); const n = []; for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) if (i || j) n.push(`${a + i}:${b + j}`); return n; }
+  function sameFootprint(a, b) {
+    if (Geo.haversine(a.centroid.lat, a.centroid.lon, b.centroid.lat, b.centroid.lon) > 1.5) return false;
+    const x = a.centroid.areaM2, y = b.centroid.areaM2;
+    return Math.abs(x - y) <= 0.05 * Math.max(x, y, 1);
+  }
+
   /** Attach sales to parcels by id, newest first. Zero-dollar transfers are kept but flagged. */
   function joinSales(parcels, sales) {
     const byId = new Map();
@@ -253,11 +318,20 @@
   }
 
   async function queryParcels(provider, lat, lon, radiusM, fetchImpl) {
-    const params = arcgisParams(lat, lon, radiusM, provider.parcels.outFields, true);
-    const data = await arcgisQuery(provider.parcels.url, params, fetchImpl);
     const out = [];
-    for (const f of data.features || []) { const p = normalizeParcel(f, provider); if (p) out.push(p); }
-    return { parcels: out, exceeded: !!data.exceededTransferLimit };
+    let offset = 0, exceeded = false, pages = 0;
+    // page through dense areas (downtown cores exceed 1000 parcels in 260 m) where the server supports it
+    for (;;) {
+      const params = arcgisParams(lat, lon, radiusM, provider.parcels.outFields, true, offset, provider.parcels.generalize);
+      const data = await arcgisQuery(provider.parcels.url, params, fetchImpl);
+      const feats = data.features || [];
+      for (const f of feats) { const p = normalizeParcel(f, provider); if (p) out.push(p); }
+      pages++;
+      exceeded = !!data.exceededTransferLimit;
+      if (!exceeded || provider.parcels.paging === false || pages >= PAGE_LIMIT || !feats.length) break;
+      offset += feats.length;
+    }
+    return { parcels: out, exceeded, pages };
   }
 
   async function querySales(provider, lat, lon, radiusM, fetchImpl) {
@@ -267,13 +341,22 @@
     return (data.features || []).map((f) => normalizeSale(f, provider));
   }
 
-  /** One round trip for the app: parcels + sales, joined. */
+  /**
+   * One round trip for the app: parcels + sales, joined. When a county's own
+   * server errors (Snohomish's joined view goes down for stretches), the
+   * statewide layer answers instead — coarser attributes, same footprints — and
+   * the result says which provider actually served it.
+   */
   async function fetchArea(provider, lat, lon, radiusM, fetchImpl) {
-    const [pr, sales] = await Promise.all([
-      queryParcels(provider, lat, lon, radiusM, fetchImpl),
-      querySales(provider, lat, lon, radiusM, fetchImpl).catch(() => []),
-    ]);
-    return { parcels: joinSales(pr.parcels, sales), exceeded: pr.exceeded, salesCount: sales.length };
+    let pr, used = provider;
+    try { pr = await queryParcels(provider, lat, lon, radiusM, fetchImpl); }
+    catch (e) {
+      const fb = provider.fallback && PROVIDERS[provider.fallback];
+      if (!fb) throw e;
+      pr = await queryParcels(fb, lat, lon, radiusM, fetchImpl); used = fb; pr.fellBackFrom = provider.id;
+    }
+    const sales = used.sales ? await querySales(used, lat, lon, radiusM, fetchImpl).catch(() => []) : [];
+    return { parcels: groupStacked(joinSales(pr.parcels, sales)), exceeded: pr.exceeded, pages: pr.pages, salesCount: sales.length, provider: used, fellBackFrom: pr.fellBackFrom || null };
   }
 
   // ---- Nominatim ---------------------------------------------------------
@@ -293,5 +376,5 @@
     };
   }
 
-  return { PROVIDERS, PROP_TYPES, WA_DOR_USE, dorType, typeFromUse, providerFor, arcgisParams, normalizeParcel, normalizeSale, joinSales, queryParcels, querySales, fetchArea, reverseGeocode };
+  return { PROVIDERS, PROP_TYPES, WA_DOR_USE, MAX_OFFSET_DEG, dorType, typeFromUse, providerFor, groupStacked, onBytes, meter, arcgisParams, normalizeParcel, normalizeSale, joinSales, queryParcels, querySales, fetchArea, reverseGeocode };
 }));

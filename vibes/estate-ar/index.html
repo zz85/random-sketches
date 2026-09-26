@@ -150,6 +150,7 @@
   <div class="row"><label>Radar shows offline coverage<small>Green = areas already cached; amber dots = being downloaded</small></label><input type="checkbox" class="sw" id="s-radarcov"></div>
   <div class="row"><label>Simulate location<small>Desktop testing: fixed position in the U-District, drag to look around, wheel to tilt</small></label><input type="checkbox" class="sw" id="s-sim"></div>
   <div class="row"><label>Offline cache<small id="cacheinfo">—</small></label></div>
+  <div class="row"><label>Daily data budget<small id="datainfo">Auto-precache stops at this; manual downloads warn</small></label><input type="range" id="s-dailyMB" min="5" max="200" step="5"><output id="o-dailyMB"></output></div>
   <div class="row"><label>Precache around me<small id="pre-est">Downloads every parcel within this distance so the whole neighbourhood works with no signal</small></label><input type="range" id="s-prearea" min="300" max="3000" step="100"><output id="o-prearea"></output></div>
   <canvas id="covmap" width="660" height="360" style="width:100%;height:180px;border-radius:12px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);margin-top:6px" aria-label="Offline coverage map"></canvas>
   <button class="primary" id="precache" style="margin-top:10px">Download neighbourhood</button>
@@ -185,7 +186,7 @@
   const D2R = Math.PI / 180;
 
   // ---- settings ----------------------------------------------------------
-  const DEFAULTS = { priceMode: "total", units: "imperial", radius: 220, maxdist: 200, maxlabels: 12, fov: 58, hoff: 0, decl: 15.3, ground: true, rooftop: true, osm: true, inside: false, priced: true, radarup: true, radarcov: true, groundcov: true, prearea: 1000, auto: "wifi", autoahead: 600, sim: false };
+  const DEFAULTS = { priceMode: "total", units: "imperial", radius: 220, maxdist: 200, maxlabels: 12, fov: 58, hoff: 0, decl: 15.3, ground: true, rooftop: true, osm: true, inside: false, priced: true, radarup: true, radarcov: true, groundcov: true, prearea: 1000, auto: "wifi", autoahead: 600, dailyMB: 25, sim: false };
   const S = Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem("estate-ar:settings") || "{}"));
   const saveS = () => localStorage.setItem("estate-ar:settings", JSON.stringify(S));
 
@@ -194,10 +195,14 @@
     lat: null, lon: null, acc: null, fixAt: 0,
     headingRaw: null, heading: null, pitch: 0, hasCompass: false, hasOrient: false, iOSCompass: false,
     provider: null, parcels: [], views: new Map(), fetching: false, lastFetchAt: 0, lastGeocodeAt: null, place: "",
-    selected: null, insideId: null, osmCount: 0, source: null, offlineGap: false, precache: null, camOK: false, w: innerWidth, h: innerHeight,
+    selected: null, insideId: null, osmCount: 0, source: null, offlineGap: false, precache: null, frame: null, parcelsVersion: 0, stream: null, suspended: false, lowPower: false, camOK: false, w: innerWidth, h: innerHeight,
     sim: { heading: 20, pitch: 0 },
   };
   const store = ParcelStore.open();
+  const dataMeter = new ParcelStore.DataMeter(localStorage);
+  Providers.onBytes((n) => dataMeter.add(n));
+  const dataMB = () => dataMeter.today() / 1048576;
+  const overBudget = () => dataMeter.over(S.dailyMB * 1048576);
   let lastLoadKey = "";
   const SIM = { lat: 47.6625, lon: -122.3145 };
 
@@ -224,8 +229,9 @@
   async function startCamera() {
     const v = $("cam");
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
-      v.srcObject = stream; await v.play().catch(() => {}); st.camOK = true;
+      // 720p is plenty for a background the labels sit on; 1080p costs measurably more battery on the ISP and compositor
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } }, audio: false });
+      v.srcObject = stream; await v.play().catch(() => {}); st.camOK = true; st.stream = stream;
     } catch (e) { v.classList.add("nocam"); toast("Camera unavailable — running without passthrough", true); }
   }
 
@@ -253,12 +259,36 @@
     if (typeof DeviceOrientationEvent !== "undefined" && typeof DeviceOrientationEvent.requestPermission === "function") {
       try { const r = await DeviceOrientationEvent.requestPermission(); if (r !== "granted") toast("Motion permission denied — use the simulate option"); } catch (e) { /* must be user gesture; we are in one */ }
     }
-    if ("ondeviceorientationabsolute" in window) window.addEventListener("deviceorientationabsolute", onOrient, true);
-    window.addEventListener("deviceorientation", onOrient, true);
+    listenOrientation(true);
   }
+  function listenOrientation(on) {
+    const m = on ? "addEventListener" : "removeEventListener";
+    if ("ondeviceorientationabsolute" in window) window[m]("deviceorientationabsolute", onOrient, true);
+    window[m]("deviceorientation", onOrient, true);
+  }
+  /**
+   * Background = nothing running. rAF stops on its own, but the camera, the GPS
+   * watch and the 60 Hz orientation stream do not; together they are most of the
+   * battery cost, so tear them down and bring them back on return.
+   */
+  function onVisibility() {
+    if (document.hidden) {
+      if (st.stream) for (const t of st.stream.getTracks()) t.enabled = false;
+      if (!S.sim) { stopGPS(); listenOrientation(false); }
+      st.suspended = true;
+    } else if (st.suspended) {
+      st.suspended = false;
+      if (st.stream) for (const t of st.stream.getTracks()) t.enabled = true;
+      if (!S.sim) { listenOrientation(true); startGPS(); }
+      dirty = true; maybeFetch();
+    }
+  }
+  let gpsWatch = null;
+  function stopGPS() { if (gpsWatch != null) { navigator.geolocation.clearWatch(gpsWatch); gpsWatch = null; } }
   function startGPS() {
     if (!navigator.geolocation) { toast("No geolocation in this browser"); return; }
-    navigator.geolocation.watchPosition((pos) => {
+    stopGPS();
+    gpsWatch = navigator.geolocation.watchPosition((pos) => {
       st.lat = pos.coords.latitude; st.lon = pos.coords.longitude; st.acc = pos.coords.accuracy; st.fixAt = Date.now();
       if (st.acc == null || st.acc < 60) track.push(st.lat, st.lon, st.fixAt);
       maybeFetch(); maybeGeocode(); maybeAutoPrecache();
@@ -317,6 +347,7 @@
       }
       $("refresh").classList.add("spin"); st.lastFetchAt = Date.now();
       const r = await Providers.fetchArea(prov, st.lat, st.lon, S.radius);
+      if (r.fellBackFrom) toast(`${prov.name} is not answering — showing the statewide parcel layer instead`, true);
       Heights.applyHeights(r.parcels, null);
       await store.put(st.lat, st.lon, S.radius, prov.id, r.parcels);
       st.offlineGap = false;
@@ -325,7 +356,9 @@
       setParcels(around.length >= r.parcels.length ? around : r.parcels, "network");
       lastLoadKey = `${prov.id}:${st.lat.toFixed(4)}:${st.lon.toFixed(4)}:${S.radius}`;
       const mine = st.parcels;
-      if (S.osm) Heights.fetchOsmHeights(st.lat, st.lon, S.radius).then(async (osm) => {
+      // Overpass is the least reliable and least essential call: skip it when this set already carries OSM heights
+      // (cached from before), when we are over budget, or on low battery
+      if (S.osm && !st.lowPower && !overBudget() && !mine.some((p) => p.heightSource === "osm")) Heights.fetchOsmHeights(st.lat, st.lon, S.radius).then(async (osm) => {
         if (st.parcels !== mine) return;
         Heights.applyHeights(mine, osm); await store.put(st.lat, st.lon, S.radius, prov.id, mine);
         st.osmCount = mine.filter((p) => p.heightSource === "osm").length;
@@ -336,8 +369,16 @@
   }
   function setParcels(list, source) {
     for (const p of list) if (p.height == null) Heights.applyHeights([p], null);
-    st.parcels = list; st.views.clear(); st.source = source;
+    // one-time conversion to a metric frame around the current position; everything per frame is then plain arithmetic
+    st.frame = Geo.frame(st.lat, st.lon);
+    for (const p of list) {
+      p.xy = p.ring.map(([lon, lat]) => st.frame.toXY(lon, lat));
+      p.xyDraw = Geo.decimate(p.xy, 0.4);                        // what the ground/radar strokes use
+      [p.cx, p.cy] = st.frame.toXY(p.centroid.lon, p.centroid.lat);
+    }
+    st.parcels = list; st.views.clear(); st.source = source; st.parcelsVersion++;
     st.osmCount = list.filter((p) => p.heightSource === "osm").length;
+    dirty = true;
   }
   async function maybeGeocode() {
     if (st.lat == null) return;
@@ -348,9 +389,13 @@
 
   // ---- per-frame geometry ------------------------------------------------
   function viewOf(p) {
-    // cache parcelView per parcel per GPS fix
+    // cache per parcel per GPS fix; the planar view is ~20x cheaper than the spherical one
     let v = st.views.get(p.id);
-    if (!v || v.fixAt !== st.fixAt) { v = Geo.parcelView(st.lat, st.lon, p.ring, p.centroid); v.fixAt = st.fixAt; st.views.set(p.id, v); }
+    if (!v || v.fixAt !== st.fixAt) {
+      if (!st.frame || !p.xy) { v = Geo.parcelView(st.lat, st.lon, p.ring, p.centroid); }
+      else { const [vx, vy] = st.frame.toXY(st.lon, st.lat); v = Geo.parcelViewXY(vx, vy, p.xy, p.cx, p.cy); }
+      v.fixAt = st.fixAt; st.views.set(p.id, v);
+    }
     return v;
   }
   function currentHeading() {
@@ -373,9 +418,18 @@
   const LABEL_H = 5.5;  // metres, where the label floats when rooftop mode is off or no building
   const labelHeight = (p) => S.rooftop && p.height > 0 ? p.height + 1.5 : LABEL_H;
 
-  function frame() {
+  let dirty = true, lastFrameAt = 0, lastHdg = null, lastPitch = null, lastFix = 0;
+  function frame(now) {
     requestAnimationFrame(frame);
+    if (document.hidden) return;
+    // 30 fps is indistinguishable for labels riding a compass that itself jitters; 15 when the battery is low.
+    // Skip the frame entirely when nothing moved: sensors quiet, no new fix, no data change.
+    const interval = st.lowPower ? 66 : 33;
+    if (now - lastFrameAt < interval) return;
     const hdg = currentHeading(), pitch = currentPitch();
+    const moved = hdg == null || lastHdg == null || Math.abs(Geo.angleDiff(hdg, lastHdg)) > 0.15 || Math.abs(pitch - lastPitch) > 0.15 || st.fixAt !== lastFix;
+    if (!moved && !dirty && now - lastFrameAt < 500) return;   // still repaint twice a second for status text
+    lastFrameAt = now; lastHdg = hdg; lastPitch = pitch; lastFix = st.fixAt; dirty = false;
     // header
     if (hdg != null) { $("hdg").firstElementChild.textContent = Math.round(hdg) + "°"; $("hdg").lastElementChild.textContent = Geo.cardinal(hdg) + (st.hasCompass || S.sim ? "" : " · no compass"); }
     if (st.lat != null) {
@@ -406,7 +460,18 @@
       if (v.inside && !S.inside) continue;
       const d = v.inside ? 8 : Math.max(v.nearest, 3);
       if (d > S.maxdist) continue;
-      const pr = Geo.project(v.bearing, Geo.pitchTo(Math.max(v.distance, 6), labelHeight(p) - EYE), hdg, pitch, S.fov, st.w, st.h, 14);
+      // Large parcels (a mall, a campus, a big-box lot) subtend a wide angle; their centroid can be off-screen
+      // while the building fills the view. Anchor the label at the part of the parcel you are looking at:
+      // the heading clamped into the parcel's angular span, a little inside its edges.
+      let brg = v.bearing, dist = Math.max(v.distance, 6);
+      if (v.spanDeg > 40 && !v.inside && v.spanLo != null) {
+        const pad = Math.min(8, v.spanDeg * 0.2);
+        const off = Geo.angleDiff(hdg, v.bearing), lo = Geo.angleDiff(v.spanLo, v.bearing) + pad, hi = Geo.angleDiff(v.spanHi, v.bearing) - pad;
+        const k = Math.max(lo, Math.min(hi, off));
+        brg = Geo.wrap360(v.bearing + k);
+        dist = Math.max(v.nearest + 4, v.distance * (1 - Math.abs(k) / Math.max(v.spanDeg, 1)));
+      }
+      const pr = Geo.project(brg, Geo.pitchTo(dist, labelHeight(p) - EYE), hdg, pitch, S.fov, st.w, st.h, 14);
       if (!pr) continue;
       vis.push({ p, v, d, x: pr.x, y: pr.y });
     }
@@ -451,7 +516,7 @@
     });
     for (const [id, el] of labelEls) if (!seen.has(id)) el.style.display = "none";
 
-    if (S.ground) drawGround(hdg, pitch);
+    if (S.ground && !(st.lowPower && pitch > 5)) drawGround(hdg, pitch);
     hint.className = shown.length ? "hidden" : "";
     if (!shown.length) hint.textContent = st.parcels.length ? (pitch > 35 ? "Lower the phone toward the buildings" : "No parcels this way within " + Geo.fmtDistance(S.maxdist, imperial())) : (st.fetching ? "Loading parcels…" : "No parcels loaded");
 
@@ -465,11 +530,10 @@
   }
 
   function drawGround(hdg, pitch) {
-    const proj = (lon, lat, h) => {
-      const b = Geo.bearing(st.lat, st.lon, lat, lon), d = Geo.haversine(st.lat, st.lon, lat, lon);
-      if (d < 0.5) return null;
-      return Geo.project(b, Geo.pitchTo(d, h - EYE), hdg, pitch, S.fov, st.w, st.h, 25);
-    };
+    const [vx, vy] = st.frame ? st.frame.toXY(st.lon, st.lat) : [0, 0];
+    // planar projection: bearing/distance from a subtraction, no haversine
+    const projXY = (x, y, h) => { const ex = x - vx, ey = y - vy, d = Math.hypot(ex, ey); if (d < 0.5) return null; return Geo.project(Math.atan2(ex, ey) / D2R, Geo.pitchTo(d, h - EYE), hdg, pitch, S.fov, st.w, st.h, 25); };
+    const proj = (lon, lat, h) => { const [x, y] = st.frame.toXY(lon, lat); return projXY(x, y, h); };
     const path = (pts) => {
       gctx.beginPath(); let started = false;
       for (let i = 0; i <= pts.length; i++) {
@@ -478,25 +542,32 @@
         if (!started) { gctx.moveTo(a.x, a.y); started = true; } else gctx.lineTo(a.x, a.y);
       }
     };
+    if (!st.frame) return;
     if (S.groundcov) drawGroundCoverage(hdg, pitch, proj);
     gctx.lineWidth = 1.5; gctx.lineJoin = "round";
+    const halfView = S.fov / 2;
+    let budget = st.lowPower ? 40 : 120;   // parcels stroked per frame
     for (const p of st.parcels) {
+      if (budget <= 0) break;
       const v = viewOf(p);
       if (v.nearest > S.maxdist) continue;
-      if (Math.abs(Geo.angleDiff(v.bearing, hdg)) > S.fov / 2 + v.spanDeg / 2 + 10) continue;
-      const base = p.ring.map(([lon, lat]) => proj(lon, lat, 0));
+      if (Math.abs(Geo.angleDiff(v.bearing, hdg)) > halfView + v.spanDeg / 2 + 10) continue;
+      budget--;
+      // far parcels get a coarser ring: a vertex every couple of screen pixels is plenty
+      const ring = v.nearest > S.maxdist * 0.5 && p.xyDraw.length > 12 ? p.xyDraw.filter((_, i) => i % 2 === 0) : p.xyDraw;
+      const base = ring.map(([x, y]) => projXY(x, y, 0));
       const sel = st.selected === p.id;
       gctx.strokeStyle = hexOf(p); gctx.globalAlpha = sel ? .95 : .55;
       path(base); gctx.stroke();
       if (sel) { gctx.globalAlpha = .18; gctx.fillStyle = hexOf(p); gctx.fill(); }
-      // rooftop: roof outline + verticals at the corners nearest the viewer (a hint of volume, not a model)
-      if (S.rooftop && p.height > 0 && !v.inside && p.ring.length <= 60) {
-        const roof = p.ring.map(([lon, lat]) => proj(lon, lat, p.height));
+      // rooftop: roof outline + a few verticals (a hint of volume, not a model)
+      if (S.rooftop && p.height > 0 && !v.inside && ring.length <= 60 && !st.lowPower) {
+        const roof = ring.map(([x, y]) => projXY(x, y, p.height));
         gctx.globalAlpha = sel ? .8 : .3; gctx.setLineDash([4, 4]);
         path(roof); gctx.stroke(); gctx.setLineDash([]);
         gctx.globalAlpha = sel ? .5 : .14;
-        const step = Math.max(1, Math.floor(p.ring.length / 4));
-        for (let i = 0; i < p.ring.length; i += step) { const a = base[i], b = roof[i]; if (a && b) { gctx.beginPath(); gctx.moveTo(a.x, a.y); gctx.lineTo(b.x, b.y); gctx.stroke(); } }
+        const step = Math.max(1, Math.floor(ring.length / 4));
+        for (let i = 0; i < ring.length; i += step) { const a = base[i], b = roof[i]; if (a && b) { gctx.beginPath(); gctx.moveTo(a.x, a.y); gctx.lineTo(b.x, b.y); gctx.stroke(); } }
       }
     }
     gctx.globalAlpha = 1;
@@ -509,6 +580,15 @@
    * the nonzero rule so overlaps stay flat; the boundary arcs from unionArcs are
    * stroked so the edge of "works offline" is a visible line on the pavement.
    */
+  // unionArcs is O(n²) in circles; the arc angles do not depend on the viewer, only the circle set, so cache per set
+  let unionCache = { key: "", arcs: [], x0: 0, y0: 0 };
+  function cachedUnionArcs(cs, circles) {
+    const key = circles.map((cv) => cv.at).join(",");
+    if (key !== unionCache.key) unionCache = { key, arcs: ParcelStore.unionArcs(cs), x0: cs[0].x, y0: cs[0].y };
+    // the cache is in a frame where cs[0] sat at (x0,y0); shift to where it is now
+    const dx = cs[0].x - unionCache.x0, dy = cs[0].y - unionCache.y0;
+    return dx || dy ? unionCache.arcs.map((a) => ({ ...a, x: a.x + dx, y: a.y + dy })) : unionCache.arcs;
+  }
   function drawGroundCoverage(hdg, pitch, proj) {
     const mpd = Geo.metresPerDegree(st.lat);
     const circles = store.coverage.fresh().filter((cv) => Geo.haversine(st.lat, st.lon, cv.lat, cv.lon) - cv.radius <= Math.max(S.maxdist, 400) * 2);
@@ -533,7 +613,7 @@
     }
     gctx.fillStyle = "rgba(53,224,122,.13)"; gctx.fill("nonzero");
     gctx.lineWidth = 2; gctx.strokeStyle = "rgba(53,224,122,.75)"; gctx.beginPath();
-    for (const seg of ParcelStore.unionArcs(cs)) {
+    for (const seg of cachedUnionArcs(cs, circles)) {
       let started = false;
       for (const [x, y] of polyPts(seg, seg.a0, seg.a1)) {
         const q = inWedge(x, y) ? P(x, y) : null;
@@ -545,9 +625,41 @@
     gctx.restore();
   }
 
+  /**
+   * Parcel footprints are drawn into an offscreen, north-up canvas centred on the
+   * viewer and only redrawn when the parcel set, the zoom, the selection or the
+   * position changes. Each frame just rotates and blits it; the few highlighted
+   * parcels and the decorations are drawn live on top.
+   */
+  const radarOff = document.createElement("canvas"); radarOff.width = radar.width; radarOff.height = radar.height;
+  const roctx = radarOff.getContext("2d");
+  let radarKey = "";
+  function radarFootprints(scale, selId) {
+    const W = radar.width, c = W / 2;
+    const key = `${st.parcelsVersion}:${scale.toFixed(4)}:${selId}:${st.lat.toFixed(5)}:${st.lon.toFixed(5)}`;
+    if (key === radarKey) return radarOff;
+    radarKey = key;
+    roctx.clearRect(0, 0, W, W);
+    if (!st.frame) return radarOff;
+    const [vx, vy] = st.frame.toXY(st.lon, st.lat);
+    const lim = c / scale + 50;   // metres visible
+    for (const p of st.parcels) {
+      if (Math.abs(p.cx - vx) > lim || Math.abs(p.cy - vy) > lim) continue;
+      roctx.beginPath();
+      const ring = p.xyDraw;
+      for (let i = 0; i < ring.length; i++) { const x = c + (ring[i][0] - vx) * scale, y = c - (ring[i][1] - vy) * scale; i ? roctx.lineTo(x, y) : roctx.moveTo(x, y); }
+      roctx.closePath();
+      const sel = selId === p.id;
+      roctx.fillStyle = hexOf(p); roctx.globalAlpha = sel ? .85 : .16; roctx.fill();
+      if (radarZoom < 2.5 || sel) { roctx.globalAlpha = sel ? 1 : .45; roctx.strokeStyle = sel ? "#fff" : hexOf(p); roctx.lineWidth = sel ? 2 : 1; roctx.stroke(); }
+    }
+    roctx.globalAlpha = 1;
+    return radarOff;
+  }
   function drawRadar(hdg, vis) {
     const zoomTarget = st.precache && st.precache.running ? Math.max(1, (S.prearea + 260) / S.radius) : 1;
     radarZoom += (zoomTarget - radarZoom) * 0.12;
+    if (Math.abs(zoomTarget - radarZoom) < 0.002) radarZoom = zoomTarget;   // settle, so the footprint cache stops invalidating
     const W = radar.width, c = W / 2, R = c - 6, scale = R / (S.radius * radarZoom);
     rctx.clearRect(0, 0, W, W);
     const rot = S.radarup && hdg != null ? -hdg * D2R : 0;
@@ -558,16 +670,15 @@
     rctx.strokeStyle = "rgba(255,255,255,.08)"; rctx.lineWidth = 1;
     for (const f of [1 / 3, 2 / 3, 1]) { rctx.beginPath(); rctx.arc(c, c, R * f, 0, Math.PI * 2); rctx.stroke(); }
     if (st.lat != null) {
-      // offline coverage: union of fresh fetched circles as one flat green wash (no stacking where they overlap)
-      // plus its outline, so the edge of "works offline" is visible. Dotted amber = precache still to do.
+      // offline coverage: union of fresh fetched circles as one flat green wash plus its boundary. Dotted amber = precache still to do.
       if (S.radarcov) {
         const circles = store.coverage.fresh().filter((cv) => Geo.haversine(st.lat, st.lon, cv.lat, cv.lon) - cv.radius <= S.radius * 1.2 * radarZoom);
         if (circles.length) {
           const cs = circles.map((cv) => { const [x, y] = toXY(cv.lon, cv.lat); return { x, y, r: cv.radius * scale }; });
-          rctx.beginPath(); for (const c of cs) { rctx.moveTo(c.x + c.r, c.y); rctx.arc(c.x, c.y, c.r, 0, Math.PI * 2); }
+          rctx.beginPath(); for (const cc of cs) { rctx.moveTo(cc.x + cc.r, cc.y); rctx.arc(cc.x, cc.y, cc.r, 0, Math.PI * 2); }
           rctx.fillStyle = "rgba(53,224,122,.10)"; rctx.fill();
           rctx.lineWidth = 1.5; rctx.strokeStyle = "rgba(53,224,122,.6)"; rctx.beginPath();
-          for (const s of ParcelStore.unionArcs(cs)) { rctx.moveTo(s.x + s.r * Math.cos(s.a0), s.y + s.r * Math.sin(s.a0)); rctx.arc(s.x, s.y, s.r, s.a0, s.a1); }
+          for (const sg of ParcelStore.unionArcs(cs)) { rctx.moveTo(sg.x + sg.r * Math.cos(sg.a0), sg.y + sg.r * Math.sin(sg.a0)); rctx.arc(sg.x, sg.y, sg.r, sg.a0, sg.a1); }
           rctx.stroke();
         }
         if (st.precache && st.precache.running) {
@@ -581,16 +692,19 @@
         const a0 = (S.radarup ? 0 : hdg) * D2R - S.fov / 2 * D2R - Math.PI / 2, a1 = a0 + S.fov * D2R;
         rctx.fillStyle = "rgba(55,211,255,.13)"; rctx.beginPath(); rctx.moveTo(c, c); rctx.arc(c, c, R, a0, a1); rctx.closePath(); rctx.fill();
       }
-      const visIds = new Set(vis.map((it) => it.p.id));
-      for (const p of st.parcels) {
-        rctx.beginPath();
-        p.ring.forEach(([lon, lat], i) => { const [x, y] = toXY(lon, lat); i ? rctx.lineTo(x, y) : rctx.moveTo(x, y); });
-        rctx.closePath();
-        const sel = st.selected === p.id, on = visIds.has(p.id);
-        rctx.fillStyle = hexOf(p); rctx.globalAlpha = sel ? .85 : on ? .5 : .16; rctx.fill();
-        if (radarZoom < 2.5 || sel) { rctx.globalAlpha = sel ? 1 : .45; rctx.strokeStyle = sel ? "#fff" : hexOf(p); rctx.lineWidth = sel ? 2 : 1; rctx.stroke(); }
+      // footprints: cached north-up bitmap, rotated
+      rctx.save(); rctx.translate(c, c); rctx.rotate(rot); rctx.drawImage(radarFootprints(scale, st.selected), -c, -c); rctx.restore();
+      // parcels currently labelled: brighter, live (few)
+      if (st.frame) {
+        const [vx, vy] = st.frame.toXY(st.lon, st.lat), cr = Math.cos(rot), sr = Math.sin(rot);
+        for (const it of vis) {
+          const p = it.p; if (p.id === st.selected) continue;
+          rctx.beginPath();
+          for (let i = 0; i < p.xyDraw.length; i++) { const dx = p.xyDraw[i][0] - vx, dy = p.xyDraw[i][1] - vy; const x = dx * cr - dy * sr, y = dx * sr + dy * cr; i ? rctx.lineTo(c + x * scale, c - y * scale) : rctx.moveTo(c + x * scale, c - y * scale); }
+          rctx.closePath(); rctx.fillStyle = hexOf(p); rctx.globalAlpha = .4; rctx.fill();
+        }
+        rctx.globalAlpha = 1;
       }
-      rctx.globalAlpha = 1;
       // north tick
       const nAng = rot - Math.PI / 2; rctx.fillStyle = "#fff"; rctx.font = "bold 18px -apple-system, sans-serif"; rctx.textAlign = "center"; rctx.textBaseline = "middle";
       rctx.fillText("N", c + Math.cos(nAng) * (R - 14), c + Math.sin(nAng) * (R - 14));
@@ -606,7 +720,7 @@
 
   // ---- detail sheet ------------------------------------------------------
   function select(id) {
-    st.selected = id;
+    st.selected = id; dirty = true;
     const p = st.parcels.find((q) => q.id === id); if (!p) return;
     const v = viewOf(p), imp = imperial(), prov = st.provider || Providers.PROVIDERS.kingcounty;
     const area = p.lotSqft ? (imp ? p.lotSqft.toLocaleString() + " ft²" + (p.acres >= 0.25 ? ` (${p.acres.toFixed(2)} ac)` : "") : Math.round(p.lotSqft * 0.0929).toLocaleString() + " m²") : "—";
@@ -622,6 +736,7 @@
       </div>
       ${p.lastSale ? `<div class="sub">Last sale <b style="color:#fff">${Geo.fmtMoney(p.lastSale.price)}</b> on ${p.lastSale.date.toLocaleDateString()}${p.totalValue ? ` · ${(p.lastSale.price / p.totalValue * 100).toFixed(0)}% of assessed` : ""}</div>` : ""}
       <table class="kv">
+        ${p.units ? `<tr><td>Units</td><td>${p.units.length} parcels share this footprint (condominium / stacked) · values summed</td></tr>` : ""}
         <tr><td>Use</td><td>${esc(p.use || "—")}</td></tr>
         <tr><td>Type</td><td>${esc(p.propTypeName || p.propType || "—")}</td></tr>
         <tr><td>Zoning</td><td>${esc(p.zoning || "—")}</td></tr>
@@ -631,12 +746,13 @@
         ${p.plat ? `<tr><td>Plat</td><td>${esc(p.plat)}</td></tr>` : ""}
       </table>
       ${salesHtml}
+      ${p.units ? `<div class="sales"><h3 style="font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:.6px;margin:14px 0 2px">Units (${p.units.length})</h3><ul>${p.units.slice(0, 12).map((u) => `<li><span>${esc(u.address || u.id)} <span class="z">${esc(u.use || "")}</span></span><b>${Geo.fmtMoney(u.totalValue, true)}</b></li>`).join("")}${p.units.length > 12 ? `<li><span class="z">… ${p.units.length - 12} more</span></li>` : ""}</ul></div>` : ""}
       <div class="links">${prov.links ? Object.entries(prov.links).map(([k, fn]) => { const u = fn(p); return u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(k)}</a>` : ""; }).join("") : ""}</div>
       <div class="sub" style="margin-top:12px">${esc(prov.attribution)}${p.asOf ? ", data as of " + new Date(p.asOf).toLocaleDateString() : ""}. Assessed values are for taxation and are not a market appraisal.</div>`;
     $("detail").classList.add("open");
   }
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-  $("dx").onclick = () => { $("detail").classList.remove("open"); st.selected = null; };
+  $("dx").onclick = () => { $("detail").classList.remove("open"); st.selected = null; dirty = true; };
   $("labels").addEventListener("click", () => { if ($("detail").classList.contains("open")) $("dx").onclick(); });
 
   // ---- settings UI ---------------------------------------------------------
@@ -648,7 +764,7 @@
   function bindSwitch(id, key, cb) { const el = $("s-" + id); el.checked = !!S[key]; el.onchange = () => { S[key] = el.checked; saveS(); cb && cb(); }; }
   function bindSeg(key) { const seg = document.querySelector(`.seg[data-set="${key}"]`); const paint = () => [...seg.children].forEach((b) => b.classList.toggle("on", b.dataset.v === S[key])); paint(); seg.onclick = (e) => { if (!e.target.dataset.v) return; S[key] = e.target.dataset.v; saveS(); paint(); refreshRanges(); }; }
   const dist = (m) => Geo.fmtDistance(m, imperial());
-  function refreshRanges() { bindRange("radius", "radius", dist); bindRange("maxdist", "maxdist", dist); bindRange("maxlabels", "maxlabels", (v) => String(v)); bindRange("fov", "fov", (v) => v + "°"); bindRange("hoff", "hoff", (v) => (v > 0 ? "+" : "") + v + "°"); bindRange("decl", "decl", (v) => v.toFixed(1) + "°"); bindRange("prearea", "prearea", dist); bindRange("autoahead", "autoahead", dist); $("s-prearea").addEventListener("input", () => updatePrecacheEstimate()); }
+  function refreshRanges() { bindRange("radius", "radius", dist); bindRange("maxdist", "maxdist", dist); bindRange("maxlabels", "maxlabels", (v) => String(v)); bindRange("fov", "fov", (v) => v + "°"); bindRange("hoff", "hoff", (v) => (v > 0 ? "+" : "") + v + "°"); bindRange("decl", "decl", (v) => v.toFixed(1) + "°"); bindRange("prearea", "prearea", dist); bindRange("autoahead", "autoahead", dist); bindRange("dailyMB", "dailyMB", (v) => v + " MB"); $("s-prearea").addEventListener("input", () => updatePrecacheEstimate()); }
   refreshRanges(); bindSeg("priceMode"); bindSeg("units");
   bindSwitch("ground", "ground"); bindSwitch("rooftop", "rooftop"); bindSwitch("osm", "osm", () => maybeFetch(true)); bindSwitch("inside", "inside"); bindSwitch("priced", "priced"); bindSwitch("radarup", "radarup"); bindSwitch("radarcov", "radarcov"); bindSwitch("groundcov", "groundcov"); bindSeg("auto");
   bindSwitch("sim", "sim", () => location.reload());
@@ -660,6 +776,7 @@
       let quota = "";
       if (navigator.storage && navigator.storage.estimate) { const e = await navigator.storage.estimate(); quota = ` · ${(e.usage / 1048576).toFixed(1)} MB used`; }
       $("cacheinfo").textContent = `${n.toLocaleString()} parcels from ${circles} area${circles === 1 ? "" : "s"} kept for offline use${quota}`;
+      $("datainfo").textContent = `${dataMB().toFixed(1)} MB of parcel data in the last 24 h (decoded size; gzip on the wire is about a third of that)${overBudget() ? " — over budget, auto-precache paused" : ""}.`;
     } catch (e) { $("cacheinfo").textContent = "Offline cache unavailable"; }
   }
   $("gear").addEventListener("click", () => { updateCacheInfo(); updatePrecacheEstimate(); });
@@ -713,7 +830,7 @@
     if (st.lat == null || !st.provider) { $("pre-est").textContent = "Needs a GPS fix first"; return; }
     await store.ready;
     const plan = ParcelStore.planPrecache(st.lat, st.lon, S.prearea, PRE_FETCH_R, store.coverage, st.provider.id);
-    $("pre-est").textContent = `${plan.todo.length} request${plan.todo.length === 1 ? "" : "s"} of ${Geo.fmtDistance(PRE_FETCH_R, imperial())} each` + (plan.skipped ? `, ${plan.skipped} already cached` : "") + ` · ~${Math.round(plan.todo.length * 1.2)} s on a good connection`;
+    $("pre-est").textContent = `${plan.todo.length} request${plan.todo.length === 1 ? "" : "s"} of ${Geo.fmtDistance(PRE_FETCH_R, imperial())} each` + (plan.skipped ? `, ${plan.skipped} already cached` : "") + ` · ~${Math.round(plan.todo.length * 1.2)} s, ~${Math.max(0.1, plan.todo.length * 0.05).toFixed(1)} MB`;
     $("precache").disabled = !!(st.precache && st.precache.running);
   }
   /** Run a list of fetch circles through the store. One run at a time; auto runs never interrupt a manual one. */
@@ -747,6 +864,7 @@
     if (st.lat == null || !st.provider) { toast("Need a GPS fix first"); return; }
     const prov = st.provider, plan = ParcelStore.planPrecache(st.lat, st.lon, S.prearea, PRE_FETCH_R, store.coverage, prov.id);
     if (!plan.todo.length) { $("pre-status").textContent = "Already fully cached."; return; }
+    if (overBudget()) toast(`Over today's ${S.dailyMB} MB budget — downloading anyway because you asked`, true);
     $("precache").textContent = "Stop"; $("precache").style.background = "var(--warn)";
     const r = await runPrecache(prov, plan.todo, "manual");
     $("precache").textContent = "Download neighbourhood"; $("precache").style.background = "";
@@ -760,6 +878,7 @@
   async function maybeAutoPrecache() {
     if (S.auto === "off" || st.lat == null || !st.provider) { st.auto = null; return; }
     const gate = ParcelStore.allowAuto(S.auto, navigator.connection, navigator.onLine);
+    if (gate.ok && overBudget()) { gate.ok = false; gate.why = `daily budget (${S.dailyMB} MB) reached`; }
     const course = track.course();
     st.auto = { gate, course };
     if (!gate.ok || !course) return;
@@ -786,7 +905,8 @@
     if (!isSecureContext) toast("Camera/GPS need https or localhost");
     if (sim) { startCamera().catch(() => {}); startSim(); }
     else { await startOrientation(); startCamera(); startGPS(); }
-    document.addEventListener("visibilitychange", () => { if (!document.hidden) maybeFetch(); });
+    document.addEventListener("visibilitychange", onVisibility);
+    if (navigator.getBattery) navigator.getBattery().then((b) => { const upd = () => { st.lowPower = !b.charging && b.level <= 0.2; }; upd(); b.addEventListener("levelchange", upd); b.addEventListener("chargingchange", upd); }).catch(() => {});
   }
   if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) navigator.serviceWorker.register("sw.js").catch(() => {});
   addEventListener("online", () => { toast("Back online", true); lastLoadKey = ""; maybeFetch(); });

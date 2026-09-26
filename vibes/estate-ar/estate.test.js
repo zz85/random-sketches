@@ -91,6 +91,38 @@ describe("Geo: polygons", () => {
   });
 });
 
+describe("Geo: planar frame", () => {
+  const parcels = parcelsFx.features.map((f) => P.normalizeParcel(f, KC));
+  const F = Geo.frame(ME.lat, ME.lon);
+  test("parcelViewXY agrees with parcelView on real rings", () => {
+    const [vx, vy] = F.toXY(ME.lon + 0.0012, ME.lat - 0.0008);   // viewer ~130 m away
+    for (const p of parcels) {
+      const a = Geo.parcelView(ME.lat - 0.0008, ME.lon + 0.0012, p.ring, p.centroid);
+      const xy = p.ring.map(([lon, lat]) => F.toXY(lon, lat)), [cx, cy] = F.toXY(p.centroid.lon, p.centroid.lat);
+      const b = Geo.parcelViewXY(vx, vy, xy, cx, cy);
+      expect(Math.abs(Geo.angleDiff(a.bearing, b.bearing))).toBeLessThan(0.05);
+      expect(b.distance).toBeCloseTo(a.distance, 0); expect(b.nearest).toBeCloseTo(a.nearest, 0);
+      expect(b.spanDeg).toBeCloseTo(a.spanDeg, 0); expect(b.inside).toBe(a.inside);
+      expect(b.spanHi - b.spanLo).toBeCloseTo(b.spanDeg, 6);
+    }
+  });
+  test("inside test at the fixture point", () => {
+    const [vx, vy] = [0, 0];
+    const inside = parcels.filter((p) => Geo.parcelViewXY(vx, vy, p.ring.map(([lon, lat]) => F.toXY(lon, lat)), ...F.toXY(p.centroid.lon, p.centroid.lat)).inside);
+    expect(inside.map((p) => p.address)).toEqual(["4541 BROOKLYN AVE NE"]);
+  });
+  test("decimate drops curb-arc vertices but keeps corners", () => {
+    const sq = [[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]];
+    expect(Geo.decimate(sq, 0.5)).toEqual(sq);
+    const dense = []; for (let i = 0; i <= 40; i++) dense.push([i * 0.25, 0]); dense.push([10, 10], [0, 10], [0, 0]);   // 41 collinear points on one edge
+    const d = Geo.decimate(dense, 0.3);
+    expect(d.length).toBe(5); expect(d[0]).toEqual([0, 0]); expect(d[1]).toEqual([10, 0]);
+    const tri = [[0, 0], [1, 0], [0, 1]]; expect(Geo.decimate(tri, 5)).toBe(tri);
+    const total = parcels.reduce((s, p) => s + p.ring.length, 0), after = parcels.reduce((s, p) => s + Geo.decimate(p.ring.map(([lon, lat]) => F.toXY(lon, lat)), 0.4).length, 0);
+    expect(after).toBeLessThan(total * 0.6);   // the un-generalised fixture loses most of its vertices
+  });
+});
+
 describe("Geo: projection", () => {
   const W = 390, H = 844, FOV = 60;
   test("centre, edges, out of frustum", () => {
@@ -253,16 +285,60 @@ describe("Providers: WA statewide layer (live fixture, Pacific Ave, Tacoma)", ()
     expect(P.providerFor(45.5152, -122.6784)).toBeNull();             // Portland
   });
   test("fetchArea works for a provider without a sales layer", async () => {
-    const fake = async () => ({ ok: true, json: async () => fx });
+    const fake = async () => ({ ok: true, text: async () => JSON.stringify(fx) });
     const r = await P.fetchArea(WA, 47.2529, -122.439, 100, fake);
-    expect(r.parcels.length).toBe(48); expect(r.salesCount).toBe(0); expect(r.parcels[0].sales).toEqual([]);
+    expect(r.parcels.length).toBe(42);   // 48 minus the stacked condo units expect(r.salesCount).toBe(0); expect(r.parcels[0].sales).toEqual([]);
+  });
+});
+
+describe("Providers: stacked parcels and paging", () => {
+  test("groupStacked merges condo units on one footprint (Tacoma fixture)", () => {
+    const ps = require("./fixture_wastate.json").features.map((f) => P.normalizeParcel(f, P.PROVIDERS.wastate));
+    const g = P.groupStacked(ps);
+    expect(g.length).toBe(42); expect(ps.length).toBe(48);
+    const m = g.filter((p) => p.units);
+    expect(m.length).toBe(3);
+    for (const p of m) { expect(p.totalValue).toBe(p.units.reduce((s, u) => s + (u.totalValue || 0), 0)); expect(p.address).toBe("1250 PACIFIC AVE"); }
+    const kc = P.groupStacked(parcelsFx.features.map((f) => P.normalizeParcel(f, KC)));
+    expect(kc.length).toBe(43);   // nothing stacked there
+  });
+  test("groupStacked strips unit suffixes and keeps sales", () => {
+    const mk = (id, addr, v) => ({ id, address: addr, centroid: { lat: 47.66, lon: -122.31, areaM2: 1000 }, ring: [], landValue: 0, imprValue: v, totalValue: v, sales: [{ id, date: new Date(2024, 0, id), price: v }], propType: "K" });
+    const out = P.groupStacked([mk(1, "100 MAIN ST UNIT 101", 100), mk(2, "100 MAIN ST UNIT 202", 300)]);
+    expect(out.length).toBe(1); expect(out[0].address).toBe("100 MAIN ST"); expect(out[0].units.length).toBe(2); expect(out[0].sales.length).toBe(2); expect(out[0].lastSale.price).toBe(300);
+  });
+  test("queryParcels pages when exceededTransferLimit and the provider supports it", async () => {
+    const calls = [];
+    const fake = async (url) => { calls.push(url); const off = Number(new URL(url).searchParams.get("resultOffset") || 0); const page = { features: parcelsFx.features.slice(off, off + 20), exceededTransferLimit: off + 20 < parcelsFx.features.length }; return { ok: true, text: async () => JSON.stringify(page) }; };
+    const r = await P.queryParcels(KC, ME.lat, ME.lon, 120, fake);
+    expect(r.parcels.length).toBe(43); expect(r.pages).toBe(3); expect(r.exceeded).toBe(false); expect(calls.length).toBe(3);
+    const sno = await P.queryParcels(P.PROVIDERS.snohomish, 47.98, -122.2, 120, async () => ({ ok: true, text: async () => JSON.stringify({ features: [], exceededTransferLimit: true }) }));
+    expect(sno.pages).toBe(1); expect(sno.exceeded).toBe(true);
+  });
+  test("fetchArea falls back to the statewide layer when the county server errors", async () => {
+    const fx = require("./fixture_wastate.json"); const calls = [];
+    const fake = async (url) => { calls.push(url); if (url.includes("snoco.org")) return { ok: true, text: async () => JSON.stringify({ error: { code: 400, message: "Failed to execute query." } }) }; return { ok: true, text: async () => JSON.stringify(fx) }; };
+    const r = await P.fetchArea(P.PROVIDERS.snohomish, 47.98, -122.2, 100, fake);
+    expect(r.fellBackFrom).toBe("snohomish"); expect(r.provider.id).toBe("wastate"); expect(r.parcels.length).toBe(42);
+    expect(calls.some((u) => u.includes("dnr.wa.gov"))).toBe(true);
+    await expect(P.fetchArea(P.PROVIDERS.wastate, 47.98, -122.2, 100, async () => ({ ok: false, status: 503 }))).rejects.toThrow("HTTP 503");   // no fallback from the fallback
+  });
+  test("arcgisParams asks for generalised geometry and the byte meter counts", async () => {
+    const q = P.arcgisParams(ME.lat, ME.lon, 100, ["PIN"], true);
+    expect(q.get("maxAllowableOffset")).toBe(String(P.MAX_OFFSET_DEG)); expect(q.get("geometryPrecision")).toBe("5");
+    expect(P.arcgisParams(ME.lat, ME.lon, 100, ["PIN"], false).get("maxAllowableOffset")).toBeNull();
+    expect(P.arcgisParams(ME.lat, ME.lon, 100, ["PIN"], true, 0, false).get("maxAllowableOffset")).toBeNull();
+    let seen = 0; P.onBytes((n) => { seen += n; });
+    const body = JSON.stringify({ features: [] });
+    await P.queryParcels(KC, ME.lat, ME.lon, 100, async () => ({ ok: true, text: async () => body }));
+    expect(seen).toBe(body.length);
   });
 });
 
 describe("Providers: query building and fetch plumbing", () => {
   test("arcgisParams", () => {
     const q = P.arcgisParams(47.6625, -122.3145, 220.4, ["PIN", "ADDR_FULL"], true);
-    expect(q.get("geometry")).toBe("-122.314500,47.662500");
+    expect(q.get("geometry")).toBe("-122.314500,47.662500"); expect(q.get("resultOffset")).toBeNull();
     expect(q.get("inSR")).toBe("4326"); expect(q.get("outSR")).toBe("4326");
     expect(q.get("distance")).toBe("220"); expect(q.get("units")).toBe("esriSRUnit_Meter");
     expect(q.get("outFields")).toBe("PIN,ADDR_FULL"); expect(q.get("returnGeometry")).toBe("true");
@@ -272,20 +348,20 @@ describe("Providers: query building and fetch plumbing", () => {
     const fake = async (url) => {
       calls.push(url);
       const body = url.includes("/2/query") ? { ...parcelsFx, exceededTransferLimit: true } : salesFx;
-      return { ok: true, json: async () => body };
+      return { ok: true, text: async () => JSON.stringify(body) };
     };
     const r = await P.fetchArea(KC, ME.lat, ME.lon, 120, fake);
-    expect(calls.length).toBe(2);
-    expect(calls[0]).toContain(KC.parcels.url); expect(calls[1]).toContain(KC.sales.url);
-    expect(r.parcels.length).toBe(43); expect(r.salesCount).toBe(19); expect(r.exceeded).toBe(true);
+    expect(calls.length).toBe(4);                        // 3 parcel pages (the fake always says "more") + 1 sales
+    expect(calls.filter((u) => u.includes(KC.parcels.url)).length).toBe(3); expect(calls.some((u) => u.includes(KC.sales.url))).toBe(true);
+    expect(r.parcels.length).toBe(43); expect(r.pages).toBe(3); expect(r.salesCount).toBe(19); expect(r.exceeded).toBe(true);
   });
   test("ArcGIS error payloads and HTTP errors throw", async () => {
-    const err = async () => ({ ok: true, json: async () => ({ error: { code: 400, message: "bad" } }) });
+    const err = async () => ({ ok: true, text: async () => JSON.stringify({ error: { code: 400, message: "bad" } }) });
     await expect(P.queryParcels(KC, ME.lat, ME.lon, 100, err)).rejects.toThrow("ArcGIS 400: bad");
     const http = async () => ({ ok: false, status: 503 });
     await expect(P.queryParcels(KC, ME.lat, ME.lon, 100, http)).rejects.toThrow("HTTP 503");
     // sales failure is swallowed by fetchArea
-    const mixed = async (url) => url.includes("/2/query") ? { ok: true, json: async () => parcelsFx } : { ok: false, status: 500 };
+    const mixed = async (url) => url.includes("/2/query") ? { ok: true, text: async () => JSON.stringify(parcelsFx) } : { ok: false, status: 500 };
     const r = await P.fetchArea(KC, ME.lat, ME.lon, 120, mixed);
     expect(r.parcels.length).toBe(43); expect(r.salesCount).toBe(0);
   });
@@ -474,6 +550,19 @@ describe("ParcelStore: Track, planAhead, allowAuto", () => {
     expect(PS.allowAuto("wifi", { type: "wifi", saveData: true }, true).ok).toBe(false);
     expect(PS.allowAuto("wifi", undefined, true).ok).toBe(true);           // iOS: no API
     expect(PS.allowAuto("any", { type: "cellular" }, true).ok).toBe(true);
+  });
+});
+
+describe("ParcelStore: DataMeter", () => {
+  const mem = () => { const m = new Map(); return { getItem: (k) => m.has(k) ? m.get(k) : null, setItem: (k, v) => m.set(k, v), removeItem: (k) => m.delete(k) }; };
+  test("adds, sums over 24 h, forgets older buckets, persists", () => {
+    const st = mem(), d = new PS.DataMeter(st), H = 3600e3, t0 = 100 * H;
+    d.add(1000, t0); d.add(2000, t0 + 5 * H); d.add(4000, t0 + 23 * H);
+    expect(d.today(t0 + 23 * H)).toBe(7000);
+    expect(d.today(t0 + 25 * H)).toBe(6000);      // first bucket (hour 100) fell out of the window at hour 125
+    expect(d.over(5000, t0 + 25 * H)).toBe(true); expect(d.over(9000, t0 + 25 * H)).toBe(false);
+    const d2 = new PS.DataMeter(st); expect(d2.today(t0 + 25 * H)).toBe(6000);
+    st.setItem("estate-ar:data", "{broken"); expect(new PS.DataMeter(st).today()).toBe(0);
   });
 });
 

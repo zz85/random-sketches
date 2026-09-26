@@ -90,6 +90,43 @@ tower. On the Brooklyn Ave test block it puts The Standard at 24, Hub U District
 Graduate Hotel at 9 (actually 8) and the walk-ups at 5-6 — good enough to put a label near
 the roof line rather than at street level. It is an estimate and the detail sheet says so.
 
+## Cost: bandwidth, CPU, battery
+
+- **Bandwidth.** Parcel geometry is generalised by the server (`maxAllowableOffset` ≈ 0.5 m,
+  `geometryPrecision=5`): a 260 m circle in the U-District drops from 7,000 to 1,250 vertices and
+  52 KB to 18 KB gzipped. Only the needed attributes are requested. Dense cores page through
+  `resultOffset` (max 3 pages) instead of silently truncating at 1,000. Overpass is skipped when
+  the parcel set already carries OSM heights, on low battery, or over budget. A rolling 24 h
+  data meter (decoded bytes, persisted) gates auto-precache at a configurable daily budget
+  (default 25 MB) and warns before manual downloads. Snohomish's joined view rejects
+  `maxAllowableOffset`, so that provider is flagged `generalize:false` and decimated client-side.
+- **CPU.** Every ring is converted once to a metric frame (`Geo.frame`) and decimated at 0.4 m
+  (`Geo.decimate`), so per-frame work is subtraction/hypot/atan2 (`Geo.parcelViewXY`), not
+  haversine per vertex. The render loop is capped at 30 fps and skips frames when heading,
+  pitch and position have not changed. The radar's parcel footprints live on an offscreen
+  north-up bitmap that is only redrawn when parcels, zoom, selection or position change; each
+  frame rotates and blits it. The coverage union arcs are cached per coverage set. Ground drawing
+  has a per-frame parcel budget and coarser rings for far parcels. With 740 parcels loaded, main
+  thread idle went from 0% (rAF gaps at 20 ms) to 96% idle when still and 74% while turning.
+- **Battery.** Camera at 720p/30 fps instead of 1080p. When the tab is hidden the camera tracks
+  are disabled, the GPS watch cleared and the 60 Hz orientation listeners removed; all resume on
+  return. If the Battery API reports ≤20% and not charging: 15 fps, no rooftop wireframes, no
+  Overpass, smaller ground budget.
+
+## Large commercial parcels
+
+- **Stacked parcels** (condominium units, air-rights lots, parking stalls under a tower) share one
+  footprint and would each get a label. `groupStacked` merges parcels whose centroids are within
+  1.5 m and areas within 5% into one, with the values summed, the unit suffix stripped from the
+  address and a units list in the detail sheet. 1250 Pacific Ave in Tacoma collapses 8 → 3.
+- **Wide parcels** (a mall, a campus, a big-box lot) subtend a large angle; their centroid can be
+  off-screen while the building fills the view. When a parcel spans more than 40°, its label is
+  anchored at the heading clamped into the parcel's angular span (`spanLo`/`spanHi`), so it sits
+  on the part of the building you are actually looking at.
+- **Dense downtowns** exceeding 1,000 parcels per request are paged rather than truncated.
+- **Provider outage**: when a county server errors (Snohomish's went down during this work) the
+  query falls back to the statewide layer and the header says so.
+
 ## Data sources (all free, no keys, CORS-enabled)
 
 | Source | Covers | What | Notes |
@@ -119,10 +156,10 @@ sales layer / links. Most US county assessors publish parcels as an ArcGIS REST 
 ## Files
 
 - `index.html` — the app (camera, sensors, overlay, radar, detail sheet, settings, SW registration)
-- `geo.js` — haversine, bearing, centroid, point-in-polygon, angular span, pinhole projection, polygon clipping / view wedge, heading filter, formatting
-- `providers.js` — provider registry (King, Snohomish, WA statewide), ArcGIS queries, normalisation, sales join, WA DOR use codes, Nominatim
+- `geo.js` — haversine, bearing, centroid, point-in-polygon, angular span, metric frame + planar view + ring decimation, pinhole projection, polygon clipping / view wedge, heading filter, formatting
+- `providers.js` — provider registry (King, Snohomish, WA statewide) with fallback, ArcGIS queries (generalised, paged, byte-metered), normalisation, sales join, stacked-parcel grouping, WA DOR use codes, Nominatim
 - `heights.js` — storey/height estimate from use class + value density; Overpass fetch and parcel matching
-- `parcelstore.js` — offline cache: coverage circles + IndexedDB parcel store (memory fallback), hex-lattice precache planner, circle-union boundary, GPS track/course, corridor-ahead planner, wifi gate
+- `parcelstore.js` — offline cache: coverage circles + IndexedDB parcel store (memory fallback), hex-lattice precache planner, circle-union boundary, GPS track/course, corridor-ahead planner, wifi gate, 24 h data meter
 - `sw.js`, `manifest.webmanifest`, `icon.svg`, `icon-192.png`, `icon-512.png` — PWA
-- `estate.test.js` — bun tests (59) using `fixture_parcels.json` / `fixture_sales.json` / `fixture_snohomish.json` / `fixture_wastate.json` captured from the live services
+- `estate.test.js` — bun tests (68) using `fixture_parcels.json` / `fixture_sales.json` / `fixture_snohomish.json` / `fixture_wastate.json` captured from the live services
 - `live_check.js` — live smoke test

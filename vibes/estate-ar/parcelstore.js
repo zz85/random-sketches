@@ -289,10 +289,25 @@
     return { ok: false, why: conn.type };
   }
 
+  /**
+   * Rolling 24 h byte meter, persisted. `add(bytes)` on every response, `today()`
+   * for the total; `over(limitBytes)` is the gate auto mode and the manual
+   * precache estimate consult. Buckets are hourly so the window slides.
+   */
+  class DataMeter {
+    constructor(storage, key) { this.storage = storage || null; this.key = key || "estate-ar:data"; this.buckets = {}; this._load(); }
+    _load() { if (!this.storage) return; try { const d = JSON.parse(this.storage.getItem(this.key) || "{}"); if (d && typeof d === "object") this.buckets = d; } catch (e) { /* */ } }
+    _save() { if (!this.storage) return; try { this.storage.setItem(this.key, JSON.stringify(this.buckets)); } catch (e) { /* */ } }
+    _prune(now) { const cut = Math.floor((now || Date.now()) / 3600e3) - 24; for (const k of Object.keys(this.buckets)) if (Number(k) < cut) delete this.buckets[k]; }
+    add(bytes, now) { const h = Math.floor((now || Date.now()) / 3600e3); this.buckets[h] = (this.buckets[h] || 0) + bytes; this._prune(now); this._save(); }
+    today(now) { this._prune(now); return Object.values(this.buckets).reduce((a, b) => a + b, 0); }
+    over(limitBytes, now) { return this.today(now) >= limitBytes; }
+  }
+
   function open(opts) {
     const useIDB = typeof indexedDB !== "undefined" && !(opts && opts.memory);
     return new Store(useIDB ? new ParcelDB(opts && opts.name) : new MemoryDB(), opts);
   }
 
-  return { Coverage, MemoryDB, ParcelDB, Store, open, freeze, thaw, planPrecache, planAhead, unionArcs, Track, allowAuto, DEFAULT_TTL };
+  return { Coverage, MemoryDB, ParcelDB, Store, open, freeze, thaw, planPrecache, planAhead, unionArcs, Track, allowAuto, DataMeter, DEFAULT_TTL };
 }));

@@ -14,7 +14,7 @@ async function check(lat, lon, radius) {
 
   let t = Date.now();
   const r = await P.fetchArea(prov, lat, lon, radius);
-  console.log(`fetchArea: ${r.parcels.length} parcels, ${r.salesCount} sales, exceeded=${r.exceeded}, ${Date.now() - t} ms`);
+  console.log(`fetchArea: ${r.parcels.length} parcels, ${r.salesCount} sales, exceeded=${r.exceeded}, pages=${r.pages}, ${Date.now() - t} ms, ${(P.meter.bytes / 1024).toFixed(0)} KB decoded so far${r.fellBackFrom ? `  (FELL BACK from ${r.fellBackFrom} to ${r.provider.id})` : ""}`);
   if (!r.parcels.length) { console.error("FAIL: no parcels returned"); process.exit(1); }
 
   t = Date.now();
