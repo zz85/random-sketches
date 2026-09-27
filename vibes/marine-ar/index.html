@@ -705,12 +705,15 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       $("info").classList.add("vis");
     },
 
+    /** Tied up or anchored: nav status says so, or a slow class B / status-less target (marina jitter). */
+    isMoored(v) {
+      return v.navStat === 1 || v.navStat === 5 || (v.sog != null && v.sog < 0.3 && v.navStat !== 0) || (v.sog != null && v.sog < 1 && (v.navStat == null || v.navStat === 15));
+    },
     drawVessels() {
       const cx = this.cx, cam = this.cam, lat = this.lat, lon = this.lon, W = this.W, H = this.H;
       const items = [];
       for (const v of this.vessels) {
-        // no nav status (class B / unknown) + creeping = tied up, GPS jitter; class A says so via status 0
-        const moored = v.navStat === 1 || v.navStat === 5 || (v.sog != null && v.sog < 0.3 && v.navStat !== 0) || (v.sog != null && v.sog < 1 && (v.navStat == null || v.navStat === 15));
+        const moored = this.isMoored(v);
         if (moored && !this.showMoored && !(this.selected && this.selected.mmsi === v.mmsi)) continue;
         if (v.occluded && this.hideOccluded && !(this.selected && this.selected.mmsi === v.mmsi)) continue;
         const { e, n } = Geo.toENU(lat, lon, v.drLat, v.drLon);
@@ -876,7 +879,13 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       if (this.aisError) { a.textContent = `AIS ${this.provider ? this.provider.id : ""} error`; a.className = "chip bad"; a.title = this.aisError; }
       else if (!this.lastAis) { a.textContent = `AIS ${this.provider ? this.provider.id : "…"} connecting`; a.className = "chip warn"; }
       else if (this.provider.id === "demo") { a.textContent = `AIS SIMULATED · ${this.vessels.length} ships`; a.className = "chip warn"; a.title = "Demo traffic: not real vessels. Pick OpenSeaFeed or a proxy in settings for live AIS."; }
-      else { a.textContent = `AIS ${this.provider.id} · ${this.vessels.length} · ${age < 60 ? Math.round(age) + "s" : Math.round(age / 60) + "m"}`; a.className = "chip " + (age < 60 ? "ok" : "warn"); }
+      else {
+        const moored = this.vessels.filter((v) => this.isMoored(v)).length, underway = this.vessels.length - moored;
+        const hidden = !this.showMoored && moored ? ` · ${moored} moored hidden` : "";
+        a.textContent = `AIS ${this.provider.id} · ${this.showMoored ? this.vessels.length : underway + " underway"}${hidden} · ${age < 60 ? Math.round(age) + "s" : Math.round(age / 60) + "m"}`;
+        a.className = "chip " + (age < 60 ? "ok" : "warn");
+        a.title = `${this.vessels.length} vessels in range: ${underway} underway, ${moored} moored or anchored${this.showMoored ? "" : " (hidden; enable 'show moored' in settings)"}`;
+      }
       const ld = $("chipLand");
       if (!this.occlude) { ld.textContent = "LAND off"; ld.className = "chip"; }
       else if (this.landLoading) { ld.textContent = "LAND loading"; ld.className = "chip warn"; }
