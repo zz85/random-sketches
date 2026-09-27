@@ -571,6 +571,125 @@
     };
   }
 
+  // ---- aisstream.io-shaped frames (aisstream.io, OpenSeaFeed, aiscast) --------
+
+  function aisstreamDims(d) { return { a: d.A || 0, b: d.B || 0, c: d.C || 0, d: d.D || 0 }; }
+  function aisstreamStatic(body, meta, now) {
+    const s = { at: now };
+    if (body.Name) s.name = body.Name.trim(); else if (meta.ShipName) s.name = meta.ShipName.trim();
+    if (body.CallSign) s.callSign = body.CallSign.trim();
+    if (body.ImoNumber) s.imo = body.ImoNumber;
+    if (body.Type != null) s.shipType = body.Type;
+    if (body.Dimension) s.dims = aisstreamDims(body.Dimension);
+    if (body.MaximumStaticDraught != null) s.draught = body.MaximumStaticDraught;   // metres
+    if (body.Destination) s.destination = body.Destination.trim();
+    if (body.Eta) s.eta = body.Eta;
+    return s;
+  }
+  /**
+   * Feeds one aisstream.io-protocol frame ({MessageType, MetaData, Message}) into a VesselTable.
+   * Returns "pos", "static" or null. Names arrive in MetaData on every position report, so a
+   * vessel gets a name before its static data shows up.
+   */
+  function ingestAisstreamFrame(table, msg, now) {
+    const meta = (msg && msg.MetaData) || {}, mmsi = Number(meta.MMSI);
+    if (!mmsi || !msg.Message) return null;
+    const body = msg.Message[msg.MessageType];
+    if (!body) return null;
+    now = now || Date.now();
+    switch (msg.MessageType) {
+      case "PositionReport":
+      case "StandardClassBPositionReport":
+      case "ExtendedClassBPositionReport": {
+        const lat = body.Latitude != null ? body.Latitude : meta.latitude, lon = body.Longitude != null ? body.Longitude : meta.longitude;
+        if (lat == null || lon == null || Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+        table.upsertPosition({
+          mmsi, lat, lon, sog: body.Sog, cog: body.Cog, heading: body.TrueHeading,
+          navStat: body.NavigationalStatus == null ? 15 : body.NavigationalStatus,
+          rot: body.RateOfTurn == null ? null : body.RateOfTurn, posAcc: !!body.PositionAccuracy, at: now,
+        });
+        const v = table.get(mmsi);
+        const st = {};
+        if (meta.ShipName && !v.name) st.name = meta.ShipName.trim();
+        if (meta.ShipType != null && v.shipType == null) st.shipType = meta.ShipType;
+        if (body.Dimension) Object.assign(st, aisstreamStatic(body, meta, now));      // extended class B carries dims + type
+        if (Object.keys(st).length) { const staticAt = v.staticAt; table.upsertStatic({ mmsi, ...st }); if (!st.at) table.get(mmsi).staticAt = staticAt; }
+        return "pos";
+      }
+      case "ShipStaticData":
+        table.upsertStatic({ mmsi, ...aisstreamStatic(body, meta, now) });
+        return "static";
+      case "StaticDataReport": {
+        const a = body.ReportA, b = body.ReportB, s = { mmsi, at: now };
+        if (a && a.Name) s.name = a.Name.trim();
+        if (b) { if (b.ShipType != null) s.shipType = b.ShipType; if (b.CallSign) s.callSign = b.CallSign.trim(); if (b.Dimension) s.dims = aisstreamDims(b.Dimension); }
+        table.upsertStatic(s);
+        return "static";
+      }
+      default: return null;
+    }
+  }
+
+  /**
+   * Bounding box around the viewer in aisstream subscribe form [[[latS, lonW], [latN, lonE]]],
+   * padded so a moving viewer does not resubscribe every tick. OpenSeaFeed's free tier allows
+   * 30 000 square degrees in total (probed 2026-09); a viewer needs well under one.
+   */
+  function aisstreamBox(lat, lon, radiusM, padFactor) {
+    const r = radiusM * (padFactor || 1.5);
+    const dLat = r / 111320, dLon = r / (111320 * Math.max(0.2, Math.cos(lat * Math.PI / 180)));
+    const c = (v, m) => Math.round(Math.max(-m, Math.min(m, v)) * 1000) / 1000;
+    return [[[c(lat - dLat, 90), c(lon - dLon, 180)], [c(lat + dLat, 90), c(lon + dLon, 180)]]];
+  }
+
+  /**
+   * Live AIS over an aisstream.io-protocol WebSocket. Browsers do not apply CORS to WebSockets,
+   * so this runs straight from the page. Reconnects with backoff; resubscribes when the viewer
+   * moves out of the padded box. `apiKey` is optional (OpenSeaFeed's free tier is keyless).
+   */
+  function aisstreamSocket(url, apiKey) {
+    return function start(ctx) {
+      let stopped = false, ws = null, timer = null, box = null, backoff = 1000, gotAny = false, watchdog = null;
+      const WS = ctx.WebSocket || (typeof WebSocket !== "undefined" ? WebSocket : null);
+      if (!WS) { ctx.onError(new Error("WebSocket unavailable")); return { stop() {}, refresh() {} }; }
+      const inBox = (lat, lon) => box && lat > box[0][0][0] && lat < box[0][1][0] && lon > box[0][0][1] && lon < box[0][1][1];
+      function subscribe() {
+        const { lat, lon, radiusM } = ctx.getCenter();
+        box = aisstreamBox(lat, lon, radiusM);
+        const sub = { BoundingBoxes: box };
+        if (apiKey) sub.APIKey = apiKey;
+        ws.send(JSON.stringify(sub));
+      }
+      function flush() { if (gotAny) ctx.onUpdate(); gotAny = false; if (!stopped) timer = setTimeout(flush, ctx.pollMs || 1000); }
+      function connect() {
+        if (stopped) return;
+        try { ws = new WS(url); } catch (e) { ctx.onError(e); return retry(); }
+        ws.onopen = () => { backoff = 1000; subscribe(); };
+        ws.onmessage = (e) => {
+          let m; try { m = JSON.parse(e.data); } catch (err) { return; }
+          if (m && m.error) { ctx.onError(new Error(m.error)); return; }
+          if (ingestAisstreamFrame(ctx.table, m)) gotAny = true;
+        };
+        ws.onerror = () => { /* onclose follows */ };
+        ws.onclose = (e) => { ws = null; if (!stopped) { if (e && e.code !== 1000 && e.code !== 1005) ctx.onError(new Error(`AIS socket closed (${e.code})`)); retry(); } };
+      }
+      function retry() { clearTimeout(watchdog); watchdog = setTimeout(connect, backoff); backoff = Math.min(backoff * 2, 30e3); }
+      // viewer moved: resubscribe if the padded box no longer covers the range
+      function check() {
+        if (stopped) return;
+        const { lat, lon, radiusM } = ctx.getCenter();
+        const inner = aisstreamBox(lat, lon, radiusM, 1.0)[0];
+        if (ws && ws.readyState === 1 && box && !(inBox(inner[0][0], inner[0][1]) && inBox(inner[1][0], inner[1][1]))) { ws.close(1000); }   // onclose reconnects with a new box
+        setTimeout(check, 5000);
+      }
+      connect(); flush(); setTimeout(check, 5000);
+      return {
+        stop() { stopped = true; clearTimeout(timer); clearTimeout(watchdog); if (ws) { ws.onclose = null; ws.close(1000); ws = null; } },
+        refresh() { if (ws && ws.readyState === 1) ws.close(1000); },
+      };
+    };
+  }
+
   /** Simulated traffic: a handful of ships running the charted lanes near the viewer, plus a ferry and a sailboat. */
   function demoProvider() {
     return function start(ctx) {
@@ -624,6 +743,13 @@
       pollMs: 10e3,
       start: restPoller("https://meri.digitraffic.fi/api/ais/v1", { "Digitraffic-User": "random-sketches/marine-ar", Accept: "application/json" }),
     },
+    openseafeed: {
+      id: "openseafeed", name: "OpenSeaFeed (worldwide)",
+      attribution: "OpenSeaFeed community AIS, CC BY 4.0",
+      bbox: null, worldwide: true,
+      pollMs: 1000,
+      start: aisstreamSocket("wss://stream.openseafeed.com/v1/stream"),
+    },
     proxy: {
       id: "proxy", name: "Local proxy (aisstream.io)",
       attribution: "aisstream.io via proxy.js",
@@ -640,14 +766,17 @@
     },
   };
 
-  /** Provider whose coverage box contains the point, else null (caller decides between proxy/demo). */
+  /**
+   * Live provider for a point: a national feed whose coverage box contains it (denser, official),
+   * else the worldwide community feed. Null only if no live provider is registered.
+   */
   function aisProviderFor(lat, lon) {
     for (const p of Object.values(AIS_PROVIDERS)) {
       if (!p.bbox) continue;
       const [w, s, e, n] = p.bbox;
       if (lon >= w && lon <= e && lat >= s && lat <= n) return p;
     }
-    return null;
+    return Object.values(AIS_PROVIDERS).find((p) => p.worldwide) || null;
   }
 
   // ---- Nominatim ----------------------------------------------------------
@@ -718,6 +847,7 @@
     ATON_LAYERS, ATON_KIND, S57_COLOUR, LITCHR, lightCharacter, normalizeAton, fetchAton, mergeAton, BoxStore,
     NAV_STATUS, shipType, CATEGORY_COLOR, flagOf, VesselTable,
     ingestDigitrafficLocations, ingestDigitrafficVessel, restPoller, demoProvider, AIS_PROVIDERS, aisProviderFor,
+    ingestAisstreamFrame, aisstreamBox, aisstreamSocket,
     reverseGeocode, declination, LaneStore,
   };
 }));

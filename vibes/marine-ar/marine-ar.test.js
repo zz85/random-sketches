@@ -226,7 +226,54 @@ describe("AIS providers", () => {
   });
   test("provider selection by coverage", () => {
     expect(P.aisProviderFor(60.15, 24.95).id).toBe("digitraffic");
-    expect(P.aisProviderFor(WEST_POINT.lat, WEST_POINT.lon)).toBeNull();
+    expect(P.aisProviderFor(WEST_POINT.lat, WEST_POINT.lon).id).toBe("openseafeed");   // worldwide community feed outside Finland
+  });
+  test("aisstream frames -> VesselTable (OpenSeaFeed / aisstream.io protocol)", () => {
+    const t = new P.VesselTable({ maxAgeMs: 1e15 });
+    const frames = require("./fixture_openseafeed.json");
+    const kinds = frames.map((f) => P.ingestAisstreamFrame(t, f, 1790487200000));
+    expect(kinds.filter((k) => k === "pos").length).toBe(4);
+    expect(kinds.filter((k) => k === "static").length).toBe(1);
+    const andiamo = t.get(338477073);
+    expect(andiamo.name).toBe("ANDIAMO");                  // from MetaData on the position report
+    expect(andiamo.category).toBe("pleasure");             // MetaData.ShipType 37
+    expect(andiamo.heading).toBe(287);
+    expect(andiamo.staticAt).toBeFalsy();                  // metadata name is not static data
+    const wen = t.get(366772750);
+    expect(wen.name).toBe("WENATCHEE"); expect(wen.length).toBe(140); expect(wen.draught).toBe(5.5); expect(wen.destination).toBe("SEATTLE");
+    expect(wen.staticAt).toBe(1790487200000);
+    expect(P.ingestAisstreamFrame(t, { MessageType: "Nonsense", MetaData: { MMSI: 1 }, Message: { Nonsense: {} } })).toBeNull();
+    expect(P.ingestAisstreamFrame(t, { error: "free tier is limited" })).toBeNull();
+  });
+  test("aisstream box: padded, clamped, tiny against the 30 000 deg² free tier", () => {
+    const b = P.aisstreamBox(WEST_POINT.lat, WEST_POINT.lon, 15000)[0];
+    expect(b[0][0]).toBeLessThan(WEST_POINT.lat); expect(b[1][0]).toBeGreaterThan(WEST_POINT.lat);
+    expect(b[0][1]).toBeLessThan(WEST_POINT.lon); expect(b[1][1]).toBeGreaterThan(WEST_POINT.lon);
+    const area = (b[1][0] - b[0][0]) * (b[1][1] - b[0][1]);
+    expect(area).toBeGreaterThan(0.1); expect(area).toBeLessThan(0.5);
+    const polar = P.aisstreamBox(89.9, 179.9, 50000)[0];
+    expect(polar[1][0]).toBe(90); expect(polar[1][1]).toBe(180);
+  });
+  test("aisstreamSocket subscribes with a box, ingests, reconnects on close", async () => {
+    const sent = [], sockets = [];
+    class FakeWS {
+      constructor(url) { this.url = url; this.readyState = 0; sockets.push(this); setTimeout(() => { this.readyState = 1; this.onopen && this.onopen(); }, 1); }
+      send(d) { sent.push(JSON.parse(d)); setTimeout(() => { for (const f of require("./fixture_openseafeed.json")) this.onmessage({ data: JSON.stringify(f) }); }, 1); }
+      close(code) { this.readyState = 3; const cb = this.onclose; this.onclose = null; cb && cb({ code: code || 1000 }); }
+    }
+    const t = new P.VesselTable({ maxAgeMs: 1e15 });
+    let updates = 0, errors = [];
+    const h = P.aisstreamSocket("wss://x/v1/stream")({ table: t, WebSocket: FakeWS, pollMs: 5, getCenter: () => ({ lat: WEST_POINT.lat, lon: WEST_POINT.lon, radiusM: 10000 }), onUpdate: () => updates++, onError: (e) => errors.push(e.message) });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(sockets.length).toBe(1);
+    expect(sent[0].BoundingBoxes.length).toBe(1); expect(sent[0].APIKey).toBeUndefined();
+    expect(t.snapshot().length).toBe(4); expect(updates).toBeGreaterThan(0);
+    sockets[0].onclose({ code: 1006 });                    // server dropped us
+    await new Promise((r) => setTimeout(r, 1100));
+    expect(sockets.length).toBe(2);                        // reconnected after backoff
+    expect(errors.some((e) => /closed \(1006\)/.test(e))).toBe(true);
+    h.stop();
+    expect(sockets[1].readyState).toBe(3);
   });
   test("restPoller polls locations and fetches static data for newcomers", async () => {
     const t = new P.VesselTable({ maxAgeMs: 1e15 });   // fixture timestamps are fixed in the past

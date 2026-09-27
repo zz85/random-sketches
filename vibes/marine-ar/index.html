@@ -143,7 +143,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
 </div>
 
 <div id="settings">
-  <div class="sr"><span>AIS source</span><select id="selProvider"><option value="auto">Auto</option><option value="digitraffic">Digitraffic (Finland)</option><option value="proxy">Local proxy (aisstream)</option><option value="demo">Demo traffic</option></select></div>
+  <div class="sr"><span>AIS source</span><select id="selProvider"><option value="auto">Auto</option><option value="openseafeed">OpenSeaFeed (worldwide)</option><option value="digitraffic">Digitraffic (Finland)</option><option value="proxy">Local proxy (aisstream)</option><option value="demo">Demo traffic</option></select></div>
   <div class="sr"><span>Proxy URL</span><input type="text" id="inProxy" placeholder="http://localhost:8788" size="18"></div>
   <div class="sr"><span>Range</span><span><input type="range" id="rRange" min="2" max="40" value="15"><span class="v" id="vRange">15 km</span></span></div>
   <div class="sr"><span>Eye height</span><span><input type="range" id="rEye" min="1" max="60" step="0.5" value="2"><span class="v" id="vEye">2.0 m</span></span></div>
@@ -191,6 +191,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
   const IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
   const D2R = Math.PI / 180, R2D = 180 / Math.PI;
 
+  const MAX_OCCLUDED_LABELS = 6;
   const A = {
     // viewer
     lat: 47.6603, lon: -122.4412, alt: null, gpsAcc: null, gpsSpeed: null, gpsCourse: null, hasGps: false, useGps: true,
@@ -436,7 +437,9 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
     },
     pickProvider() {
       if (this.providerChoice !== "auto") return Providers.AIS_PROVIDERS[this.providerChoice];
-      return Providers.aisProviderFor(this.lat, this.lon) || (this.proxyBase || location.port === "8788" ? Providers.AIS_PROVIDERS.proxy : Providers.AIS_PROVIDERS.demo);
+      // an explicitly configured proxy beats the community feed; otherwise national feed → OpenSeaFeed → demo
+      if (this.proxyBase || location.port === "8788") return Providers.AIS_PROVIDERS.proxy;
+      return Providers.aisProviderFor(this.lat, this.lon) || Providers.AIS_PROVIDERS.demo;
     },
     startAis() {
       if (this.providerHandle) this.providerHandle.stop();
@@ -453,6 +456,15 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       // demo needs lanes to seed ships; wait briefly if they are still loading
       const go = () => { ctx.lanes = this.lanes; this.providerHandle = p.start(ctx); };
       if (p.id === "demo" && this.lanesLoading) setTimeout(go, 1500); else go();
+      if (p.id === "openseafeed" && this.providerChoice === "auto") {
+        const h = this.providerHandle;
+        setTimeout(() => {
+          if (this.providerHandle !== h || this.lastAis) return;
+          this.toast("No AIS from OpenSeaFeed — showing simulated traffic");
+          this.providerChoice = "demo"; $("selProvider").value = "demo"; this.startAis();
+          this.providerChoice = "auto"; $("selProvider").value = "auto";   // stays auto so a reload retries live
+        }, 25000);
+      }
     },
     async geocode() {
       this.place = { lat: this.lat, lon: this.lon };
@@ -697,7 +709,8 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       const cx = this.cx, cam = this.cam, lat = this.lat, lon = this.lon, W = this.W, H = this.H;
       const items = [];
       for (const v of this.vessels) {
-        const moored = v.navStat === 1 || v.navStat === 5 || (v.sog != null && v.sog < 0.3 && v.navStat !== 0);
+        // no nav status (class B / unknown) + creeping = tied up, GPS jitter; class A says so via status 0
+        const moored = v.navStat === 1 || v.navStat === 5 || (v.sog != null && v.sog < 0.3 && v.navStat !== 0) || (v.sog != null && v.sog < 1 && (v.navStat == null || v.navStat === 15));
         if (moored && !this.showMoored && !(this.selected && this.selected.mmsi === v.mmsi)) continue;
         if (v.occluded && this.hideOccluded && !(this.selected && this.selected.mmsi === v.mmsi)) continue;
         const { e, n } = Geo.toENU(lat, lon, v.drLat, v.drLon);
@@ -706,6 +719,15 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
         const sp = cam.projectSea(e, n);
         const brg = Geo.wrap360(Math.atan2(e, n) * R2D);
         items.push({ v, e, n, d, sp, brg, moored });
+      }
+      // Real feeds carry hundreds of boats tied up in marinas behind the shore, all jittering at
+      // 0.5-2 kn. Behind land only the nearest few underway ships earn a label; the rest still
+      // count in the chip and radar.
+      const occluded = items.filter((it) => it.v.occluded && !(this.selected && this.selected.mmsi === it.v.mmsi));
+      if (occluded.length > MAX_OCCLUDED_LABELS) {
+        occluded.sort((a, b) => ((b.v.sog >= 2) - (a.v.sog >= 2)) || a.d - b.d);
+        const drop = new Set(occluded.slice(MAX_OCCLUDED_LABELS).map((it) => it.v.mmsi));
+        for (let i = items.length - 1; i >= 0; i--) if (drop.has(items[i].v.mmsi)) items.splice(i, 1);
       }
       items.sort((a, b) => b.d - a.d);   // far first so near hulls paint on top
       const labels = [];
@@ -853,6 +875,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       const age = this.lastAis ? (now - this.lastAis) / 1000 : null;
       if (this.aisError) { a.textContent = `AIS ${this.provider ? this.provider.id : ""} error`; a.className = "chip bad"; a.title = this.aisError; }
       else if (!this.lastAis) { a.textContent = `AIS ${this.provider ? this.provider.id : "…"} connecting`; a.className = "chip warn"; }
+      else if (this.provider.id === "demo") { a.textContent = `AIS SIMULATED · ${this.vessels.length} ships`; a.className = "chip warn"; a.title = "Demo traffic: not real vessels. Pick OpenSeaFeed or a proxy in settings for live AIS."; }
       else { a.textContent = `AIS ${this.provider.id} · ${this.vessels.length} · ${age < 60 ? Math.round(age) + "s" : Math.round(age / 60) + "m"}`; a.className = "chip " + (age < 60 ? "ok" : "warn"); }
       const ld = $("chipLand");
       if (!this.occlude) { ld.textContent = "LAND off"; ld.className = "chip"; }
