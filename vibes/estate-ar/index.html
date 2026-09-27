@@ -766,6 +766,8 @@
         ${m.zip.condo ? `<tr><td>ZIP typical condo</td><td>${Geo.fmtMoney(m.zip.condo.value)} ${pct(m.zip.condo.change)}</td></tr>` : ""}
         ${m.zip.home ? `<tr><td>ZIP typical home</td><td>${Geo.fmtMoney(m.zip.home.value)} ${pct(m.zip.home.change)}</td></tr>` : ""}
       </table><div class="sub">Zillow Research indices for ${esc(p.zip || "")}, ${m.zip.asOf}. Rent per unit is an estimate: ZIP typical rent scaled by unit size and building age.</div>` : ""}` : "";
+    // TODO: for Prop 13 providers list the individual comps behind p.comps (address, distance, date, $/ft²)
+    //       so the user can judge the estimate; fetchArea would need to keep the sales array on the result.
     const salesHtml = prov.sales && p.sales.length ?  `<div class="sales"><h3 style="font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:.6px;margin:14px 0 2px">Recorded sales (3 yrs)</h3><ul>${p.sales.map((s) => `<li><span>${s.date ? s.date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "—"} <span class="z">${s.use || ""}</span></span><b class="${s.price > 0 ? "" : "z"}">${s.price > 0 ? Geo.fmtMoney(s.price) + (s.sqft ? ` <span class="z">$${Math.round(s.price / s.sqft)}/ft²</span>` : "") : "transfer / $0"}</b></li>`).join("")}</ul></div>` : "";
     $("dbody").innerHTML = `
       <h2>${esc(p.address || p.name || "(no address)")}</h2>

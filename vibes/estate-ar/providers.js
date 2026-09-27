@@ -131,6 +131,8 @@
       links: { "Assessor record": (p) => p.link || `https://www.snoco.org/proptax/search.aspx?parcel_number=${p.id}` },
     },
 
+    // TODO: Orange County (ocgis) and Ventura County follow the same ArcGIS pattern
+    //       (roll values + base year + living ft²); each is a provider entry like this one.
     lacounty: {
       id: "lacounty",
       name: "Los Angeles County Assessor",
@@ -312,6 +314,8 @@
 
   /**
    * Comparable-sales price per ft² for an area: the median of price/size over
+   * TODO: weight comps by recency (half-life ~18 months) and by bedroom-count
+   *       match to the subject instead of a plain median over the circle.
    * arm's-length sales (price > 0, size > 0) in the last `years`, optionally
    * restricted to one use type. Returns null with fewer than `min` comps.
    */
