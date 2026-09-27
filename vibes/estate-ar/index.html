@@ -138,6 +138,10 @@
   <div class="row"><label>Label distance<small>Hide parcels farther than this</small></label><input type="range" id="s-maxdist" min="40" max="600" step="10"><output id="o-maxdist"></output></div>
   <div class="row"><label>Max labels<small>Nearest parcels win</small></label><input type="range" id="s-maxlabels" min="3" max="30" step="1"><output id="o-maxlabels"></output></div>
   <div class="row"><label>Camera field of view<small>Horizontal. Point at a known edge and adjust until the outline sits on it</small></label><input type="range" id="s-fov" min="35" max="100" step="1"><output id="o-fov"></output></div>
+  <div class="row"><label>Your height<small id="eyesub">Auto: GPS altitude minus ground elevation. Set a floor number to override (indoors GPS often can't tell)</small></label>
+    <div class="seg" data-set="floorMode"><button data-v="auto">Auto</button><button data-v="manual">Floor</button></div>
+    <input type="number" id="s-floor" min="0" max="120" step="1" inputmode="numeric" style="width:64px;margin-left:8px" aria-label="Floor number"></div>
+  <div class="row"><label>Terrain<small>Ground elevation per parcel from USGS 3DEP / Copernicus DEM, so hillside homes sit where they are</small></label><input type="checkbox" id="s-terrain" class="sw"></div>
   <div class="row"><label>Heading offset<small>Compass correction if labels sit left/right of the buildings</small></label><input type="range" id="s-hoff" min="-45" max="45" step="1"><output id="o-hoff"></output></div>
   <div class="row"><label>Magnetic declination<small>East positive. Seattle ≈ 15.3°E</small></label><input type="range" id="s-decl" min="-25" max="25" step="0.1"><output id="o-decl"></output></div>
   <div class="row"><label>Ground outlines<small>Draw parcel boundaries on the ground when tilted down</small></label><input type="checkbox" class="sw" id="s-ground"></div>
@@ -180,6 +184,7 @@
 <script src="heights.js"></script>
 <script src="parcelstore.js"></script>
 <script src="market.js"></script>
+<script src="terrain.js"></script>
 <script>
 (() => {
   "use strict";
@@ -187,7 +192,7 @@
   const D2R = Math.PI / 180;
 
   // ---- settings ----------------------------------------------------------
-  const DEFAULTS = { priceMode: "auto", units: "imperial", radius: 220, maxdist: 200, maxlabels: 12, fov: 58, hoff: 0, decl: 15.3, ground: true, rooftop: true, osm: true, inside: false, priced: true, radarup: true, radarcov: true, groundcov: true, prearea: 1000, auto: "wifi", autoahead: 600, dailyMB: 25, sim: false };
+  const DEFAULTS = { priceMode: "auto", units: "imperial", radius: 220, maxdist: 200, maxlabels: 12, fov: 58, hoff: 0, decl: 15.3, ground: true, rooftop: true, osm: true, inside: false, priced: true, radarup: true, radarcov: true, groundcov: true, prearea: 1000, auto: "wifi", autoahead: 600, dailyMB: 25, sim: false, floorMode: "auto", floor: 0, terrain: true };
   const S = Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem("estate-ar:settings") || "{}"));
   const saveS = () => localStorage.setItem("estate-ar:settings", JSON.stringify(S));
 
@@ -198,6 +203,8 @@
     provider: null, parcels: [], views: new Map(), fetching: false, lastFetchAt: 0, lastGeocodeAt: null, place: "",
     selected: null, insideId: null, osmCount: 0, source: null, offlineGap: false, precache: null, frame: null, parcelsVersion: 0, stream: null, suspended: false, lowPower: false, camOK: false, w: innerWidth, h: innerHeight,
     sim: { heading: 20, pitch: 0 },
+    groundElev: null,          // metres ASL under the viewer (null = unknown; parcels then use 0 relative)
+    vh: Terrain.viewerHeight(),
   };
   const store = ParcelStore.open();
   const dataMeter = new ParcelStore.DataMeter(localStorage);
@@ -205,8 +212,10 @@
   const dataMB = () => dataMeter.today() / 1048576;
   const overBudget = () => dataMeter.over(S.dailyMB * 1048576);
   let lastLoadKey = "";
+  // ?sim=calabasas for the LA County test area; &floor=24 to stand on the 24th floor (or &alt=<m ASL> for a raw GPS altitude)
   const SIMS = { seattle: { lat: 47.6625, lon: -122.3145 }, calabasas: { lat: 34.1450, lon: -118.6615 } };
-  const SIM = SIMS[new URLSearchParams(location.search).get("sim")] || SIMS.seattle;   // ?sim=calabasas for the LA County test area
+  const SIMQ = new URLSearchParams(location.search);
+  const SIM = Object.assign({}, SIMS[SIMQ.get("sim")] || SIMS.seattle, SIMQ.get("alt") ? { alt: parseFloat(SIMQ.get("alt")), altAcc: 8 } : {});
 
   const TYPE_COLOR = { R: "var(--res)", C: "var(--com)", K: "var(--condo)", M: "var(--res)", T: "var(--other)", U: "var(--other)", X: "var(--exempt)" };
   const TYPE_HEX = { R: "#37d3ff", C: "#ff8a3d", K: "#c58bff", M: "#37d3ff", T: "#8fe388", U: "#8fe388", X: "#ffd166" };
@@ -301,10 +310,36 @@
     gpsWatch = navigator.geolocation.watchPosition((pos) => {
       st.lat = pos.coords.latitude; st.lon = pos.coords.longitude; st.acc = pos.coords.accuracy; st.fixAt = Date.now();
       if (st.acc == null || st.acc < 60) track.push(st.lat, st.lon, st.fixAt);
+      onAltitude(pos.coords.altitude, pos.coords.altitudeAccuracy);
       maybeFetch(); maybeGeocode(); maybeAutoPrecache();
     }, (err) => { toast("Location: " + err.message); $("gpsdot").className = "dot bad"; $("loctxt").textContent = "Location denied"; },
     { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 });
   }
+  /**
+   * Viewer ground elevation and eye height. The ground under the viewer is looked up
+   * once per ~30 m of movement (cached in Terrain); each GPS fix with an altitude is
+   * fused into the running eye-height estimate. Nothing here blocks a frame.
+   */
+  let groundReq = null;
+  function refreshGround() {
+    if (st.lat == null || !S.terrain) return;
+    if (st.groundAt && Geo.haversine(st.lat, st.lon, st.groundAt.lat, st.groundAt.lon) < Terrain.GRID_M) return;
+    if (groundReq) return;
+    const at = { lat: st.lat, lon: st.lon };
+    groundReq = Terrain.elevationAt(at.lat, at.lon).then((m) => {
+      if (m != null) { st.groundElev = m; st.groundAt = at; if (st.lastAlt) st.vh.feed(st.lastAlt.alt, st.lastAlt.acc, m, at.lat, at.lon); dirty = true; }
+    }).catch(() => {}).finally(() => { groundReq = null; });
+  }
+  function onAltitude(alt, altAcc) {
+    if (alt != null && isFinite(alt)) st.lastAlt = { alt, acc: altAcc };
+    refreshGround();
+    if (st.lastAlt && st.groundElev != null && S.terrain) st.vh.feed(st.lastAlt.alt, st.lastAlt.acc, st.groundElev, st.lat, st.lon);
+    dirty = true;
+  }
+  /** Eye height above the ground under the viewer, metres. */
+  function eyeM() { return S.floorMode === "manual" ? Math.max(0, S.floor || 0) * Terrain.STOREY_M + Terrain.EYE_STANDING : st.vh.eye().m; }
+  /** Ground under a parcel relative to the ground under the viewer (0 when terrain is off or unknown). */
+  const relGround = (p) => S.terrain && p.groundElev != null && st.groundElev != null ? p.groundElev - st.groundElev : 0;
   /** Move the simulated position `m` metres along `brg`, as if a GPS fix arrived. */
   function simWalk(brg, m) {
     const mpd = Geo.metresPerDegree(st.lat);
@@ -315,6 +350,8 @@
   window.__simWalk = simWalk; window.__st = st;
   function startSim() {
     st.lat = SIM.lat; st.lon = SIM.lon; st.acc = 5; st.fixAt = Date.now(); st.hasCompass = true; st.hasOrient = true;
+    if (SIMQ.get("floor") != null) { S.floorMode = "manual"; S.floor = parseInt(SIMQ.get("floor"), 10) || 0; }
+    if (SIM.alt != null) { const tick = () => { onAltitude(SIM.alt + (Math.random() - 0.5) * 6, SIM.altAcc); if (S.sim) setTimeout(tick, 1500); }; tick(); } else refreshGround();
     let drag = null;
     const onDown = (x, y) => { drag = { x, y, h: st.sim.heading, p: st.sim.pitch }; };
     const onMove = (x, y) => { if (!drag) return; st.sim.heading = Geo.wrap360(drag.h + (x - drag.x) * (S.fov / st.w)); st.sim.pitch = Math.max(-89, Math.min(89, drag.p - (y - drag.y) * (S.fov / st.w))); };
@@ -394,6 +431,18 @@
     st.parcels = list; st.views.clear(); st.source = source; st.parcelsVersion++;
     st.osmCount = list.filter((p) => p.heightSource === "osm").length;
     dirty = true;
+    if (S.terrain) loadTerrain(list);
+  }
+  /** Ground elevation per parcel centroid (one Open-Meteo call per 100 parcels, cached on a 30 m grid). */
+  async function loadTerrain(list) {
+    const need = list.filter((p) => p.groundElev == null);
+    if (!need.length) return;
+    try {
+      const el = await Terrain.elevations(need.map((p) => [p.centroid.lat, p.centroid.lon]));
+      el.forEach((m, i) => { if (m != null) need[i].groundElev = m; });
+      st.terrainCount = list.filter((p) => p.groundElev != null).length;
+      dirty = true;
+    } catch (e) { /* offline: flat ground */ }
   }
   async function maybeGeocode() {
     if (st.lat == null) return;
@@ -429,7 +478,8 @@
   function resize() { st.w = innerWidth; st.h = innerHeight; ground.width = st.w * devicePixelRatio; ground.height = st.h * devicePixelRatio; gctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0); }
   addEventListener("resize", resize); resize();
 
-  const EYE = 1.6;      // metres, eye above ground
+  // EYE is the viewer's eye above the ground under the viewer; re-read each frame (GPS altitude fusion / manual floor)
+  let EYE = Terrain.EYE_STANDING;
   const LABEL_H = 5.5;  // metres, where the label floats when rooftop mode is off or no building
   const labelHeight = (p) => S.rooftop && p.height > 0 ? p.height + 1.5 : LABEL_H;
 
@@ -442,6 +492,7 @@
     const interval = st.lowPower ? 66 : 33;
     if (now - lastFrameAt < interval) return;
     const hdg = currentHeading(), pitch = currentPitch();
+    EYE = eyeM();
     const moved = hdg == null || lastHdg == null || Math.abs(Geo.angleDiff(hdg, lastHdg)) > 0.15 || Math.abs(pitch - lastPitch) > 0.15 || st.fixAt !== lastFix;
     if (!moved && !dirty && now - lastFrameAt < 500) return;   // still repaint twice a second for status text
     lastFrameAt = now; lastHdg = hdg; lastPitch = pitch; lastFix = st.fixAt; dirty = false;
@@ -450,7 +501,7 @@
     if (st.lat != null) {
       $("gpsdot").className = "dot " + (st.acc == null ? "" : st.acc <= 15 ? "ok" : st.acc <= 40 ? "" : "bad");
       $("loctxt").textContent = st.place || `${st.lat.toFixed(5)}, ${st.lon.toFixed(5)}`;
-      $("locsub").textContent = `${st.parcels.length} parcels${st.source === "cache" ? " (cached)" : ""}${navigator.onLine === false ? " · OFFLINE" : ""}${st.offlineGap ? " · no data here yet" : ""}${st.osmCount > 0 ? ` · ${st.osmCount} OSM heights` : ""}${st.precache && st.precache.running && st.precache.kind === "auto" ? ` · caching ahead ${st.precache.done}/${st.precache.total}` : autoNote ? " · " + autoNote : ""} · ±${Geo.fmtDistance(st.acc || 0, imperial())} · ${st.provider ? st.provider.name : "no provider"}${S.sim ? " · SIMULATED" : ""}`;
+      $("locsub").textContent = `${st.parcels.length} parcels${st.source === "cache" ? " (cached)" : ""}${navigator.onLine === false ? " · OFFLINE" : ""}${st.offlineGap ? " · no data here yet" : ""}${st.osmCount > 0 ? ` · ${st.osmCount} OSM heights` : ""}${eyeNote()}${st.precache && st.precache.running && st.precache.kind === "auto" ? ` · caching ahead ${st.precache.done}/${st.precache.total}` : autoNote ? " · " + autoNote : ""} · ±${Geo.fmtDistance(st.acc || 0, imperial())} · ${st.provider ? st.provider.name : "no provider"}${S.sim ? " · SIMULATED" : ""}`;
     }
     // horizon line
     const hp = Geo.project(hdg || 0, 0, hdg || 0, pitch, S.fov, st.w, st.h, 0);
@@ -488,7 +539,7 @@
         brg = Geo.wrap360(v.bearing + k);
         dist = Math.max(v.nearest + 4, v.distance * (1 - Math.abs(k) / Math.max(v.spanDeg, 1)));
       }
-      const pr = Geo.project(brg, Geo.pitchTo(dist, labelHeight(p) - EYE), hdg, pitch, S.fov, st.w, st.h, 14);
+      const pr = Geo.project(brg, Geo.pitchTo(dist, relGround(p) + labelHeight(p) - EYE), hdg, pitch, S.fov, st.w, st.h, 14);
       if (!pr) continue;
       vis.push({ p, v, d, x: pr.x, y: pr.y });
     }
@@ -546,6 +597,12 @@
     drawRadar(hdg, shown);
   }
 
+  function eyeNote() {
+    const e = S.floorMode === "manual" ? { source: "manual", floor: S.floor || 0 } : st.vh.eye();
+    if (e.source === "manual") return e.floor > 0 ? ` · floor ${e.floor}` : "";
+    if (e.source === "gps" && e.floor > 0) return ` · ~floor ${e.floor} ±${Math.max(1, Math.round(e.uncertainty / Terrain.STOREY_M))}`;
+    return "";
+  }
   function drawGround(hdg, pitch) {
     const [vx, vy] = st.frame ? st.frame.toXY(st.lon, st.lat) : [0, 0];
     // planar projection: bearing/distance from a subtraction, no haversine
@@ -572,14 +629,15 @@
       budget--;
       // far parcels get a coarser ring: a vertex every couple of screen pixels is plenty
       const ring = v.nearest > S.maxdist * 0.5 && p.xyDraw.length > 12 ? p.xyDraw.filter((_, i) => i % 2 === 0) : p.xyDraw;
-      const base = ring.map(([x, y]) => projXY(x, y, 0));
+      const g = relGround(p);
+      const base = ring.map(([x, y]) => projXY(x, y, g));
       const sel = st.selected === p.id;
       gctx.strokeStyle = hexOf(p); gctx.globalAlpha = sel ? .95 : .55;
       path(base); gctx.stroke();
       if (sel) { gctx.globalAlpha = .18; gctx.fillStyle = hexOf(p); gctx.fill(); }
       // rooftop: roof outline + a few verticals (a hint of volume, not a model)
       if (S.rooftop && p.height > 0 && !v.inside && ring.length <= 60 && !st.lowPower) {
-        const roof = ring.map(([x, y]) => projXY(x, y, p.height));
+        const roof = ring.map(([x, y]) => projXY(x, y, g + p.height));
         gctx.globalAlpha = sel ? .8 : .3; gctx.setLineDash([4, 4]);
         path(roof); gctx.stroke(); gctx.setLineDash([]);
         gctx.globalAlpha = sel ? .5 : .14;
@@ -810,11 +868,22 @@
     el.value = S[key]; out.textContent = fmt(S[key]);
     el.oninput = () => { S[key] = parseFloat(el.value); out.textContent = fmt(S[key]); saveS(); if (key === "radius") maybeFetch(true); };
   }
+  function bindFloor() {
+    const el = $("s-floor"); el.value = S.floor || 0;
+    el.oninput = () => { S.floor = Math.max(0, parseInt(el.value, 10) || 0); S.floorMode = "manual"; saveS(); refreshRanges(); dirty = true; };
+    const est = st.vh.estimate(), e = st.vh.eye();
+    $("eyesub").textContent = S.floorMode === "manual" ? `Using floor ${S.floor || 0} (${Math.round(eyeM())} m eye height). Switch to Auto to use GPS altitude.`
+      : e.source === "gps" ? `GPS says ~floor ${e.floor} ±${Math.max(1, Math.round(e.uncertainty / Terrain.STOREY_M))} (${Math.round(e.m)} m above ground). Set a floor to override.`
+      : est ? `GPS altitude too noisy so far (±${Math.round(est.unc)} m from ${est.n} fixes); assuming ground level. Set a floor to override.`
+      : `No GPS altitude yet${st.lastAlt ? "" : " (indoors it is often missing)"}; assuming ground level. Set a floor to override.`;
+    el.disabled = S.floorMode !== "manual";
+  }
   function bindSwitch(id, key, cb) { const el = $("s-" + id); el.checked = !!S[key]; el.onchange = () => { S[key] = el.checked; saveS(); cb && cb(); }; }
   function bindSeg(key) { const seg = document.querySelector(`.seg[data-set="${key}"]`); const paint = () => [...seg.children].forEach((b) => b.classList.toggle("on", b.dataset.v === S[key])); paint(); seg.onclick = (e) => { if (!e.target.dataset.v) return; S[key] = e.target.dataset.v; saveS(); paint(); refreshRanges(); }; }
   const dist = (m) => Geo.fmtDistance(m, imperial());
-  function refreshRanges() { bindRange("radius", "radius", dist); bindRange("maxdist", "maxdist", dist); bindRange("maxlabels", "maxlabels", (v) => String(v)); bindRange("fov", "fov", (v) => v + "°"); bindRange("hoff", "hoff", (v) => (v > 0 ? "+" : "") + v + "°"); bindRange("decl", "decl", (v) => v.toFixed(1) + "°"); bindRange("prearea", "prearea", dist); bindRange("autoahead", "autoahead", dist); bindRange("dailyMB", "dailyMB", (v) => v + " MB"); $("s-prearea").addEventListener("input", () => updatePrecacheEstimate()); }
-  refreshRanges(); bindSeg("priceMode"); bindSeg("units");
+  function refreshRanges() { bindFloor(); bindRange("radius", "radius", dist); bindRange("maxdist", "maxdist", dist); bindRange("maxlabels", "maxlabels", (v) => String(v)); bindRange("fov", "fov", (v) => v + "°"); bindRange("hoff", "hoff", (v) => (v > 0 ? "+" : "") + v + "°"); bindRange("decl", "decl", (v) => v.toFixed(1) + "°"); bindRange("prearea", "prearea", dist); bindRange("autoahead", "autoahead", dist); bindRange("dailyMB", "dailyMB", (v) => v + " MB"); $("s-prearea").addEventListener("input", () => updatePrecacheEstimate()); }
+  refreshRanges(); bindSeg("priceMode"); bindSeg("units"); bindSeg("floorMode");
+  bindSwitch("terrain", "terrain", () => { if (S.terrain) { loadTerrain(st.parcels); refreshGround(); } dirty = true; });
   bindSwitch("ground", "ground"); bindSwitch("rooftop", "rooftop"); bindSwitch("osm", "osm", () => maybeFetch(true)); bindSwitch("inside", "inside"); bindSwitch("priced", "priced"); bindSwitch("radarup", "radarup"); bindSwitch("radarcov", "radarcov"); bindSwitch("groundcov", "groundcov"); bindSeg("auto");
   bindSwitch("sim", "sim", () => location.reload());
   $("clearcache").onclick = async () => { await store.clear(); lastLoadKey = ""; st.parcels = []; st.views.clear(); updateCacheInfo(); maybeFetch(true); toast("Cache cleared", true); };

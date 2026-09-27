@@ -707,3 +707,62 @@ describe("ParcelStore: Store with MemoryDB", () => {
     const s2 = PS.open(); expect(s2.db).toBeInstanceOf(typeof indexedDB === "undefined" ? PS.MemoryDB : PS.ParcelDB);
   });
 });
+
+describe("Terrain: elevation lookups and viewer height fusion", () => {
+  const T = require("./terrain.js");
+  test("geoid offsets per region", () => {
+    expect(T.geoidOffset(47.66, -122.31)).toBe(-20.5); expect(T.geoidOffset(34.14, -118.66)).toBe(-33); expect(T.geoidOffset(40, -74)).toBe(-20);
+  });
+  test("elevations: batches through Open-Meteo, dedupes by 30 m cell, caches", async () => {
+    T._cache.clear(); const urls = [];
+    const fake = async (url) => { urls.push(url); const n = (url.match(/latitude=([^&]*)/)[1].split(",")).length; return { ok: true, json: async () => ({ elevation: Array.from({ length: n }, (_, i) => 100 + i) }) }; };
+    const pts = [[47.6625, -122.3145], [47.66251, -122.31451], [47.6700, -122.3145]];   // first two share a cell
+    const e = await T.elevations(pts, fake);
+    expect(urls.length).toBe(1); expect(urls[0]).toContain("latitude=47.66250,47.67000");
+    expect(e).toEqual([100, 100, 101]);
+    const again = await T.elevations(pts, async () => { throw new Error("must not fetch"); });
+    expect(again).toEqual([100, 100, 101]);
+    // >100 points -> two calls
+    const many = Array.from({ length: 150 }, (_, i) => [40 + i * 0.01, -100]); urls.length = 0;
+    await T.elevations(many, fake); expect(urls.length).toBe(2);
+  });
+  test("elevationAt: USGS first, Open-Meteo on failure, null offline", async () => {
+    T._cache.clear();
+    const usgs = async (url) => ({ ok: true, json: async () => (url.includes("epqs") ? { value: "405.63" } : { elevation: [419] }) });
+    expect(await T.elevationAt(34.145, -118.6615, usgs)).toBeCloseTo(405.63);
+    T._cache.clear();
+    const noUsgs = async (url) => (url.includes("epqs") ? { ok: false, status: 503 } : { ok: true, json: async () => ({ elevation: [419] }) });
+    expect(await T.elevationAt(34.145, -118.6615, noUsgs)).toBe(419);
+    T._cache.clear();
+    expect(await T.elevationAt(34.145, -118.6615, async () => { throw new Error("offline"); })).toBeNull();
+  });
+  test("viewerHeight: defaults to standing, trusts GPS only once the fused uncertainty is small", () => {
+    const vh = T.viewerHeight();
+    expect(vh.eye()).toEqual({ m: 1.6, source: "default", floor: 0, uncertainty: null });
+    // ground 67 m ASL in Seattle, geoid -20.5: standing on floor 24 (76.8 m + 1.6 eye) => ellipsoidal alt ≈ 67 + 78.4 + 20.5 = 165.9
+    const truth = 67 + 24 * T.STOREY_M + T.EYE_STANDING + 20.5;
+    vh.feed(truth + 25, 30, 67, 47.66, -122.31);              // one noisy fix: not trusted yet
+    expect(vh.eye().source).toBe("default"); expect(vh.estimate().n).toBe(1);
+    for (let i = 0; i < 12; i++) vh.feed(truth + (i % 2 ? 6 : -6), 8, 67, 47.66, -122.31);
+    const e = vh.eye();
+    expect(e.source).toBe("gps"); expect(e.floor).toBeGreaterThanOrEqual(23); expect(e.floor).toBeLessThanOrEqual(25);
+    expect(e.m).toBeGreaterThan(70); expect(e.m).toBeLessThan(85); expect(e.uncertainty).toBeLessThan(12);
+    // null altitude / missing ground are ignored, garbage (below ground) is rejected
+    vh.feed(null, 5, 67, 47.66, -122.31); vh.feed(truth, 5, null, 47.66, -122.31); vh.feed(-500, 5, 67, 47.66, -122.31);
+    expect(vh.estimate().n).toBe(13);
+    // manual override wins
+    vh.setFloor(3); expect(vh.eye()).toEqual({ m: 3 * T.STOREY_M + T.EYE_STANDING, source: "manual", floor: 3, uncertainty: 1.5 });
+    vh.setFloor(null); expect(vh.eye().source).toBe("gps");
+  });
+  test("viewerHeight: at street level the estimate stays near the ground", () => {
+    const vh = T.viewerHeight();
+    for (let i = 0; i < 10; i++) vh.feed(67 + 1.6 + 20.5 + (i % 3 - 1) * 5, 6, 67, 47.66, -122.31);
+    const e = vh.eye(); expect(e.source).toBe("gps"); expect(e.floor).toBe(0); expect(e.m).toBeLessThan(6);
+  });
+  test("geometry: from floor 24 a nearby low roof projects below the horizon, and a hillside lot rises with its ground", () => {
+    const G = require("./geo.js");
+    expect(G.pitchTo(100, 12 - 1.6)).toBeGreaterThan(0);                      // standing: roof above eye
+    expect(G.pitchTo(100, 12 - (24 * 3.2 + 1.6))).toBeLessThan(-30);          // floor 24: well below
+    expect(G.pitchTo(200, 30 + 12 - 1.6)).toBeGreaterThan(G.pitchTo(200, 12 - 1.6));   // ground 30 m higher over there
+  });
+});

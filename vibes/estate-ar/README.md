@@ -139,6 +139,26 @@ still shows the roll value everywhere; "Auto" picks per state.
 
 Simulator: `index.html?sim=calabasas` starts you in Vista Pointe.
 
+## Elevation: hills and high-rises
+
+The geometry is 3-D, not flat-earth. Two heights feed every label and ground outline:
+
+- **Ground under each parcel** (`terrain.js`): centroid elevations from Open-Meteo's elevation API
+  (Copernicus GLO-90, 100 points per call, CORS) and the precise ground under you from USGS 3DEP
+  (`epqs.nationalmap.gov`, ~1 m), cached on a 30 m grid. A Calabasas house 70 m downhill is drawn
+  70 m lower. Terrain can be switched off in settings (flat ground, no extra requests).
+- **Your eye height.** GPS altitude is the weak sensor: ellipsoidal, ±15–30 m, often null indoors,
+  and browsers expose no barometer. So it is fused: geoid-corrected (per-region EGM96 offset),
+  minus the ground under you, then averaged over fixes weighted by `altitudeAccuracy` with an
+  8-fix half-life; the result is only trusted once the combined uncertainty is under 12 m. The
+  status chip then reads "~floor 25 ±1". Until then, or when altitude is missing, you are assumed
+  to stand on the ground. Settings → Your height shows what GPS thinks, and a **Floor** override
+  (storey = 3.2 m) takes over when you know better — e.g. deep inside a tower.
+
+From the 25th floor the street grid drops below the horizon and low roofs are seen from above;
+before this, every label sat ~30° too high. Simulator: `?sim=seattle&floor=24`, or
+`&alt=166` for a raw ellipsoidal GPS altitude to exercise the fusion.
+
 ## Cost: bandwidth, CPU, battery
 
 - **Bandwidth.** Parcel geometry is generalised by the server (`maxAllowableOffset` ≈ 0.5 m,
@@ -188,6 +208,8 @@ Simulator: `index.html?sim=calabasas` starts you in Vista Pointe.
 | `overpass-api.de` / `overpass.kumi.systems` | — | OSM buildings with `height` or `building:levels` near you | Best effort; shared volunteer servers. Matched to parcels by building centroid |
 | `aqua.kingcounty.gov/extranet/assessor/*.zip` | King County | Apartment Complex + Unit Breakdown extracts | No CORS, so bundled by `fetch_data.js` into `data/kc_apartments.json` |
 | `files.zillowstatic.com/research/public_csvs/…` | WA + CA ZIPs | ZORI rent, ZHVI condo and home value indices | 10–120 MB CSVs, so bundled by `fetch_data.js` into `data/zip_market_{wa,ca}.json` |
+| `api.open-meteo.com/v1/elevation` | world | Ground elevation, 100 points per call | Copernicus GLO-90; one call per 100 parcels |
+| `epqs.nationalmap.gov/v1/json` | US | Ground elevation under the viewer | USGS 3DEP, ~1 m; one call per 30 m moved |
 | `cache.gis.lacounty.gov/cache/rest/services/LACounty_Cache/LACounty_Parcel/FeatureServer/0` | Los Angeles County | Parcels with roll values, base years, living ft², beds/baths, units, year built | Hosted layer, CORS, 2000/page, updated monthly |
 | `assessor.gis.lacounty.gov/assessor/rest/services/PAIS/pais_sales_parcels/MapServer/0` | Los Angeles County | Recorded sales with price, size, bedrooms | Feeds the comps estimate |
 
@@ -212,9 +234,10 @@ sales layer / links. Most US county assessors publish parcels as an ArcGIS REST 
 - `geo.js` — haversine, bearing, centroid, point-in-polygon, angular span, metric frame + planar view + ring decimation, pinhole projection, polygon clipping / view wedge, heading filter, formatting
 - `providers.js` — provider registry (King, Snohomish, WA statewide) with fallback, ArcGIS queries (generalised, paged, byte-metered), normalisation, sales join, stacked-parcel grouping, WA DOR use codes, Nominatim
 - `heights.js` — storey/height estimate from use class + value density; Overpass fetch and parcel matching
+- `terrain.js` — ground elevation lookups (cached) and GPS-altitude fusion into eye height
 - `market.js` — apartment records and ZIP market indices: per-unit value, rent estimate, yield
 - `fetch_data.js` — refreshes `data/` from the assessor extracts and Zillow Research CSVs
 - `parcelstore.js` — offline cache: coverage circles + IndexedDB parcel store (memory fallback), hex-lattice precache planner, circle-union boundary, GPS track/course, corridor-ahead planner, wifi gate, 24 h data meter
 - `sw.js`, `manifest.webmanifest`, `icon.svg`, `icon-192.png`, `icon-512.png` — PWA
-- `estate.test.js` — bun tests (81) using `fixture_parcels.json` / `fixture_sales.json` / `fixture_snohomish.json` / `fixture_wastate.json` captured from the live services
+- `estate.test.js` — bun tests (87) using `fixture_parcels.json` / `fixture_sales.json` / `fixture_snohomish.json` / `fixture_wastate.json` captured from the live services
 - `live_check.js` — live smoke test
