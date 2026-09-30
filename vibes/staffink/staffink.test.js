@@ -1,0 +1,257 @@
+// bun test  — recognizer, parser, theory, layout and export, on synthetic handwriting.
+import { test, expect, describe } from 'bun:test';
+import fs from 'fs';
+import { loadModel, classify, features, N_FEATURES, makeUserTemplate } from './recognizer.js';
+import { newScore, spellScore, ticks, measureCapacity, keyAlter } from './theory.js';
+import { layoutScore, beamGroups, locate } from './layout.js';
+import { interpret, parseNote } from './parser.js';
+import { toMusicXML, toMidi, performance } from './export.js';
+import * as I from './testink.js';
+
+const model = loadModel(JSON.parse(fs.readFileSync(new URL('./model.json', import.meta.url))));
+const WIDTH = 64;
+
+function session(opts) {
+  const score = newScore(opts);
+  const s = { score, pending: [], log: [] };
+  s.L = () => layoutScore(s.score, { width: WIDTH });
+  s.write = (strokes, forced) => {
+    const L = s.L();
+    const e = interpret(strokes, { score: s.score, L, model, user: s.user || [], pending: s.pending }, forced);
+    if (!e) { s.log.push(null); return null; }
+    const r = e.apply(s.score);
+    if (r && r.pending) s.pending.push(r.pending);
+    s.log.push(e);
+    return e;
+  };
+  s.top = (si = 0, sys = 0) => s.L().systems[sys].staffTops[si];
+  /** x inside measure mi after its existing content */
+  s.xIn = (mi, frac = 0.5) => { const m = s.L().measures[mi]; return m.reserveX + (m.x1 - m.reserveX) * frac * 0.6 + 0.8; };
+  s.events = (mi = 0, si = 0) => s.score.measures[mi].staves[si].events;
+  return s;
+}
+
+describe('recognizer', () => {
+  test('features have a fixed length', () => {
+    expect(features(I.note(10, 5, 2)).length).toBe(N_FEATURES);
+  });
+  const cases = [
+    ['Quarter-Note', () => I.note(10, 5, 2)], ['Quarter-Note', () => I.note(10, 5, 7)],
+    ['Half-Note', () => I.note(10, 5, 1, { filled: false })], ['Eighth-Note', () => I.note(10, 5, 2, { flags: 1 })],
+    ['Sixteenth-Note', () => I.note(10, 5, 2, { flags: 2 })], ['Whole-Note', () => I.wholeNote(10, 5, 3)],
+    ['Sharp', () => I.sharp(10, 5, 3)], ['Flat', () => I.flat(10, 5, 3)], ['Natural', () => I.natural(10, 5, 3)],
+    ['Quarter-Rest', () => I.quarterRest(10, 5)], ['Whole-Half-Rest', () => I.blockRest(10, 5, 5)], ['G-Clef', () => I.trebleClef(10, 3)],
+  ];
+  for (const [label, make] of cases) test(`classifies ${label}`, () => { expect(classify(make(), model)[0].label).toBe(label); });
+
+  test('size matters: a tiny loop is not a whole note', () => {
+    const tiny = [I.hollowHead(5, 5, 0.3, 0.25)];
+    expect(classify(tiny, model)[0].label).not.toBe('Whole-Note');
+  });
+
+  test('a user correction teaches the recogniser', () => {
+    const ink = I.quarterRest(10, 5);
+    const user = [makeUserTemplate('Eighth-Rest', ink)];
+    expect(classify(ink, model, { user })[0].label).toBe('Eighth-Rest');
+    expect(classify(I.note(10, 5, 2), model, { user })[0].label).toBe('Quarter-Note');
+  });
+});
+
+describe('structural note parse', () => {
+  test('stem up, filled head, pitch from height', () => {
+    const r = parseNote(I.note(10, 5, 2), 10);
+    expect(r.stem.up).toBe(true); expect(r.heads.map((h) => h.pos)).toEqual([2]); expect(r.filled).toBe(true);
+  });
+  test('stem down, open head', () => {
+    const r = parseNote(I.note(10, 5, 7, { filled: false }), 10);
+    expect(r.stem.up).toBe(false); expect(r.heads.map((h) => h.pos)).toEqual([7]); expect(r.filled).toBe(false);
+  });
+});
+
+describe('theory', () => {
+  test('ticks and capacity', () => {
+    expect(ticks({ dur: 4 })).toBe(96); expect(ticks({ dur: 4, dots: 1 })).toBe(144); expect(ticks({ dur: 8, dots: 2 })).toBe(84);
+    expect(measureCapacity([6, 8])).toBe(288);
+  });
+  test('key signatures', () => {
+    expect(keyAlter(-1, 6)).toBe(-1); expect(keyAlter(2, 0)).toBe(1); expect(keyAlter(2, 4)).toBe(0);
+  });
+  test('accidentals carry through the bar, key signature applies', () => {
+    const s = newScore({ key: -1 });
+    const B = (acc = null) => ({ id: s.nextId++, kind: 'note', dur: 4, heads: [{ pos: 4, acc }] });
+    s.measures[0].staves[0].events.push(B(), B(0), B());
+    s.measures[1].staves[0].events.push(B());
+    const { spelled } = spellScore(s);
+    const midis = [...s.measures[0].staves[0].events, ...s.measures[1].staves[0].events].map((e) => spelled.get(e)[0].midi);
+    expect(midis).toEqual([70, 71, 71, 70]);
+  });
+});
+
+describe('writing', () => {
+  test('a quarter note lands on G4', () => {
+    const s = session();
+    s.write(I.note(s.top(), s.xIn(0, 0.1), 2));
+    const ev = s.events()[0];
+    expect(ev).toMatchObject({ kind: 'note', dur: 4, heads: [{ pos: 2 }] });
+    expect(spellScore(s.score).spelled.get(ev)[0].midi).toBe(67);
+  });
+
+  test('a bar of four notes, then the next bar; paper keeps one blank bar', () => {
+    const s = session();
+    for (const p of [2, 4, 6, 3]) s.write(I.note(s.top(), s.xIn(0), p));
+    expect(s.events(0).map((e) => e.heads[0].pos)).toEqual([2, 4, 6, 3]);
+    s.write(I.note(s.top(), s.xIn(1, 0.1), 5, { filled: false }));
+    expect(s.events(1)).toHaveLength(1);
+    expect(s.events(1)[0].dur).toBe(2);
+    expect(s.score.measures).toHaveLength(3);
+  });
+
+  test('sharp before a note, written first', () => {
+    const s = session();
+    const x = s.xIn(0, 0.1);
+    const e = s.write(I.sharp(s.top(), x, 3));
+    expect(e.label).toBe('Sharp');
+    expect(s.pending).toHaveLength(1);
+    s.write(I.note(s.top(), x + 1.9, 3));
+    expect(s.events()[0].heads[0].acc).toBe(1);
+    expect(s.pending).toHaveLength(0);
+  });
+
+  test('flat added in front of an existing note', () => {
+    const s = session();
+    s.write(I.note(s.top(), s.xIn(0, 0.2), 4));
+    const hx = s.L().evPos.get(s.events()[0].id).x;
+    s.write(I.flat(s.top(), hx - 1.4, 4));
+    expect(s.events()[0].heads[0].acc).toBe(-1);
+  });
+
+  test('a stemless head on an existing stem makes a chord', () => {
+    const s = session();
+    s.write(I.note(s.top(), s.xIn(0, 0.2), 2));
+    const p = s.L().evPos.get(s.events()[0].id);
+    s.write([I.filledHead(p.x + 0.6, p.top + 4 - 6 / 2)]);
+    expect(s.events()).toHaveLength(1);
+    expect(s.events()[0].heads.map((h) => h.pos).sort()).toEqual([2, 6]);
+  });
+
+  test('dot to the right = dotted, dot under = staccato', () => {
+    const s = session();
+    s.write(I.note(s.top(), s.xIn(0, 0.2), 3));
+    let p = s.L().evPos.get(s.events()[0].id);
+    s.write(I.dot(p.x + 1.8, p.heads[0].y));
+    expect(s.events()[0].dots).toBe(1);
+    s.write(I.note(s.top(), s.xIn(0), 6));
+    p = s.L().evPos.get(s.events()[1].id);
+    s.write(I.dot(p.x + 0.6, p.heads[0].y - 1.3));
+    expect(s.events()[1].stacc).toBe(true);
+  });
+
+  test('a line across two stem tips beams them', () => {
+    const s = session();
+    s.write(I.note(s.top(), s.xIn(0, 0.1), 2));
+    s.write(I.note(s.top(), s.xIn(0, 0.1), 3));
+    const [a, b] = s.events().map((e) => s.L().evPos.get(e.id));
+    const e = s.write(I.straight(a.stem.x - 0.1, a.stem.y1 + 0.2, b.stem.x + 0.1, b.stem.y1 + 0.1));
+    expect(e.kind).toBe('beam');
+    expect(s.events().map((x) => x.dur)).toEqual([8, 8]);
+    const g = beamGroups(s.events(), [4, 4]);
+    expect(g).toHaveLength(1);
+  });
+
+  test('an arc between equal pitches is a tie, otherwise a slur', () => {
+    const s = session();
+    for (const p of [3, 3, 5]) s.write(I.note(s.top(), s.xIn(0), p));
+    const [a, b, c] = s.events().map((e) => s.L().evPos.get(e.id));
+    const hw = s.L().headW;
+    expect(s.write(I.arc(a.x + hw, a.heads[0].y + 0.6, b.x, b.heads[0].y + 0.6, 0.5)).kind).toBe('tie');
+    expect(s.events()[0].tie).toBe(true);
+    expect(s.write(I.arc(b.x + hw / 2, b.heads[0].y + 0.7, c.x + hw / 2, c.heads[0].y + 0.7, 0.7)).kind).toBe('slur');
+    expect(s.score.slurs).toHaveLength(1);
+    const perf = performance(s.score);
+    expect(perf.notes).toHaveLength(2); // tied pair sounds once
+    expect(perf.notes[0].dur).toBe(192);
+  });
+
+  test('scribbling over a note erases it', () => {
+    const s = session();
+    s.write(I.note(s.top(), s.xIn(0, 0.1), 4));
+    s.write(I.note(s.top(), s.xIn(0), 5));
+    const p = s.L().evPos.get(s.events()[0].id);
+    const e = s.write(I.scribble(p.bbox.x0 - 0.3, p.bbox.y0, p.bbox.x1 + 0.3, p.bbox.y1, 7));
+    expect(e.kind).toBe('erase');
+    expect(s.events().map((x) => x.heads[0].pos)).toEqual([5]);
+  });
+
+  test('block rests: hanging = whole (bar rest), sitting = half', () => {
+    const s = session();
+    s.write(I.blockRest(s.top(), s.xIn(0, 0.2), 5));
+    expect(s.events(0)[0]).toMatchObject({ kind: 'rest', dur: 1, full: true });
+    s.write(I.blockRest(s.top(), s.xIn(1, 0.1), 4));
+    expect(s.events(1)[0]).toMatchObject({ kind: 'rest', dur: 2 });
+  });
+
+  test('ledger lines are ignored, the note below them is kept', () => {
+    const s = session();
+    const x = s.xIn(0, 0.2), top = s.top();
+    const ink = [...I.note(top, x, -2), ...I.straight(x - 0.9, top + 5, x + 0.9, top + 5)];
+    s.write(ink);
+    expect(s.events()[0].heads[0].pos).toBe(-2);
+  });
+
+  test('ink far from every staff is not forced onto one', () => {
+    const s = session();
+    const e = s.write(I.note(s.top() + 22, s.xIn(0, 0.2), 2));
+    expect(e.kind).toBe('none');
+    expect(s.events()).toHaveLength(0);
+  });
+
+  test('grand staff routes low notes to the bass staff', () => {
+    const s = session({ staves: [{ clef: 'G' }, { clef: 'F' }] });
+    s.write(I.note(s.top(1), s.xIn(0, 0.1), 4));
+    expect(s.events(0, 1)).toHaveLength(1);
+    expect(spellScore(s.score).spelled.get(s.events(0, 1)[0])[0].midi).toBe(50); // D3
+  });
+});
+
+describe('layout', () => {
+  const fill = (score, mi, evs) => { score.measures[mi].staves[0].events = evs.map((e) => ({ id: score.nextId++, kind: 'note', heads: [{ pos: 3, acc: null }], ...e })); };
+  test('eighths beam by beat', () => {
+    expect(beamGroups(Array.from({ length: 8 }, (_, i) => ({ id: i, kind: 'note', dur: 8, heads: [{ pos: 3 }] })), [4, 4])).toHaveLength(4);
+    expect(beamGroups(Array.from({ length: 6 }, (_, i) => ({ id: i, kind: 'note', dur: 8, heads: [{ pos: 3 }] })), [6, 8]).map((g) => g.length)).toEqual([3, 3]);
+  });
+  test('systems break and stay inside the page; notes move left to right', () => {
+    const s = newScore();
+    s.measures = [];
+    for (let i = 0; i < 14; i++) { s.measures.push({ attrs: {}, staves: [{ events: [] }] }); fill(s, i, [{ dur: 8 }, { dur: 8 }, { dur: 4 }, { dur: 2 }]); }
+    const L = layoutScore(s, { width: WIDTH });
+    expect(L.systems.length).toBeGreaterThan(2);
+    for (const sys of L.systems) expect(sys.x1).toBeLessThanOrEqual(WIDTH - 1.5 + 0.01);
+    const xs = s.measures[0].staves[0].events.map((e) => L.evPos.get(e.id).x);
+    expect([...xs].sort((a, b) => a - b)).toEqual(xs);
+    expect(L.beams.length).toBe(14);
+  });
+  test('locate finds the staff and bar under a point', () => {
+    const s = newScore({ staves: [{ clef: 'G' }, { clef: 'F' }] });
+    const L = layoutScore(s, { width: WIDTH });
+    const sys = L.systems[0];
+    expect(locate(L, sys.measures[1].x0 + 2, sys.staffTops[1] + 2)).toMatchObject({ si: 1, mi: 1 });
+  });
+});
+
+describe('export', () => {
+  test('MusicXML and MIDI', () => {
+    const s = session();
+    for (const p of [2, 4]) s.write(I.note(s.top(), s.xIn(0), p));
+    s.write(I.sharp(s.top(), s.xIn(0) + 0.2, 6));
+    s.write(I.note(s.top(), s.xIn(0) + 2.0, 6));
+    const xml = toMusicXML(s.score);
+    expect((xml.match(/<note>/g) || []).length).toBe(3);
+    expect(xml).toContain('<step>G</step><octave>4</octave>');
+    expect(xml).toContain('<step>D</step><alter>1</alter><octave>5</octave>');
+    expect(xml).toContain('<accidental>sharp</accidental>');
+    expect(xml.split('<measure ').length - 1).toBe(1);
+    const mid = toMidi(s.score);
+    expect(String.fromCharCode(...mid.slice(0, 4))).toBe('MThd');
+    expect(mid.filter((b, i) => (b & 0xf0) === 0x90 && mid[i + 2] > 0 && i > 22).length).toBeGreaterThanOrEqual(3);
+  });
+});

@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#f3eee3">
+<title>StaffInk — handwritten music notation</title>
+<style>
+  @font-face { font-family: Bravura; src: url(fonts/Bravura.woff2) format('woff2'); font-display: block; }
+  @font-face { font-family: Petaluma; src: url(fonts/Petaluma.woff2) format('woff2'); font-display: block; }
+  :root { --paper: #fbf8f1; --bar: #f3eee3; --ink: #1d1c1a; --muted: #6b645a; --line: #ddd4c4; --accent: #2563eb; --warn: #c2410c; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bar); color: var(--ink); font: 14px/1.35 system-ui, -apple-system, 'Segoe UI', sans-serif; overscroll-behavior: none; }
+  header { position: fixed; inset: 0 0 auto 0; height: 48px; padding: 0 8px env(safe-area-inset-right) 8px; padding-top: env(safe-area-inset-top); display: flex; align-items: center; gap: 4px; background: var(--bar); border-bottom: 1px solid var(--line); z-index: 5; user-select: none; }
+  header .brand { font: italic 600 17px Georgia, serif; margin: 0 6px 0 2px; white-space: nowrap; }
+  header input.title { flex: 1 1 60px; min-width: 40px; border: 0; background: transparent; font: italic 15px Georgia, serif; color: var(--ink); padding: 6px; border-radius: 6px; }
+  header input.title:focus { background: #fff; outline: 1px solid var(--line); }
+  button { font: inherit; color: inherit; background: transparent; border: 1px solid transparent; border-radius: 8px; height: 36px; min-width: 36px; padding: 0 8px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 4px; }
+  button:hover { background: rgba(0,0,0,.05); }
+  button:disabled { opacity: .35; cursor: default; }
+  button.on { background: #fff; border-color: var(--line); box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+  .group { display: flex; gap: 2px; padding: 2px; border-radius: 10px; background: rgba(0,0,0,.035); }
+  .ic { font-size: 18px; line-height: 1; }
+  .mus { font-family: Bravura; font-size: 26px; line-height: 1; position: relative; top: 5px; }
+  .lbl { font-size: 13px; }
+  .narrow { display: none; }
+  @media (max-width: 720px) { header .lbl, .wide { display: none; } header .brand { font-size: 15px; } }
+  @media (max-width: 560px) {
+    header { gap: 1px; padding-left: 4px; padding-right: 4px; }
+    header .brand, #settingsBtn, #helpBtn { display: none; }
+    header input.title { flex-basis: 40px; font-size: 14px; padding: 6px 2px; }
+    header button { min-width: 34px; padding: 0 5px; }
+    .narrow { display: flex; }
+  }
+  #stage { position: fixed; inset: 48px 0 0 0; margin-top: env(safe-area-inset-top); touch-action: none; overflow: hidden; background: var(--paper); }
+  #stage canvas { position: absolute; left: 0; top: 0; touch-action: none; }
+  #ink { pointer-events: none; }
+  #status { position: fixed; left: 10px; bottom: calc(10px + env(safe-area-inset-bottom)); max-width: calc(100% - 20px); padding: 7px 12px; border-radius: 10px; background: rgba(29,28,26,.86); color: #fff; font-size: 13px; opacity: 0; transform: translateY(8px); transition: .18s; pointer-events: none; z-index: 6; }
+  #status.show { opacity: 1; transform: none; }
+  #status b { font-weight: 600; }
+  #mode { position: fixed; right: 10px; bottom: calc(10px + env(safe-area-inset-bottom)); font-size: 12px; color: var(--muted); background: rgba(243,238,227,.9); border: 1px solid var(--line); padding: 4px 9px; border-radius: 99px; z-index: 4; user-select: none; }
+  .chips { position: fixed; display: none; gap: 4px; padding: 4px; background: #fff; border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.12); z-index: 7; flex-wrap: wrap; max-width: 92vw; }
+  .chips.show { display: flex; }
+  #alts { left: 50%; transform: translateX(-50%); bottom: calc(50px + env(safe-area-inset-bottom)); justify-content: center; }
+  .chips button { height: 40px; border: 1px solid var(--line); background: #fbfaf7; padding: 0 9px; }
+  .chips button .mus { font-size: 24px; top: 4px; }
+  .chips button small { color: var(--muted); font-size: 11px; }
+  .chips button.on { background: #e8eefc; border-color: var(--accent); color: var(--accent); }
+  .chips .hint { width: 100%; font-size: 11px; color: var(--muted); padding: 0 4px; }
+  dialog { border: 1px solid var(--line); border-radius: 14px; padding: 0; max-width: min(520px, 94vw); width: 100%; background: #fffdf9; color: var(--ink); box-shadow: 0 20px 60px rgba(0,0,0,.25); }
+  dialog::backdrop { background: rgba(30,25,20,.3); }
+  dialog h2 { font: italic 600 19px Georgia, serif; margin: 0; padding: 14px 18px 8px; }
+  dialog .body { padding: 4px 18px 16px; max-height: 70vh; overflow: auto; }
+  dialog .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid #f0ebe1; }
+  dialog .row:last-child { border: 0; }
+  dialog label { flex: 1; }
+  dialog label small { display: block; color: var(--muted); font-size: 12px; }
+  dialog select, dialog input[type=number] { font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+  dialog input[type=range] { width: 150px; }
+  dialog .foot { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 14px; border-top: 1px solid #f0ebe1; }
+  dialog .foot button { border: 1px solid var(--line); background: #fff; }
+  dialog .foot button.primary { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .help-grid { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; align-items: center; font-size: 13.5px; }
+  .help-grid .mus { font-size: 30px; top: 6px; text-align: center; }
+  .help-grid div:nth-child(odd) { text-align: center; min-width: 54px; color: var(--muted); }
+  kbd { font: 12px ui-monospace, monospace; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; background: #fff; }
+  .menu { position: fixed; display: none; flex-direction: column; min-width: 180px; background: #fff; border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,.15); padding: 4px; z-index: 8; }
+  .menu.show { display: flex; }
+  .menu button { justify-content: flex-start; height: 38px; }
+</style>
+</head>
+<body>
+<header>
+  <span class="brand">StaffInk</span>
+  <input class="title" id="title" value="Untitled" aria-label="Score title" spellcheck="false">
+  <div class="group" role="toolbar" aria-label="Tools">
+    <button id="tWrite" class="on" title="Write (pen, mouse, or finger)" aria-label="Write"><span class="ic">✎</span><span class="lbl">Write</span></button>
+    <button id="tSelect" title="Select and edit: tap a note, drag it up or down" aria-label="Select"><span class="ic">☝</span><span class="lbl">Select</span></button>
+    <button id="tErase" title="Erase: stroke through symbols" aria-label="Erase"><span class="ic">⌫</span><span class="lbl">Erase</span></button>
+  </div>
+  <button id="undo" title="Undo (Ctrl+Z)" aria-label="Undo"><span class="ic">↶</span></button>
+  <button id="redo" title="Redo (Ctrl+Shift+Z)" aria-label="Redo"><span class="ic">↷</span></button>
+  <button id="play" title="Play / stop (Space)" aria-label="Play"><span class="ic" id="playIc">▶</span><span class="lbl" id="playLbl">Play</span></button>
+  <button id="exportBtn" title="Export and more" aria-label="Export and more"><span class="ic">⤓</span><span class="lbl wide">Export</span></button>
+  <button id="settingsBtn" title="Score and input settings" aria-label="Settings"><span class="ic">⚙</span></button>
+  <button id="helpBtn" title="How to write" aria-label="Help"><span class="ic">?</span></button>
+</header>
+<div id="stage"><canvas id="score"></canvas><canvas id="ink"></canvas></div>
+<div id="status" role="status" aria-live="polite"></div>
+<div id="mode"></div>
+<div class="chips" id="alts" role="menu" aria-label="Recognition alternatives"></div>
+<div class="chips" id="selbar" role="toolbar" aria-label="Edit selected note"></div>
+<div class="menu" id="exportMenu" role="menu">
+  <button data-x="xml">MusicXML (.musicxml)</button>
+  <button data-x="mid">MIDI (.mid)</button>
+  <button data-x="png">Image (.png)</button>
+  <button data-x="json">StaffInk file (.json)</button>
+  <button data-x="open">Open StaffInk file…</button>
+  <button data-x="settings" class="narrow">⚙ Settings</button>
+  <button data-x="help" class="narrow">? How to write</button>
+</div>
+<input type="file" id="openFile" accept=".json,application/json" hidden>
+
+<dialog id="settings">
+  <h2>Score &amp; input</h2>
+  <div class="body">
+    <div class="row"><label>Staves</label><select id="sStaves"><option value="G">Treble</option><option value="F">Bass</option><option value="C">Alto</option><option value="GF">Piano (grand staff)</option></select></div>
+    <div class="row"><label>Key signature</label><select id="sKey"></select></div>
+    <div class="row"><label>Time signature<small>or write one at the start of any bar</small></label><select id="sTime"><option>4/4</option><option>3/4</option><option>2/4</option><option>6/8</option><option>9/8</option><option>12/8</option><option>3/8</option><option>2/2</option><option value="C">C (common)</option></select></div>
+    <div class="row"><label>Tempo (♩ per minute)</label><input type="number" id="sTempo" min="30" max="260" step="2"></div>
+    <div class="row"><label>Engraving font</label><select id="sFont"><option>Bravura</option><option value="Petaluma">Petaluma (handwritten)</option></select></div>
+    <div class="row"><label>Staff size</label><input type="range" id="sZoom" min="0.6" max="2" step="0.05"></div>
+    <div class="row"><label>Recognise after pause<small>how long the pen rests before ink becomes notation</small></label><input type="range" id="sDelay" min="250" max="1600" step="50"></div>
+    <div class="row"><label>Finger<small>Auto: fingers write until a stylus is used, then fingers scroll and select (palm rejection)</small></label><select id="sFinger"><option value="auto">Auto</option><option value="write">Always writes</option><option value="navigate">Scrolls &amp; selects</option></select></div>
+    <div class="row"><label>Show my ink under the notation<small>debug: see what the recogniser saw</small></label><input type="checkbox" id="sShowInk"></div>
+    <div class="row"><label>Handwriting I taught it<small id="userCount"></small></label><button id="forget">Forget</button></div>
+    <div class="row"><label>New score<small>clears the page (undo still works)</small></label><button id="newScore">New</button></div>
+  </div>
+  <div class="foot"><button class="primary" id="settingsDone">Done</button></div>
+</dialog>
+
+<dialog id="help">
+  <h2>Writing music</h2>
+  <div class="body">
+    <p style="margin-top:0">Write on the staff as you would on paper. Pause and the ink turns into notation. The pitch comes from where the notehead sits.</p>
+    <div class="help-grid">
+      <div class="mus">&#xE1D5;</div><div>Notes: a scribbled (black) or open head plus a stem. Flags for eighths and sixteenths, or draw a <b>line across the stem tips</b> to beam them.</div>
+      <div class="mus">&#xE0A4;</div><div>Chord: write another head on an existing stem.</div>
+      <div class="mus">&#xE262;&#xE260;</div><div>Accidentals: write ♯ ♭ ♮ just left of the head, before or after the note.</div>
+      <div class="mus">&#xE1E7;</div><div>Dot to the right: dotted note. Dot above or below: staccato.</div>
+      <div class="mus">&#xE4E5;&#xE4E6;</div><div>Rests. A block hanging from the 4th line is a whole (bar) rest, one sitting on the middle line is a half rest.</div>
+      <div style="font-size:26px">⌒</div><div>Arc from head to head: a tie (same pitch) or slur.</div>
+      <div class="mus">&#xE050;&#xE08A;</div><div>Clefs and time signatures: write them at the start of a bar.</div>
+      <div>scribble</div><div>Scribble over symbols to erase them, or over unrecognised ink to cancel it. The stylus eraser end works too.</div>
+      <div>tap</div><div>Tap a notehead to hear and edit it; drag it up or down to change pitch.</div>
+      <div>wrong?</div><div>After each symbol the alternatives pop up. Tap the right one: it fixes this symbol and learns your handwriting.</div>
+    </div>
+    <p style="color:var(--muted);font-size:12.5px">Ledger lines and barlines are drawn for you. Bars grow as you write; an overfull bar turns red. Keys: <kbd>Ctrl Z</kbd> undo, <kbd>Space</kbd> play, <kbd>↑</kbd><kbd>↓</kbd> move a selected note, <kbd>1</kbd>–<kbd>6</kbd> duration, <kbd>.</kbd> dot, <kbd>Del</kbd> delete.</p>
+    <p style="color:var(--muted);font-size:12.5px">Recognition: a small neural network trained on the HOMUS dataset (15 200 symbols by 100 musicians), with your corrections matched by the $P point-cloud recogniser. Engraving in SMuFL Bravura/Petaluma. Everything runs in this page; nothing is uploaded.</p>
+  </div>
+  <div class="foot"><button class="primary" id="helpDone">Start writing</button></div>
+</dialog>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
