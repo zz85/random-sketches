@@ -1,9 +1,10 @@
 // StaffInk UI: pointer capture, ink grouping, recognition feedback, editing, playback.
 import { loadModel, bbox, pathLength, straightness, reversals, makeUserTemplate, packStrokes, unpackStrokes, CLASSES } from './recognizer.js';
-import { newScore, newMeasure, ensureTrailingMeasure, findEvent, describe } from './theory.js';
+import { newScore, newMeasure, ensureTrailingMeasure, findEvent, describe, tupletWindows, clearTuplet } from './theory.js';
+import { buildExtraTemplates } from './extras.js';
 import { layoutScore, locate } from './layout.js';
 import { renderScore } from './render.js';
-import { interpret, detectGesture, removeEvent, isScribble } from './parser.js';
+import { interpret, detectGesture, removeEvent, isScribble, makeTuplet } from './parser.js';
 import { Player } from './audio.js';
 import { toMusicXML, toMidi } from './export.js';
 
@@ -29,7 +30,10 @@ if (params.get('delay')) S.settings.delay = +params.get('delay');
 function validScore(s) { return s && s.version === 1 && Array.isArray(s.measures) && Array.isArray(s.staves) && s.measures.length ? s : null; }
 
 // ---------------------------------------------------------------- model
-const modelReady = fetch('model.json').then((r) => r.json()).then((j) => { S.model = loadModel(j); }).catch((e) => toast('Could not load the recogniser: ' + e.message, 6000));
+const modelReady = Promise.all([
+  fetch('model.json').then((r) => r.json()).then((j) => { S.model = loadModel(j); }),
+  fetch('digits.json').then((r) => r.json()).catch(() => null).then((d) => { S.extras = buildExtraTemplates(d); }),
+]).catch((e) => toast('Could not load the recogniser: ' + e.message, 6000));
 
 // ---------------------------------------------------------------- layout & drawing
 function resize() {
@@ -126,8 +130,11 @@ const GLYPH = {
   Sharp: '\uE262', Flat: '\uE260', Natural: '\uE261', 'Double-Sharp': '\uE263', 'G-Clef': '\uE050', 'F-Clef': '\uE062', 'C-Clef': '\uE05C', 'Common-Time': '\uE08A', 'Cut-Time': '\uE08B', Dot: '\uE1E7',
 };
 const NICE = { 'Whole-Half-Rest': 'whole/half rest', 'Thirty-Two-Note': '32nd note', 'Sixty-Four-Note': '64th note', 'Thirty-Two-Rest': '32nd rest', 'Sixty-Four-Rest': '64th rest', 'G-Clef': 'treble clef', 'F-Clef': 'bass clef', 'C-Clef': 'alto clef' };
-const nice = (l) => NICE[l] || (/^\d+-\d+-Time$/.test(l) ? l.replace(/^(\d+)-(\d+)-Time$/, '$1/$2 time') : l.replace(/-/g, ' ').toLowerCase());
+const nice = (l) => NICE[l] || (l.startsWith('Dyn-') ? l.slice(4) : l === 'Tuplet-3' ? 'triplet 3' : l === 'Tuplet-6' ? 'sextuplet 6' : null) || (/^\d+-\d+-Time$/.test(l) ? l.replace(/^(\d+)-(\d+)-Time$/, '$1/$2 time') : l.replace(/-/g, ' ').toLowerCase());
+const DYN_CH = { p: '\uE520', m: '\uE521', f: '\uE522', r: '\uE523', s: '\uE524', z: '\uE525' };
 function glyphHtml(l) {
+  if (l.startsWith('Dyn-')) return `<span class="mus" style="font-size:22px;top:3px">${[...l.slice(4)].map((c) => DYN_CH[c]).join('')}</span>`;
+  if (l.startsWith('Tuplet-')) return `<span class="mus" style="font-size:22px;top:3px">${String.fromCodePoint(0xE880 + +l.slice(7))}</span>`;
   if (GLYPH[l]) { const small = /Clef/.test(l) ? ' style="font-size:15px;top:2px"' : ''; return `<span class="mus"${small}>${GLYPH[l]}</span>`; }
   const m = l.match(/^(\d+)-(\d+)-Time$/); if (m) return `<b>${m[1]}/${m[2]}</b>`;
   return '<b>|</b>';
@@ -166,7 +173,7 @@ $('alts').addEventListener('click', (e) => {
 });
 
 // ---------------------------------------------------------------- recognition flow
-const ctx = (score = S.score, L = S.L, pending = S.pending) => ({ score, L, model: S.model, user: S.user, pending });
+const ctx = (score = S.score, L = S.L, pending = S.pending) => ({ score, L, model: S.model, user: S.user, pending, extras: S.extras });
 
 function groupBox() { return bbox(S.group.map((s) => s.pts)); }
 
@@ -288,7 +295,9 @@ function showSel() {
   box.innerHTML = DUR_BTN.map(([d, g]) => `<button data-a="dur" data-v="${d}" class="${ev.dur === d && !ev.full ? 'on' : ''}" title="duration"><span class="mus">${g}</span></button>`).join('')
     + `<button data-a="dot" class="${ev.dots ? 'on' : ''}" title="dot"><span class="mus">\uE1E7</span>${ev.dots > 1 ? '2' : ''}</button>`
     + (isNote ? accBtn(1, '\uE262') + accBtn(-1, '\uE260') + accBtn(0, '\uE261') + `<button data-a="tie" class="${ev.tie ? 'on' : ''}" title="tie to next">⌒</button><button data-a="stacc" class="${ev.stacc ? 'on' : ''}" title="staccato"><span class="mus">\uE4A2</span></button>` : '')
-    + `<button data-a="rest" title="${isNote ? 'make rest' : 'make note'}">${isNote ? '<span class="mus">\uE4E5</span>' : '<span class="mus">\uE0A4</span>'}</button><button data-a="del" title="delete">✕</button>`;
+    + `<button data-a="tup" class="${ev.tuplet ? 'on' : ''}" title="triplet from here"><span class="mus" style="font-size:20px;top:2px">\uE883</span></button>`
+    + `<button data-a="rest" title="${isNote ? 'make rest' : 'make note'}">${isNote ? '<span class="mus">\uE4E5</span>' : '<span class="mus">\uE0A4</span>'}</button><button data-a="del" title="delete">✕</button>`
+    + '<div class="hint" style="width:100%"></div>' + ['pp', 'p', 'mp', 'mf', 'f', 'ff', 'sfz'].map((d) => `<button data-a="dyn" data-d="${d}" class="${ev.dyn === d ? 'on' : ''}" title="dynamic ${d}"><span class="mus" style="font-size:22px;top:3px">${[...d].map((c) => DYN_CH[c]).join('')}</span></button>`).join('');
   box.classList.add('show');
   const p = S.L.evPos.get(ev.id);
   const bw = box.offsetWidth, bh = box.offsetHeight;
@@ -301,14 +310,23 @@ function hideSel() { $('selbar').classList.remove('show'); }
 $('selbar').addEventListener('pointerdown', (e) => e.stopPropagation());
 $('selbar').addEventListener('click', (e) => {
   const b = e.target.closest('button[data-a]'); if (!b || !S.selected) return;
-  editSelected(b.dataset.a, b.dataset.v !== undefined ? +b.dataset.v : undefined);
+  editSelected(b.dataset.a, b.dataset.d || (b.dataset.v !== undefined ? +b.dataset.v : undefined));
 });
 
 function editSelected(a, v) {
   const f = S.selected && findEvent(S.score, S.selected.id); if (!f) return;
   const before = JSON.stringify(S.score), ev = f.ev;
   const head = ev.kind === 'note' ? ev.heads.find((h) => h.pos === S.selected.pos) || ev.heads[0] : null;
-  if (a === 'dur') { ev.dur = v; ev.full = false; delete ev.beamId; }
+  if (a === 'dur') { ev.dur = v; ev.full = false; delete ev.beamId; if (ev.tuplet) clearTuplet(S.score, ev.tuplet.id); }
+  else if (a === 'dyn') { if (ev.dyn === v) delete ev.dyn; else ev.dyn = v; }
+  else if (a === 'tup') {
+    if (ev.tuplet) clearTuplet(S.score, ev.tuplet.id);
+    else {
+      const w = tupletWindows(f.events, f.i, 3).filter((x) => x.a === f.i).sort((p, q) => p.b - q.b)[0];
+      if (!w) { toast('a triplet needs notes after this one that add up to three equal parts', 2600); return; }
+      makeTuplet(S.score, f.events.slice(w.a, w.b).map((e) => e.id), 3);
+    }
+  }
   else if (a === 'dot') ev.dots = ((ev.dots || 0) + 1) % 3;
   else if (a === 'acc' && head) head.acc = head.acc === v ? null : v;
   else if (a === 'tie') ev.tie = !ev.tie;
@@ -569,6 +587,10 @@ updateButtons(); updateMode();
 Promise.all([document.fonts.load('40px Bravura'), document.fonts.load('40px Petaluma')]).finally(resize);
 resize();
 if (!load('staffink.helped') && !params.has('nohelp')) $('help').showModal();
+
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1') && !params.has('nosw')) {
+  navigator.serviceWorker.register('sw.js').catch(() => { /* offline support is optional */ });
+}
 
 /** Test/automation hook: page-space (staff spaces) ink straight into the recogniser. */
 window.StaffInk = {

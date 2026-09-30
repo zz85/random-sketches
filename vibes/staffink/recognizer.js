@@ -154,6 +154,21 @@ export function makeUserTemplate(label, strokes) {
   return { label, cloud: normalizeCloud(strokes), w: b.w, h: b.h, ns: strokes.length, strokes: packStrokes(strokes) };
 }
 
+/** Best $P distance per label, sorted. `gate` bounds the log size mismatch. */
+export function rankTemplates(strokes, templates, gate = 0.7, only) {
+  const b = bbox(strokes), cloud = normalizeCloud(strokes);
+  const best = new Map();
+  for (const t of templates) {
+    if (only && !only(t.label)) continue;
+    const sizePen = Math.abs(Math.log((b.w + 0.3) / (t.w + 0.3))) + Math.abs(Math.log((b.h + 0.3) / (t.h + 0.3)));
+    if (sizePen > gate) continue;
+    const cur = best.get(t.label);
+    const d = cloudMatch(cloud, t.cloud, cur === undefined ? Infinity : cur) + 0.05 * sizePen;
+    if (cur === undefined || d < cur) best.set(t.label, d);
+  }
+  return [...best.entries()].map(([label, d]) => ({ label, d })).sort((x, y) => x.d - y.d);
+}
+
 /** Nearest user template; size must agree within ~40 % to count. */
 export function matchUserTemplates(strokes, templates) {
   if (!templates.length) return null;
@@ -190,8 +205,14 @@ export const CLASSES = {
   '2-2-Time': { kind: 'time', time: [2, 2] }, '2-4-Time': { kind: 'time', time: [2, 4] }, '3-4-Time': { kind: 'time', time: [3, 4] }, '4-4-Time': { kind: 'time', time: [4, 4] },
   '3-8-Time': { kind: 'time', time: [3, 8] }, '6-8-Time': { kind: 'time', time: [6, 8] }, '9-8-Time': { kind: 'time', time: [9, 8] }, '12-8-Time': { kind: 'time', time: [12, 8] },
   'Dot': { kind: 'dot' }, 'Barline': { kind: 'barline' },
+  // not in HOMUS: matched with $P against extras.js templates, outside the staff
+  'Tuplet-3': { kind: 'tuplet', n: 3 }, 'Tuplet-6': { kind: 'tuplet', n: 6 },
+  'Dyn-pp': { kind: 'dyn', dyn: 'pp' }, 'Dyn-p': { kind: 'dyn', dyn: 'p' }, 'Dyn-mp': { kind: 'dyn', dyn: 'mp' }, 'Dyn-mf': { kind: 'dyn', dyn: 'mf' },
+  'Dyn-f': { kind: 'dyn', dyn: 'f' }, 'Dyn-ff': { kind: 'dyn', dyn: 'ff' }, 'Dyn-sfz': { kind: 'dyn', dyn: 'sfz' }, 'Dyn-fp': { kind: 'dyn', dyn: 'fp' },
 };
-export const LABELS = Object.keys(CLASSES);
+export const isExtra = (label) => CLASSES[label] && (CLASSES[label].kind === 'tuplet' || CLASSES[label].kind === 'dyn');
+/** The 32 HOMUS classes, in the order the MLP was trained on. */
+export const LABELS = Object.keys(CLASSES).filter((l) => !isExtra(l));
 
 // ---------------------------------------------------------------- features
 

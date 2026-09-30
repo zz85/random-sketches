@@ -5,6 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#f3eee3">
 <title>StaffInk — handwritten music notation</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="StaffInk">
 <style>
   @font-face { font-family: Bravura; src: url(fonts/Bravura.woff2) format('woff2'); font-display: block; }
   @font-face { font-family: Petaluma; src: url(fonts/Petaluma.woff2) format('woff2'); font-display: block; }
@@ -131,12 +137,15 @@
       <div class="mus">&#xE4E5;&#xE4E6;</div><div>Rests. A block hanging from the 4th line is a whole (bar) rest, one sitting on the middle line is a half rest.</div>
       <div style="font-size:26px">⌒</div><div>Arc from head to head: a tie (same pitch) or slur.</div>
       <div class="mus">&#xE050;&#xE08A;</div><div>Clefs and time signatures: write them at the start of a bar.</div>
+      <div class="mus">&#xE883;</div><div>Tuplets: write a 3 (or 6) above or below the notes; they must add up to three equal parts (three eighths, quarter + eighth…). Or tap a note and press <span class="mus" style="font-size:18px;top:2px">&#xE883;</span>.</div>
+      <div class="mus">&#xE52D;</div><div>Dynamics: write pp p mp mf f ff sfz fp under a note, outside the staff.</div>
+      <div style="font-size:22px">&lt; &gt;</div><div>Hairpins: a &lt; or &gt; under the notes, in one stroke or two lines. They shape playback toward the next dynamic.</div>
       <div>scribble</div><div>Scribble over symbols to erase them, or over unrecognised ink to cancel it. The stylus eraser end works too.</div>
       <div>tap</div><div>Tap a notehead to hear and edit it; drag it up or down to change pitch.</div>
       <div>wrong?</div><div>After each symbol the alternatives pop up. Tap the right one: it fixes this symbol and learns your handwriting.</div>
     </div>
     <p style="color:var(--muted);font-size:12.5px">Ledger lines and barlines are drawn for you. Bars grow as you write; an overfull bar turns red. Keys: <kbd>Ctrl Z</kbd> undo, <kbd>Space</kbd> play, <kbd>↑</kbd><kbd>↓</kbd> move a selected note, <kbd>1</kbd>–<kbd>6</kbd> duration, <kbd>.</kbd> dot, <kbd>Del</kbd> delete.</p>
-    <p style="color:var(--muted);font-size:12.5px">Recognition: a small neural network trained on the HOMUS dataset (15 200 symbols by 100 musicians), with your corrections matched by the $P point-cloud recogniser. Engraving in SMuFL Bravura/Petaluma. Everything runs in this page; nothing is uploaded.</p>
+    <p style="color:var(--muted);font-size:12.5px">Recognition: a small neural network trained on the HOMUS dataset (15 200 symbols by 100 musicians), with your corrections matched by the $P point-cloud recogniser. Engraving in SMuFL Bravura/Petaluma. Everything runs in this page; nothing is uploaded. Install it (Add to Home Screen) and it works offline.</p>
   </div>
   <div class="foot"><button class="primary" id="helpDone">Start writing</button></div>
 </dialog>

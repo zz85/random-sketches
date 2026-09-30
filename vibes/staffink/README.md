@@ -3,12 +3,15 @@
 Handwritten music notation in the browser. Write on the staff with a stylus, finger or
 mouse; pause, and the ink turns into engraved notation you can play back and export.
 No backend and no build step: plain ES modules, a 172 KB recognizer model, and vendored
-SMuFL fonts. Nothing leaves the page.
+SMuFL fonts. Nothing leaves the page. It is an installable PWA: a service worker precaches
+all 20 files (~1 MB) on first load, after which it starts and recognises with no network.
 
 ```
-python3 -m http.server      # any static server (model.json is fetched, so file:// will not work)
-bun test                    # recognizer, parser, theory, layout, export: 37 tests
-node smoke.js               # headless Chromium over CDP, real pen + touch pointer events: 18 checks
+python3 -m http.server      # any static server (model.json is fetched, so file:// will not work;
+                            # the service worker needs https or localhost)
+bun test                    # recognizer, parser, theory, layout, export, tuplets, dynamics: 44 tests
+node smoke.js               # headless Chromium over CDP, real pen + touch pointer events, offline reload: 23 checks
+bun train.js --digits       # rebuild digits.json (tuplet numbers cut from HOMUS time signatures)
 bun train.js --eval         # retrain, writer-independent score (downloads HOMUS to /tmp/homus)
 bun train.js                # retrain on all 100 writers, writes model.json (~5 min)
 ```
@@ -26,13 +29,16 @@ bun train.js                # retrain on all 100 writers, writes model.json (~5 
 | quarter, eighth… rests; a block hanging from line 4 / sitting on line 3 | rests; whole (bar) rest / half rest |
 | arc from head to head | tie (same pitch) or slur |
 | G/F/C clef, 2/4 3/4 4/4 6/8 … C ¢ at the start of a bar | clef / time signature change |
+| a 3 (or 6) above or below notes | triplet (sextuplet) over the neighbouring notes whose lengths add up to 3 equal parts: three eighths, quarter + eighth, six sixteenths… |
+| pp p mp mf f ff sfz fp under a note, outside the staff | dynamic: engraved on a common line under the staff, sets playback loudness |
+| `<` or `>` under the notes, one stroke or two lines | crescendo / diminuendo hairpin; playback ramps to the next dynamic (or two steps) |
 | scribble over symbols | erase (over unrecognised ink: cancel it). The stylus eraser end also erases |
 | ledger lines, barlines | ignored, the engraver draws them |
 
 After every symbol the top alternatives appear in a strip at the bottom. Tapping one fixes
 the symbol and stores the ink as a personal template, so the recognizer adapts to your
 hand. Tap a notehead to hear it and get an edit bar (duration, dot, accidentals, tie,
-staccato, note↔rest, delete); drag it or use ↑/↓ to change pitch. Bars grow as you write
+staccato, triplet, note↔rest, delete, and a row of dynamics); drag it or use ↑/↓ to change pitch. Bars grow as you write
 and always leave room for the missing beats, underfull bars are tinted amber and overfull
 ones red. One blank bar is always kept at the end. Treble, bass, alto or piano grand staff;
 any key; Bravura or the handwritten-style Petaluma. Export MusicXML 4.0, MIDI, PNG or the
@@ -78,6 +84,31 @@ writing; configurable).
 | Gourlay, *Spacing a Line of Music*, 1987; Ross, *The Art of Music Engraving*; Gould, *Behind Bars* | Logarithmic duration spacing; beaming by beat; stem direction by the note furthest from the middle line | `layout.js` |
 | SMuFL (W3C Music Notation CG), Bravura / Petaluma (Steinberg, OFL) | Standard glyph codepoints, anchors (stem attachment), engraving defaults | Glyphs, stem anchors, line thicknesses |
 
+### Tuplets and dynamics
+
+HOMUS has neither, and there is no public online-handwriting dataset of dynamics, so these
+are matched with $P against separate templates, and only where notes cannot be: entirely
+outside the staff lines, or (numbers only) beyond the stems and beams of the notes below.
+A whole note on a ledger line is the one note that lives out there, so a confident MLP
+whole-note verdict needs a much closer template match to be overridden.
+
+- Tuplet numbers: 200 real handwritten 3s and 6s, cut from the numerators of HOMUS 3/4, 3/8
+  and 6/8 time signatures (one per writer), scaled to 1.4 staff spaces (`digits.json`, 30 KB).
+  133 of 136 held-in HOMUS 3s match "3"; 2s and 9s also fall nearest to 3 but farther
+  (median $P cost 0.048-0.055 vs 0.032), which is what the 0.045-0.052 acceptance threshold
+  separates.
+- Dynamics: synthesised from italic p/m/f/s/z skeletons with random slant, proportions,
+  spacing and cursive joins (`extras.js`), 10 per word. This is the weakest part: it is
+  validated only against other synthetic ink (100 %), not real handwriting. Your
+  corrections from the alternatives strip become templates and take over quickly.
+- Tuplet placement follows *Behind Bars*: number on the beam side, bracket only when the
+  tuplet is not exactly one beam group; tuplets beam as their own group. The group is the
+  window of consecutive notes around the number whose written lengths sum to n units of a
+  plain note value, preferring the tightest window centred under the number.
+- Playback: dynamics hold until the next one, sfz accents one note, fp is f then p;
+  hairpins interpolate by onset time. MusicXML carries `<time-modification>`,
+  `<tuplet>`, `<dynamics>` and `<wedge>`.
+
 ### Recognizer choice, measured
 
 Writer-independent on HOMUS (train writers 1–80, test 81–100):
@@ -101,6 +132,8 @@ not the data.
 | File | Role |
 |---|---|
 | `recognizer.js` | features, MLP inference, $P user templates, stroke geometry |
+| `extras.js`, `digits.json` | templates for tuplet numbers and dynamics |
+| `sw.js`, `manifest.webmanifest`, `icon*` | offline PWA shell |
 | `parser.js` | ink → score edits: gestures, dots, context prior, structural note parse, accidental attachment |
 | `theory.js` | score model, durations, clefs/keys, pitch spelling with accidental carry and ties |
 | `layout.js` | spacing, line breaking, stems, beams, chords with seconds, accidentals stacking, ties/slurs, hit location |
@@ -113,7 +146,7 @@ not the data.
 
 ## Not yet
 
-One voice per staff; no tuplets, grace notes, dynamics, hairpins, lyrics or text; no
-key-signature handwriting (use settings); no offline/PWA shell yet; recognition sees one
+One voice per staff; tuplets only 3 and 6 (no 5, 7, or nested); no grace notes, lyrics,
+text or tempo marks; no key-signature handwriting (use settings); recognition sees one
 symbol at a time, so writing two symbols without lifting a moment between them can merge
 them (a far-away stroke starts a new symbol, otherwise the pause does).

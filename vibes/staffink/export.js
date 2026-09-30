@@ -1,5 +1,5 @@
 // Playback timeline, MusicXML 4.0 and Standard MIDI File export. No DOM.
-import { DIV, spellScore, resolveAttrs, measureCapacity, evTicks, stepName, DUR_NAMES } from './theory.js';
+import { DIV, spellScore, resolveAttrs, measureCapacity, evTicks, stepName, DUR_NAMES, DYN_LEVEL, staffSequence } from './theory.js';
 import { beamGroups } from './layout.js';
 
 /** Last measure with anything in it (the trailing blank bar is not music). */
@@ -10,6 +10,40 @@ function lastUsed(score) {
 }
 
 /**
+ * Loudness 0..1 per event id: written dynamics hold until the next one, sfz/fp accent a
+ * single note, hairpins ramp from where they start to the next marked dynamic (or two
+ * steps up/down when none follows). Default mf.
+ */
+export function velocities(score) {
+  const vel = new Map();
+  score.staves.forEach((_, si) => {
+    const seq = staffSequence(score, si);
+    let level = DYN_LEVEL.mf;
+    const base = seq.map(({ ev }) => {
+      let v = level;
+      if (ev.dyn === 'sfz') v = Math.min(1, level + 0.3);
+      else if (ev.dyn === 'fp') { v = DYN_LEVEL.f; level = DYN_LEVEL.p; }
+      else if (DYN_LEVEL[ev.dyn]) { level = DYN_LEVEL[ev.dyn]; v = level; }
+      return v;
+    });
+    for (const h of score.hairpins || []) {
+      const a = seq.findIndex((q) => q.ev.id === h.from), b = seq.findIndex((q) => q.ev.id === h.to);
+      if (a < 0 || b < a) continue;
+      // the target is a dynamic on the last note or the one right after it
+      const nk = seq.findIndex((q, k) => k > a && k >= b && k <= b + 1 && DYN_LEVEL[q.ev.dyn]);
+      const v0 = base[a], v1 = nk >= 0 ? DYN_LEVEL[seq[nk].ev.dyn] : Math.max(0.15, Math.min(1, v0 + (h.type === 'cresc' ? 0.24 : -0.24)));
+      const t0 = seq[a].onset, t1 = nk >= 0 ? seq[nk].onset : seq[b].onset;
+      const end = nk >= 0 ? nk - 1 : b;
+      for (let k = a; k <= end; k++) base[k] = v0 + (v1 - v0) * (seq[k].onset - t0) / Math.max(1, t1 - t0);
+      // without a closing dynamic, the level reached is where the music stays
+      if (nk < 0) for (let k = b + 1; k < seq.length && !seq[k].ev.dyn; k++) base[k] = v1;
+    }
+    seq.forEach(({ ev }, k) => vel.set(ev.id, base[k]));
+  });
+  return vel;
+}
+
+/**
  * Notes to sound: [{tick, dur, midi, id, si, vel}] with ties merged into one sounding note.
  * Also returns per-event onsets for the playhead.
  */
@@ -17,6 +51,7 @@ export function performance(score) {
   const { spelled, attrs } = spellScore(score);
   const end = lastUsed(score);
   const notes = [], onsets = [];
+  const vels = velocities(score);
   score.staves.forEach((_, si) => {
     let t0 = 0;
     const open = new Map(); // midi -> note still sustaining through a tie
@@ -31,7 +66,7 @@ export function performance(score) {
           const nextOpen = new Map();
           hs.forEach((h) => {
             let n = open.get(h.midi);
-            if (n) n.dur += d; else { n = { tick: t, dur: d, midi: h.midi, id: ev.id, si, vel: ev.stacc ? 0.75 : 0.85, stacc: !!ev.stacc }; notes.push(n); }
+            if (n) n.dur += d; else { n = { tick: t, dur: d, midi: h.midi, id: ev.id, si, vel: Math.max(0.08, (vels.get(ev.id) ?? 0.68) * (ev.stacc ? 0.9 : 1)), stacc: !!ev.stacc }; notes.push(n); }
             if (ev.tie) nextOpen.set(h.midi, n);
           });
           open.clear(); for (const [k, v] of nextOpen) open.set(k, v);
@@ -90,12 +125,29 @@ export function toMusicXML(score) {
       const voice = si * 4 + 1;
       const beams = new Map();
       for (const g of beamGroups(st.events, a.time)) g.forEach((ev, k) => beams.set(ev.id, k === 0 ? 'begin' : k === g.length - 1 ? 'end' : 'continue'));
+      const tupPos = new Map();
+      st.events.forEach((ev, k) => {
+        if (!ev.tuplet) return;
+        const prev = st.events[k - 1], next = st.events[k + 1];
+        const first = !(prev && prev.tuplet && prev.tuplet.id === ev.tuplet.id), last = !(next && next.tuplet && next.tuplet.id === ev.tuplet.id);
+        tupPos.set(ev.id, (first ? 'start' : '') + (last ? 'stop' : ''));
+      });
       for (const ev of st.events) {
         const d = evTicks(ev, a.time);
         const staffTag = nSt > 1 ? `<staff>${si + 1}</staff>` : '';
+        const tm = ev.tuplet ? `<time-modification><actual-notes>${ev.tuplet.n}</actual-notes><normal-notes>${ev.tuplet.m}</normal-notes></time-modification>` : '';
+        const tp = tupPos.get(ev.id) || '';
+        const tupN = (tp.includes('start') ? `<tuplet type="start" bracket="${beams.has(ev.id) ? 'no' : 'yes'}"/>` : '') + (tp.includes('stop') ? '<tuplet type="stop"/>' : '');
+        const dir = (inner, place = 'below') => out.push(`      <direction placement="${place}"><direction-type>${inner}</direction-type>${staffTag}</direction>`);
+        for (const h of score.hairpins || []) if (h.from === ev.id) dir(`<wedge type="${h.type === 'cresc' ? 'crescendo' : 'diminuendo'}"/>`);
+        if (ev.dyn) {
+          const lvl = DYN_LEVEL[ev.dyn];
+          out.push(`      <direction placement="below"><direction-type><dynamics><${ev.dyn}/></dynamics></direction-type>${staffTag}${lvl ? `<sound dynamics="${Math.round(lvl * 110 / 90 * 100)}"/>` : ''}</direction>`);
+        }
         if (ev.kind === 'rest') {
-          out.push(`      <note>${ev.full ? '<rest measure="yes"/>' : '<rest/>'}<duration>${d}</duration><voice>${voice}</voice>${ev.full ? '' : `<type>${DUR_NAMES[ev.dur]}</type>`}${'<dot/>'.repeat(ev.dots || 0)}${staffTag}</note>`);
+          out.push(`      <note>${ev.full ? '<rest measure="yes"/>' : '<rest/>'}<duration>${d}</duration><voice>${voice}</voice>${ev.full ? '' : `<type>${DUR_NAMES[ev.dur]}</type>`}${'<dot/>'.repeat(ev.dots || 0)}${tm}${staffTag}${tupN ? `<notations>${tupN}</notations>` : ''}</note>`);
           tiedIn[si].clear();
+          for (const h of score.hairpins || []) if (h.to === ev.id) dir('<wedge type="stop"/>');
           continue;
         }
         const hs = spelled.get(ev) || [];
@@ -109,11 +161,13 @@ export function toMusicXML(score) {
           const tied = (stop ? '<tied type="stop"/>' : '') + (start ? '<tied type="start"/>' : '');
           const slur = k === 0 ? (slurStart.has(ev.id) ? `<slur type="start" number="${slurStart.get(ev.id)}"/>` : '') + (slurStop.has(ev.id) ? `<slur type="stop" number="${slurStop.get(ev.id)}"/>` : '') : '';
           const art = k === 0 && ev.stacc ? '<articulations><staccato/></articulations>' : '';
-          const notations = tied || slur || art ? `<notations>${tied}${slur}${art}</notations>` : '';
+          const tn = k === 0 ? tupN : '';
+          const notations = tied || slur || art || tn ? `<notations>${tied}${slur}${tn}${art}</notations>` : '';
           const beam = k === 0 && beams.has(ev.id) ? `<beam number="1">${beams.get(ev.id)}</beam>` : '';
-          out.push(`      <note>${k ? '<chord/>' : ''}<pitch><step>${step}</step>${s.alter ? `<alter>${s.alter}</alter>` : ''}<octave>${octave}</octave></pitch><duration>${d}</duration>${ties}<voice>${voice}</voice><type>${DUR_NAMES[ev.dur]}</type>${'<dot/>'.repeat(ev.dots || 0)}${s.showAcc ? `<accidental>${ACC_NAME[s.alter]}</accidental>` : ''}${staffTag}${beam}${notations}</note>`);
+          out.push(`      <note>${k ? '<chord/>' : ''}<pitch><step>${step}</step>${s.alter ? `<alter>${s.alter}</alter>` : ''}<octave>${octave}</octave></pitch><duration>${d}</duration>${ties}<voice>${voice}</voice><type>${DUR_NAMES[ev.dur]}</type>${'<dot/>'.repeat(ev.dots || 0)}${s.showAcc ? `<accidental>${ACC_NAME[s.alter]}</accidental>` : ''}${tm}${staffTag}${beam}${notations}</note>`);
         });
         tiedIn[si] = nextIn;
+        for (const h of score.hairpins || []) if (h.to === ev.id) dir('<wedge type="stop"/>');
       }
     });
     out.push('    </measure>');

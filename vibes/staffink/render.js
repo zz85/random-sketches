@@ -119,6 +119,39 @@ export function renderScore(g, L, view, st = {}) {
       g.beginPath(); g.moveTo(X(s.x0), Y(s.y0)); g.lineTo(X(s.x1), Y(s.y1)); g.lineTo(X(s.x1), Y(s.y1 + t)); g.lineTo(X(s.x0), Y(s.y0 + t)); g.closePath(); g.fill();
     }
   }
+  // tuplets: number (and bracket when the group is not one beam)
+  for (const t of L.tuplets || []) {
+    const color = t.ids.some((i) => playing.has(i)) ? THEME.play : t.ids.some((i) => selected.has(i)) ? THEME.select : THEME.ink;
+    const digits = String(t.n).split('').map((d) => 'tuplet' + d);
+    const w = digits.reduce((a, g) => a + glyphW(M, g), 0), cx = (t.x0 + t.x1) / 2;
+    g.font = `${3.2 * S}px ${L.font}`;
+    let x = cx - w * 0.8 / 2;
+    for (const d of digits) { glyph(d, x, t.y + 0.6, color); x += glyphW(M, d) * 0.8; }
+    g.font = musicFont;
+    if (t.bracket) {
+      const th = ED.tupletBracketThickness || 0.16, hook = t.up ? 0.6 : -0.6, gap = w * 0.4 + 0.35;
+      hline(t.x0, cx - gap, t.y, th, color); hline(cx + gap, t.x1, t.y, th, color);
+      vline(t.x0, Math.min(t.y, t.y + hook), Math.max(t.y, t.y + hook), th, color);
+      vline(t.x1, Math.min(t.y, t.y + hook), Math.max(t.y, t.y + hook), th, color);
+    }
+  }
+  // dynamics and hairpins
+  for (const d of L.dynamics || []) {
+    const color = playing.has(d.id) ? THEME.play : selected.has(d.id) ? THEME.select : THEME.ink;
+    let x = d.x;
+    for (const gname of d.letters) { glyph(gname, x, d.y, color); x += (M.glyphs[gname] ? M.glyphs[gname].adv : 1) * 0.92; }
+  }
+  g.strokeStyle = THEME.ink; g.lineWidth = Math.max(1, (ED.hairpinThickness || 0.16) * S); g.lineCap = 'round';
+  for (const h of L.hairpins || []) {
+    const open = 0.65, cresc = h.type === 'cresc';
+    // a hairpin broken across systems does not close to a point at the break
+    const a0 = cresc ? (h.cut === 'start' ? open * 0.45 : 0) : (h.cut === 'start' ? open * 0.55 : open);
+    const a1 = cresc ? (h.cut === 'end' ? open * 0.55 : open) : (h.cut === 'end' ? open * 0.45 : 0);
+    g.beginPath();
+    g.moveTo(X(h.x0), Y(h.y - a0)); g.lineTo(X(h.x1), Y(h.y - a1));
+    g.moveTo(X(h.x0), Y(h.y + a0)); g.lineTo(X(h.x1), Y(h.y + a1));
+    g.stroke();
+  }
   // ties and slurs: crescents, thick in the middle
   g.fillStyle = THEME.ink;
   for (const t of L.ties) curve(g, X, Y, t.x0, t.y, t.x1, t.y, t.up, Math.min(1.2, 0.35 + 0.12 * (t.x1 - t.x0)), ED.tieMidpointThickness);

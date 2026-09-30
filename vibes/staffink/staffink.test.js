@@ -4,11 +4,16 @@ import fs from 'fs';
 import { loadModel, classify, features, N_FEATURES, makeUserTemplate } from './recognizer.js';
 import { newScore, spellScore, ticks, measureCapacity, keyAlter } from './theory.js';
 import { layoutScore, beamGroups, locate } from './layout.js';
-import { interpret, parseNote } from './parser.js';
+import { interpret, parseNote, removeEvent } from './parser.js';
 import { toMusicXML, toMidi, performance } from './export.js';
 import * as I from './testink.js';
+import { buildExtraTemplates, inkWord, rng, DYN_WORDS } from './extras.js';
+import { rankTemplates } from './recognizer.js';
+import { velocities } from './export.js';
+import { ticks as tk } from './theory.js';
 
 const model = loadModel(JSON.parse(fs.readFileSync(new URL('./model.json', import.meta.url))));
+const extras = buildExtraTemplates(JSON.parse(fs.readFileSync(new URL('./digits.json', import.meta.url))));
 const WIDTH = 64;
 
 function session(opts) {
@@ -17,7 +22,7 @@ function session(opts) {
   s.L = () => layoutScore(s.score, { width: WIDTH });
   s.write = (strokes, forced) => {
     const L = s.L();
-    const e = interpret(strokes, { score: s.score, L, model, user: s.user || [], pending: s.pending }, forced);
+    const e = interpret(strokes, { score: s.score, L, model, user: s.user || [], pending: s.pending, extras }, forced);
     if (!e) { s.log.push(null); return null; }
     const r = e.apply(s.score);
     if (r && r.pending) s.pending.push(r.pending);
@@ -210,6 +215,90 @@ describe('writing', () => {
     s.write(I.note(s.top(1), s.xIn(0, 0.1), 4));
     expect(s.events(0, 1)).toHaveLength(1);
     expect(spellScore(s.score).spelled.get(s.events(0, 1)[0])[0].midi).toBe(50); // D3
+  });
+});
+
+describe('tuplets, dynamics, hairpins', () => {
+  const r = rng(99);
+  const three = (s, mi = 0) => { for (const p of [3, 4, 5]) s.write(I.note(s.top(), s.xIn(mi, 0.1), p, { flags: 1 })); return s.events(mi); };
+  test('a 3 over three eighths makes a triplet that fills one beat', () => {
+    const s = session();
+    const evs = three(s);
+    expect(evs.map((e) => e.dur)).toEqual([8, 8, 8]);
+    const ps = evs.map((e) => s.L().evPos.get(e.id));
+    const cx = (ps[0].x + ps[2].x) / 2 + 0.5, y = Math.min(...ps.map((p) => p.bbox.y0)) - 1.6;
+    const e = s.write(inkWord('3', cx - 0.4, y, r));
+    expect(e.label).toBe('Tuplet-3');
+    expect(s.events().every((x) => x.tuplet && x.tuplet.n === 3)).toBe(true);
+    expect(s.events().reduce((a, x) => a + tk(x), 0)).toBe(96);
+    const L = s.L();
+    expect(L.tuplets).toHaveLength(1);
+    expect(L.tuplets[0].bracket).toBe(false); // the three are beamed together
+    const xml = toMusicXML(s.score);
+    expect((xml.match(/<actual-notes>3<\/actual-notes>/g) || []).length).toBe(3);
+    expect(xml).toContain('<tuplet type="start"');
+    expect(xml).toContain('<duration>32</duration>');
+  });
+  test('quarter + eighth under a 3 is a triplet too; a lone quarter is not', () => {
+    const s = session();
+    s.write(I.note(s.top(), s.xIn(0, 0.1), 4));
+    s.write(I.note(s.top(), s.xIn(0, 0.1), 5, { flags: 1 }));
+    const ps = s.events().map((e) => s.L().evPos.get(e.id));
+    s.write(inkWord('3', (ps[0].x + ps[1].x) / 2, s.top() - 2.2, r));
+    expect(s.events().map((x) => !!x.tuplet)).toEqual([true, true]);
+    const t = session();
+    t.write(I.note(t.top(), t.xIn(0, 0.1), 4));
+    const p = t.L().evPos.get(t.events()[0].id);
+    const e = t.write(inkWord('3', p.x, t.top() - 2.2, r));
+    expect(e.kind).toBe('none');
+  });
+  test('dynamics under notes attach and set playback loudness', () => {
+    const s = session();
+    for (const p of [2, 3, 4, 5]) s.write(I.note(s.top(), s.xIn(0), p));
+    const ps = s.events().map((e) => s.L().evPos.get(e.id));
+    expect(s.write(inkWord('p', ps[0].x, s.top() + 7, r)).label).toBe('Dyn-p');
+    expect(s.write(inkWord('ff', ps[3].x - 0.3, s.top() + 7, r)).label).toBe('Dyn-ff');
+    expect(s.events()[0].dyn).toBe('p'); expect(s.events()[3].dyn).toBe('ff');
+    // a crescendo from the first note to the third ramps toward the ff
+    const hx0 = ps[0].x + 1.6, hx1 = ps[2].x + 1, hy = s.top() + 6.6;
+    const e = s.write([[...I.straight(hx1, hy - 0.5, hx0, hy)[0], ...I.straight(hx0, hy, hx1, hy + 0.5)[0]]]);
+    expect(e.kind).toBe('hairpin');
+    expect(s.score.hairpins[0]).toMatchObject({ type: 'cresc', from: s.events()[0].id, to: s.events()[2].id });
+    const v = s.events().map((x) => velocities(s.score).get(x.id));
+    expect(v[0]).toBeLessThan(v[1]); expect(v[1]).toBeLessThan(v[2]); expect(v[2]).toBeLessThan(v[3]);
+    const xml = toMusicXML(s.score);
+    expect(xml).toContain('<dynamics><p/></dynamics>');
+    expect(xml).toContain('<wedge type="crescendo"/>');
+    expect(xml).toContain('<wedge type="stop"/>');
+    expect(s.L().hairpins).toHaveLength(1);
+  });
+  test('two-stroke diminuendo', () => {
+    const s = session();
+    for (const p of [5, 4]) s.write(I.note(s.top(), s.xIn(0), p));
+    const ps = s.events().map((e) => s.L().evPos.get(e.id));
+    const x0 = ps[0].x, x1 = ps[1].x + 1.2, y = s.top() + 6.6;
+    const e = s.write([I.straight(x0, y - 0.5, x1, y)[0], I.straight(x0, y + 0.5, x1 + 0.1, y + 0.05)[0]]);
+    expect(e && e.label).toBe('diminuendo');
+  });
+  test('synthetic dynamics are recognised; notes and accidentals stay away from the templates', () => {
+    const rr = rng(4242);
+    let ok = 0, n = 0;
+    for (const w of DYN_WORDS) for (let i = 0; i < 5; i++) { n++; if (rankTemplates(inkWord(w, 5, 5, rr), extras, 1.0)[0].label === 'Dyn-' + w) ok++; }
+    expect(ok / n).toBeGreaterThan(0.9);
+    for (const ink of [I.wholeNote(10, 5, -2), I.note(10, 5, -3), I.sharp(10, 5, 3), I.quarterRest(10, 5)]) expect(rankTemplates(ink, extras, 1.0)[0].d).toBeGreaterThan(0.052);
+  });
+  test('a whole note on a ledger line below the staff is still a note', () => {
+    const s = session();
+    s.write(I.wholeNote(s.top(), s.xIn(0, 0.2), -2));
+    expect(s.events()[0]).toMatchObject({ kind: 'note', dur: 1, heads: [{ pos: -2 }] });
+  });
+  test('deleting a tuplet member dissolves the tuplet', () => {
+    const s = session();
+    const evs = three(s);
+    const ps = evs.map((e) => s.L().evPos.get(e.id));
+    s.write(inkWord('3', (ps[0].x + ps[2].x) / 2, Math.min(...ps.map((p) => p.bbox.y0)) - 1.6, r));
+    removeEvent(s.score, s.events()[1].id);
+    expect(s.events().every((x) => !x.tuplet)).toBe(true);
   });
 });
 

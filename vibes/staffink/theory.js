@@ -12,17 +12,50 @@ export function newScore(opts = {}) {
     version: 1, title: opts.title || 'Untitled', tempo: opts.tempo || 96,
     key: opts.key || 0, time: opts.time || [4, 4], staves,
     measures: [newMeasure(staves.length), newMeasure(staves.length)],
-    slurs: [], nextId: 1,
+    slurs: [], hairpins: [], nextId: 1,
   };
 }
 export function newMeasure(nStaves) { return { attrs: {}, staves: Array.from({ length: nStaves }, () => ({ events: [] })) }; }
 
-export function ticks(ev) {
+/** Written duration in ticks, ignoring any tuplet. */
+export function baseTicks(ev) {
   const base = (4 / ev.dur) * DIV;
   let t = base, add = base;
   for (let i = 0; i < (ev.dots || 0); i++) { add /= 2; t += add; }
   return t;
 }
+/** Sounding duration: a tuplet {n, m} plays n notes in the time of m. */
+export function ticks(ev) {
+  const t = baseTicks(ev);
+  return ev.tuplet ? t * ev.tuplet.m / ev.tuplet.n : t;
+}
+
+export const TUPLETS = { 3: 2, 6: 4 };
+const TUPLET_UNITS = [DIV * 2, DIV, DIV / 2, DIV / 4, DIV / 8];
+
+/**
+ * Consecutive events that can form an n-tuplet: their written lengths must add up to
+ * n equal units (three eighths, quarter + eighth, six sixteenths ...).
+ * `events` is one staff of one measure; returns [start, end) windows containing `k`.
+ */
+export function tupletWindows(events, k, n) {
+  const out = [];
+  for (let a = 0; a <= k; a++) for (let b = k + 1; b <= Math.min(events.length, a + 2 * n); b++) {
+    const win = events.slice(a, b);
+    if (win.some((e) => e.full || (e.tuplet && !win.every((w) => w.tuplet && w.tuplet.id === e.tuplet.id)))) continue;
+    const T = win.reduce((s, e) => s + baseTicks(e), 0);
+    if (TUPLET_UNITS.includes(T / n)) out.push({ a, b, T });
+  }
+  return out;
+}
+
+export function clearTuplet(score, tid) {
+  if (!tid) return;
+  for (const m of score.measures) for (const st of m.staves) for (const e of st.events) if (e.tuplet && e.tuplet.id === tid) delete e.tuplet;
+}
+
+export const DYNAMICS = ['ppp', 'pp', 'p', 'mp', 'mf', 'f', 'ff', 'fff', 'sfz', 'fp'];
+export const DYN_LEVEL = { ppp: 0.22, pp: 0.32, p: 0.44, mp: 0.56, mf: 0.68, f: 0.8, ff: 0.9, fff: 1 };
 export function measureCapacity(time) { return time[0] * (4 / time[1]) * DIV; }
 
 /** Duration in ticks of an event inside a measure with `time` (full-measure rests fill it). */
@@ -147,8 +180,8 @@ export function ensureTrailingMeasure(score) {
 
 export const DUR_NAMES = { 1: 'whole', 2: 'half', 4: 'quarter', 8: 'eighth', 16: '16th', 32: '32nd', 64: '64th' };
 export function describe(ev, heads) {
-  const d = (ev.dots ? (ev.dots > 1 ? 'double-dotted ' : 'dotted ') : '') + DUR_NAMES[ev.dur];
+  const d = (ev.tuplet ? (ev.tuplet.n === 3 ? 'triplet ' : ev.tuplet.n + '-tuplet ') : '') + (ev.dots ? (ev.dots > 1 ? 'double-dotted ' : 'dotted ') : '') + DUR_NAMES[ev.dur];
   if (ev.kind === 'rest') return `${ev.full ? 'bar' : d} rest`;
   const names = (heads || []).map((h) => { const s = stepName(h.d); return s.step + ['𝄫', '♭', '', '♯', '𝄪'][h.alter + 2] + s.octave; });
-  return `${d} ${names.join(' ')}`;
+  return `${d} ${names.join(' ')}${ev.dyn ? ' ' + ev.dyn : ''}`;
 }

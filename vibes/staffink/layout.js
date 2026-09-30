@@ -9,7 +9,7 @@
 // y grows downward; a staff's top line is at `top`, bottom line at `top + 4`.
 // Position p sits at y = top + 4 - p/2.
 import { SMUFL } from './smufl.js';
-import { DIV, spellScore, evTicks, measureCapacity } from './theory.js';
+import { DIV, spellScore, evTicks, measureCapacity, staffSequence } from './theory.js';
 
 export const PAGE = { marginL: 1.6, marginR: 1.6, top: 7, staffDist: 11, sysGap: 10, minMeasure: 9 };
 
@@ -20,6 +20,7 @@ export const posOf = (top, y) => Math.round((top + 4 - y) * 2);
 const REST_GLYPH = { 1: 'restWhole', 2: 'restHalf', 4: 'restQuarter', 8: 'rest8th', 16: 'rest16th', 32: 'rest32nd', 64: 'rest64th' };
 const FLAG = { 8: '8th', 16: '16th', 32: '32nd', 64: '64th' };
 const ACC_GLYPH = { '-2': 'accidentalDoubleFlat', '-1': 'accidentalFlat', 0: 'accidentalNatural', 1: 'accidentalSharp', 2: 'accidentalDoubleSharp' };
+export const DYN_GLYPH = { p: 'dynamicPiano', m: 'dynamicMezzo', f: 'dynamicForte', r: 'dynamicRinforzando', s: 'dynamicSforzando', z: 'dynamicZ' };
 export const CLEF_GLYPH = { G: ['gClef', 2], F: ['fClef', 6], C: ['cClef', 4] };
 
 export function glyphW(M, name) { const g = M.glyphs[name]; return g ? g.bb[2] - g.bb[0] : 1; }
@@ -33,16 +34,19 @@ function beatTicks(time) {
 /** Beam groups for one staff of one measure: arrays of note events. */
 export function beamGroups(events, time) {
   const beat = beatTicks(time), groups = [];
-  let cur = [], t = 0, curBeat = -1, curId = null;
-  const flush = () => { if (cur.length > 1) groups.push(cur); cur = []; curId = null; };
+  let cur = [], t = 0, curBeat = -1, curId = null, curTup = null;
+  const flush = () => { if (cur.length > 1) groups.push(cur); cur = []; curId = null; curTup = null; };
   for (const ev of events) {
     const b = Math.floor(t / beat);
     const beamable = ev.kind === 'note' && ev.dur >= 8;
     if (!beamable) flush();
     else {
       const sameExplicit = ev.beamId && ev.beamId === curId;
-      if (cur.length && !sameExplicit && (b !== curBeat || ev.beam === 'break' || (curId && ev.beamId !== curId))) flush();
-      if (!cur.length) { curBeat = b; curId = ev.beamId || null; }
+      const tup = ev.tuplet ? ev.tuplet.id : null;
+      // a tuplet beams as its own group
+      if (cur.length && tup !== curTup) flush();
+      else if (cur.length && !tup && !sameExplicit && (b !== curBeat || ev.beam === 'break' || (curId && ev.beamId !== curId))) flush();
+      if (!cur.length) { curBeat = b; curId = ev.beamId || null; curTup = tup; }
       cur.push(ev);
     }
     t += evTicks(ev, time);
@@ -219,8 +223,61 @@ export function layoutScore(score, opt) {
     slurs.push({ x0: a.x + headW / 2, y0: ya, x1: b.x + headW / 2, y1: yb, up });
   }
 
+  // ---- 6. tuplet numbers/brackets, dynamics, hairpins
+  const tuplets = [], dynamics = [], hairpins = [];
+  const beamOf = new Map(); for (const bm of beams) for (const id of bm.ids) beamOf.set(id, bm);
+  const groupsById = new Map();
+  score.measures.forEach((m) => m.staves.forEach((st) => st.events.forEach((ev) => { if (ev.tuplet) { if (!groupsById.has(ev.tuplet.id)) groupsById.set(ev.tuplet.id, []); groupsById.get(ev.tuplet.id).push(ev); } })));
+  for (const [, evs] of groupsById) {
+    const ps = evs.map((ev) => evPos.get(ev.id)).filter(Boolean);
+    if (!ps.length || ps.some((p) => p.sys !== ps[0].sys)) continue;
+    const bm = beamOf.get(evs[0].id);
+    const beamed = bm && evs.every((e) => bm.ids.includes(e.id)) && bm.ids.length === evs.length;
+    const notes = ps.filter((p) => p.kind === 'note' && p.stem);
+    const up = notes.length ? notes.filter((p) => p.stemUp).length * 2 >= notes.length : true;
+    const x0 = ps[0].x - 0.2, x1 = ps[ps.length - 1].x + (ps[ps.length - 1].hw || 1) + 0.2;
+    let y;
+    if (up) y = Math.min(ps[0].top - 1.0, ...ps.map((p) => p.bbox.y0)) - 0.9;
+    else y = Math.max(ps[0].top + 5.0, ...ps.map((p) => p.bbox.y1)) + 0.9;
+    tuplets.push({ n: evs[0].tuplet.n, x0, x1, y, up, bracket: !beamed, ids: evs.map((e) => e.id), sys: ps[0].sys });
+  }
+  // dynamics sit on one line under each staff of a system, below whatever hangs lowest
+  const dynLine = new Map();
+  for (const [, p] of evPos) {
+    const k = p.sys + ':' + p.si;
+    dynLine.set(k, Math.max(dynLine.get(k) || p.top + 6.4, p.bbox.y1 + 1.6));
+  }
+  for (const t of tuplets) if (!t.up) { const k = t.sys + ':' + evPos.get(t.ids[0]).si; dynLine.set(k, Math.max(dynLine.get(k), t.y + 1.8)); }
+  const dynAt = new Map();
+  score.measures.forEach((m) => m.staves.forEach((st) => st.events.forEach((ev) => {
+    if (!ev.dyn) return;
+    const p = evPos.get(ev.id); if (!p) return;
+    const letters = [...ev.dyn].map((c) => DYN_GLYPH[c]).filter(Boolean);
+    const w = letters.reduce((a, g) => a + (M.glyphs[g] ? M.glyphs[g].adv : 1) * 0.92, 0);
+    const cx = p.hw ? p.x + p.hw / 2 : (p.bbox.x0 + p.bbox.x1) / 2;
+    const d = { id: ev.id, letters, x: cx - w / 2, w, y: dynLine.get(p.sys + ':' + p.si), sys: p.sys };
+    dynamics.push(d); dynAt.set(ev.id, d);
+  })));
+  for (const h of score.hairpins || []) {
+    const a = evPos.get(h.from), b = evPos.get(h.to);
+    if (!a || !b) continue;
+    const da = dynAt.get(h.from), y = dynLine.get(a.sys + ':' + a.si) - 0.45;
+    let x0 = da ? da.x + da.w + 0.4 : a.x;
+    // end at the next note's dynamic if there is one, else at the end of the last note
+    const seq = staffSequence(score, a.si);
+    const k = seq.findIndex((q) => q.ev.id === h.to);
+    const nxt = seq[k + 1] && dynAt.get(seq[k + 1].ev.id);
+    const endX = nxt && nxt.sys === b.sys ? nxt.x - 0.4 : b.x + (b.hw || 1) + 0.6;
+    if (a.sys === b.sys) hairpins.push({ type: h.type, x0, x1: Math.max(x0 + 1.5, endX), y });
+    else {
+      hairpins.push({ type: h.type, x0, x1: systems[a.sys].x1 - 0.4, y, cut: 'end' });
+      const s2 = systems[b.sys];
+      hairpins.push({ type: h.type, x0: s2.x0 + s2.header, x1: Math.max(s2.x0 + s2.header + 1.5, endX), y: dynLine.get(b.sys + ':' + b.si) - 0.45, cut: 'start' });
+    }
+  }
+
   const height = y + 4;
-  return { systems, measures, evPos, beams, ties, slurs, height, width, headW, font: opt.font || 'Bravura', M, ED, nSt, attrs, spelled };
+  return { systems, measures, evPos, beams, ties, slurs, tuplets, dynamics, hairpins, height, width, headW, font: opt.font || 'Bravura', M, ED, nSt, attrs, spelled };
 }
 
 // Time signature digits are two spaces tall in Bravura; Petaluma draws them larger, so

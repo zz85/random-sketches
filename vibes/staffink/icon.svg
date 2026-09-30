@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#fbf8f1"/>
+  <g stroke="#3b3833" stroke-width="7">
+    <path d="M40 176H472M40 224H472M40 272H472M40 320H472M40 368H472"/>
+  </g>
+  <!-- engraved quarter on the left -->
+  <ellipse cx="150" cy="296" rx="34" ry="24" transform="rotate(-20 150 296)" fill="#1d1c1a"/>
+  <path d="M181 288V130" stroke="#1d1c1a" stroke-width="9"/>
+  <!-- handwritten eighth on the right, blue ink -->
+  <path d="M318 345c-24-6-33 16-16 25 18 9 44-8 40-22-3-12-24-11-35 3" fill="none" stroke="#2563eb" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M342 346C344 290 346 220 349 150c24 22 55 38 58 78" fill="none" stroke="#2563eb" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- stylus -->
+  <g transform="rotate(35 420 120)">
+    <rect x="404" y="-30" width="32" height="150" rx="10" fill="#1d1c1a"/>
+    <path d="M404 120L420 160L436 120Z" fill="#e2572b"/>
+  </g>
+</svg>

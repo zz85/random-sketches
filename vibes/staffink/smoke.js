@@ -9,11 +9,12 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import * as I from './testink.js';
+import { inkWord, rng } from './extras.js';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const CHROME = process.env.CHROME || path.join(process.env.HOME, '.cache/ms-playwright/chromium-1134/chrome-linux/chrome');
 const PORT = 8797, CDP = 9337;
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'application/json', '.woff2': 'font/woff2', '.png': 'image/png' };
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'application/json', '.woff2': 'font/woff2', '.png': 'image/png', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const getJson = (u) => new Promise((res, rej) => http.get(u, (r) => { let s = ''; r.on('data', (d) => (s += d)); r.on('end', () => { try { res(JSON.parse(s)); } catch (e) { rej(e); } }); }).on('error', rej));
 async function waitFor(fn, ms) { const t0 = Date.now(); for (;;) { try { const v = await fn(); if (v) return v; } catch (e) { /* retry */ } if (Date.now() - t0 > ms) throw new Error('timeout'); await sleep(150); } }
@@ -174,6 +175,49 @@ const server = http.createServer((req, res) => {
     check('edit bar: flat, then arrow up moves the note', edited.heads[0].acc === -1 && edited.heads[0].pos === 4, JSON.stringify(edited.heads));
     await sleep(100);
     fs.writeFileSync(path.join(DIR, 'smoke_edit.png'), Buffer.from((await c.send('Page.captureScreenshot', { format: 'png' })).result.data, 'base64'));
+
+    // ---------------------------------------------------------- scene 2c: tuplets, dynamics, hairpins
+    await c.send('Page.navigate', { url: `http://localhost:${PORT}/?fresh&nohelp&delay=250` });
+    await sleep(800);
+    await ev('StaffInk.modelReady.then(() => true)');
+    const dTop = await ev('StaffInk.staffTop(0, 0)');
+    const R = rng(5);
+    for (const pos of [3, 4, 5]) await pen(I.note(dTop, await nextX(0), pos, { flags: 1 }));
+    for (const pos of [6, 5]) await pen(I.note(dTop, await nextX(0), pos));
+    let dm = await events(0);
+    const tp = await Promise.all(dm.slice(0, 3).map((e) => evPos(e.id)));
+    await pen(inkWord('3', (tp[0].x + tp[2].x) / 2 + 0.2, Math.min(...tp.map((p) => p.bbox.y0)) - 1.5, R));
+    dm = await events(0);
+    check('pen: a 3 over three eighths makes a triplet', dm.slice(0, 3).every((e) => e.tuplet && e.tuplet.n === 3) && !dm[3].tuplet, JSON.stringify(dm.map((e) => e.tuplet ? 't' : '-')));
+    await pen(inkWord('p', tp[0].x, dTop + 7.2, R));
+    const qp = await evPos(dm[4].id);
+    await pen(inkWord('f', qp.x, dTop + 7.2, R));
+    dm = await events(0);
+    check('pen: p and f under notes', dm[0].dyn === 'p' && dm[4].dyn === 'f', JSON.stringify(dm.map((e) => e.dyn || '-')));
+    const hy = dTop + 6.8, hx0 = tp[0].x + 1.8, hx1 = (await evPos(dm[3].id)).x + 1.2;
+    await pen([[...I.straight(hx1, hy - 0.5, hx0, hy)[0], ...I.straight(hx0, hy, hx1, hy + 0.5)[0]]]);
+    const hps = await ev('JSON.stringify(StaffInk.score.hairpins)').then(JSON.parse);
+    check('pen: crescendo hairpin', hps.length === 1 && hps[0].type === 'cresc' && hps[0].from === dm[0].id, JSON.stringify(hps));
+    const vel = await ev('import("./export.js").then(m => { const v = m.velocities(StaffInk.score); return StaffInk.score.measures[0].staves[0].events.map(e => +v.get(e.id).toFixed(2)); })');
+    check('hairpin ramps playback from p to f', vel.every((v, i) => !i || v >= vel[i - 1]) && vel[0] < vel[4], JSON.stringify(vel));
+    await ev('document.getElementById("status").classList.remove("show"), document.getElementById("alts").classList.remove("show"), true');
+    await sleep(150);
+    fs.writeFileSync(path.join(DIR, 'smoke_expr.png'), Buffer.from((await c.send('Page.captureScreenshot', { format: 'png' })).result.data, 'base64'));
+
+    // ---------------------------------------------------------- scene 2d: offline
+    await ev('navigator.serviceWorker.ready.then(() => new Promise((r) => { if (navigator.serviceWorker.controller) r(true); else navigator.serviceWorker.addEventListener("controllerchange", () => r(true)); setTimeout(() => r(!!navigator.serviceWorker.controller), 5000); }))');
+    const cached = await ev('caches.open("staffink-v1").then((c) => c.keys()).then((k) => k.length)');
+    await c.send('Network.enable');
+    await c.send('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+    await c.send('Page.navigate', { url: `http://localhost:${PORT}/?nohelp&delay=250` });
+    await sleep(1200);
+    const off = await ev('Promise.race([StaffInk.modelReady.then(() => ({ model: !!StaffInk.S.model, extras: StaffInk.S.extras.length, bravura: document.fonts.check("40px Bravura"), notes: StaffInk.score.measures[0].staves[0].events.length })), new Promise((r) => setTimeout(() => r(null), 4000))])');
+    const oTop = await ev('StaffInk.staffTop(0, 0)');
+    await pen(I.note(oTop, await nextX(0), 8));
+    const offNotes = (await events(0)).length;
+    check('offline: reload from the service worker, recogniser and fonts work', off && off.model && off.extras > 100 && off.bravura && offNotes === off.notes + 1, JSON.stringify({ cached, ...off, offNotes }));
+    await c.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+    c.events.length = 0; // failed background revalidation while offline is expected
 
     // ---------------------------------------------------------- scene 3: phone, finger writing
     await ev('localStorage.removeItem("staffink.settings"), localStorage.removeItem("staffink.user"), true');

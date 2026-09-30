@@ -14,8 +14,8 @@
 //  4. Notes are parsed structurally (Miyao & Maruyama's stroke-primitive idea, 2004/07):
 //     find the stem, then the heads at one end of it; each head's height on the staff
 //     gives its pitch, several heads make a chord, fill density decides black/white.
-import { bbox, pathLength, straightness, reversals, resampleStep, classify, CLASSES } from './recognizer.js';
-import { findEvent, ensureTrailingMeasure } from './theory.js';
+import { bbox, pathLength, straightness, reversals, resampleStep, classify, CLASSES, isExtra, rankTemplates } from './recognizer.js';
+import { findEvent, ensureTrailingMeasure, tupletWindows, clearTuplet, TUPLETS } from './theory.js';
 import { locate, posOf } from './layout.js';
 
 // ---------------------------------------------------------------- stroke analysis
@@ -165,6 +165,9 @@ export function detectGesture(strokes, ctx, loc) {
     if (hit.length) return { kind: 'erase', label: 'erase', ids: hit, desc: `erased ${hit.length} symbol${hit.length > 1 ? 's' : ''}`, apply: (score) => { for (const id of hit) removeEvent(score, id); ensureTrailingMeasure(score); return { ids: [] }; } };
   }
 
+  const hp = detectHairpin(strokes, ctx, loc);
+  if (hp) return hp;
+
   const chord = dist(a, z), st = straightness(s);
   // straight, shallow line touching two or more stem tips = beam
   if (st > 0.92 && chord >= 1.4 && Math.abs(z.y - a.y) < 0.8 * Math.abs(z.x - a.x)) {
@@ -226,11 +229,124 @@ export function detectGesture(strokes, ctx, loc) {
 export function removeEvent(score, id) {
   const f = findEvent(score, id);
   if (!f) return;
+  if (f.ev.tuplet) clearTuplet(score, f.ev.tuplet.id); // a tuplet missing a member no longer adds up
   f.events.splice(f.i, 1);
   score.slurs = (score.slurs || []).filter((s) => s.from !== id && s.to !== id);
+  score.hairpins = (score.hairpins || []).filter((h) => h.from !== id && h.to !== id);
   // a tie into a removed note is meaningless
   const prev = f.events[f.i - 1];
   if (prev && prev.tie && !f.events[f.i]) prev.tie = false;
+}
+
+// ---------------------------------------------------------------- hairpins, dynamics, tuplets
+
+const outsideStaff = (b, top, m = 0.35) => b.y0 > top + 4 + m || b.y1 < top - m;
+const staffEvents = (L, sys, si) => [...L.evPos.values()].filter((p) => p.sys === sys && p.si === si).sort((a, b) => a.x - b.x);
+const centerX = (p) => (p.hw ? p.x + p.hw / 2 : (p.bbox.x0 + p.bbox.x1) / 2);
+
+/** '<' or '>' outside the staff: one stroke with a corner, or two lines meeting at the apex. */
+export function detectHairpin(strokes, ctx, loc) {
+  const b = bbox(strokes);
+  if (!outsideStaff(b, loc.top, 0.2) || b.w < 1.8 || b.h > 0.6 * b.w || b.h < 0.3) return null;
+  let arms, apex, opens;
+  if (strokes.length === 1) {
+    const s = strokes[0];
+    let iMin = 0, iMax = 0;
+    s.forEach((p, i) => { if (p.x < s[iMin].x) iMin = i; if (p.x > s[iMax].x) iMax = i; });
+    const endsX = (s[0].x + s[s.length - 1].x) / 2;
+    const k = Math.abs(s[iMin].x - endsX) > Math.abs(s[iMax].x - endsX) ? iMin : iMax;
+    if (k < 2 || k > s.length - 3) return null;
+    arms = [s.slice(0, k + 1), s.slice(k)]; apex = s[k]; opens = [s[0], s[s.length - 1]];
+  } else if (strokes.length === 2) {
+    const [a, c] = strokes, ea = [a[0], a[a.length - 1]], ec = [c[0], c[c.length - 1]];
+    let best = null;
+    for (let i = 0; i < 2; i++) for (let j = 0; j < 2; j++) { const d = dist(ea[i], ec[j]); if (!best || d < best.d) best = { d, i, j }; }
+    if (best.d > 0.7) return null;
+    arms = strokes; apex = { x: (ea[best.i].x + ec[best.j].x) / 2, y: (ea[best.i].y + ec[best.j].y) / 2 }; opens = [ea[1 - best.i], ec[1 - best.j]];
+  } else return null;
+  for (const arm of arms) { const ab = bbox([arm]); if (straightness(arm) < 0.9 || ab.w < 1.5 || ab.h > 0.6 * ab.w) return null; }
+  const open = Math.abs(opens[0].y - opens[1].y), openX = (opens[0].x + opens[1].x) / 2;
+  if (open < 0.3 || open > 2.2 || Math.abs(openX - apex.x) < 1.5 || Math.sign(opens[0].x - apex.x) !== Math.sign(opens[1].x - apex.x)) return null;
+  const type = openX > apex.x ? 'cresc' : 'dim';
+  const evs = staffEvents(ctx.L, loc.sys, loc.si);
+  const nearest = (x) => evs.reduce((m, p) => (!m || Math.abs(centerX(p) - x) < Math.abs(centerX(m) - x) ? p : m), null);
+  const from = nearest(b.x0), last = nearest(b.x1);
+  let to = last;
+  const name = type === 'cresc' ? 'crescendo' : 'diminuendo';
+  if (!from) return { kind: 'none', label: name, desc: `${name}: write it under the notes it covers`, apply: () => ({ ids: [] }) };
+  if (!to || to.x < from.x) to = from;
+  return { kind: 'hairpin', label: name, desc: name, apply: (score) => {
+    score.hairpins = (score.hairpins || []).filter((h) => !(h.from === from.id && h.to === to.id));
+    score.hairpins.push({ from: from.id, to: to.id, type });
+    return { ids: [from.id, to.id] };
+  } };
+}
+
+/**
+ * Dynamics and tuplet numbers. They are only looked for where notes cannot be: fully
+ * outside the staff lines, or (numbers only) beyond the stems/beams of notes below.
+ */
+export const EXTRA_THRESHOLD = { outside: 0.052, beyond: 0.045 };
+function tryExtra(strokes, ctx, forced) {
+  const { L } = ctx;
+  const b = bbox(strokes);
+  const loc = locate(L, b.cx, b.cy);
+  if (!loc) return null;
+  let zone = outsideStaff(b, loc.top) ? 'outside' : null;
+  if (!zone) {
+    const over = staffEvents(L, loc.sys, loc.si).filter((p) => p.bbox.x1 > b.x0 - 0.3 && p.bbox.x0 < b.x1 + 0.3);
+    if (over.length && (b.y1 < Math.min(...over.map((p) => p.bbox.y0)) - 0.1 || b.y0 > Math.max(...over.map((p) => p.bbox.y1)) + 0.1)) zone = 'beyond';
+  }
+  let label = forced, alts = [];
+  if (!forced) {
+    if (!zone || !ctx.extras) return null;
+    const pool = ctx.extras.concat((ctx.user || []).filter((u) => isExtra(u.label)));
+    const r = rankTemplates(strokes, pool, 1.0, zone === 'beyond' ? (l) => l.startsWith('Tuplet') : undefined);
+    if (!r.length) return null;
+    // a whole note on a ledger line also sits outside the staff
+    const mlp = ctx.model ? classify(strokes, ctx.model)[0] : null;
+    const guard = mlp && mlp.label === 'Whole-Note' && mlp.p > 0.6;
+    if (r[0].d >= (guard ? 0.03 : EXTRA_THRESHOLD[zone])) return null;
+    label = r[0].label;
+    const w = r.slice(0, 4).map((x) => ({ label: x.label, s: Math.exp(-x.d / 0.012) }));
+    const z = w.reduce((a, x) => a + x.s, 0);
+    alts = w.map((x) => ({ label: x.label, p: x.s / z * 0.9, source: 'extra' }));
+    if (mlp) alts.push({ label: mlp.label, p: 0.1 * mlp.p, source: 'mlp' });
+  }
+  const C = CLASSES[label];
+  const evs = staffEvents(L, loc.sys, loc.si);
+  const base = { label, alts, kind: C.kind, strokes };
+  if (C.kind === 'dyn') {
+    let best = null;
+    for (const p of evs) { const d = Math.abs(centerX(p) - (b.x0 + Math.min(b.w, 1.4) / 2)); if (d < 4 && (!best || d < best.d)) best = { d, p }; }
+    if (!best) return { ...base, kind: 'none', desc: `${C.dyn}: write it under a note`, apply: () => ({ ids: [] }) };
+    const id = best.p.id;
+    return { ...base, desc: `dynamic ${C.dyn}`, apply: (score) => { const f = findEvent(score, id); if (f) f.ev.dyn = C.dyn; return { ids: [id] }; } };
+  }
+  // tuplet: the window of consecutive events around the number whose lengths add up
+  let near = null;
+  for (const p of evs) { const d = Math.abs(centerX(p) - b.cx); if (!near || d < near.d) near = { d, p }; }
+  if (!near || near.d > 4) return { ...base, kind: 'none', desc: `${C.n}: write it over the notes of the tuplet`, apply: () => ({ ids: [] }) };
+  const events = ctx.score.measures[near.p.mi].staves[near.p.si].events;
+  const k = events.findIndex((e) => e.id === near.p.id);
+  let pick = null;
+  for (const w of tupletWindows(events, k, C.n)) {
+    const ps = events.slice(w.a, w.b).map((e) => L.evPos.get(e.id));
+    const c = (centerX(ps[0]) + centerX(ps[ps.length - 1])) / 2;
+    const sc = Math.abs(c - b.cx) + 0.3 * (w.b - w.a);
+    if (!pick || sc < pick.sc) pick = { sc, w };
+  }
+  if (!pick) return { ...base, kind: 'none', desc: `${C.n}: those notes do not add up to ${C.n} equal parts`, apply: () => ({ ids: [] }) };
+  const ids = events.slice(pick.w.a, pick.w.b).map((e) => e.id);
+  return { ...base, desc: C.n === 3 ? 'triplet' : `${C.n}-tuplet`, apply: (score) => makeTuplet(score, ids, C.n) };
+}
+
+export function makeTuplet(score, ids, n) {
+  const evs = ids.map((id) => findEvent(score, id)).filter(Boolean).map((f) => f.ev);
+  for (const e of evs) if (e.tuplet) clearTuplet(score, e.tuplet.id);
+  const tid = 't' + score.nextId++;
+  for (const e of evs) e.tuplet = { id: tid, n, m: TUPLETS[n] };
+  return { ids };
 }
 
 // ---------------------------------------------------------------- dots
@@ -288,6 +404,8 @@ export function interpret(strokes, ctx, forced) {
   if (!loc) return null;
   if (loc.dist > 7) return { kind: 'none', label: 'none', alts: [], desc: 'write on or near a staff', apply: () => ({ ids: [] }) };
   if (!forced) { const g = detectGesture(strokes, ctx, loc); if (g) return g; }
+  if (!forced && strokes.length === 2) { const h = detectHairpin(strokes, ctx, loc); if (h) return h; }
+  if (!forced || isExtra(forced)) { const x = tryExtra(strokes, ctx, forced); if (x) return x; }
 
   const dots = [], main = [];
   for (const s of strokes) {

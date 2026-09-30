@@ -2,6 +2,9 @@
 //
 //   bun train.js --eval        writer-independent: train writers 1-80, test 81-100
 //   bun train.js               train on all 100 writers, write model.json
+//   bun train.js --digits      cut the numerator digits out of HOMUS time signatures
+//                              (3/4, 3/8 -> "3", 6/8 -> "6") into digits.json, used as
+//                              tuplet-number templates
 //   options: --epochs=40 --hidden=128 --seed=1 --homus=/path/to/HOMUS
 //
 // HOMUS (Calvo-Zaragoza & Oncina, ICPR 2014), https://grfia.dlsi.ua.es/homus/, is not
@@ -9,7 +12,7 @@
 import fs from 'fs';
 import path from 'path';
 import { execSync } from 'child_process';
-import { features, N_FEATURES, LABELS, CLASSES, f32ToB64, loadModel, forward, bbox } from './recognizer.js';
+import { features, N_FEATURES, LABELS, CLASSES, f32ToB64, loadModel, forward, bbox, packStrokes } from './recognizer.js';
 
 const args = Object.fromEntries(process.argv.slice(2).filter((a) => a.startsWith('--')).map((a) => { const [k, v] = a.slice(2).split('='); return [k, v === undefined ? true : isNaN(+v) ? v : +v]; }));
 const EPOCHS = args.epochs || 40, HIDDEN = args.hidden || 128, SP = 14;
@@ -33,7 +36,7 @@ function load() {
       const lines = fs.readFileSync(path.join(dir, f), 'utf8').trim().split(/\r?\n/);
       const label = lines[0].trim();
       const strokes = lines.slice(1).map((l) => l.split(';').filter((s) => s.trim()).map((s) => { const [x, y] = s.split(',').map(Number); return { x: x / SP, y: y / SP }; })).filter((s) => s.length);
-      if (strokes.length && CLASSES[label]) out.push({ writer: +w, label, y: LABELS.indexOf(label), strokes });
+      if (strokes.length && LABELS.includes(label)) out.push({ writer: +w, label, y: LABELS.indexOf(label), strokes });
     }
   }
   return out;
@@ -172,6 +175,27 @@ function evaluate(json, test) {
 }
 
 const data = load();
+if (args.digits) {
+  const DIG = { '3-4-Time': 'Tuplet-3', '3-8-Time': 'Tuplet-3', '6-8-Time': 'Tuplet-6' };
+  const out = [];
+  const perWriter = new Map();
+  for (const smp of data) {
+    const label = DIG[smp.label]; if (!label) continue;
+    const b = bbox(smp.strokes);
+    const top = smp.strokes.filter((st) => bbox([st]).cy < b.cy);
+    if (!top.length || top.length > 2) continue;
+    const tb = bbox(top);
+    if (tb.h < 0.6 || tb.w < 0.3) continue;
+    const k = label + smp.writer; if ((perWriter.get(k) || 0) >= 1) continue; // one per writer: more styles, less bulk
+    perWriter.set(k, 1);
+    const sc = 1.4 / tb.h; // tuplet numbers are written smaller than time signatures
+    out.push([label, packStrokes(top.map((st) => st.map((p) => ({ x: p.x * sc, y: p.y * sc }))))]);
+  }
+  const file = path.join(path.dirname(new URL(import.meta.url).pathname), 'digits.json');
+  fs.writeFileSync(file, JSON.stringify({ about: 'Tuplet digit templates cut from HOMUS time signatures (Calvo-Zaragoza & Oncina 2014), 1/20 staff space, scaled to 1.4 sp tall. See train.js --digits.', templates: out }));
+  console.log(`wrote ${out.length} digit templates (${out.filter((t) => t[0] === 'Tuplet-3').length} threes), ${(fs.statSync(file).size / 1024).toFixed(0)} KB`);
+  process.exit(0);
+}
 console.log(`HOMUS: ${data.length} samples, ${N_FEATURES} features, ${LABELS.length} classes`);
 const t0 = Date.now();
 if (args.eval) {
