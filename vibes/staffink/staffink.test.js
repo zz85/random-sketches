@@ -4,8 +4,9 @@ import fs from 'fs';
 import { loadModel, classify, features, N_FEATURES, makeUserTemplate } from './recognizer.js';
 import { newScore, spellScore, ticks, measureCapacity, keyAlter } from './theory.js';
 import { layoutScore, beamGroups, locate } from './layout.js';
-import { interpret, parseNote, removeEvent } from './parser.js';
+import { interpret, parseNote, removeEvent, articShapes } from './parser.js';
 import { toMusicXML, toMidi, performance } from './export.js';
+import { hasArtic } from './theory.js';
 import * as I from './testink.js';
 import { buildExtraTemplates, inkWord, rng, DYN_WORDS } from './extras.js';
 import { rankTemplates } from './recognizer.js';
@@ -299,6 +300,152 @@ describe('tuplets, dynamics, hairpins', () => {
     s.write(inkWord('3', (ps[0].x + ps[2].x) / 2, Math.min(...ps.map((p) => p.bbox.y0)) - 1.6, r));
     removeEvent(s.score, s.events()[1].id);
     expect(s.events().every((x) => !x.tuplet)).toBe(true);
+  });
+});
+
+describe('articulations and slurs', () => {
+  // four quarters: two stems up (low), two stems down (high)
+  const four = (pos = [2, 3, 6, 7]) => { const s = session(); for (const p of pos) s.write(I.note(s.top(), s.xIn(0), p)); return s; };
+  const at = (s, k) => s.L().evPos.get(s.events()[k].id);
+  const cx = (p) => p.x + p.hw / 2;
+
+  test('shapes: dash, tick, wedge, caret, arch + dot', () => {
+    expect(articShapes(I.tenutoMark(5, 5))[0].label).toBe('Art-tenuto');
+    expect(articShapes(I.tickMark(5, 5))[0].label).toBe('Art-staccatissimo');
+    expect(articShapes(I.accentMark(5, 5))[0].label).toBe('Art-accent');
+    expect(articShapes(I.marcatoMark(5, 5))[0].label).toBe('Art-marcato');
+    expect(articShapes(I.fermataMark(5, 5))[0].label).toBe('Art-fermata');
+    expect(articShapes(I.note(10, 5, 2))).toHaveLength(0);
+    expect(articShapes(I.sharp(10, 5, 3))).toHaveLength(0);
+    expect(articShapes(I.quarterRest(10, 5))).toHaveLength(0);
+  });
+
+  test('marks next to a note attach to it, on either side', () => {
+    const s = four();
+    const [a, b, c, d] = [0, 1, 2, 3].map((k) => at(s, k));
+    // stem-up notes: under the head; stem-down notes: above the head
+    expect(s.write(I.accentMark(cx(a), a.heads[0].y + 1.3)).kind).toBe('artic');
+    expect(s.write(I.tenutoMark(cx(b), b.heads[0].y + 1.1)).label).toBe('Art-tenuto');
+    expect(s.write(I.marcatoMark(cx(c), c.heads[0].y - 1.4)).label).toBe('Art-marcato');
+    expect(s.write(I.tickMark(cx(d), d.heads[0].y - 1.3)).label).toBe('Art-staccatissimo');
+    // above an up-stem note, past the stem tip, still counts
+    expect(s.write(I.fermataMark(cx(a), a.stem.y1 - 1.2)).label).toBe('Art-fermata');
+    const e = s.events();
+    expect(hasArtic(e[0], 'accent')).toBe(true); expect(e[0].fermata).toBe(true);
+    expect(hasArtic(e[1], 'tenuto')).toBe(true);
+    expect(hasArtic(e[2], 'marcato')).toBe(true);
+    expect(hasArtic(e[3], 'staccatissimo')).toBe(true);
+    // alternatives offer other readings, including the network's
+    expect(s.log[s.log.length - 1].alts.some((x) => x.source === 'mlp')).toBe(true);
+  });
+
+  test('a mark far from any note, or a big wedge under the notes, is not an articulation', () => {
+    const s = four();
+    const a = at(s, 0), d = at(s, 3);
+    const e = s.write(I.accentMark(s.xIn(0) + 6, s.top() - 3));
+    expect(e && e.kind).not.toBe('artic');
+    const hp = s.write(I.straight(a.x, s.top() + 7.6, d.x + 1, s.top() + 7).concat(I.straight(a.x, s.top() + 7.6, d.x + 1, s.top() + 8.3)));
+    expect(hp.kind).toBe('hairpin');
+  });
+
+  test('accent and marcato exclude each other, staccato and staccatissimo too', () => {
+    const s = four();
+    const a = at(s, 0);
+    s.write(I.accentMark(cx(a), a.heads[0].y + 1.3));
+    s.write(I.marcatoMark(cx(a), at(s, 0).bbox.y1 + 0.6));
+    expect(hasArtic(s.events()[0], 'marcato')).toBe(true);
+    expect(hasArtic(s.events()[0], 'accent')).toBe(false);
+  });
+
+  test('engraving: head side, stacked outward, fermata above the staff', () => {
+    const s = four();
+    for (const k of [0, 3]) { const ev = s.events()[k]; ev.stacc = true; ev.artic = ['accent']; ev.fermata = true; }
+    const [a, , , d] = [0, 1, 2, 3].map((k) => at(s, k));
+    const byArt = (p, n) => p.artics.find((m) => m.art === n);
+    // stem up -> marks below the head, staccato nearest
+    expect(byArt(a, 'stacc').box.y0).toBeGreaterThan(a.heads[0].y + 0.5);
+    expect(byArt(a, 'accent').box.y0).toBeGreaterThan(byArt(a, 'stacc').box.y1);
+    // stem down -> above
+    expect(byArt(d, 'stacc').box.y1).toBeLessThan(d.heads[0].y - 0.5);
+    expect(byArt(d, 'accent').box.y1).toBeLessThan(byArt(d, 'stacc').box.y0);
+    for (const p of [a, d]) { const f = byArt(p, 'fermata'); expect(f.box.y1).toBeLessThan(p.top); expect(f.box.y1).toBeLessThanOrEqual(p.core.y0); }
+  });
+
+  test('scribbling over a mark removes only the mark; over a slur, only the slur', () => {
+    const s = four([3, 3, 5, 5]);
+    const a = at(s, 0), b = at(s, 1), c = at(s, 2);
+    s.write(I.accentMark(cx(a), a.heads[0].y + 1.3));
+    const m = at(s, 0).artics[0].box;
+    const e = s.write(I.scribble(m.x0 - 0.3, m.y0 - 0.1, m.x1 + 0.3, m.y1 + 0.2, 6));
+    expect(e.kind).toBe('erase');
+    expect(s.events()).toHaveLength(4);
+    expect(hasArtic(s.events()[0], 'accent')).toBe(false);
+    s.write(I.arc(cx(b), b.heads[0].y + 0.8, cx(c), c.heads[0].y + 0.8, 0.8));
+    expect(s.score.slurs).toHaveLength(1);
+    const sl = s.L().slurs[0], mid = sl.pts[6];
+    const e2 = s.write(I.scribble(mid.x - 0.9, mid.y - 0.8, mid.x + 0.9, mid.y + 0.8, 6));
+    expect(e2.desc).toContain('slur');
+    expect(s.score.slurs).toHaveLength(0);
+    expect(s.events()).toHaveLength(4);
+  });
+
+  test('slur direction: head side, above for mixed stems, flippable; clears notes in between', () => {
+    const s = four([2, 3, 2, 3]);
+    const ids = s.events().map((e) => e.id);
+    s.score.slurs.push({ from: ids[0], to: ids[3] });
+    let sl = s.L().slurs[0];
+    expect(sl.up).toBe(false); // stems up -> slur under the heads
+    s.events()[1].heads[0].pos = 9; // a high note in the middle: stems now mixed
+    sl = s.L().slurs[0];
+    expect(sl.up).toBe(true);
+    const mid = at(s, 1), apex = Math.min(...sl.pts.map((q) => q.y));
+    expect(apex).toBeLessThan(mid.bbox.y0);
+    s.score.slurs[0].dir = 'down';
+    expect(s.L().slurs[0].up).toBe(false);
+  });
+
+  test('a slur across a line break is drawn on both lines', () => {
+    const s = session();
+    s.score.measures = Array.from({ length: 12 }, () => ({ attrs: {}, staves: [{ events: [0, 1, 2, 3].map((k) => ({ id: s.score.nextId++, kind: 'note', dur: 4, dots: 0, heads: [{ pos: 3 + (k % 3), acc: null }], tie: false })) }] }));
+    const L = s.L();
+    const seq = s.score.measures.flatMap((m) => m.staves[0].events);
+    const k = seq.findIndex((e, i) => i && L.evPos.get(e.id).sys !== L.evPos.get(seq[i - 1].id).sys);
+    expect(k).toBeGreaterThan(0);
+    s.score.slurs.push({ from: seq[k - 2].id, to: seq[k + 1].id });
+    const parts = s.L().slurs;
+    expect(parts).toHaveLength(2);
+    expect(parts[0].sys + 1).toBe(parts[1].sys);
+    expect(parts[0].cut).toBe('end'); expect(parts[1].cut).toBe('start');
+  });
+
+  test('playback follows the marks', () => {
+    const s = four([3, 3, 3, 3]);
+    const [a, b, c, d] = s.events();
+    b.artic = ['accent']; c.artic = ['tenuto']; d.stacc = true;
+    let n = performance(s.score).notes;
+    expect(n[1].vel).toBeGreaterThan(n[0].vel + 0.1);
+    expect(n[2].dur).toBe(96); expect(n[0].dur).toBeLessThan(96); expect(n[3].dur).toBeLessThan(50);
+    d.stacc = false; d.artic = ['staccatissimo'];
+    expect(performance(s.score).notes[3].dur).toBeLessThan(n[3].dur);
+    // slurred notes join up, the last one of the slur releases normally
+    c.artic = [];
+    s.score.slurs.push({ from: a.id, to: c.id });
+    n = performance(s.score).notes;
+    expect(n[0].dur).toBe(96); expect(n[1].dur).toBe(96); expect(n[2].dur).toBeLessThan(96);
+    // a fermata holds its note and pushes the rest later
+    b.fermata = true;
+    const p = performance(s.score);
+    expect(p.notes[1].dur).toBe(192); expect(p.notes[2].tick).toBe(96 * 3);
+    expect(p.totalTicks).toBe(96 * 5);
+  });
+
+  test('MusicXML carries articulations, fermatas and slur placement', () => {
+    const s = four([3, 3, 3, 3]);
+    const [a, b, c, d] = s.events();
+    a.artic = ['accent', 'tenuto']; b.artic = ['marcato']; c.stacc = true; d.artic = ['staccatissimo']; d.fermata = true;
+    s.score.slurs.push({ from: a.id, to: c.id, dir: 'up' });
+    const xml = toMusicXML(s.score);
+    for (const t of ['<accent/>', '<tenuto/>', '<strong-accent type="up"/>', '<staccato/>', '<staccatissimo/>', '<fermata type="upright"/>', '<slur type="start" number="1" placement="above"/>']) expect(xml).toContain(t);
   });
 });
 

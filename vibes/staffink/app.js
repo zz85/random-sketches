@@ -1,10 +1,10 @@
 // StaffInk UI: pointer capture, ink grouping, recognition feedback, editing, playback.
 import { loadModel, bbox, pathLength, straightness, reversals, makeUserTemplate, packStrokes, unpackStrokes, CLASSES } from './recognizer.js';
-import { newScore, newMeasure, ensureTrailingMeasure, findEvent, describe, tupletWindows, clearTuplet } from './theory.js';
+import { newScore, newMeasure, ensureTrailingMeasure, findEvent, describe, tupletWindows, clearTuplet, hasArtic, setArtic } from './theory.js';
 import { buildExtraTemplates } from './extras.js';
 import { layoutScore, locate } from './layout.js';
 import { renderScore } from './render.js';
-import { interpret, detectGesture, removeEvent, isScribble, makeTuplet } from './parser.js';
+import { interpret, detectGesture, removeEvent, isScribble, makeTuplet, articShapes, eraseHits, applyErase } from './parser.js';
 import { Player } from './audio.js';
 import { toMusicXML, toMidi } from './export.js';
 
@@ -128,14 +128,15 @@ const GLYPH = {
   'Whole-Note': '\uE1D2', 'Half-Note': '\uE1D3', 'Quarter-Note': '\uE1D5', 'Eighth-Note': '\uE1D7', 'Sixteenth-Note': '\uE1D9', 'Thirty-Two-Note': '\uE1DB', 'Sixty-Four-Note': '\uE1DD',
   'Whole-Half-Rest': '\uE4E3', 'Quarter-Rest': '\uE4E5', 'Eighth-Rest': '\uE4E6', 'Sixteenth-Rest': '\uE4E7', 'Thirty-Two-Rest': '\uE4E8', 'Sixty-Four-Rest': '\uE4E9',
   Sharp: '\uE262', Flat: '\uE260', Natural: '\uE261', 'Double-Sharp': '\uE263', 'G-Clef': '\uE050', 'F-Clef': '\uE062', 'C-Clef': '\uE05C', 'Common-Time': '\uE08A', 'Cut-Time': '\uE08B', Dot: '\uE1E7',
+  'Art-staccato': '\uE4A2', 'Art-staccatissimo': '\uE4A6', 'Art-tenuto': '\uE4A4', 'Art-accent': '\uE4A0', 'Art-marcato': '\uE4AC', 'Art-fermata': '\uE4C0',
 };
 const NICE = { 'Whole-Half-Rest': 'whole/half rest', 'Thirty-Two-Note': '32nd note', 'Sixty-Four-Note': '64th note', 'Thirty-Two-Rest': '32nd rest', 'Sixty-Four-Rest': '64th rest', 'G-Clef': 'treble clef', 'F-Clef': 'bass clef', 'C-Clef': 'alto clef' };
-const nice = (l) => NICE[l] || (l.startsWith('Dyn-') ? l.slice(4) : l === 'Tuplet-3' ? 'triplet 3' : l === 'Tuplet-6' ? 'sextuplet 6' : null) || (/^\d+-\d+-Time$/.test(l) ? l.replace(/^(\d+)-(\d+)-Time$/, '$1/$2 time') : l.replace(/-/g, ' ').toLowerCase());
+const nice = (l) => NICE[l] || (l.startsWith('Dyn-') || l.startsWith('Art-') ? l.slice(4) : l === 'Tuplet-3' ? 'triplet 3' : l === 'Tuplet-6' ? 'sextuplet 6' : null) || (/^\d+-\d+-Time$/.test(l) ? l.replace(/^(\d+)-(\d+)-Time$/, '$1/$2 time') : l.replace(/-/g, ' ').toLowerCase());
 const DYN_CH = { p: '\uE520', m: '\uE521', f: '\uE522', r: '\uE523', s: '\uE524', z: '\uE525' };
 function glyphHtml(l) {
   if (l.startsWith('Dyn-')) return `<span class="mus" style="font-size:22px;top:3px">${[...l.slice(4)].map((c) => DYN_CH[c]).join('')}</span>`;
   if (l.startsWith('Tuplet-')) return `<span class="mus" style="font-size:22px;top:3px">${String.fromCodePoint(0xE880 + +l.slice(7))}</span>`;
-  if (GLYPH[l]) { const small = /Clef/.test(l) ? ' style="font-size:15px;top:2px"' : ''; return `<span class="mus"${small}>${GLYPH[l]}</span>`; }
+  if (GLYPH[l]) { const small = /Clef/.test(l) ? ' style="font-size:15px;top:2px"' : l.startsWith('Art-') ? ' style="top:8px"' : ''; return `<span class="mus"${small}>${GLYPH[l]}</span>`; }
   const m = l.match(/^(\d+)-(\d+)-Time$/); if (m) return `<b>${m[1]}/${m[2]}</b>`;
   return '<b>|</b>';
 }
@@ -208,7 +209,14 @@ async function handleStroke(stroke) {
       if (loc && detectGesture([pts], { score: trial, L: L2 }, loc)) { commitGroup(); runGroup([pts]); return; }
     }
     const far = sb.x0 > gb.x1 + 2.0 || sb.x1 < gb.x0 - 2.0 || sb.y0 > gb.y1 + 5 || sb.y1 < gb.y0 - 5;
-    if (far) commitGroup();
+    // a small mark just above or below the symbol being written is its articulation:
+    // finish the symbol first so the mark has a note to attach to. A short flat line
+    // outside the staff is left alone, it is far more often a ledger line.
+    const loc = locate(S.L, sb.cx, sb.cy);
+    const outside = loc && (sb.y1 < loc.top - 0.3 || sb.y0 > loc.top + 4.3);
+    const art = articShapes([pts]).filter((a) => !(a.label === 'Art-tenuto' && outside));
+    const offSide = sb.y1 < gb.y0 - 0.1 || sb.y0 > gb.y1 + 0.1;
+    if (far || (art.length && offSide && sb.cx > gb.x0 - 1 && sb.cx < gb.x1 + 1)) commitGroup();
   } else if (shape) {
     const loc = locate(S.L, sb.cx, sb.cy);
     if (loc && detectGesture([pts], ctx(), loc)) { runGroup([pts]); return; }
@@ -284,19 +292,22 @@ function select(hit) {
   showSel(); drawScore();
 }
 
+const ARTIC_BTN = [['stacc', '\uE4A2', 'staccato'], ['staccatissimo', '\uE4A6', 'staccatissimo'], ['tenuto', '\uE4A4', 'tenuto'], ['accent', '\uE4A0', 'accent'], ['marcato', '\uE4AC', 'marcato'], ['fermata', '\uE4C0', 'fermata']];
 const DUR_BTN = [[1, '\uE1D2'], [2, '\uE1D3'], [4, '\uE1D5'], [8, '\uE1D7'], [16, '\uE1D9']];
 function showSel() {
   const box = $('selbar');
   const f = S.selected && findEvent(S.score, S.selected.id);
   if (!f) { hideSel(); return; }
   const ev = f.ev, isNote = ev.kind === 'note';
+  const slurred = (S.score.slurs || []).some((x) => x.from === ev.id || x.to === ev.id);
   const head = isNote ? ev.heads.find((h) => h.pos === S.selected.pos) || ev.heads[0] : null;
   const accBtn = (v, g) => `<button data-a="acc" data-v="${v}" class="${head && head.acc === v ? 'on' : ''}"><span class="mus">${g}</span></button>`;
   box.innerHTML = DUR_BTN.map(([d, g]) => `<button data-a="dur" data-v="${d}" class="${ev.dur === d && !ev.full ? 'on' : ''}" title="duration"><span class="mus">${g}</span></button>`).join('')
     + `<button data-a="dot" class="${ev.dots ? 'on' : ''}" title="dot"><span class="mus">\uE1E7</span>${ev.dots > 1 ? '2' : ''}</button>`
-    + (isNote ? accBtn(1, '\uE262') + accBtn(-1, '\uE260') + accBtn(0, '\uE261') + `<button data-a="tie" class="${ev.tie ? 'on' : ''}" title="tie to next">⌒</button><button data-a="stacc" class="${ev.stacc ? 'on' : ''}" title="staccato"><span class="mus">\uE4A2</span></button>` : '')
+    + (isNote ? accBtn(1, '\uE262') + accBtn(-1, '\uE260') + accBtn(0, '\uE261') + `<button data-a="tie" class="${ev.tie ? 'on' : ''}" title="tie to next">⌒</button>` + (slurred ? '<button data-a="flip" title="flip slur">⌒↕</button>' : '') : '')
     + `<button data-a="tup" class="${ev.tuplet ? 'on' : ''}" title="triplet from here"><span class="mus" style="font-size:20px;top:2px">\uE883</span></button>`
     + `<button data-a="rest" title="${isNote ? 'make rest' : 'make note'}">${isNote ? '<span class="mus">\uE4E5</span>' : '<span class="mus">\uE0A4</span>'}</button><button data-a="del" title="delete">✕</button>`
+    + '<div class="hint" style="width:100%"></div>' + ARTIC_BTN.filter(([a]) => isNote || a === 'fermata').map(([a, g, t]) => `<button data-a="art" data-d="${a}" class="${hasArtic(ev, a) ? 'on' : ''}" title="${t}"><span class="mus" style="top:${a === 'fermata' ? 6 : 8}px">${g}</span></button>`).join('')
     + '<div class="hint" style="width:100%"></div>' + ['pp', 'p', 'mp', 'mf', 'f', 'ff', 'sfz'].map((d) => `<button data-a="dyn" data-d="${d}" class="${ev.dyn === d ? 'on' : ''}" title="dynamic ${d}"><span class="mus" style="font-size:22px;top:3px">${[...d].map((c) => DYN_CH[c]).join('')}</span></button>`).join('');
   box.classList.add('show');
   const p = S.L.evPos.get(ev.id);
@@ -330,7 +341,15 @@ function editSelected(a, v) {
   else if (a === 'dot') ev.dots = ((ev.dots || 0) + 1) % 3;
   else if (a === 'acc' && head) head.acc = head.acc === v ? null : v;
   else if (a === 'tie') ev.tie = !ev.tie;
-  else if (a === 'stacc') ev.stacc = !ev.stacc;
+  else if (a === 'art') setArtic(ev, v, !hasArtic(ev, v));
+  else if (a === 'flip') {
+    // flip every slur touching this note, from the side it is drawn on now
+    (S.score.slurs || []).forEach((x, i) => {
+      if (x.from !== ev.id && x.to !== ev.id) return;
+      const seg = S.L.slurs.find((q) => q.idx === i);
+      x.dir = seg && seg.up ? 'down' : 'up';
+    });
+  }
   else if (a === 'rest') { if (ev.kind === 'note') { ev.kind = 'rest'; ev.heads = []; ev.tie = false; } else { ev.kind = 'note'; ev.full = false; ev.dur = ev.dur || 4; ev.heads = [{ pos: 4, acc: null }]; } S.selected.pos = ev.kind === 'note' ? 4 : undefined; }
   else if (a === 'del') { removeEvent(S.score, ev.id); S.selected = null; }
   else if (a === 'move' && head) { for (const h of ev.heads) h.pos += v; S.selected.pos += v; }
@@ -393,8 +412,9 @@ window.addEventListener('pointermove', (e) => {
   } else if (rec.role === 'erase') {
     rec.pts.push(p);
     const b = { x0: p.x - 0.3, x1: p.x + 0.3, y0: p.y - 0.3, y1: p.y + 0.3 };
-    let hit = false;
-    for (const [id, ev] of S.L.evPos) if (ev.bbox.x0 < b.x1 && ev.bbox.x1 > b.x0 && ev.bbox.y0 < b.y1 && ev.bbox.y1 > b.y0) { removeEvent(S.score, id); hit = true; rec.erased++; }
+    const h = eraseHits(S.L, b, true);
+    const n = h.ids.length + h.artics.length + h.slurs.length, hit = n > 0;
+    if (hit) { applyErase(S.score, h); rec.erased += n; }
     if (hit) { if (S.selected && !findEvent(S.score, S.selected.id)) { S.selected = null; hideSel(); } relayout(); }
     drawInk();
   } else if (rec.role === 'pinch') {

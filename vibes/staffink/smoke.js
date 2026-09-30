@@ -204,17 +204,46 @@ const server = http.createServer((req, res) => {
     await sleep(150);
     fs.writeFileSync(path.join(DIR, 'smoke_expr.png'), Buffer.from((await c.send('Page.captureScreenshot', { format: 'png' })).result.data, 'base64'));
 
+    // ---------------------------------------------------------- scene 2e: articulations and slurs
+    await c.send('Page.navigate', { url: `http://localhost:${PORT}/?fresh&nohelp&delay=250` });
+    await sleep(800);
+    await ev('StaffInk.modelReady.then(() => true)');
+    const aTop = await ev('StaffInk.staffTop(0, 0)');
+    // an accent written straight after its note, before the pause: the note is finished first
+    { const x = await nextX(0), y = aTop + 4 - 3 / 2; await pen([...I.note(aTop, x, 3), ...I.accentMark(x + 0.1, y + 1.4)]); }
+    for (const pos of [4, 8, 7]) await pen(I.note(aTop, await nextX(0), pos));
+    let am = await events(0);
+    const ap = await Promise.all(am.map((e) => evPos(e.id)));
+    const acx = (p) => p.x + p.hw / 2;
+    await pen(I.tenutoMark(acx(ap[1]), ap[1].heads[0].y - 1.1));
+    await pen(I.fermataMark(acx(ap[3]), aTop - 1.8));
+    await pen(I.tickMark(acx(ap[2]), ap[2].heads[0].y - 1.3));
+    am = await events(0);
+    check('pen: accent (right after its note), tenuto, staccatissimo, fermata', am.length === 4 && (am[0].artic || []).includes('accent') && (am[1].artic || []).includes('tenuto') && (am[2].artic || []).includes('staccatissimo') && am[3].fermata === true, JSON.stringify(am.map((e) => [e.artic || [], !!e.fermata])) + ' ' + await ev('JSON.stringify(StaffInk.S.log.slice(-4))'));
+    await pen(I.arc(acx(ap[0]) - 0.2, ap[0].heads[0].y - 0.9, acx(ap[2]) + 0.2, ap[2].heads[0].y - 0.9, -0.9));
+    const sl = await ev('JSON.stringify({ s: StaffInk.score.slurs, l: StaffInk.layout.slurs.map((q) => ({ up: q.up, n: q.pts.length })) })').then(JSON.parse);
+    check('pen: slur over mixed stems goes above', sl.s.length === 1 && sl.l[0].up === true, JSON.stringify(sl));
+    await ev('document.getElementById("status").classList.remove("show"), document.getElementById("alts").classList.remove("show"), true');
+    await sleep(150);
+    fs.writeFileSync(path.join(DIR, 'smoke_artic.png'), Buffer.from((await c.send('Page.captureScreenshot', { format: 'png' })).result.data, 'base64'));
+    const mk = (await evPos(am[1].id)).artics[0].box;
+    await pen(I.scribble(mk.x0 - 0.3, mk.y0 - 0.1, mk.x1 + 0.3, mk.y1 + 0.2, 6));
+    am = await events(0);
+    check('pen: scribble removes just the tenuto', am.length === 4 && !(am[1].artic || []).includes('tenuto'), JSON.stringify(am.map((e) => e.artic || [])));
+    const legato = await ev('import("./export.js").then(m => m.performance(StaffInk.score).notes.map(n => n.dur))');
+    check('slurred notes play joined, fermata held', legato[0] === 96 && legato[1] === 96 && legato[3] >= 160, JSON.stringify(legato));
+
     // ---------------------------------------------------------- scene 2d: offline
     await ev('navigator.serviceWorker.ready.then(() => new Promise((r) => { if (navigator.serviceWorker.controller) r(true); else navigator.serviceWorker.addEventListener("controllerchange", () => r(true)); setTimeout(() => r(!!navigator.serviceWorker.controller), 5000); }))');
-    const cached = await ev('caches.open("staffink-v1").then((c) => c.keys()).then((k) => k.length)');
+    const cached = await ev('caches.open("staffink-v2").then((c) => c.keys()).then((k) => k.length)');
     await c.send('Network.enable');
     await c.send('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
     await c.send('Page.navigate', { url: `http://localhost:${PORT}/?nohelp&delay=250` });
     await sleep(1200);
-    const off = await ev('Promise.race([StaffInk.modelReady.then(() => ({ model: !!StaffInk.S.model, extras: StaffInk.S.extras.length, bravura: document.fonts.check("40px Bravura"), notes: StaffInk.score.measures[0].staves[0].events.length })), new Promise((r) => setTimeout(() => r(null), 4000))])');
+    const off = await ev('Promise.race([StaffInk.modelReady.then(() => ({ model: !!StaffInk.S.model, extras: StaffInk.S.extras.length, bravura: document.fonts.check("40px Bravura"), notes: StaffInk.score.measures.reduce((n, m) => n + m.staves[0].events.length, 0) })), new Promise((r) => setTimeout(() => r(null), 4000))])');
     const oTop = await ev('StaffInk.staffTop(0, 0)');
-    await pen(I.note(oTop, await nextX(0), 8));
-    const offNotes = (await events(0)).length;
+    await pen(I.note(oTop, await nextX(1), 8));
+    const offNotes = await ev('StaffInk.score.measures.reduce((n, m) => n + m.staves[0].events.length, 0)');
     check('offline: reload from the service worker, recogniser and fonts work', off && off.model && off.extras > 100 && off.bravura && offNotes === off.notes + 1, JSON.stringify({ cached, ...off, offNotes }));
     await c.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
     c.events.length = 0; // failed background revalidation while offline is expected

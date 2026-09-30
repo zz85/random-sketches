@@ -1,5 +1,5 @@
 // Playback timeline, MusicXML 4.0 and Standard MIDI File export. No DOM.
-import { DIV, spellScore, resolveAttrs, measureCapacity, evTicks, stepName, DUR_NAMES, DYN_LEVEL, staffSequence } from './theory.js';
+import { DIV, spellScore, resolveAttrs, measureCapacity, evTicks, stepName, DUR_NAMES, DYN_LEVEL, staffSequence, hasArtic } from './theory.js';
 import { beamGroups } from './layout.js';
 
 /** Last measure with anything in it (the trailing blank bar is not music). */
@@ -43,15 +43,43 @@ export function velocities(score) {
   return vel;
 }
 
+/** Every event from a slur's first note up to, not including, its last: played legato. */
+export function legatoIds(score) {
+  const out = new Set();
+  score.staves.forEach((_, si) => {
+    const seq = staffSequence(score, si);
+    for (const s of score.slurs || []) {
+      const a = seq.findIndex((q) => q.ev.id === s.from), b = seq.findIndex((q) => q.ev.id === s.to);
+      if (a >= 0 && b > a) for (let k = a; k < b; k++) out.add(seq[k].ev.id);
+    }
+  });
+  return out;
+}
+
+/**
+ * How much of its written length a note sounds, from its articulation. Unmarked notes
+ * get a small gap so that slurred (joined) and tenuto (held full) notes sound different.
+ */
+export function release(ev, legato) {
+  if (hasArtic(ev, 'staccatissimo')) return (d) => Math.max(DIV / 12, d * 0.25);
+  if (hasArtic(ev, 'stacc')) return (d) => Math.max(DIV / 8, d * 0.45);
+  if (hasArtic(ev, 'marcato')) return (d) => d * 0.75;
+  if (hasArtic(ev, 'tenuto') || legato.has(ev.id)) return (d) => d;
+  return (d) => d - Math.min(d * 0.1, DIV / 8);
+}
+export const ACCENT_BOOST = { accent: 0.18, marcato: 0.26 };
+
 /**
  * Notes to sound: [{tick, dur, midi, id, si, vel}] with ties merged into one sounding note.
- * Also returns per-event onsets for the playhead.
+ * Also returns per-event onsets for the playhead. Times are in ticks after fermatas:
+ * a fermata doubles its note, and everything after it (on every staff) moves later.
  */
 export function performance(score) {
   const { spelled, attrs } = spellScore(score);
   const end = lastUsed(score);
   const notes = [], onsets = [];
-  const vels = velocities(score);
+  const vels = velocities(score), legato = legatoIds(score);
+  const holds = new Map(); // written tick where a fermata ends -> extra ticks
   score.staves.forEach((_, si) => {
     let t0 = 0;
     const open = new Map(); // midi -> note still sustaining through a tie
@@ -61,12 +89,16 @@ export function performance(score) {
       for (const ev of score.measures[mi].staves[si].events) {
         const d = evTicks(ev, a.time);
         onsets.push({ tick: t, dur: d, id: ev.id, si });
+        if (ev.fermata) holds.set(t + d, Math.max(holds.get(t + d) || 0, d));
         if (ev.kind === 'note') {
           const hs = spelled.get(ev) || [];
           const nextOpen = new Map();
+          let vel = (vels.get(ev.id) ?? 0.68) * (ev.stacc ? 0.9 : 1);
+          for (const k in ACCENT_BOOST) if (hasArtic(ev, k)) vel += ACCENT_BOOST[k];
           hs.forEach((h) => {
             let n = open.get(h.midi);
-            if (n) n.dur += d; else { n = { tick: t, dur: d, midi: h.midi, id: ev.id, si, vel: Math.max(0.08, (vels.get(ev.id) ?? 0.68) * (ev.stacc ? 0.9 : 1)), stacc: !!ev.stacc }; notes.push(n); }
+            if (n) n.dur += d; else { n = { tick: t, dur: d, midi: h.midi, id: ev.id, si, vel: Math.min(1, Math.max(0.08, vel)) }; notes.push(n); }
+            n.rel = release(ev, legato); // a tied note ends the way its last written note does
             if (ev.tie) nextOpen.set(h.midi, n);
           });
           open.clear(); for (const [k, v] of nextOpen) open.set(k, v);
@@ -76,11 +108,14 @@ export function performance(score) {
       t0 += measureCapacity(a.time);
     }
   });
-  for (const n of notes) if (n.stacc) n.dur = Math.max(DIV / 8, n.dur * 0.45);
+  const marks = [...holds].sort((a, b) => a[0] - b[0]);
+  const warp = (t) => { let x = t; for (const [e, extra] of marks) { if (e > t) break; x += extra; } return x; };
+  for (const n of notes) { const a = warp(n.tick), b = warp(n.tick + n.dur); n.tick = a; n.dur = n.rel(b - a); delete n.rel; }
+  for (const o of onsets) { const a = warp(o.tick); o.dur = warp(o.tick + o.dur) - a; o.tick = a; }
   notes.sort((a, b) => a.tick - b.tick || a.midi - b.midi);
   onsets.sort((a, b) => a.tick - b.tick);
   let totalTicks = 0; for (let mi = 0; mi <= end; mi++) totalTicks += measureCapacity(attrs[mi].time);
-  return { notes, onsets, totalTicks };
+  return { notes, onsets, totalTicks: warp(totalTicks) };
 }
 
 // ---------------------------------------------------------------- MusicXML
@@ -88,6 +123,12 @@ export function performance(score) {
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const ACC_NAME = { '-2': 'flat-flat', '-1': 'flat', 0: 'natural', 1: 'sharp', 2: 'double-sharp' };
 const CLEF_XML = { G: ['G', 2], F: ['F', 4], C: ['C', 3] };
+
+const ART_XML = { accent: '<accent/>', marcato: '<strong-accent type="up"/>', stacc: '<staccato/>', staccatissimo: '<staccatissimo/>', tenuto: '<tenuto/>' };
+function articXml(ev) {
+  const a = Object.keys(ART_XML).filter((k) => hasArtic(ev, k)).map((k) => ART_XML[k]).join('');
+  return (a ? `<articulations>${a}</articulations>` : '') + (ev.fermata ? '<fermata type="upright"/>' : '');
+}
 
 export function toMusicXML(score) {
   const { spelled, attrs } = spellScore(score);
@@ -102,7 +143,7 @@ export function toMusicXML(score) {
   out.push(`  <part-list><score-part id="P1"><part-name>${nSt > 1 ? 'Piano' : 'Music'}</part-name></score-part></part-list>`);
   out.push('  <part id="P1">');
   const slurStart = new Map(), slurStop = new Map();
-  (score.slurs || []).forEach((s, i) => { slurStart.set(s.from, (i % 6) + 1); slurStop.set(s.to, (i % 6) + 1); });
+  (score.slurs || []).forEach((s, i) => { slurStart.set(s.from, { n: (i % 6) + 1, dir: s.dir }); slurStop.set(s.to, (i % 6) + 1); });
   const tiedIn = score.staves.map(() => new Set());
   for (let mi = 0; mi <= end; mi++) {
     const m = score.measures[mi], a = attrs[mi], ch = a.changed;
@@ -145,7 +186,8 @@ export function toMusicXML(score) {
           out.push(`      <direction placement="below"><direction-type><dynamics><${ev.dyn}/></dynamics></direction-type>${staffTag}${lvl ? `<sound dynamics="${Math.round(lvl * 110 / 90 * 100)}"/>` : ''}</direction>`);
         }
         if (ev.kind === 'rest') {
-          out.push(`      <note>${ev.full ? '<rest measure="yes"/>' : '<rest/>'}<duration>${d}</duration><voice>${voice}</voice>${ev.full ? '' : `<type>${DUR_NAMES[ev.dur]}</type>`}${'<dot/>'.repeat(ev.dots || 0)}${tm}${staffTag}${tupN ? `<notations>${tupN}</notations>` : ''}</note>`);
+          const rn = tupN + articXml(ev);
+          out.push(`      <note>${ev.full ? '<rest measure="yes"/>' : '<rest/>'}<duration>${d}</duration><voice>${voice}</voice>${ev.full ? '' : `<type>${DUR_NAMES[ev.dur]}</type>`}${'<dot/>'.repeat(ev.dots || 0)}${tm}${staffTag}${rn ? `<notations>${rn}</notations>` : ''}</note>`);
           tiedIn[si].clear();
           for (const h of score.hairpins || []) if (h.to === ev.id) dir('<wedge type="stop"/>');
           continue;
@@ -159,8 +201,9 @@ export function toMusicXML(score) {
           if (start) nextIn.add(h.pos);
           const ties = (stop ? '<tie type="stop"/>' : '') + (start ? '<tie type="start"/>' : '');
           const tied = (stop ? '<tied type="stop"/>' : '') + (start ? '<tied type="start"/>' : '');
-          const slur = k === 0 ? (slurStart.has(ev.id) ? `<slur type="start" number="${slurStart.get(ev.id)}"/>` : '') + (slurStop.has(ev.id) ? `<slur type="stop" number="${slurStop.get(ev.id)}"/>` : '') : '';
-          const art = k === 0 && ev.stacc ? '<articulations><staccato/></articulations>' : '';
+          const ss = slurStart.get(ev.id);
+          const slur = k === 0 ? (slurStop.has(ev.id) ? `<slur type="stop" number="${slurStop.get(ev.id)}"/>` : '') + (ss ? `<slur type="start" number="${ss.n}"${ss.dir ? ` placement="${ss.dir === 'up' ? 'above' : 'below'}"` : ''}/>` : '') : '';
+          const art = k === 0 ? articXml(ev) : '';
           const tn = k === 0 ? tupN : '';
           const notations = tied || slur || art || tn ? `<notations>${tied}${slur}${tn}${art}</notations>` : '';
           const beam = k === 0 && beams.has(ev.id) ? `<beam number="1">${beams.get(ev.id)}</beam>` : '';

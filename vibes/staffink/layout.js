@@ -9,7 +9,7 @@
 // y grows downward; a staff's top line is at `top`, bottom line at `top + 4`.
 // Position p sits at y = top + 4 - p/2.
 import { SMUFL } from './smufl.js';
-import { DIV, spellScore, evTicks, measureCapacity, staffSequence } from './theory.js';
+import { DIV, spellScore, evTicks, measureCapacity, staffSequence, hasArtic } from './theory.js';
 
 export const PAGE = { marginL: 1.6, marginR: 1.6, top: 7, staffDist: 11, sysGap: 10, minMeasure: 9 };
 
@@ -174,7 +174,7 @@ export function layoutScore(score, opt) {
       // full-measure rests are centred in the bar
       for (const c of m.cols) for (const { ev } of c.items) if (ev.full) {
         const p = evPos.get(ev.id); const w = glyphW(M, 'restWhole'); const dx = (m.contentX + m.x1) / 2 - w / 2 - p.x;
-        p.x += dx; p.rest.x += dx; p.bbox.x0 += dx; p.bbox.x1 += dx;
+        p.x += dx; p.rest.x += dx; for (const bx of [p.bbox, p.core]) { bx.x0 += dx; bx.x1 += dx; }
       }
     });
     sys.x1 = x;
@@ -213,15 +213,21 @@ export function layoutScore(score, opt) {
       }
     });
   }
-  const slurs = [];
-  for (const s of score.slurs || []) {
-    const a = evPos.get(s.from), b = evPos.get(s.to);
-    if (!a || !b || a.sys !== b.sys) continue;
-    const up = !a.stemUp;
-    const ya = up ? Math.min(...a.heads.map((h) => h.y)) - 0.8 : Math.max(...a.heads.map((h) => h.y)) + 0.8;
-    const yb = up ? Math.min(...b.heads.map((h) => h.y)) - 0.8 : Math.max(...b.heads.map((h) => h.y)) + 0.8;
-    slurs.push({ x0: a.x + headW / 2, y0: ya, x1: b.x + headW / 2, y1: yb, up });
-  }
+  const slurs = layoutSlurs(score, seqs, evPos, systems);
+
+  // ---- 5b. fermatas: above the staff, above everything else on the note
+  score.measures.forEach((m) => m.staves.forEach((st) => st.events.forEach((ev) => {
+    if (!ev.fermata) return;
+    const p = evPos.get(ev.id); if (!p) return;
+    const cx = p.hw ? p.x + p.hw / 2 : (p.bbox.x0 + p.bbox.x1) / 2;
+    let bottom = Math.min(p.top - 0.9, p.bbox.y0 - 0.45);
+    for (const sl of slurs) if (sl.up && sl.sys === p.sys && cx >= sl.x0 - 0.5 && cx <= sl.x1 + 0.5) {
+      for (const q of sl.pts) if (Math.abs(q.x - cx) < 1.4) bottom = Math.min(bottom, q.y - 0.5);
+    }
+    const f = markAt(M, 'fermataAbove', cx, bottom, false, 'fermata');
+    p.artics.push(f);
+    p.bbox.y0 = Math.min(p.bbox.y0, f.box.y0);
+  })));
 
   // ---- 6. tuplet numbers/brackets, dynamics, hairpins
   const tuplets = [], dynamics = [], hairpins = [];
@@ -280,6 +286,72 @@ export function layoutScore(score, opt) {
   return { systems, measures, evPos, beams, ties, slurs, tuplets, dynamics, hairpins, height, width, headW, font: opt.font || 'Bravura', M, ED, nSt, attrs, spelled };
 }
 
+/**
+ * Slurs. Direction: a slur goes on the notehead side when every stem under it points
+ * the same way, and above when stems are mixed (Gould); a stored `dir` overrides. Ends
+ * sit just off the head, or off the stem tip when the slur is on the stem side, and
+ * outside any staccato/tenuto on that side. The arch is raised until it clears every
+ * note in between. A slur that crosses a line break is drawn in pieces, one per system.
+ */
+function layoutSlurs(score, seqs, evPos, systems) {
+  const out = [];
+  (score.slurs || []).forEach((sl, idx) => {
+    const a = evPos.get(sl.from), b = evPos.get(sl.to);
+    if (!a || !b || a.si !== b.si || a.kind !== 'note' || b.kind !== 'note') return;
+    const seq = seqs[a.si];
+    const ka = seq.findIndex((e) => e.id === sl.from), kb = seq.findIndex((e) => e.id === sl.to);
+    if (ka < 0 || kb <= ka) return;
+    const span = seq.slice(ka, kb + 1).filter((e) => e.kind === 'note').map((e) => evPos.get(e.id)).filter(Boolean);
+    const stems = span.filter((p) => p.stem);
+    const mixed = stems.some((p) => p.stemUp) && stems.some((p) => !p.stemUp);
+    const up = sl.dir ? sl.dir === 'up' : mixed ? true : !a.stemUp;
+    const end = (p) => {
+      const headSide = !p.stem || p.stemUp !== up;
+      let x, y;
+      if (headSide) {
+        x = p.x + p.hw / 2;
+        y = up ? Math.min(...p.heads.map((h) => h.y)) - 0.75 : Math.max(...p.heads.map((h) => h.y)) + 0.75;
+        if (p.artics.length && p.artSide === (up ? 'above' : 'below')) y = up ? Math.min(y, p.artEdge - 0.3) : Math.max(y, p.artEdge + 0.3);
+      } else { x = p.stem.x; y = p.stem.y1 + (up ? -0.5 : 0.5); }
+      return { x, y };
+    };
+    const A = end(a), B = end(b);
+    const pieces = [];
+    if (a.sys === b.sys) pieces.push({ sys: a.sys, x0: A.x, y0: A.y, x1: B.x, y1: B.y });
+    else {
+      const outer = (sys) => { const t = systems[sys].staffTops[a.si]; return up ? t - 1.2 : t + 5.2; };
+      pieces.push({ sys: a.sys, x0: A.x, y0: A.y, x1: systems[a.sys].x1 - 0.3, y1: up ? Math.min(A.y, outer(a.sys)) : Math.max(A.y, outer(a.sys)), cut: 'end' });
+      for (let k = a.sys + 1; k < b.sys; k++) { const s = systems[k], y = outer(k); pieces.push({ sys: k, x0: s.x0 + s.header - 0.6, y0: y, x1: s.x1 - 0.3, y1: y, cut: 'both' }); }
+      const s = systems[b.sys];
+      pieces.push({ sys: b.sys, x0: s.x0 + s.header - 0.6, y0: up ? Math.min(B.y, outer(b.sys)) : Math.max(B.y, outer(b.sys)), x1: B.x, y1: B.y, cut: 'start' });
+    }
+    for (const pc of pieces) {
+      const len = Math.max(0.5, pc.x1 - pc.x0);
+      let h = Math.min(2.2, 0.6 + 0.12 * len);
+      const lineY = (x) => pc.y0 + (pc.y1 - pc.y0) * (x - pc.x0) / len;
+      for (const p of span) {
+        if (p === a || p === b || p.sys !== pc.sys) continue;
+        const cx = p.x + p.hw / 2;
+        if (cx <= pc.x0 || cx >= pc.x1) continue;
+        // how far the note pokes past the straight line joining the ends (a cubic with
+        // both control points at height h peaks at 0.75 h)
+        const poke = up ? lineY(cx) - p.bbox.y0 : p.bbox.y1 - lineY(cx);
+        h = Math.max(h, (poke + 0.55) / 0.75);
+      }
+      h = Math.min(h, 5);
+      const sgn = up ? -1 : 1, mx = (pc.x0 + pc.x1) / 2;
+      const c1 = { x: pc.x0 + (mx - pc.x0) * 0.4, y: pc.y0 + sgn * h }, c2 = { x: pc.x1 - (pc.x1 - mx) * 0.4, y: pc.y1 + sgn * h };
+      const pts = [];
+      for (let i = 0; i <= 12; i++) {
+        const t = i / 12, u = 1 - t;
+        pts.push({ x: u * u * u * pc.x0 + 3 * u * u * t * c1.x + 3 * u * t * t * c2.x + t * t * t * pc.x1, y: u * u * u * pc.y0 + 3 * u * u * t * c1.y + 3 * u * t * t * c2.y + t * t * t * pc.y1 });
+      }
+      out.push({ ...pc, up, h, idx, pts, from: sl.from, to: sl.to });
+    }
+  });
+  return out;
+}
+
 // Time signature digits are two spaces tall in Bravura; Petaluma draws them larger, so
 // they are scaled to fit their half of the staff.
 export function timeScale(M) { const g = M.glyphs.timeSig4; const h = g ? g.bb[3] - g.bb[1] : 2; return h > 2.3 ? 2.05 / h : 1; }
@@ -309,6 +381,7 @@ function placeEvent(ev, sp, x, top, M, headW, meta, forced) {
     const bb = M.glyphs[g].bb;
     p.bbox = { x0: x + bb[0], x1: x + bb[2], y0: p.rest.y - bb[3], y1: p.rest.y - bb[1] };
     for (let d = 0; d < (ev.dots || 0); d++) p.dots.push({ x: x + bb[2] + 0.35 + d * 0.5, y: yOf(top, 5) });
+    p.core = { ...p.bbox }; p.artics = [];
     return p;
   }
   const up = forced !== undefined ? forced : stemUpFor(ev.heads);
@@ -347,15 +420,56 @@ function placeEvent(ev, sp, x, top, M, headW, meta, forced) {
     const dp = h.pos % 2 === 0 ? h.pos + 1 : h.pos;
     for (let d = 0; d < (ev.dots || 0); d++) p.dots.push({ x: dotX + d * 0.5, y: yOf(top, dp) });
   }
-  if (ev.stacc) {
-    const h = up ? p.heads[0] : p.heads[p.heads.length - 1];
-    const dp = up ? h.pos - 2 - (h.pos % 2 === 0 ? 1 : 0) : h.pos + 2 + (h.pos % 2 === 0 ? 1 : 0);
-    p.stacc = { x: x + hw / 2 - 0.2, y: yOf(top, dp) };
-  }
   p.headGlyph = glyph; p.hw = hw;
   const ys = p.heads.map((h) => h.y);
   p.bbox = { x0: Math.min(leftMost, ...p.heads.filter((h) => h.acc).map((h) => h.acc.x)), x1: Math.max(...p.heads.map((h) => h.x)) + hw, y0: Math.min(...ys) - 0.5, y1: Math.max(...ys) + 0.5 };
+  p.core = { ...p.bbox };
+  placeArtics(p, ev, M);
   return p;
+}
+
+// Articulations on the notehead side (opposite the stem), closest first: staccato,
+// staccatissimo or tenuto next to the head, in the nearest space; accent or marcato
+// beyond it (Gould, "Behind Bars", ch. 4; Ross, "The Art of Music Engraving"). Fermatas
+// go above the staff and are placed later, once stems, beams and slurs are known.
+const ART_ORDER = ['stacc', 'staccatissimo', 'tenuto', 'accent', 'marcato'];
+const ART_GLYPH = { stacc: 'articStaccato', staccatissimo: 'articStaccatissimo', tenuto: 'articTenuto', accent: 'articAccent', marcato: 'articMarcato' };
+
+/** Glyph placed with its centre at x and its inner edge (toward the note) at y. */
+function markAt(M, name, cx, inner, below, art) {
+  const g = M.glyphs[name], bb = g ? g.bb : [0, 0, 1, 1];
+  const x = cx - (bb[0] + bb[2]) / 2;
+  const y = below ? inner + bb[3] : inner + bb[1];
+  return { art, glyph: name, x, y, box: { x0: x + bb[0], x1: x + bb[2], y0: y - bb[3], y1: y - bb[1] } };
+}
+
+function placeArtics(p, ev, M) {
+  p.artics = [];
+  const list = ART_ORDER.filter((a) => hasArtic(ev, a));
+  if (!list.length) return;
+  const below = p.stemUp;
+  const h = below ? p.heads[0] : p.heads[p.heads.length - 1];
+  const cx = p.x + p.hw / 2;
+  let edge = h.y + (below ? 0.5 : -0.5);
+  list.forEach((a, k) => {
+    const name = ART_GLYPH[a] + (below ? 'Below' : 'Above');
+    const bb = (M.glyphs[name] || { bb: [0, 0, 0.3, 0.3] }).bb, gh = bb[3] - bb[1];
+    let inner = edge + (below ? 0.28 : -0.28);
+    if (k === 0 && (a === 'stacc' || a === 'tenuto')) {
+      // centred in the space next to the head (1 sp away from a space note, 1.5 from a line note)
+      const dp = below ? h.pos - 2 - (h.pos % 2 === 0 ? 1 : 0) : h.pos + 2 + (h.pos % 2 === 0 ? 1 : 0);
+      const c = p.top + 4 - dp / 2;
+      inner = below ? c - gh / 2 : c + gh / 2;
+    }
+    // accents and marcatos read badly on the staff lines: take them outside the staff
+    if ((a === 'accent' || a === 'marcato') && inner > p.top - 0.3 && inner < p.top + 4.3) inner = below ? p.top + 4.3 : p.top - 0.3;
+    const m = markAt(M, name, cx, inner, below, a);
+    p.artics.push(m);
+    edge = below ? m.box.y1 : m.box.y0;
+  });
+  p.artSide = below ? 'below' : 'above';
+  p.artEdge = edge;
+  for (const m of p.artics) { p.bbox.y0 = Math.min(p.bbox.y0, m.box.y0); p.bbox.y1 = Math.max(p.bbox.y1, m.box.y1); }
 }
 
 function stemBase(p, M) {
@@ -377,8 +491,7 @@ function stemSingle(p, ev, M) {
   if (up && tip > mid) tip = mid; if (!up && tip < mid) tip = mid;
   p.stem = { x: b.x, y0: b.y0, y1: tip };
   if (FLAG[ev.dur]) p.flag = { glyph: `flag${FLAG[ev.dur]}${up ? 'Up' : 'Down'}`, x: b.x - M.engravingDefaults.stemThickness / 2, y: tip };
-  p.bbox.y0 = Math.min(p.bbox.y0, tip); p.bbox.y1 = Math.max(p.bbox.y1, tip);
-  if (p.flag) p.bbox.x1 = Math.max(p.bbox.x1, b.x + 1.1);
+  for (const bx of [p.bbox, p.core]) { bx.y0 = Math.min(bx.y0, tip); bx.y1 = Math.max(bx.y1, tip); if (p.flag) bx.x1 = Math.max(bx.x1, b.x + 1.1); }
 }
 
 function beamGroup(items, M, headW) {
@@ -409,7 +522,7 @@ function beamGroup(items, M, headW) {
   for (const { p, b } of bases) {
     p.stem = { x: b.x, y0: b.y0, y1: Y(b.x) + (up ? -0.0 : 0) };
     delete p.flag;
-    p.bbox.y0 = Math.min(p.bbox.y0, p.stem.y1); p.bbox.y1 = Math.max(p.bbox.y1, p.stem.y1);
+    for (const bx of [p.bbox, p.core]) { bx.y0 = Math.min(bx.y0, p.stem.y1); bx.y1 = Math.max(bx.y1, p.stem.y1); }
   }
   const st = M.engravingDefaults.stemThickness;
   const segs = [];

@@ -98,6 +98,7 @@ export function renderScore(g, L, view, st = {}) {
     if (p.kind === 'rest') {
       glyph(p.rest.glyph, p.rest.x, p.rest.y, color);
       for (const d of p.dots) glyph('augmentationDot', d.x, d.y, color);
+      for (const a of p.artics || []) glyph(a.glyph, a.x, a.y, color);
       continue;
     }
     for (const l of p.ledgers) hline(l.x0, l.x1, l.y, ED.legerLineThickness, color);
@@ -108,7 +109,7 @@ export function renderScore(g, L, view, st = {}) {
     for (const d of p.dots) glyph('augmentationDot', d.x, d.y, color);
     if (p.stem) vline(p.stem.x, Math.min(p.stem.y0, p.stem.y1), Math.max(p.stem.y0, p.stem.y1), ED.stemThickness, color);
     if (p.flag) glyph(p.flag.glyph, p.flag.x, p.flag.y, color);
-    if (p.stacc) glyph(p.stemUp ? 'articStaccatoBelow' : 'articStaccatoAbove', p.stacc.x, p.stacc.y, color);
+    for (const a of p.artics || []) glyph(a.glyph, a.x, a.y, color);
   }
   // beams
   for (const b of L.beams) {
@@ -155,7 +156,10 @@ export function renderScore(g, L, view, st = {}) {
   // ties and slurs: crescents, thick in the middle
   g.fillStyle = THEME.ink;
   for (const t of L.ties) curve(g, X, Y, t.x0, t.y, t.x1, t.y, t.up, Math.min(1.2, 0.35 + 0.12 * (t.x1 - t.x0)), ED.tieMidpointThickness);
-  for (const s of L.slurs) curve(g, X, Y, s.x0, s.y0, s.x1, s.y1, s.up, Math.min(2.2, 0.6 + 0.12 * (s.x1 - s.x0)), ED.slurMidpointThickness);
+  for (const s of L.slurs) {
+    g.fillStyle = [s.from, s.to].some((i) => playing.has(i)) ? THEME.play : [s.from, s.to].some((i) => selected.has(i)) ? THEME.select : THEME.ink;
+    curve(g, X, Y, s.x0, s.y0, s.x1, s.y1, s.up, s.h, ED.slurMidpointThickness);
+  }
 }
 
 function drawKey(glyph, M, key, clef, x, t, cancelGap) {

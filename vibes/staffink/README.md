@@ -27,7 +27,8 @@ bun train.js                # retrain on all 100 writers, writes model.json (~5 
 | ♯ ♭ ♮ 𝄪 left of a head, before or after the note | accidental, carried through the bar |
 | dot right of a head / above or below | augmentation dot (twice = double) / staccato |
 | quarter, eighth… rests; a block hanging from line 4 / sitting on line 3 | rests; whole (bar) rest / half rest |
-| arc from head to head | tie (same pitch) or slur |
+| arc from head to head | tie (same pitch) or slur (notehead side, above when stems are mixed; clears the notes under it; continues across line breaks; plays legato) |
+| small mark just above/below a note: `>` `–` `^` short `\|`, arch + dot | accent, tenuto, marcato, staccatissimo, fermata (shape + position, no training data needed; corrections learn your version) |
 | G/F/C clef, 2/4 3/4 4/4 6/8 … C ¢ at the start of a bar | clef / time signature change |
 | a 3 (or 6) above or below notes | triplet (sextuplet) over the neighbouring notes whose lengths add up to 3 equal parts: three eighths, quarter + eighth, six sixteenths… |
 | pp p mp mf f ff sfz fp under a note, outside the staff | dynamic: engraved on a common line under the staff, sets playback loudness |
@@ -38,7 +39,7 @@ bun train.js                # retrain on all 100 writers, writes model.json (~5 
 After every symbol the top alternatives appear in a strip at the bottom. Tapping one fixes
 the symbol and stores the ink as a personal template, so the recognizer adapts to your
 hand. Tap a notehead to hear it and get an edit bar (duration, dot, accidentals, tie,
-staccato, triplet, note↔rest, delete, and a row of dynamics); drag it or use ↑/↓ to change pitch. Bars grow as you write
+staccato/staccatissimo/tenuto/accent/marcato/fermata, flip slur, triplet, note↔rest, delete, and a row of dynamics); drag it or use ↑/↓ to change pitch. Bars grow as you write
 and always leave room for the missing beats, underfull bars are tinted amber and overfull
 ones red. One blank bar is always kept at the end. Treble, bass, alto or piano grand staff;
 any key; Bravura or the handwritten-style Petaluma. Export MusicXML 4.0, MIDI, PNG or the

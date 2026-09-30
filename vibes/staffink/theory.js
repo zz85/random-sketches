@@ -178,10 +178,34 @@ export function ensureTrailingMeasure(score) {
   if (!empty(score.measures[score.measures.length - 1])) score.measures.push(newMeasure(score.staves.length));
 }
 
+// Articulations. `stacc` stays a boolean on the event (older scores have it); the rest
+// live in ev.artic, fermata in ev.fermata. Staccato/staccatissimo and accent/marcato
+// exclude each other: a note is one length and one weight.
+export const ARTICS = ['stacc', 'staccatissimo', 'tenuto', 'accent', 'marcato', 'fermata'];
+export const ARTIC_NAMES = { stacc: 'staccato', staccatissimo: 'staccatissimo', tenuto: 'tenuto', accent: 'accent', marcato: 'marcato', fermata: 'fermata' };
+const ARTIC_EXCL = { stacc: 'staccatissimo', staccatissimo: 'stacc', accent: 'marcato', marcato: 'accent' };
+export function hasArtic(ev, a) {
+  if (a === 'stacc') return !!ev.stacc;
+  if (a === 'fermata') return !!ev.fermata;
+  return !!(ev.artic && ev.artic.includes(a));
+}
+export function setArtic(ev, a, on = true) {
+  if (on && ARTIC_EXCL[a]) setArtic(ev, ARTIC_EXCL[a], false);
+  if (a === 'stacc') ev.stacc = !!on;
+  else if (a === 'fermata') { if (on) ev.fermata = true; else delete ev.fermata; }
+  else {
+    const list = (ev.artic || []).filter((x) => x !== a);
+    if (on) list.push(a);
+    if (list.length) ev.artic = list; else delete ev.artic;
+  }
+}
+export const articsOf = (ev) => ARTICS.filter((a) => hasArtic(ev, a));
+
 export const DUR_NAMES = { 1: 'whole', 2: 'half', 4: 'quarter', 8: 'eighth', 16: '16th', 32: '32nd', 64: '64th' };
 export function describe(ev, heads) {
   const d = (ev.tuplet ? (ev.tuplet.n === 3 ? 'triplet ' : ev.tuplet.n + '-tuplet ') : '') + (ev.dots ? (ev.dots > 1 ? 'double-dotted ' : 'dotted ') : '') + DUR_NAMES[ev.dur];
-  if (ev.kind === 'rest') return `${ev.full ? 'bar' : d} rest`;
+  if (ev.kind === 'rest') return `${ev.full ? 'bar' : d} rest${ev.fermata ? ' fermata' : ''}`;
   const names = (heads || []).map((h) => { const s = stepName(h.d); return s.step + ['𝄫', '♭', '', '♯', '𝄪'][h.alter + 2] + s.octave; });
-  return `${d} ${names.join(' ')}${ev.dyn ? ' ' + ev.dyn : ''}`;
+  const arts = articsOf(ev).map((a) => ARTIC_NAMES[a]).join(' ');
+  return `${d} ${names.join(' ')}${arts ? ' ' + arts : ''}${ev.dyn ? ' ' + ev.dyn : ''}`;
 }

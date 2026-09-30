@@ -95,3 +95,13 @@ export function trebleClef(top, x) {
   for (let i = 1; i <= 8; i++) { const a = i / 8 * Math.PI; pts.push({ x: x - 0.3 + Math.cos(a) * 0.45, y: top + 6.3 - Math.sin(a) * 0.35 }); }
   return [wob(pts, 0.04)];
 }
+
+// ---- articulation marks, centred at (cx, cy)
+export function accentMark(cx, cy, w = 0.9, h = 0.6) { return [[...line(cx - w / 2, cy - h / 2, cx + w / 2, cy, 8), ...line(cx + w / 2, cy, cx - w / 2, cy + h / 2, 8).slice(1)]]; }
+export function marcatoMark(cx, cy, w = 0.7, h = 0.8) { return [[...line(cx - w / 2, cy + h / 2, cx, cy - h / 2, 8), ...line(cx, cy - h / 2, cx + w / 2, cy + h / 2, 8).slice(1)]]; }
+export function tenutoMark(cx, cy, w = 1.1) { return [line(cx - w / 2, cy, cx + w / 2, cy + 0.03, 10)]; }
+export function tickMark(cx, cy, h = 0.7) { return [line(cx, cy - h / 2, cx + 0.03, cy + h / 2, 8)]; }
+export function fermataMark(cx, cy, w = 1.8) {
+  const pts = []; for (let i = 0; i <= 16; i++) { const t = i / 16; pts.push({ x: cx - w / 2 + w * t, y: cy + 0.35 - 0.8 * Math.sin(Math.PI * t) }); }
+  return [wob(pts, 0.02), ...dot(cx - 0.05, cy + 0.15)];
+}

@@ -4,7 +4,7 @@
  * and offline, while an online load quietly fetches the new build for next time.
  * Bump VERSION when the file list changes.
  */
-const VERSION = 'staffink-v1';
+const VERSION = 'staffink-v2';
 const SHELL = [
   './', './index.html', './app.js', './recognizer.js', './extras.js', './parser.js', './theory.js', './layout.js',
   './render.js', './export.js', './audio.js', './smufl.js', './model.json', './digits.json',

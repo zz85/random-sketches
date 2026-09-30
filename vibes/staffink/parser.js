@@ -8,14 +8,18 @@
 //     heads = tie (same pitch) or slur, ledger lines and barlines are ignored because
 //     the engraver draws them.
 //  2. Tiny strokes are dots; their meaning comes from where they sit relative to a
-//     head (right = augmentation, above/below = staccato).
+//     head (right = augmentation, above/below = staccato). Other small marks just
+//     above or below a note are articulations, told apart by shape (dash = tenuto,
+//     tick = staccatissimo, > = accent, ^ = marcato, arch + dot = fermata). Their
+//     position is what separates them from look-alikes: an accent from a hairpin
+//     (smaller, and hugging one note), a tenuto from a ledger line.
 //  3. Everything else goes to the symbol classifier (recognizer.js) with a context
 //     prior: clefs and time signatures only at the start of a bar.
 //  4. Notes are parsed structurally (Miyao & Maruyama's stroke-primitive idea, 2004/07):
 //     find the stem, then the heads at one end of it; each head's height on the staff
 //     gives its pitch, several heads make a chord, fill density decides black/white.
-import { bbox, pathLength, straightness, reversals, resampleStep, classify, CLASSES, isExtra, rankTemplates } from './recognizer.js';
-import { findEvent, ensureTrailingMeasure, tupletWindows, clearTuplet, TUPLETS } from './theory.js';
+import { bbox, pathLength, straightness, reversals, resampleStep, classify, CLASSES, isExtra, isArtic, rankTemplates } from './recognizer.js';
+import { findEvent, ensureTrailingMeasure, tupletWindows, clearTuplet, TUPLETS, hasArtic, setArtic, ARTIC_NAMES } from './theory.js';
 import { locate, posOf } from './layout.js';
 
 // ---------------------------------------------------------------- stroke analysis
@@ -153,16 +157,15 @@ export function detectGesture(strokes, ctx, loc) {
   const s = strokes[0], b = bbox(strokes), ink = pathLength(s);
   const a = s[0], z = s[s.length - 1];
 
-  // scribble over existing symbols = erase
+  // scribble over existing symbols = erase (notes first, else an articulation, else a slur)
   const rx = reversals(s, 0.3, 'x');
   if (isScribble(s)) {
-    const hit = [];
-    for (const [id, p] of L.evPos) {
-      const area = Math.max(0.3, (p.bbox.x1 - p.bbox.x0) * (p.bbox.y1 - p.bbox.y0));
-      const head = p.heads && p.heads.length ? { x0: p.bbox.x0, x1: p.bbox.x1, y0: Math.min(...p.heads.map((h) => h.y)) - 0.5, y1: Math.max(...p.heads.map((h) => h.y)) + 0.5 } : p.bbox;
-      if (rectOverlap(b, p.bbox) > 0.3 * area || rectOverlap(b, head) > 0.5 * (head.x1 - head.x0) * (head.y1 - head.y0)) hit.push(id);
+    const hit = eraseHits(L, b, false);
+    const n = hit.ids.length + hit.artics.length + hit.slurs.length;
+    if (n) {
+      const what = hit.ids.length ? `${hit.ids.length} symbol${hit.ids.length > 1 ? 's' : ''}` : hit.artics.length ? hit.artics.map((a) => ARTIC_NAMES[a.art]).join(', ') : hit.slurs.length > 1 ? `${hit.slurs.length} slurs` : 'slur';
+      return { kind: 'erase', label: 'erase', ids: hit.ids, desc: `erased ${what}`, apply: (score) => { applyErase(score, hit); return { ids: [] }; } };
     }
-    if (hit.length) return { kind: 'erase', label: 'erase', ids: hit, desc: `erased ${hit.length} symbol${hit.length > 1 ? 's' : ''}`, apply: (score) => { for (const id of hit) removeEvent(score, id); ensureTrailingMeasure(score); return { ids: [] }; } };
   }
 
   const hp = detectHairpin(strokes, ctx, loc);
@@ -224,6 +227,38 @@ export function detectGesture(strokes, ctx, loc) {
     return { kind: 'barline', label: 'Barline', desc: 'barlines are automatic, bars fill as you write', apply: () => ({ ids: [] }) };
   }
   return null;
+}
+
+/**
+ * What an eraser box touches. `touch` (eraser tool, small box): any overlap counts.
+ * Otherwise (scribble): a note needs a real share of its body covered. Notes win over
+ * their articulations, which win over slurs, so scribbling a mark off keeps its note.
+ */
+export function eraseHits(L, b, touch) {
+  const ids = [], artics = [], slurs = [];
+  for (const [id, p] of L.evPos) {
+    const c = p.core || p.bbox;
+    const area = Math.max(0.3, (c.x1 - c.x0) * (c.y1 - c.y0));
+    const head = p.heads && p.heads.length ? { x0: c.x0, x1: c.x1, y0: Math.min(...p.heads.map((h) => h.y)) - 0.5, y1: Math.max(...p.heads.map((h) => h.y)) + 0.5 } : c;
+    const ov = rectOverlap(b, c);
+    if (touch ? ov > 0 : ov > 0.3 * area || rectOverlap(b, head) > 0.5 * (head.x1 - head.x0) * (head.y1 - head.y0)) ids.push(id);
+  }
+  if (!ids.length) for (const [id, p] of L.evPos) for (const a of p.artics || []) {
+    const m = { x0: a.box.x0 - 0.15, x1: a.box.x1 + 0.15, y0: a.box.y0 - 0.15, y1: a.box.y1 + 0.15 };
+    if (rectOverlap(b, m) > (touch ? 0 : 0.25 * (m.x1 - m.x0) * (m.y1 - m.y0))) artics.push({ id, art: a.art });
+  }
+  if (!ids.length && !artics.length) for (const sl of L.slurs || []) {
+    const inside = sl.pts.filter((q) => q.x > b.x0 - 0.25 && q.x < b.x1 + 0.25 && q.y > b.y0 - 0.25 && q.y < b.y1 + 0.25).length;
+    if (inside >= (touch ? 1 : 2) && !slurs.includes(sl.idx)) slurs.push(sl.idx);
+  }
+  return { ids, artics, slurs };
+}
+
+export function applyErase(score, hit) {
+  for (const id of hit.ids) removeEvent(score, id);
+  for (const a of hit.artics) { const f = findEvent(score, a.id); if (f) setArtic(f.ev, a.art, false); }
+  if (hit.slurs.length) score.slurs = (score.slurs || []).filter((_, i) => !hit.slurs.includes(i));
+  if (hit.ids.length) ensureTrailingMeasure(score);
 }
 
 export function removeEvent(score, id) {
@@ -349,6 +384,130 @@ export function makeTuplet(score, ids, n) {
   return { ids };
 }
 
+// ---------------------------------------------------------------- articulations
+
+const isTiny = (s) => { const b = bbox([s]); return b.w < 0.55 && b.h < 0.55 && pathLength(s) < 1.6; };
+
+/** Interior point farthest from the chord, and how far: the corner of a wedge. */
+function corner(s) {
+  const a = s[0], z = s[s.length - 1], L = Math.max(1e-6, dist(a, z));
+  let k = -1, d = 0;
+  for (let i = 1; i < s.length - 1; i++) {
+    const e = Math.abs((z.x - a.x) * (a.y - s[i].y) - (a.x - s[i].x) * (z.y - a.y)) / L;
+    if (e > d) { d = e; k = i; }
+  }
+  if (k < 2 || k > s.length - 3) return null;
+  const arms = [s.slice(0, k + 1), s.slice(k)];
+  if (arms.some((arm) => pathLength(arm) < 0.3 || straightness(arm) < 0.8)) return null;
+  return { apex: s[k], a, z, depth: d, chord: L };
+}
+
+/** An arch: x monotonic, bulging well clear of the chord. sag < 0 = bulges up (y down). */
+function arch(s) {
+  const b = bbox([s]);
+  if (reversals(s, 0.25, 'x') > 0 || b.w < 0.7) return null;
+  const a = s[0], z = s[s.length - 1];
+  if (Math.abs(z.y - a.y) > 0.5 * b.w) return null;
+  const [l, r] = a.x < z.x ? [a, z] : [z, a];
+  let sag = 0;
+  for (const p of s) { const yl = l.y + (r.y - l.y) * (p.x - l.x) / Math.max(1e-6, r.x - l.x); if (Math.abs(p.y - yl) > Math.abs(sag)) sag = p.y - yl; }
+  return Math.abs(sag) >= Math.max(0.3, 0.22 * b.w) ? { sag } : null;
+}
+
+/**
+ * Articulation candidates from shape alone, best first: [{label, s}]. Position (just
+ * above or below one note) is the caller's job, and is what makes these safe to guess.
+ */
+export function articShapes(strokes) {
+  const out = [];
+  const dots = strokes.filter(isTiny), lines = strokes.filter((s) => !isTiny(s));
+  if (strokes.length > 2 || lines.length > 2) return out;
+  if (!lines.length) { if (dots.length === 1) out.push({ label: 'Art-staccato', s: 0.9 }); return out; }
+  if (lines.length === 1) {
+    const s = lines[0], b = bbox([s]), st = straightness(s);
+    const ar = arch(s);
+    if (dots.length === 1) {
+      const d = bbox([dots[0]]);
+      // fermata: an arch with its dot under the curve
+      if (ar && b.w <= 3.6 && Math.abs(d.cx - b.cx) < 0.35 * b.w + 0.15 && (ar.sag < 0 ? d.cy > b.y0 + 0.15 : d.cy < b.y1 - 0.15)) out.push({ label: 'Art-fermata', s: 0.95 });
+      return out;
+    }
+    if (st > 0.9 && b.w >= 0.45 && b.w <= 2.0 && b.h <= 0.3 * b.w + 0.12) out.push({ label: 'Art-tenuto', s: 0.9 });
+    if (st > 0.85 && b.h >= 0.3 && b.h <= 1.4 && b.w <= 0.35 * b.h + 0.1) out.push({ label: 'Art-staccatissimo', s: 0.85 });
+    const c = corner(s);
+    if (c && c.depth > 0.22 * c.chord && Math.max(b.w, b.h) <= 1.9 && Math.max(b.w, b.h) >= 0.35) {
+      const mid = { x: (c.a.x + c.z.x) / 2, y: (c.a.y + c.z.y) / 2 };
+      const dx = c.apex.x - mid.x, dy = c.apex.y - mid.y;
+      if (dx > 0 && dx > 1.2 * Math.abs(dy) && Math.abs(c.a.y - c.z.y) >= 0.25) out.push({ label: 'Art-accent', s: 0.9 });
+      else if (Math.abs(dy) > 1.2 * Math.abs(dx) && Math.abs(c.a.x - c.z.x) >= 0.25) out.push({ label: 'Art-marcato', s: 0.88 });
+    }
+    // an arch on its own: a fermata written without its dot (the dot often comes late)
+    if (ar && b.w >= 1.0 && b.w <= 3.6 && st < 0.93 && !out.length) out.push({ label: 'Art-fermata', s: 0.5 });
+    return out;
+  }
+  // two straight arms meeting at the apex
+  if (dots.length) return out;
+  const [p, q] = lines, ep = [p[0], p[p.length - 1]], eq = [q[0], q[q.length - 1]];
+  let best = null;
+  for (let i = 0; i < 2; i++) for (let j = 0; j < 2; j++) { const d = dist(ep[i], eq[j]); if (!best || d < best.d) best = { d, i, j }; }
+  if (best.d > 0.45 || straightness(p) < 0.85 || straightness(q) < 0.85) return out;
+  const one = (best.i === 1 ? p : p.slice().reverse()).concat(best.j === 0 ? q : q.slice().reverse());
+  return articShapes([one]).filter((c) => c.label === 'Art-accent' || c.label === 'Art-marcato');
+}
+
+/** The note an articulation mark belongs to: just above or below it, centred on it. */
+function articTarget(L, loc, b, label) {
+  let best = null;
+  const ferm = label === 'Art-fermata';
+  for (const [, p] of L.evPos) {
+    if (p.sys !== loc.sys || p.si !== loc.si) continue;
+    if (p.kind !== 'note' && !ferm) continue;
+    const cx = p.hw ? p.x + p.hw / 2 : (p.bbox.x0 + p.bbox.x1) / 2;
+    const dx = Math.abs(b.cx - cx);
+    if (dx > Math.max(1.1, b.w / 2 + 0.4)) continue;
+    const c = p.core || p.bbox;
+    const hy0 = p.heads && p.heads.length ? Math.min(...p.heads.map((h) => h.y)) - 0.5 : c.y0;
+    const hy1 = p.heads && p.heads.length ? Math.max(...p.heads.map((h) => h.y)) + 0.5 : c.y1;
+    const reach = ferm ? 4.2 : 2.5;
+    let gap = null;
+    // above: clear of the head, and of an up-stem's tip (a mark cannot sit on the stem)
+    if (b.y1 < hy0 + 0.2 && (!(p.stem && p.stemUp) || b.y1 < p.stem.y1 + 0.35)) gap = Math.min(Math.abs(hy0 - b.y1), Math.abs(p.bbox.y0 - b.y1));
+    else if (b.y0 > hy1 - 0.2 && (!(p.stem && !p.stemUp) || b.y0 > p.stem.y1 - 0.35)) gap = Math.min(Math.abs(b.y0 - hy1), Math.abs(b.y0 - p.bbox.y1));
+    if (gap === null || gap > reach) continue;
+    const sc = dx + 0.7 * gap;
+    if (!best || sc < best.sc) best = { sc, p };
+  }
+  return best && best.p;
+}
+
+function tryArtic(strokes, ctx, loc, forced) {
+  const b = bbox(strokes);
+  if (strokes.length > 2 || Math.max(b.w, b.h) > 3.8) return forced ? { kind: 'none', label: forced, alts: [], desc: 'write the mark just above or below one note', apply: () => ({ ids: [] }) } : null;
+  let ranked = forced ? [{ label: forced, s: 1 }] : articShapes(strokes);
+  if (!forced) {
+    // a lone dot keeps its existing meaning (augmentation or staccato, see attachDots)
+    if (strokes.length === 1 && isTiny(strokes[0])) return null;
+    // your own corrected marks win when they match closely
+    const mine = (ctx.user || []).filter((u) => isArtic(u.label));
+    const r = mine.length ? rankTemplates(strokes, mine, 0.7)[0] : null;
+    if (r && r.d < 0.042) ranked = [{ label: r.label, s: 1, source: 'user' }, ...ranked.filter((x) => x.label !== r.label)];
+  }
+  if (!ranked.length) return null;
+  const label = ranked[0].label;
+  const p = articTarget(ctx.L, loc, b, label);
+  if (!p) return forced ? { kind: 'none', label, alts: [], desc: `${ARTIC_NAMES[CLASSES[label].art]}: write it just above or below a note`, apply: () => ({ ids: [] }) } : null;
+  const art = CLASSES[label].art;
+  let alts = [];
+  if (!forced) {
+    const z = ranked.reduce((a, x) => a + x.s, 0);
+    alts = ranked.map((x) => ({ label: x.label, p: 0.85 * x.s / z, source: x.source || 'shape' }));
+    // the way out if it was really a symbol: the network's best guesses
+    if (ctx.model) for (const m of classify(strokes, ctx.model).slice(0, 2)) alts.push({ label: m.label, p: 0.15 * m.p, source: 'mlp' });
+  }
+  const id = p.id;
+  return { kind: 'artic', label, alts, strokes, desc: ARTIC_NAMES[art], apply: (score) => { const f = findEvent(score, id); if (f) setArtic(f.ev, art, true); return { ids: [id] }; } };
+}
+
 // ---------------------------------------------------------------- dots
 
 function attachDots(dots, ctx, loc, onlyEvent) {
@@ -377,7 +536,7 @@ function applyDots(score, actions, L) {
   for (const a of actions) {
     const f = findEvent(score, a.p.id);
     if (!f) continue;
-    if (a.type === 'stacc') { f.ev.stacc = true; continue; }
+    if (a.type === 'stacc') { setArtic(f.ev, 'stacc', true); continue; }
     // one dot per head of a chord is still a single dot; a dot further right doubles it
     const prevX = seen.has(a.p.id) ? seen.get(a.p.id) : (a.p.dots.length ? a.p.dots[a.p.dots.length - 1].x : null);
     if (prevX === null) { f.ev.dots = Math.max(1, f.ev.dots || 0); seen.set(a.p.id, a.x); }
@@ -405,6 +564,7 @@ export function interpret(strokes, ctx, forced) {
   if (loc.dist > 7) return { kind: 'none', label: 'none', alts: [], desc: 'write on or near a staff', apply: () => ({ ids: [] }) };
   if (!forced) { const g = detectGesture(strokes, ctx, loc); if (g) return g; }
   if (!forced && strokes.length === 2) { const h = detectHairpin(strokes, ctx, loc); if (h) return h; }
+  if (!forced || isArtic(forced)) { const a = tryArtic(strokes, ctx, loc, forced); if (a) return a; }
   if (!forced || isExtra(forced)) { const x = tryExtra(strokes, ctx, forced); if (x) return x; }
 
   const dots = [], main = [];
