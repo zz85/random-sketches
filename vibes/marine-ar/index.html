@@ -705,6 +705,12 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       $("info").classList.add("vis");
     },
 
+    /** Name, or "Unnamed <type>" while the static report is still in transit; falls back to the MMSI. */
+    displayName(v) {
+      if (v.name) return v.name;
+      if (v.shipTypeName && v.shipTypeName !== "Unknown" && v.shipTypeName !== "Not available") return "Unnamed " + v.shipTypeName.toLowerCase();
+      return v.flag ? `Unnamed vessel · ${v.flag}` : "MMSI " + v.mmsi;   // the card still lists the MMSI
+    },
     /** Tied up or anchored: nav status says so, or a slow class B / status-less target (marina jitter). */
     isMoored(v) {
       return v.navStat === 1 || v.navStat === 5 || (v.sog != null && v.sog < 0.3 && v.navStat !== 0) || (v.sog != null && v.sog < 1 && (v.navStat == null || v.navStat === 15));
@@ -783,7 +789,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       cx.textAlign = "left"; cx.textBaseline = "middle";
       for (const L of labels.slice(0, 40)) {
         const v = L.v;
-        const name = v.name || ("MMSI " + v.mmsi);
+        const name = this.displayName(v);
         const l2 = [v.sog != null ? Geo.fmtSpeed(v.sog) : null, v.cog != null ? String(Math.round(v.cog)).padStart(3, "0") + "°" : null, this.fmtD(L.d)].filter(Boolean).join("  ");
         const l3 = L.occ ? `behind land · ${this.fmtD(v.occluded.distanceM)} to shore` : v.shipTypeName && v.shipTypeName !== "Unknown" ? v.shipTypeName + (v.length ? ` · ${v.length} m` : "") : (v.length ? `${v.length} m` : "");
         cx.globalAlpha = L.occ && !L.sel ? 0.42 : 1;
@@ -905,7 +911,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
     showInfo(v) {
       this.selected = v;
       $("iDot").style.setProperty("--c", v.color);
-      $("iName").textContent = v.name || "MMSI " + v.mmsi;
+      $("iName").textContent = this.displayName(v);
       $("iType").textContent = [v.shipTypeName, v.flag ? "flag " + v.flag : null, v.navStatName].filter(Boolean).join(" · ");
       const own = { lat: this.lat, lon: this.lon, sog: this.gpsSpeed ? this.gpsSpeed / Geo.KN : 0, cog: this.gpsCourse || 0 };
       const c = Geo.cpa(own, { lat: v.drLat, lon: v.drLon, sog: v.sog || 0, cog: v.cog || 0 });
@@ -926,6 +932,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       $("iLinks").innerHTML = [
         `<a target="_blank" rel="noopener" href="https://www.marinetraffic.com/en/ais/details/ships/mmsi:${v.mmsi}">MarineTraffic</a>`,
         `<a target="_blank" rel="noopener" href="https://www.vesselfinder.com/vessels/details/${v.imo || v.mmsi}">VesselFinder</a>`,
+        `<a target="_blank" rel="noopener" href="https://www.vesselfinder.com/?mmsi=${v.mmsi}">VF map</a>`,
         `<a target="_blank" rel="noopener" href="https://www.google.com/maps?q=${v.drLat.toFixed(5)},${v.drLon.toFixed(5)}">Map</a>`,
       ].join("");
       $("info").classList.add("vis");
