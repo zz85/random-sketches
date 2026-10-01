@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ScoreShift — transpose a photo of sheet music</title>
+<meta name="theme-color" content="#1d2b3a">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<style>
+  :root { --bg:#f3f1ec; --ink:#1d2b3a; --mut:#5d6b78; --acc:#c2410c; --card:#fff; --line:#d9d4ca; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--ink); font:15px/1.4 system-ui, -apple-system, Segoe UI, sans-serif; }
+  header { display:flex; gap:.5rem; align-items:center; padding:.5rem .75rem; background:var(--ink); color:#fff; flex-wrap:wrap; }
+  header h1 { font-size:1.05rem; margin:0 .5rem 0 0; letter-spacing:.02em; }
+  header h1 span { color:#fdba74; }
+  button, select, label.btn { font:inherit; border:1px solid var(--line); background:var(--card); color:var(--ink); border-radius:8px; padding:.4rem .7rem; cursor:pointer; min-height:36px; }
+  header button, header label.btn { background:#2c3e50; color:#fff; border-color:#40566b; }
+  button:focus-visible, select:focus-visible, label.btn:focus-within { outline:3px solid #fdba74; outline-offset:1px; }
+  button[aria-pressed="true"] { background:var(--ink); color:#fff; border-color:var(--ink); }
+  input[type=file] { position:absolute; width:1px; height:1px; opacity:0; }
+  #bar { display:flex; gap:.5rem .9rem; align-items:center; flex-wrap:wrap; padding:.5rem .75rem; border-bottom:1px solid var(--line); background:#faf8f4; }
+  #bar label { display:flex; gap:.35rem; align-items:center; color:var(--mut); font-size:.88rem; }
+  #bar select { max-width:15rem; }
+  .seg { display:inline-flex; }
+  .seg button { border-radius:0; margin-left:-1px; }
+  .seg button:first-child { border-radius:8px 0 0 8px; } .seg button:last-child { border-radius:0 8px 8px 0; }
+  #status { padding:.35rem .75rem; font-size:.88rem; color:var(--mut); min-height:1.9rem; }
+  #status b { color:var(--ink); }
+  #wrap { position:relative; overflow:auto; height:calc(100vh - 9.5rem); touch-action:pan-x pan-y pinch-zoom; }
+  #stage { position:relative; transform-origin:0 0; }
+  #stage canvas { display:block; }
+  #ov { position:absolute; left:0; top:0; pointer-events:none; }
+  #empty { padding:2.5rem 1.25rem; max-width:44rem; margin:0 auto; text-align:center; color:var(--mut); }
+  #empty h2 { color:var(--ink); }
+  #empty .big { display:flex; gap:.75rem; justify-content:center; flex-wrap:wrap; margin:1.25rem 0; }
+  #empty .big button, #empty .big label.btn { font-size:1.05rem; padding:.7rem 1.1rem; }
+  .chip { position:absolute; transform:translate(-2px,-120%); background:#1d2b3aee; color:#fff; font-size:12px; padding:2px 7px; border-radius:10px; border:0; min-height:0; white-space:nowrap; }
+  #pop { position:fixed; z-index:10; background:var(--card); border:1px solid var(--line); border-radius:12px; box-shadow:0 8px 30px #0003; padding:.6rem; display:none; max-width:min(22rem,94vw); }
+  #pop h3 { margin:.1rem 0 .5rem; font-size:.95rem; }
+  #pop .row { display:flex; gap:.35rem; flex-wrap:wrap; margin:.3rem 0; align-items:center; }
+  #pop .row button { min-width:2.4rem; }
+  #busy { position:fixed; inset:0; display:none; place-items:center; background:#f3f1ecc0; z-index:20; font-size:1.1rem; }
+  .sr { position:absolute; left:-9999px; }
+  @media (max-width:600px) { #bar select { max-width:11rem; } #wrap { height:calc(100vh - 13rem); } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Score<span>Shift</span></h1>
+  <label class="btn" id="camBtn">📷 Photo<input id="cam" type="file" accept="image/*" capture="environment"></label>
+  <label class="btn">🖼 Open<input id="file" type="file" accept="image/*"></label>
+  <button id="sample">Sample</button>
+  <button id="export" disabled>⬇ PNG</button>
+</header>
+<div id="bar">
+  <label>Written for <select id="from"></select></label>
+  <label>Transpose for <select id="to"></select></label>
+  <label>Octave <span class="seg"><button id="octDn" aria-label="Octave down">−</button><button id="octAuto" aria-pressed="true">auto</button><button id="octUp" aria-label="Octave up">+</button></span></label>
+  <label>Clef <select id="clef"><option value="auto">instrument</option><option value="keep">keep</option><option value="treble">treble</option><option value="bass">bass</option><option value="alto">alto</option><option value="tenor">tenor</option></select></label>
+  <span class="seg" role="group" aria-label="View">
+    <button data-view="original">Original</button><button data-view="interpreted">Interpreted</button><button data-view="transposed" aria-pressed="true">Transposed</button>
+  </span>
+  <label><input type="checkbox" id="labels"> note names</label>
+  <label>Zoom <input type="range" id="zoom" min="0.25" max="2" step="0.05" value="1" aria-label="Zoom"></label>
+</div>
+<div id="status" aria-live="polite"></div>
+<div id="wrap">
+  <div id="empty">
+    <h2>Take a photo of a page of music</h2>
+    <p>ScoreShift reads the staves, clefs, key signatures, notes and accidentals on the photo, then rewrites the
+      page itself for another instrument: every note slides to its new line or space, accidentals and the key
+      signature are replaced, ledger lines regenerated. The layout, beams, slurs, dynamics and lyrics stay exactly
+      where the engraver put them. Everything runs on this device.</p>
+    <div class="big"><label class="btn">📷 Take photo<input id="cam2" type="file" accept="image/*" capture="environment"></label><button id="sample2">Try the sample</button></div>
+    <p>Best results: printed music, flat page, whole width of the staff in frame, even light. Check the
+      <b>Interpreted</b> view and tap anything it got wrong.</p>
+  </div>
+  <div id="stage" hidden><canvas id="cv"></canvas><canvas id="ov"></canvas></div>
+</div>
+<div id="pop" role="dialog" aria-modal="false"></div>
+<div id="busy" role="status"><div>Reading the music…</div></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>

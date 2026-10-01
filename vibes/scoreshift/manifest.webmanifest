@@ -1,0 +1,12 @@
+{
+  "name": "ScoreShift — transpose a photo of sheet music",
+  "short_name": "ScoreShift",
+  "description": "Photograph a page of music and get it back rewritten for clarinet, sax, horn or any other instrument, in its own layout. Runs on the device, works offline.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f3f1ec",
+  "theme_color": "#1d2b3a",
+  "categories": ["music", "education"],
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}
