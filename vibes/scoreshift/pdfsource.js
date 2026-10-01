@@ -26,7 +26,8 @@ export async function openPdf(blob) {
 
 // Render a page so its long side is about `px` pixels (scans are typically 300-600 dpi; 3000 px
 // on a Letter/A4 page is ~270 dpi, plenty for staff spaces of 15+ px). White background.
-export async function renderPage(doc, n, px = 3000) {
+// keep: leave the page's decoded images in the pdf.js worker (re-rendering is then ~20x faster).
+export async function renderPage(doc, n, px = 3000, keep = false) {
   const page = await doc.getPage(n);
   const vp1 = page.getViewport({ scale: 1 });
   const scale = px / Math.max(vp1.width, vp1.height), vp = page.getViewport({ scale });
@@ -35,8 +36,53 @@ export async function renderPage(doc, n, px = 3000) {
   const ctx = c.getContext('2d');
   ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
   await page.render({ canvasContext: ctx, canvas: c, viewport: vp, background: 'white' }).promise;
-  page.cleanup();
-  return { canvas: c, widthPt: vp1.width, heightPt: vp1.height };
+  if (!keep) page.cleanup();
+  return { canvas: c, widthPt: vp1.width, heightPt: vp1.height, page };
+}
+
+// Several pdf.js documents on the same bytes, each with its own pdf.js worker. Scanned PDFs
+// spend ~0.7 s a page decoding JBIG2 / JPEG 2000 whatever the output size, single-threaded per
+// worker, so pages rendered on N readers come out ~N times faster. Each reader keeps its last
+// page decoded, and a render of that page again (probe at 1000 px, then the page at 3000 px)
+// is routed to it and costs ~40 ms instead of ~800.
+export class PdfPool {
+  static async open(blob, n) {
+    const { getDocument } = await pdfjs();
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    // each reader holds a copy of the file: fewer readers for big files
+    n = Math.max(1, Math.min(n ?? 4, bytes.length > 60e6 ? 1 : bytes.length > 20e6 ? 2 : 4));
+    const open = () => getDocument({ data: bytes.slice(), wasmUrl: new URL('wasm/', BASE).href, isEvalSupported: false, enableXfa: false }).promise;
+    const first = await open(); // fail fast on a bad file before spawning more workers
+    const rest = await Promise.all(Array.from({ length: n - 1 }, open));
+    return new PdfPool([first, ...rest]);
+  }
+  constructor(docs) {
+    this.readers = docs.map((doc) => ({ doc, busy: false, hot: null }));
+    this.numPages = docs[0].numPages; this.waiting = [];
+  }
+  get doc() { return this.readers[0].doc; }
+  acquire(k) {
+    const free = this.readers.filter((r) => !r.busy);
+    const r = free.find((x) => x.hot && x.hot.n === k) || free.find((x) => !x.hot) || free[0];
+    if (r) { r.busy = true; return Promise.resolve(r); }
+    return new Promise((res) => this.waiting.push({ k, res }));
+  }
+  release(r) {
+    r.busy = false;
+    if (!this.waiting.length) return;
+    const i = Math.max(0, this.waiting.findIndex((w) => r.hot && w.k === r.hot.n)), w = this.waiting.splice(i, 1)[0];
+    r.busy = true; w.res(r);
+  }
+  async render(k, px) {
+    const r = await this.acquire(k);
+    try {
+      if (r.hot && r.hot.n !== k) { r.hot.page.cleanup(); r.hot = null; }
+      const out = await renderPage(r.doc, k, px, true);
+      r.hot = { n: k, page: out.page };
+      return out;
+    } finally { this.release(r); }
+  }
+  destroy() { for (const r of this.readers) r.doc.loadingTask.destroy().catch(() => {}); this.readers = []; }
 }
 
 // ---------- writer: one JPEG per page, page size in points ----------

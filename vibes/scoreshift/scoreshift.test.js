@@ -7,6 +7,8 @@ import { CLEFS, INSTRUMENTS, instrument, partInterval, transposePitch, keySigPos
 import { evaluate, FIXTURES, loadFixture } from './eval.js';
 import { plan } from './render.js';
 import { CONDITIONS } from './degrade.js';
+import { normalize, analyze } from './omr.js';
+import fs from 'fs';
 
 describe('theory', () => {
   const C = instrument('C'), BB = instrument('Bb-clarinet');
@@ -130,4 +132,30 @@ describe('recognition (Verovio fixtures, 5 engraving fonts)', () => {
     expect(pl.staves[0].notes[0].p - pl.staves[0].notes[0].n.p).toBe(-6); // D3: middle line in bass, first ledger below in alto
   });
   test('fixtures load', () => { expect(loadFixture('minuet').truth.notes.length).toBe(96); });
+});
+
+// One system from three pages of a real scan: Haydn op. 17 no. 5, Philharmonia study score
+// (1920s), Internet Archive / Wikimedia Commons (public domain), rendered from the JBIG2/JPX PDF
+// at 2400 px and quantised to 16 grey levels. Clefs and keys are the true ones, read by eye; the
+// note counts are a baseline from the current recogniser (not hand counted), so a drop is a
+// regression. Each crop has a failure that was fixed: p15's top staff picked up a beam as its top
+// line and its clef touched the bracket; p11's clefs touch the bracket and the staff above;
+// p20's key signatures lose a flat on some staves.
+describe('real scan regression (Haydn op. 17 no. 5)', () => {
+  const CASES = [
+    { name: 'scan_haydn_p15', clefs: 'treble treble alto bass', key: 1, notes: 72 },
+    { name: 'scan_haydn_p11', clefs: 'treble treble alto bass', key: 1, notes: 72 },
+    { name: 'scan_haydn_p20', clefs: 'treble treble alto bass', key: -2, notes: 97 },
+  ];
+  for (const c of CASES) test(c.name, () => {
+    const r = analyze(normalize(decodeGray(fs.readFileSync(new URL(`./fixtures/${c.name}.png`, import.meta.url)))));
+    expect(r.staves.length).toBe(4);
+    expect(r.staves.map((s) => s.clef.detected).join(' ')).toBe(c.clefs);
+    expect(r.staves.map((s) => s.key.fifths)).toEqual([c.key, c.key, c.key, c.key]);
+    expect(r.notes.length).toBeGreaterThanOrEqual(Math.floor(0.95 * c.notes));
+    expect(r.notes.length).toBeLessThanOrEqual(Math.ceil(1.1 * c.notes));
+    expect(new Set(r.staves.map((s) => s.system)).size).toBe(1); // one system: shared barlines
+    const pl = plan(r, { from: 'C', to: 'Bb-clarinet', octave: 'auto', clef: 'keep' });
+    expect(pl.staves.every((s) => s.fifths === c.key + 2)).toBe(true);
+  });
 });

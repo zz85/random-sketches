@@ -130,8 +130,11 @@ export function findStaves(bin, S, t) {
   };
   staves = staves.filter((s) => !staves.some((o) => o !== s && span(o) > 1.5 * span(s) && o.pts[0].x < s.pts[s.pts.length - 1].x && s.pts[0].x < o.pts[o.pts.length - 1].x && onLedgers(s, o)));
   staves.sort((a, b) => a.pts[0].ys[0] - b.pts[0].ys[0]);
-  // drop duplicates (same staff found twice)
-  return staves.filter((s, i) => !staves.some((o, j) => j < i && Math.abs(lineY(o, 2, s.x0) - lineY(s, 2, s.x0)) < 2 * S && o.x0 < s.x1 && s.x0 < o.x1));
+  // drop duplicates (same staff found twice, e.g. a few slices that took a beam or hairpin
+  // above it as the top line): the one supported by the most slices wins
+  const bySupport = staves.slice().sort((a, b) => b.pts.length - a.pts.length);
+  const keep = bySupport.filter((s, i) => !bySupport.some((o, j) => j < i && Math.abs(lineY(o, 2, s.x0) - lineY(s, 2, s.x0)) < 2 * S && o.x0 < s.x1 && s.x0 < o.x1));
+  return staves.filter((s) => keep.includes(s));
 }
 
 // Clear thin vertical runs crossing a horizontal guide y(x) on [xa, xb].
@@ -259,8 +262,28 @@ export function analyze(norm, opts = {}) {
   staves.forEach((st, i) => { st.index = i; st.band = bandOf(st, i); st.notes = []; st.bars = []; });
   const staffAt = (x, y) => staves.find((st) => x >= st.x0 - S0 && x <= st.x1 + S0 && y >= st.band[0] && y < st.band[1]);
 
-  // components before ledger removal (for clefs)
-  let cc = IP.components(sym0);
+  // components before ledger removal (for clefs). Scanned systems often have the clefs touching
+  // the system bracket or the barline at the start of the staff, making clef + bracket one
+  // component spanning the whole system. Cut long vertical runs in the clef zone first: runs
+  // longer than any clef anywhere in it, and long ones at the very start of the staff.
+  // Only components too big to be a clef are cut, so a clef standing alone (a C clef's bars
+  // also span the staff) is never touched.
+  const clefImg = { w, h, data: new Uint8Array(sym0.data) };
+  const c0 = IP.components(sym0), big = new Uint8Array(c0.comps.length);
+  for (const c of c0.comps) if (c && (c.y1 - c.y0 > 8.5 * S0 || c.x1 - c.x0 > 4 * S0)) big[c.id] = 1;
+  for (const st of staves) {
+    const [b0, b1] = st.band;
+    for (let x = Math.max(0, Math.round(st.x0 - 3 * S0)); x <= Math.min(w - 1, Math.round(st.x0 + 4.5 * S0)); x++) {
+      const lim = x < st.x0 + 1.5 * S0 ? 3.5 * S0 : 9 * S0; // (the opening barline spans 4 spaces)
+      for (let y = Math.max(0, Math.round(b0 - 6 * S0)); y < Math.min(h, Math.round(b1 + 6 * S0)); y++) {
+        if (!clefImg.data[y * w + x] || !big[c0.labels[y * w + x]]) continue;
+        let e = y; while (e < h && sym0.data[e * w + x]) e++;
+        if (e - y > lim) for (let yy = y; yy < e; yy++) clefImg.data[yy * w + x] = 0;
+        y = e;
+      }
+    }
+  }
+  let cc = IP.components(clefImg);
   const used = new Set();
   for (const st of staves) {
     // (system brackets and braces are taller than any clef, or a thin line)
@@ -589,13 +612,14 @@ export function analyze(norm, opts = {}) {
   // signatures get misread (a glyph lost to noise or touching the clef, one extra picked up from
   // the music, none found at all), so a staff takes the key most staves of its system, else of
   // the page, actually read: plurality among the staves that read one, at least two of them and
-  // 60% of those. Applied to staves that read nothing (when there is ink where a key would be)
+  // half of those. Applied to staves that read nothing (when there is ink where a key would be)
   // or the same kind of accidental in another number; never against a sharp/flat contradiction.
   const plural = (sts) => {
     const v = new Map(); let tot = 0;
     for (const st of sts) if (st.key.detected) { v.set(st.key.detected, (v.get(st.key.detected) || 0) + 1); tot++; }
-    const [k, n] = [...v].sort((a, b) => b[1] - a[1])[0] || [0, 0];
-    return n >= 2 && n >= 0.6 * tot ? k : 0;
+    // ties go to the longer signature: a glyph lost to noise is likelier than one invented
+    const [k, n] = [...v].sort((a, b) => b[1] - a[1] || Math.abs(b[0]) - Math.abs(a[0]))[0] || [0, 0];
+    return n >= 2 && n >= 0.5 * tot ? k : 0;
   };
   const sysOf = (st) => staves.filter((o) => Math.abs(o.x0 - st.x0) < 2 * S0 && o.bars.some((b) => st.bars.some((q) => q.ids[0] === b.ids[0])));
   const pageKey = plural(staves);

@@ -25,7 +25,7 @@ no dependencies, nothing uploaded. Installable PWA that works offline.
 
 ```
 python3 -m http.server              # any static server, then open /vibes/scoreshift/
-bun test                            # theory, image primitives, recognition accuracy: 18 tests
+bun test                            # theory, image primitives, recognition accuracy, real-scan regression: 21 tests
 node smoke.js                       # headless Chromium over CDP: UI, PDF, export, offline: 24 checks
 bun eval.js [tune|all] [condition]  # accuracy table; condition = clean | scan | photo | phone
 bun debug.js <tune> [cond] [x0 y0 x1 y1]   # colour overlay of what was recognised
@@ -50,12 +50,15 @@ Corrections feed the transposed page immediately. **⬇ PNG** exports the curren
 
 **PDFs** (IMSLP, Internet Archive, anything): rendered with pdf.js, including the JBIG2 and
 JPEG 2000 images scanned PDFs are made of. Opening probes each page at low resolution for staves
-(~0.3 s a page) and starts at the first page mostly covered by music, skipping the cover, title
-page and preface. A thumbnail strip and ◀ ▶ move between pages; corrections are remembered per
+and starts at the first page mostly covered by music, skipping the cover, title page and preface.
+Scanned PDFs spend ~0.7 s a page decoding JBIG2 / JPEG 2000 whatever the output size, so pages
+render on a pool of up to four pdf.js documents (each with its own pdf.js worker) and probe a
+batch at a time; each reader keeps its last page decoded, so the probe's page is re-rendered at
+full size in ~40 ms, and the probe renders become the thumbnails. A thumbnail strip and ◀ ▶ move between pages; corrections are remembered per
 page. **⬇ Transposed PDF** transposes every page and writes a new PDF of the same page size
 (pages with no music are kept as they are). On a 30-page Internet Archive scan of a Haydn
-quartet (31 JBIG2 + 60 JPEG 2000 images) it opens at the first page of music in ~12 s and
-exports the whole file in ~27 s. The export runs on a pool of up to four workers: the main
+quartet (31 JBIG2 + 60 JPEG 2000 images) it opens at the first page of music (page 11) in
+~6 s and exports the whole file in ~22 s. The export runs on a pool of up to four workers: the main
 thread only paints PDF pages, each worker probes its page for staves (text pages are kept
 without the seconds a full analysis of a page of words costs), recognises, rewrites and
 JPEG-encodes it with OffscreenCanvas. Pages corrected by hand use the corrected reading.
@@ -78,10 +81,13 @@ transposition needs. All of it is in `omr.js` / `imgproc.js`, about 900 lines.
    five evenly spaced line candidates is scored by completeness and the best non-overlapping
    runs kept, so stacks of ledger lines next to a staff do not win. Slices are linked into
    staves, each line kept as a piecewise-linear `y(x)` (handles residual curl and keystone),
-   and the ends walked outwards through binarisation gaps. A five-line "staff" that sits on a
+   and the ends walked outwards through binarisation gaps. When a staff is found twice (a few
+   slices took a beam or hairpin above it as the top line), the one most slices support wins. A five-line "staff" that sits on a
    real staff's ledger positions and is shorter is dropped.
 3. **Staff removal**: vertical runs no thicker than the line are cleared along each line.
-4. **Clefs**: the first tall component of each staff. G clef by extent (above and below the
+4. **Clefs**: the first tall component of each staff. In scans clefs often touch the system
+   bracket or the opening barline and become part of a component spanning the whole system, so
+   long vertical runs of components too big to be a clef are cut in the clef zone first. G clef by extent (above and below the
    staff), C clef by a solid bar as tall as the staff (alto vs tenor by where it is centred),
    F clef as a curl that stops short of the bottom line; C clef pieces and F clef dots are gathered.
 5. **Filled heads**: a morphological opening with a square of 0.55 spaces removes stems, lines,
@@ -150,9 +156,8 @@ grace notes. The transposed page is readable but shows its seams at that resolut
 - Ties and slurs stay put: fine for steps, visibly off for big moves such as clef changes.
 - Moving a note does not re-flip stems or re-slope beams; with a clef change notes can collide.
 - One staff size per page; cross-staff beams move with one staff.
-- Key signatures on scans: 95% of staves right on 8 pages of the Haydn scan (125/132, was 98/132).
-  The rest are mostly staves whose clef was not found; a wrong one gives that staff a different
-  target key, fixed in Interpreted view.
+- Clefs and keys on scans: on 8 pages of the Haydn scan (132 staves) 131 clefs and 128 keys are
+  right. A wrong key gives that staff a different target key; fix it in Interpreted view.
 - Exported PDFs are page images (JPEG), not vector or text; about 0.7 MB a page.
 
 ## Research notes
@@ -225,6 +230,6 @@ segmentation net would be the natural upgrade for heads and accidentals in poor 
 | `degrade.js` | deterministic photo simulator with exact point mapping for ground truth |
 | `eval.js`, `debug.js`, `scoreshift.test.js`, `smoke.js`, `cdp.js`, `png.js` | evaluation, tests, tiny CDP driver and PNG codec |
 | `tools/` | fixture / glyph / sample builders (Verovio 6.3, dev-only) |
-| `fixtures/` | `parts.pdf` (PDF smoke test), 7 clean engravings + ground truth (every head's box, pitch, accidental; staves, clefs, keys) |
+| `fixtures/` | `scan_haydn_p*.png` (one system each from a real 1920s scan, regression test), `parts.pdf` (PDF smoke test), 7 clean engravings + ground truth (every head's box, pitch, accidental; staves, clefs, keys) |
 
 Fonts: glyph outlines from Leipzig, Bravura, Leland, Gootville and Petaluma (SIL OFL 1.1).

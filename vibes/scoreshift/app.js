@@ -48,16 +48,27 @@ function recognise(src) {
   const p = job.then(run, run); job = p.catch(() => {}); // one recognition at a time
   return p;
 }
+// A small pool of extra workers for PDF work (page probes on open, whole-file export), so
+// probing pages runs in parallel with each other and with the interactive recogniser.
+const pool = { workers: [], free: [], wait: [] };
+function poolSize() { return Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1)); }
+function poolGet() {
+  if (!pool.workers.length) for (let i = 0; i < poolSize(); i++) { const w = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' }); pool.workers.push(w); pool.free.push(w); }
+  if (pool.free.length) return Promise.resolve(pool.free.pop());
+  return new Promise((res) => pool.wait.push(res));
+}
+function poolPut(w) { const n = pool.wait.shift(); if (n) n(w); else pool.free.push(w); }
+async function poolCall(msg, tr) {
+  const w = await poolGet();
+  try { return await new Promise((res, rej) => { w.onmessage = (e) => (e.data.error ? rej(new Error(e.data.error)) : res(e.data)); w.onerror = (e) => rej(new Error(e.message)); w.postMessage(msg, tr); }); }
+  finally { poolPut(w); }
+}
+function poolClose() { pool.workers.forEach((w) => w.terminate()); pool.workers = []; pool.free = []; pool.wait = []; }
 function probe(src) {
-  const run = async () => {
-    const c = document.createElement('canvas'); c.width = src.width; c.height = src.height;
-    const g = c.getContext('2d', { willReadFrequently: true }); g.drawImage(src, 0, 0);
-    const d = g.getImageData(0, 0, c.width, c.height).data, gray = new Uint8Array(c.width * c.height);
-    for (let i = 0; i < gray.length; i++) gray[i] = (d[i * 4] * 77 + d[i * 4 + 1] * 150 + d[i * 4 + 2] * 29) >> 8;
-    return new Promise((res) => { worker.onmessage = (e) => res(e.data); worker.postMessage({ probe: true, gray, w: c.width, h: c.height }, [gray.buffer]); });
-  };
-  const p = job.then(run, run); job = p.catch(() => {});
-  return p;
+  const c = src, g = c.getContext('2d', { willReadFrequently: true });
+  const d = g.getImageData(0, 0, c.width, c.height).data, gray = new Uint8Array(c.width * c.height);
+  for (let i = 0; i < gray.length; i++) gray[i] = (d[i * 4] * 77 + d[i * 4 + 1] * 150 + d[i * 4 + 2] * 29) >> 8;
+  return poolCall({ probe: true, gray, w: c.width, h: c.height }, [gray.buffer]);
 }
 function show(model, img, name) {
   S.model = model; S.rend = new Renderer(img, model); S.name = name; S.octave = S.octave ?? 'auto';
@@ -80,27 +91,32 @@ async function load(blob, name) {
 // ---------- PDF (IMSLP etc.) ----------
 const pdfMod = () => import('./pdfsource.js');
 async function isPdf(blob) { return (await pdfMod()).isPdf(blob); }
-function closePdf() { if (S.pdf) { const d = S.pdf.doc; S.pdf = null; (d.loadingTask?.destroy?.() ?? d.destroy?.())?.catch?.(() => {}); } $('pages').hidden = true; $('exportPdf').hidden = true; }
+function closePdf() { if (S.pdf) { const pp = S.pdf.pool; S.pdf = null; pp.destroy(); poolClose(); } $('pages').hidden = true; $('exportPdf').hidden = true; }
 async function loadPdf(blob, name) {
   closePdf();
   await busy(async () => {
     try {
-      const { openPdf } = await pdfMod();
-      const doc = await openPdf(blob);
-      S.pdf = { doc, name: (name || 'score').replace(/\.pdf$/i, ''), n: doc.numPages, page: 0, edited: new Map() };
+      const { PdfPool } = await pdfMod();
+      const pool = await PdfPool.open(blob, Math.max(1, (navigator.hardwareConcurrency || 2) - 1));
+      const P = (S.pdf = { pool, name: (name || 'score').replace(/\.pdf$/i, ''), n: pool.numPages, page: 0, edited: new Map(), thumbs: new Map() });
       $('pages').hidden = false; $('exportPdf').hidden = false;
-      buildThumbs();
       S.octave = 'auto';
-      // IMSLP / Internet Archive files open with a cover, title page, preface: probe pages at low
-      // resolution for staves (~0.3 s a page) and start at the first mostly covered by staves
-      const { renderPage } = await pdfMod();
-      let best = 1, most = 0;
-      for (let k = 1; k <= Math.min(doc.numPages, 40); k++) {
-        $('busy').firstElementChild.textContent = `Looking for music… page ${k}`;
-        const { staves, cover } = await probe((await renderPage(doc, k, 1400)).canvas);
-        if (staves > most) { most = staves; best = k; }
-        if (staves >= 3 && cover >= 0.4) { best = k; break; }
+      // IMSLP / Internet Archive files open with a cover, title page, preface: probe pages at
+      // 1000 px for staves, a batch at a time across the readers, and start at the first page
+      // mostly covered by staves. The probe renders double as thumbnails.
+      const B = pool.readers.length, lim = Math.min(P.n, 40);
+      let best = 1, most = 0, found = 0;
+      for (let k0 = 1; k0 <= lim && !found; k0 += B) {
+        $('busy').firstElementChild.textContent = `Looking for music… page ${k0}`;
+        const ks = Array.from({ length: Math.min(B, lim - k0 + 1) }, (_, i) => k0 + i);
+        const res = await Promise.all(ks.map(async (k) => { const { canvas } = await pool.render(k, 1000); P.thumbs.set(k, thumbOf(canvas)); return probe(canvas); }));
+        res.forEach(({ staves, cover }, i) => {
+          if (staves > most) { most = staves; best = ks[i]; }
+          if (!found && staves >= 3 && cover >= 0.4) found = ks[i];
+        });
       }
+      if (found) best = found;
+      buildThumbs();
       await openPage(best);
     } catch (e) { closePdf(); setStatus(`<b>Could not open this PDF:</b> ${e.message}`); }
   }, 'Opening PDF…');
@@ -109,8 +125,7 @@ async function openPage(k, quiet = false) {
   const P = S.pdf; if (!P || k < 1 || k > P.n) return false;
   P.page = k; pageUi();
   if (P.edited.has(k)) { const e = P.edited.get(k); show(e.model, e.img, `${P.name}-p${k}`); return true; }
-  const { renderPage } = await pdfMod();
-  const { canvas } = await renderPage(P.doc, k);
+  const { canvas } = await P.pool.render(k, 3000);
   try {
     const { model, img } = await recognise(canvas);
     if (P !== S.pdf) return false;
@@ -136,18 +151,22 @@ function pageUi() {
   document.querySelectorAll('#thumbs button').forEach((b) => b.setAttribute('aria-current', +b.dataset.page === P.page ? 'page' : 'false'));
   document.querySelector(`#thumbs button[data-page="${P.page}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
+const thumbOf = (src) => {
+  const t = document.createElement('canvas'), f = 160 / Math.max(src.width, src.height);
+  t.width = Math.round(src.width * f); t.height = Math.round(src.height * f);
+  t.getContext('2d').drawImage(src, 0, 0, t.width, t.height);
+  return t;
+};
 function buildThumbs() {
   const strip = $('thumbs'), P = S.pdf; strip.innerHTML = '';
-  let queue = Promise.resolve();
   const io = new IntersectionObserver((ents) => ents.forEach((en) => {
     if (!en.isIntersecting) return; io.unobserve(en.target);
-    const b = en.target;
-    queue = queue.then(async () => {
-      if (P !== S.pdf) return;
-      const { renderPage } = await pdfMod();
-      const { canvas } = await renderPage(P.doc, +b.dataset.page, 160);
-      canvas.setAttribute('aria-hidden', 'true'); b.prepend(canvas);
-    }).catch(() => {});
+    const b = en.target, k = +b.dataset.page;
+    const put = (c) => { c.setAttribute('aria-hidden', 'true'); b.prepend(c); };
+    if (P.thumbs.has(k)) return put(P.thumbs.get(k));
+    // after page work: thumbnails only ever wait behind it
+    (P.thumbQ ||= Promise.resolve());
+    P.thumbQ = P.thumbQ.then(() => (P === S.pdf ? P.pool.render(k, 160) : null)).then((r) => r && put(r.canvas)).catch(() => {});
   }), { root: strip, rootMargin: '200px' });
   for (let k = 1; k <= P.n; k++) {
     const b = document.createElement('button'); b.dataset.page = k; b.title = `Page ${k}`;
@@ -164,18 +183,15 @@ $('nextPage').onclick = () => S.pdf && busy(() => openPage(S.pdf.page + 1));
 // JPEG-encodes them in parallel (OffscreenCanvas), results reassembled in page order.
 async function exportPdf() {
   const P = S.pdf; if (!P) return;
-  const { renderPage, writePdf } = await pdfMod();
+  const { writePdf } = await pdfMod();
   const opts = { from: S.from, to: S.to, octave: S.octave, clef: S.clef }, q = 0.8;
-  const N = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1));
-  const pool = Array.from({ length: N }, () => new Worker(new URL('./worker.js', import.meta.url), { type: 'module' }));
   const pages = new Array(P.n); let next = 1, done = 0;
   const progress = () => ($('busy').firstElementChild.textContent = `Transposing… ${done} of ${P.n} pages`);
-  const call = (w, msg, tr) => new Promise((res, rej) => { w.onmessage = (e) => (e.data.error ? rej(new Error(e.data.error)) : res(e.data)); w.postMessage(msg, tr); });
   const jpegMain = (c) => new Promise((res) => c.toBlob(async (b) => res(new Uint8Array(await b.arrayBuffer())), 'image/jpeg', q));
-  const lane = async (w) => {
+  const lane = async () => {
     while (next <= P.n) {
       const k = next++;
-      const { canvas, widthPt, heightPt } = await renderPage(P.doc, k, 2400);
+      const { canvas, widthPt, heightPt } = await P.pool.render(k, 2400); // pages render on all readers at once
       let r;
       if (P.edited.has(k)) { // corrected by hand: use that model, render here
         const { model, img } = P.edited.get(k), c = document.createElement('canvas');
@@ -184,13 +200,13 @@ async function exportPdf() {
       } else {
         const bitmap = await createImageBitmap(canvas);
         canvas.width = canvas.height = 1; // free the page early
-        r = await call(w, { page: true, bitmap, opts, q }, [bitmap]);
+        r = await poolCall({ page: true, bitmap, opts, q }, [bitmap]);
       }
       pages[k - 1] = { ...r, widthPt, heightPt };
       done++; progress();
     }
   };
-  try { progress(); await Promise.all(pool.map(lane)); } finally { pool.forEach((w) => w.terminate()); }
+  progress(); await Promise.all(Array.from({ length: poolSize() }, lane));
   const bytes = writePdf(pages);
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
   a.download = `${P.name}-${S.to}.pdf`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 10000);
