@@ -26,7 +26,7 @@ no dependencies, nothing uploaded. Installable PWA that works offline.
 ```
 python3 -m http.server              # any static server, then open /vibes/scoreshift/
 bun test                            # theory, image primitives, recognition accuracy: 18 tests
-node smoke.js                       # headless Chromium over CDP: UI, PDF, export, offline: 23 checks
+node smoke.js                       # headless Chromium over CDP: UI, PDF, export, offline: 24 checks
 bun eval.js [tune|all] [condition]  # accuracy table; condition = clean | scan | photo | phone
 bun debug.js <tune> [cond] [x0 y0 x1 y1]   # colour overlay of what was recognised
 node tools/make_fixtures.mjs        # rebuild fixtures + glyphs.js from Verovio (dev-only dependency)
@@ -55,7 +55,10 @@ page and preface. A thumbnail strip and ◀ ▶ move between pages; corrections 
 page. **⬇ Transposed PDF** transposes every page and writes a new PDF of the same page size
 (pages with no music are kept as they are). On a 30-page Internet Archive scan of a Haydn
 quartet (31 JBIG2 + 60 JPEG 2000 images) it opens at the first page of music in ~12 s and
-exports the whole file in ~80 s (~3 s a 16-staff page in headless Chromium).
+exports the whole file in ~27 s. The export runs on a pool of up to four workers: the main
+thread only paints PDF pages, each worker probes its page for staves (text pages are kept
+without the seconds a full analysis of a page of words costs), recognises, rewrites and
+JPEG-encodes it with OffscreenCanvas. Pages corrected by hand use the corrected reading.
 
 Works best with printed music, the page flat, the whole staff width in frame and even light.
 Phone photos down to about 13 px per staff space work (see below); more is better.
@@ -97,8 +100,14 @@ transposition needs. All of it is in `omr.js` / `imgproc.js`, about 900 lines.
    right is bottom-heavy (a flat's bowl). Fragments cut apart by staff removal (a flat's bowl at
    its joint, the two halves of a sharp lying on lines) are re-paired. Key signatures are the
    evenly spaced run of same-type accidentals after the clef, kept only as far as they sit where
-   a key signature puts them for that clef; when most staves of a page agree on a key, a staff
-   that read none takes it (marked as inferred). Local accidentals attach to the nearest head to
+   a key signature puts them for that clef. Scans misread them (heavy staff lines erase a
+   sharp's crossbars, splitting it into halves; a sharp's crossings survive the head opening and
+   look like a notehead; a glyph is lost or one from the music is picked up), so halves are
+   re-paired, accidental-shaped "heads" are rejected, C clefs gather their curls so the key is
+   found right after them, and a staff takes the key most staves of its system (else of the page)
+   read: when it read none but has ink where a key would be, or the same kind of accidental in
+   another number. A sharp/flat contradiction is never overruled (orchestral scores mix keys;
+   horns often have none). Inferred keys are marked. Local accidentals attach to the nearest head to
    their right at the same position and carry through the bar.
 8. **Barlines** are thin components spanning a staff (or a whole system, counted for every staff
    they cross); staves joined by the same barlines form a system.
@@ -141,8 +150,9 @@ grace notes. The transposed page is readable but shows its seams at that resolut
 - Ties and slurs stay put: fine for steps, visibly off for big moves such as clef changes.
 - Moving a note does not re-flip stems or re-slope beams; with a clef change notes can collide.
 - One staff size per page; cross-staff beams move with one staff.
-- A misread key signature on one staff of a score (the page consensus only fills staves where
-  something key-like was seen) gives that staff a different target key; fix it in Interpreted view.
+- Key signatures on scans: 95% of staves right on 8 pages of the Haydn scan (125/132, was 98/132).
+  The rest are mostly staves whose clef was not found; a wrong one gives that staff a different
+  target key, fixed in Interpreted view.
 - Exported PDFs are page images (JPEG), not vector or text; about 0.7 MB a page.
 
 ## Research notes

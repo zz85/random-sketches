@@ -96,6 +96,8 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
       fetch(this.href).then(r=>r.arrayBuffer()).then(async buf=>{const {openPdf}=await import('./pdfsource.js');const d=await openPdf(new Blob([buf]));const pg=await d.getPage(2);const v=pg.getViewport({scale:1});res({name,size:buf.byteLength,pages:d.numPages,w:Math.round(v.width),h:Math.round(v.height)})})};
       document.getElementById('exportPdf').click();})`);
     check('transposed PDF export (3 Letter pages, re-readable)', pdfOut.pages === 3 && pdfOut.w === 612 && pdfOut.h === 792 && pdfOut.size > 100000, JSON.stringify(pdfOut));
+    const ex2 = await b.evaluate(`(()=>{const a=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){};return __ss.exportPdf().finally(()=>{HTMLAnchorElement.prototype.click=a})})()`);
+    check('export: music pages transposed in workers, title page kept', ex2.music === 2, JSON.stringify(ex2));
     await b.evaluate(`document.getElementById('sample').click();1`);
     await waitFor(() => b.evaluate(`!__ss.S.pdf && __ss.S.model && __ss.S.model.notes.length > 90`), 20000).catch(async () => console.log(await b.evaluate(`JSON.stringify({pdf:!!__ss.S.pdf,m:__ss.S.model?.notes.length,st:document.getElementById("status").textContent,busy:document.getElementById("busy").style.display})`)));
 

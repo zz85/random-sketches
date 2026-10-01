@@ -8,7 +8,12 @@ import { GLYPHS } from './glyphs.js';
 
 const ACC_GLYPH = { '-2': 'doubleFlat', '-1': 'flat', 0: 'natural', 1: 'sharp', 2: 'doubleSharp' };
 const CLEF_GLYPH = { G: 'gClef', F: 'fClef', C: 'cClef' };
-const canvas = (w, h) => { const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(w)); c.height = Math.max(1, Math.round(h)); return c; };
+// DOM canvas on the page, OffscreenCanvas in a worker (whole-PDF export renders in workers)
+const canvas = (w, h) => {
+  w = Math.max(1, Math.round(w)); h = Math.max(1, Math.round(h));
+  if (typeof document === 'undefined') return new OffscreenCanvas(w, h);
+  const c = document.createElement('canvas'); c.width = w; c.height = h; return c;
+};
 
 // ---------- transposition plan (pure, also used by the UI text and tests) ----------
 export function plan(model, opts) {

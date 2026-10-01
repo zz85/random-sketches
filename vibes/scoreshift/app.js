@@ -160,27 +160,41 @@ $('prevPage').onclick = () => S.pdf && busy(() => openPage(S.pdf.page - 1));
 $('nextPage').onclick = () => S.pdf && busy(() => openPage(S.pdf.page + 1));
 
 // Whole document, transposed, as a PDF: pages without staves are kept as they are.
+// The main thread only paints PDF pages; a pool of workers recognises, rewrites and
+// JPEG-encodes them in parallel (OffscreenCanvas), results reassembled in page order.
 async function exportPdf() {
   const P = S.pdf; if (!P) return;
   const { renderPage, writePdf } = await pdfMod();
-  const pages = [], opts = { from: S.from, to: S.to, octave: S.octave, clef: S.clef };
-  const jpeg = (c) => new Promise((res) => c.toBlob(async (b) => res(new Uint8Array(await b.arrayBuffer())), 'image/jpeg', 0.8));
-  for (let k = 1; k <= P.n; k++) {
-    $('busy').firstElementChild.textContent = `Transposing page ${k} of ${P.n}…`;
-    const { canvas, widthPt, heightPt } = await renderPage(P.doc, k, 2400);
-    let out = canvas;
-    try {
-      const { model, img } = P.edited.get(k) || (k === P.page && S.model ? { model: S.model, img: S.rend.img } : await recognise(canvas));
-      const r = new Renderer(img, model), c = document.createElement('canvas');
-      r.render(c.getContext('2d'), plan(model, opts));
-      out = c;
-    } catch (e) { /* no music here: original page */ }
-    pages.push({ jpeg: await jpeg(out), w: out.width, h: out.height, widthPt, heightPt });
-  }
+  const opts = { from: S.from, to: S.to, octave: S.octave, clef: S.clef }, q = 0.8;
+  const N = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1));
+  const pool = Array.from({ length: N }, () => new Worker(new URL('./worker.js', import.meta.url), { type: 'module' }));
+  const pages = new Array(P.n); let next = 1, done = 0;
+  const progress = () => ($('busy').firstElementChild.textContent = `Transposing… ${done} of ${P.n} pages`);
+  const call = (w, msg, tr) => new Promise((res, rej) => { w.onmessage = (e) => (e.data.error ? rej(new Error(e.data.error)) : res(e.data)); w.postMessage(msg, tr); });
+  const jpegMain = (c) => new Promise((res) => c.toBlob(async (b) => res(new Uint8Array(await b.arrayBuffer())), 'image/jpeg', q));
+  const lane = async (w) => {
+    while (next <= P.n) {
+      const k = next++;
+      const { canvas, widthPt, heightPt } = await renderPage(P.doc, k, 2400);
+      let r;
+      if (P.edited.has(k)) { // corrected by hand: use that model, render here
+        const { model, img } = P.edited.get(k), c = document.createElement('canvas');
+        new Renderer(img, model).render(c.getContext('2d'), plan(model, opts));
+        r = { jpeg: await jpegMain(c), w: c.width, h: c.height };
+      } else {
+        const bitmap = await createImageBitmap(canvas);
+        canvas.width = canvas.height = 1; // free the page early
+        r = await call(w, { page: true, bitmap, opts, q }, [bitmap]);
+      }
+      pages[k - 1] = { ...r, widthPt, heightPt };
+      done++; progress();
+    }
+  };
+  try { progress(); await Promise.all(pool.map(lane)); } finally { pool.forEach((w) => w.terminate()); }
   const bytes = writePdf(pages);
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
   a.download = `${P.name}-${S.to}.pdf`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 10000);
-  return bytes.length;
+  return { bytes: bytes.length, music: pages.filter((p) => p.music).length };
 }
 $('exportPdf').onclick = () => busy(exportPdf, 'Transposing…');
 for (const id of ['cam', 'cam2', 'file']) $(id).onchange = (e) => { const f = e.target.files[0]; if (f) load(f, f.name); e.target.value = ''; };

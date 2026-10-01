@@ -278,10 +278,21 @@ export function analyze(norm, opts = {}) {
         for (const q of cc.comps) {
           if (!q || inBox.has(q.id) || q.x0 < box[0] || q.x0 - box[2] > 1.0 * S || q.y1 < box[1] || q.y0 > box[3]) continue;
           const qh = q.y1 - q.y0 + 1, qw = q.x1 - q.x0 + 1;
-          if (((type === 'alto' || type === 'tenor') && qh >= 3 * S && q.x1 - box[0] < 5 * S) || (type === 'bass' && qh <= 0.8 * S && qw <= 0.8 * S)) {
+          // a C clef's bars span the staff (~4 spaces); a sharp or natural right after it is
+          // ~3 spaces tall and must stay out, or the key signature loses its first glyph
+          const span = lineY(st, 4, q.cx) - lineY(st, 0, q.cx);
+          if (((type === 'alto' || type === 'tenor') && qh >= 0.85 * span && q.y0 <= lineY(st, 0, q.cx) + 0.3 * S && q.y1 >= lineY(st, 4, q.cx) - 0.3 * S && q.x1 - box[0] < 5 * S) || (type === 'bass' && qh <= 0.8 * S && qw <= 0.8 * S)) {
             box[0] = Math.min(box[0], q.x0); box[1] = Math.min(box[1], q.y0); box[2] = Math.max(box[2], q.x1); box[3] = Math.max(box[3], q.y1);
             inBox.add(q.id); grew = true;
           }
+        }
+      }
+      if (type === 'alto' || type === 'tenor') { // the two curls right of the bars
+        const ya = lineY(st, 0, c.cx), yb = lineY(st, 4, c.cx);
+        for (const q of cc.comps) {
+          if (!q || inBox.has(q.id) || q.x0 < box[2] - 0.2 * S || q.x1 > box[0] + 3.2 * S || q.y0 < ya - 0.5 * S || q.y1 > yb + 0.5 * S) continue;
+          if (q.y1 - q.y0 < 0.5 * S || classifyAccidental(cc.labels, w, q, S, t)) continue;
+          box[2] = Math.max(box[2], q.x1); inBox.add(q.id);
         }
       }
       st.clef = { type: opts.clef || type, detected: type, box }; break;
@@ -466,10 +477,10 @@ export function analyze(norm, opts = {}) {
   });
   // holes inside sharps, naturals and double sharps pass the ring test: drop those
   notes = notes.filter((n) => {
-    if (n.kind === 'black') return true;
-    const c = cc.comps[n.comp]; if (!c) return false;
+    const c = cc.comps[n.comp]; if (!c) return n.kind === 'black';
     const S = spaceAt(n.st, n.x), a = classifyAccidental(L, w, c, S, t);
-    if (a && a.type >= 0) return false;
+    if (a && a.type >= 0) return false; // also filled: a sharp's crossings survive the opening in heavy scans
+    if (n.kind === 'black') return true;
     // time-signature digits: two spaces tall, hanging from the top line or standing on the bottom one
     const ch = c.y1 - c.y0 + 1, ya = lineY(n.st, 0, n.x), yb = lineY(n.st, 4, n.x);
     if (ch > 1.6 * S && ch < 2.4 * S && (Math.abs(c.y0 - ya) < 0.35 * S || Math.abs(c.y1 - yb) < 0.35 * S) && c.x1 - c.x0 > 1.0 * S) return false;
@@ -483,13 +494,16 @@ export function analyze(norm, opts = {}) {
   const groups = new Map();
   for (const c of cc.comps) if (c && !headComps.has(c.id)) groups.set(c.id, { ...c, ids: [c.id] });
   const isStroke = (g) => g.x1 - g.x0 + 1 <= 0.45 * S0 && g.y1 - g.y0 + 1 >= 1.5 * S0;
+  // a half of a sharp or natural whose crossbars were erased with thick staff lines keeps
+  // stubs of them, so it can be most of a space wide
+  const isHalf = (g) => g.x1 - g.x0 + 1 <= 0.95 * S0 && g.y1 - g.y0 + 1 >= 1.8 * S0 && g.y1 - g.y0 + 1 <= 3.8 * S0;
   for (const g of groups.values()) {
-    if (!isStroke(g) || g.merged) continue;
+    if (!(isStroke(g) || isHalf(g)) || g.merged) continue;
     for (const q of groups.values()) {
       if (q === g || q.merged || q.x0 - g.x1 < 0 || q.x0 - g.x1 > 0.6 * S0 || q.x1 - q.x0 > 1.4 * S0) continue;
       const ov = Math.min(g.y1, q.y1) - Math.max(g.y0, q.y0);
-      const bowl = q.y0 >= g.y0 + 0.4 * S0 && q.y1 <= g.y1 + 0.3 * S0 && q.x0 - g.x1 <= 0.3 * S0; // flat: bowl fragment
-      const pair = isStroke(q) && ov > 0.6 * Math.min(g.y1 - g.y0, q.y1 - q.y0);       // sharp / natural halves
+      const bowl = isStroke(g) && q.y0 >= g.y0 + 0.4 * S0 && q.y1 <= g.y1 + 0.3 * S0 && q.x0 - g.x1 <= 0.3 * S0; // flat: bowl fragment
+      const pair = (isStroke(q) || isHalf(q)) && ov > 0.6 * Math.min(g.y1 - g.y0, q.y1 - q.y0) && q.x1 - g.x0 <= 1.9 * S0; // sharp / natural halves
       if (!bowl && !pair) continue;
       const m = { ...g, ids: [...g.ids, ...q.ids], x1: Math.max(g.x1, q.x1), y0: Math.min(g.y0, q.y0), y1: Math.max(g.y1, q.y1), n: g.n + q.n, cx: (g.cx * g.n + q.cx * q.n) / (g.n + q.n), cy: (g.cy * g.n + q.cy * q.n) / (g.n + q.n) };
       const a = classifyAccidental(L, w, m, S0, t);
@@ -571,19 +585,30 @@ export function analyze(norm, opts = {}) {
     if (best) (best.dots ||= []).push({ ids: d.c.ids, box: [d.c.x0, d.c.y0, d.c.x1, d.c.y1], p: pOfY(d.st, d.c.cy, d.c.cx) });
   }
 
-  // A page usually has one key. Where a staff read no key signature but most staves agree
-  // on one (and something sits between the clef and the music), take it, flagged as inferred.
-  if (opts.fifths == null && staves.length >= 3) {
-    const votes = new Map(); for (const st of staves) if (st.key.detected) votes.set(st.key.detected, (votes.get(st.key.detected) || 0) + 1);
-    const [k, n] = [...votes].sort((a, b) => b[1] - a[1])[0] || [0, 0];
-    if (k && n >= staves.length / 2) for (const st of staves) {
-      if (st.key.detected) continue;
-      const S = spaceAt(st, st.key.x0), first = Math.min(st.x1, ...notes.filter((q) => q.st === st).map((q) => q.box[0]));
-      const ya = lineY(st, 0, st.key.x0), yb = lineY(st, 4, st.key.x0);
-      const something = cc.comps.some((c) => c && c.x0 >= st.key.x0 - 0.2 * S && c.x1 <= Math.min(first, st.key.x0 + 1.5 * S * Math.abs(k) + S) &&
-        c.y1 - c.y0 >= 1.2 * S && c.x1 - c.x0 <= 1.6 * S && c.y1 > ya && c.y0 < yb);
-      if (something) { st.key.fifths = k; st.key.inferred = true; }
-    }
+  // A page usually has one key, and the staves of one system always share theirs. Scanned key
+  // signatures get misread (a glyph lost to noise or touching the clef, one extra picked up from
+  // the music, none found at all), so a staff takes the key most staves of its system, else of
+  // the page, actually read: plurality among the staves that read one, at least two of them and
+  // 60% of those. Applied to staves that read nothing (when there is ink where a key would be)
+  // or the same kind of accidental in another number; never against a sharp/flat contradiction.
+  const plural = (sts) => {
+    const v = new Map(); let tot = 0;
+    for (const st of sts) if (st.key.detected) { v.set(st.key.detected, (v.get(st.key.detected) || 0) + 1); tot++; }
+    const [k, n] = [...v].sort((a, b) => b[1] - a[1])[0] || [0, 0];
+    return n >= 2 && n >= 0.6 * tot ? k : 0;
+  };
+  const sysOf = (st) => staves.filter((o) => Math.abs(o.x0 - st.x0) < 2 * S0 && o.bars.some((b) => st.bars.some((q) => q.ids[0] === b.ids[0])));
+  const pageKey = plural(staves);
+  if (opts.fifths == null) for (const st of staves) {
+    const sys = sysOf(st), k = (sys.length >= 3 && plural(sys)) || pageKey;
+    if (!k || st.key.detected === k) continue;
+    if (Math.sign(st.key.detected) === Math.sign(k)) { st.key.fifths = k; st.key.inferred = true; continue; }
+    if (st.key.detected) continue;
+    const S = spaceAt(st, st.key.x0), first = Math.min(st.x1, ...notes.filter((q) => q.st === st).map((q) => q.box[0]));
+    const ya = lineY(st, 0, st.key.x0), yb = lineY(st, 4, st.key.x0);
+    const something = cc.comps.some((c) => c && c.x0 >= st.key.x0 - 0.2 * S && c.x1 <= Math.min(first, st.key.x0 + 1.5 * S * Math.abs(k) + S) &&
+      c.y1 - c.y0 >= 1.2 * S && c.x1 - c.x0 <= 1.6 * S && c.y1 > ya && c.y0 < yb);
+    if (something) { st.key.fifths = k; st.key.inferred = true; }
   }
 
   // ---- assemble per staff: chords, bars, pitches ----
