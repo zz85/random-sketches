@@ -15,7 +15,7 @@ who prefer aisstream.io's denser feed, which needs a key that must not live in a
 ```
 open index.html                       # any static server, or
 node proxy.js                         # http://localhost:8788  (also serves the files)
-bun test                              # geometry, providers, proxy, occlusion, AtoN, AIS sockets: 56 tests, fixtures included
+bun test                              # geometry, providers, proxy, occlusion, AtoN, AIS sockets, light rhythms: 61 tests, fixtures included
 node smoke.js                         # headless Chromium over CDP: 5 scenes against live NOAA / OpenSeaFeed / Digitraffic, page state + console
 ```
 
@@ -26,10 +26,11 @@ node smoke.js                         # headless Chromium over CDP: 5 scenes aga
 | Traffic lanes, separation zones, precautionary areas, TSS boundaries, fairways | NOAA **ENC Direct** ArcGIS REST, `enc_harbour` + `enc_coastal` services | S-57 objects TSSLPT (with `ORIENT`), TSEZNE, PRCARE, TSSBND, FAIRWY. Layer ids in `providers.js` `LANE_LAYERS`. Harbour features win, coastal fills gaps. Cached 7 days in localStorage. |
 | AIS vessels — Finland / Baltic | **Digitraffic** `meri.digitraffic.fi/api/ais/v1` | Public REST, `Access-Control-Allow-Origin: *`, no key. `/locations?latitude&longitude&radius` polled every 10 s, `/vessels/{mmsi}` for static data. Also has MQTT-over-WebSocket (not used; polling is enough). |
 | AIS vessels — worldwide | **OpenSeaFeed** `wss://stream.openseafeed.com/v1/stream` | Community-owned open AIS network (Apache-2.0, data CC BY 4.0) speaking the aisstream.io protocol. Keyless free tier: one subscribe message with a bounding box around the viewer (padded 1.5×, resubscribed when you move out of it), the box's vessels replayed on connect, then live position and static reports. Free tier allows 30 000 deg² of box area, probed; an AR view needs about 0.2. Default outside national feeds; falls back to demo after 25 s without data. |
+| Vessel names for silent targets | **OpenSeaFeed** `GET api.openseafeed.com/v1/vessels/{mmsi}` | ~250 bytes, CORS `*`. A class B boat repeats its name only every 6 min and many never send it; a vessel we have only heard a position from is looked up here (nearest nameless first, 5 per second) and shown as "Unnamed vessel · US" meanwhile. Hits cached 30 days in localStorage, misses one day. Opt-out in settings. |
 | AIS vessels — worldwide, denser | **aisstream.io** via `proxy.js` | Free API key, server-side only. The proxy holds one WebSocket for a box around the viewer and re-serves the table in the exact Digitraffic shape, so the browser has one code path. `AISSTREAM_API_KEY=… node proxy.js`. |
 | AIS vessels — nowhere | **demo** provider | Simulated ships seeded *inside the charted lanes* running along `ORIENT`, plus a ferry, a sailboat and an anchored tug. Only used when explicitly chosen or when no live feed delivers; the chip then reads "AIS SIMULATED" so it cannot be mistaken for real traffic. |
 | Land, for line-of-sight occlusion | NOAA **ENC Direct** `Land_Area` (S-57 LNDARE) + `Land_Elevation_point` (LNDELV), harbour then coastal | Fetched with `maxAllowableOffset` (~30 m generalisation) so a 45 km box is ~150 KB. Each vessel's sight line is tested against the polygons twice a second; ships behind land are drawn dimmed and dashed with "behind land · distance to shore" (or hidden, per setting). Lane labels whose centroid is behind land are dropped. Cached 30 days. |
-| Aids to navigation | NOAA **ENC Direct** point layers BOYLAT/BOYSPP/BOYCAR/BOYISD/BOYSAW, BCNLAT/BCNSPP/BCNSAW, DAYMAR, LIGHTS, LITFLT | Buoys drawn as cones in their charted colours, beacons as posts, loose lights as stars; the LIGHTS object at the same position is merged onto its structure and rendered as "Fl G 4s 5M" from LITCHR/COLOUR/SIGGRP/SIGPER/VALNMR. Tap for lateral meaning, height, nominal range, sector. Same occlusion treatment as vessels. Harbour layers first (11 requests), coastal only where harbour charted nothing. Cached 30 days. |
+| Aids to navigation | NOAA **ENC Direct** point layers BOYLAT/BOYSPP/BOYCAR/BOYISD/BOYSAW, BCNLAT/BCNSPP/BCNSAW, DAYMAR, LIGHTS, LITFLT | Buoys drawn as cones in their charted colours, beacons as posts, loose lights as stars; the LIGHTS object at the same position is merged onto its structure and rendered as "Fl G 4s 5M" from LITCHR/COLOUR/SIGGRP/SIGPER/VALNMR. Tap for lateral meaning, height, nominal range, sector. Same occlusion treatment as vessels. After dark (sun below −3° at your position, or forced in settings) every light flashes its charted rhythm: `Geo.lightSchedule` turns LITCHR/SIGPER/SIGGRP into an on/off timetable (Fl, LFl, Q, VQ, Iso, Oc, Al, composite groups like Fl(2+1), Q+LFl), lit lights get a glow sized by nominal range, and each has its own phase so a row of buoys does not blink in unison. Harbour layers first (11 requests), coastal only where harbour charted nothing. Cached 30 days. |
 | Magnetic declination | NOAA WMM `geomag-web` calculator | CORS. Applied to Android compass headings; iOS `webkitCompassHeading` is already true. |
 | Place name | Nominatim reverse geocode | Header only. |
 
@@ -60,9 +61,9 @@ compass heading that `alpha` alone gives.
 
 ## Files
 
-- `index.html` — the app. URL params for testing: `?lat=&lon=&eye=&hdg=&pitch=&provider=demo|openseafeed|digitraffic|proxy&proxy=http://…&auto=1&nocam=1`
-- `geo.js` — spherical + ENU geometry, `Camera`, horizon, hull footprint, dead reckoning, CPA/TCPA, lane arrows, land line-of-sight (`landOcclusion`, elevation-aware), `estimateAirDraught`
-- `providers.js` — ENC Direct lane / land / LNDELV / AtoN queries, S-57 colour and light-character tables, AIS provider registry, `VesselTable`, ITU ship-type / nav-status tables, `LaneStore` / `LandStore` / `BoxStore`
+- `index.html` — the app. URL params for testing: `?lat=&lon=&eye=&hdg=&pitch=&provider=demo|openseafeed|digitraffic|proxy&proxy=http://…&auto=1&nocam=1&night=1`
+- `geo.js` — spherical + ENU geometry, `Camera`, horizon, hull footprint, dead reckoning, CPA/TCPA, lane arrows, land line-of-sight (`landOcclusion`, elevation-aware), `estimateAirDraught`, light rhythms (`lightSchedule`, `lightState`), `sunAltitude`
+- `providers.js` — ENC Direct lane / land / LNDELV / AtoN queries, S-57 colour and light-character tables, AIS provider registry, `VesselTable`, ITU ship-type / nav-status tables, `LaneStore` / `LandStore` / `BoxStore` / `StaticCache`, OpenSeaFeed socket + name lookup
 - `proxy.js` — static server + aisstream.io → Digitraffic-shaped `/ais/*`
 - `marine-ar.test.js` — `bun test`; uses the `fixture_*.json` captured from the live endpoints
 - `smoke.js` — renders two scenes in headless Chromium and fails on console errors

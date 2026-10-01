@@ -314,7 +314,12 @@
       heightM: a.HEIGHT != null ? Number(a.HEIGHT) : (a.VERLEN != null ? Number(a.VERLEN) : null),
       inform: clean(a.INFORM) || null,
       cell: clean(a.DSNM) || null,
-      light: kind === "LIGHTS" || kind === "LITFLT" ? { character: lightCharacter(a), colour: colours.length ? S57_COLOUR[colours[0]] : "#ffffff", heightM: a.HEIGHT != null ? Number(a.HEIGHT) : null, rangeNM: a.VALNMR != null ? Number(a.VALNMR) : null, sector: a.SECTR1 != null ? [Number(a.SECTR1), Number(a.SECTR2)] : null } : null,
+      light: kind === "LIGHTS" || kind === "LITFLT" ? {
+        character: lightCharacter(a), colour: colours.length ? S57_COLOUR[colours[0]] : "#ffffff",
+        colours: colours.length ? colours.map((c) => S57_COLOUR[c]) : ["#ffffff"],           // slot order for alternating lights
+        chr: a.LITCHR != null ? Number(a.LITCHR) : null, periodS: a.SIGPER != null && isFinite(a.SIGPER) ? Number(a.SIGPER) : null, group: clean(a.SIGGRP) || null,
+        heightM: a.HEIGHT != null ? Number(a.HEIGHT) : null, rangeNM: a.VALNMR != null ? Number(a.VALNMR) : null, sector: a.SECTR1 != null ? [Number(a.SECTR1), Number(a.SECTR2)] : null,
+      } : null,
     };
   }
 
@@ -631,6 +636,78 @@
   }
 
   /**
+   * Cache of vessel particulars keyed by MMSI, persisted in localStorage. Names and dimensions
+   * change rarely, so entries live 30 days; a miss (404) is remembered for a day.
+   */
+  class StaticCache {
+    constructor(opts) {
+      this.storage = (opts && opts.storage) || null; this.key = (opts && opts.key) || "marine-ar:static";
+      this.ttlMs = (opts && opts.ttlMs) || 30 * 86400e3; this.missTtlMs = (opts && opts.missTtlMs) || 86400e3; this.max = (opts && opts.max) || 3000;
+      this.map = new Map();
+      try { const d = JSON.parse(this.storage && this.storage.getItem(this.key) || "null"); if (d && d.v === 1) for (const [k, v] of d.e) this.map.set(Number(k), v); } catch (e) { /* ignore */ }
+      this._dirty = false;
+    }
+    get(mmsi) {
+      const e = this.map.get(Number(mmsi)); if (!e) return undefined;
+      if (Date.now() - e.at > (e.miss ? this.missTtlMs : this.ttlMs)) { this.map.delete(Number(mmsi)); return undefined; }
+      return e.miss ? null : e;
+    }
+    set(mmsi, data) {
+      this.map.set(Number(mmsi), { ...(data || { miss: true }), at: Date.now() });
+      if (this.map.size > this.max) { const k = this.map.keys().next().value; this.map.delete(k); }
+      this._dirty = true; if (!this._t) this._t = setTimeout(() => this.flush(), 2000);
+    }
+    flush() { this._t = null; if (!this._dirty || !this.storage) return; this._dirty = false; try { this.storage.setItem(this.key, JSON.stringify({ v: 1, e: [...this.map.entries()] })); } catch (e) { /* quota */ } }
+  }
+
+  /** OpenSeaFeed /v1/vessels/{mmsi} record -> VesselTable static fields. Dimensions come as len/beam only, so the reference point is centred. */
+  function staticFromOsf(v) {
+    if (!v) return null;
+    const s = {};
+    if (v.name) s.name = v.name; if (v.type != null) s.shipType = v.type; if (v.imo) s.imo = v.imo; if (v.callsign) s.callSign = v.callsign;
+    if (v.dest) s.destination = v.dest; if (v.draught != null) s.draught = v.draught;
+    if (v.len) s.dims = { a: Math.round(v.len / 2), b: Math.round(v.len / 2), c: Math.round((v.beam || 0) / 2), d: Math.round((v.beam || 0) / 2) };
+    return Object.keys(s).length ? s : null;
+  }
+
+  /**
+   * Fills in name / type / size for vessels whose static report has not arrived yet, from a
+   * per-vessel REST lookup (OpenSeaFeed `GET /v1/vessels/{mmsi}`, CORS *, ~250 bytes) backed
+   * by StaticCache. `limit` lookups per call so a busy harbour never bursts.
+   */
+  function lookupMissingStatic(table, opts) {
+    const { base, cache, fetchImpl, inflight, limit, onUpdate } = opts;
+    const f = fetchImpl || fetch;
+    // nameless vessels first (they are the ones labelled "Unnamed"), nearest first within that
+    const c = opts.center;
+    const dist = (v) => (c && v.lat != null ? Geo.haversine(c.lat, c.lon, v.lat, v.lon) : 0);
+    const missing = table.snapshot().filter((v) => !v.staticAt && !inflight.has(v.mmsi)).sort((a, b) => (!!a.name - !!b.name) || (dist(a) - dist(b))).slice(0, limit || 3);
+    let started = 0;
+    for (const v of missing) {
+      const cached = cache ? cache.get(v.mmsi) : undefined;
+      if (cached !== undefined) {                                   // hit (data) or remembered miss (null)
+        const s = cached && staticFromOsf(cached);
+        table.upsertStatic({ mmsi: v.mmsi, ...(s || {}) });
+        if (s) onUpdate && onUpdate();
+        continue;
+      }
+      inflight.add(v.mmsi); started++;
+      f(`${base}/${v.mmsi}`, { headers: { Accept: "application/json" } })
+        .then((r) => (r.ok ? r.json() : r.status === 404 ? null : Promise.reject(new Error(`HTTP ${r.status}`))))
+        .then((d) => {
+          const keep = d ? { name: d.name, type: d.type, imo: d.imo, callsign: d.callsign, dest: d.dest, draught: d.draught, len: d.len, beam: d.beam } : null;
+          const s = staticFromOsf(keep);
+          if (cache) cache.set(v.mmsi, s ? keep : null);          // a record with no particulars is a miss: retry tomorrow
+          table.upsertStatic({ mmsi: v.mmsi, ...(s || {}) });       // marks as looked up either way
+          if (s) onUpdate && onUpdate();
+        })
+        .catch(() => { /* leave unlooked-up; retried on a later tick */ })
+        .finally(() => inflight.delete(v.mmsi));
+    }
+    return started;
+  }
+
+  /**
    * Bounding box around the viewer in aisstream subscribe form [[[latS, lonW], [latN, lonE]]],
    * padded so a moving viewer does not resubscribe every tick. OpenSeaFeed's free tier allows
    * 30 000 square degrees in total (probed 2026-09); a viewer needs well under one.
@@ -647,9 +724,10 @@
    * so this runs straight from the page. Reconnects with backoff; resubscribes when the viewer
    * moves out of the padded box. `apiKey` is optional (OpenSeaFeed's free tier is keyless).
    */
-  function aisstreamSocket(url, apiKey) {
+  function aisstreamSocket(url, apiKey, lookupBase) {
     return function start(ctx) {
       let stopped = false, ws = null, timer = null, box = null, backoff = 1000, gotAny = false, watchdog = null;
+      const inflight = new Set();
       const WS = ctx.WebSocket || (typeof WebSocket !== "undefined" ? WebSocket : null);
       if (!WS) { ctx.onError(new Error("WebSocket unavailable")); return { stop() {}, refresh() {} }; }
       const inBox = (lat, lon) => box && lat > box[0][0][0] && lat < box[0][1][0] && lon > box[0][0][1] && lon < box[0][1][1];
@@ -660,7 +738,11 @@
         if (apiKey) sub.APIKey = apiKey;
         ws.send(JSON.stringify(sub));
       }
-      function flush() { if (gotAny) ctx.onUpdate(); gotAny = false; if (!stopped) timer = setTimeout(flush, ctx.pollMs || 1000); }
+      function flush() {
+        if (gotAny) ctx.onUpdate(); gotAny = false;
+        if (lookupBase && ctx.lookupStatic !== false) lookupMissingStatic(ctx.table, { base: lookupBase, cache: ctx.staticCache, fetchImpl: ctx.fetch, inflight, limit: 5, center: ctx.getCenter(), onUpdate: () => { gotAny = true; } });
+        if (!stopped) timer = setTimeout(flush, ctx.pollMs || 1000);
+      }
       function connect() {
         if (stopped) return;
         try { ws = new WS(url); } catch (e) { ctx.onError(e); return retry(); }
@@ -748,7 +830,7 @@
       attribution: "OpenSeaFeed community AIS, CC BY 4.0",
       bbox: null, worldwide: true,
       pollMs: 1000,
-      start: aisstreamSocket("wss://stream.openseafeed.com/v1/stream"),
+      start: aisstreamSocket("wss://stream.openseafeed.com/v1/stream", null, "https://api.openseafeed.com/v1/vessels"),
     },
     proxy: {
       id: "proxy", name: "Local proxy (aisstream.io)",
@@ -847,7 +929,7 @@
     ATON_LAYERS, ATON_KIND, S57_COLOUR, LITCHR, lightCharacter, normalizeAton, fetchAton, mergeAton, BoxStore,
     NAV_STATUS, shipType, CATEGORY_COLOR, flagOf, VesselTable,
     ingestDigitrafficLocations, ingestDigitrafficVessel, restPoller, demoProvider, AIS_PROVIDERS, aisProviderFor,
-    ingestAisstreamFrame, aisstreamBox, aisstreamSocket,
+    ingestAisstreamFrame, aisstreamBox, aisstreamSocket, StaticCache, staticFromOsf, lookupMissingStatic,
     reverseGeocode, declination, LaneStore,
   };
 }));

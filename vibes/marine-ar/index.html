@@ -162,6 +162,8 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
   <div class="sr"><span>Aids to navigation</span><span class="group">
     <label><input type="checkbox" id="ckAton" checked>buoys, beacons, lights</label>
     <label>within <input type="range" id="rAton" min="1" max="15" value="6" style="width:80px"> <span class="v" id="vAton" style="min-width:40px">6 km</span></label></span></div>
+  <div class="sr"><span>Light rhythms</span><span class="group"><select id="selNight"><option value="auto">Auto (sun below −3°)</option><option value="on">Always flash</option><option value="off">Steady dots</option></select><span class="v" id="vNight"></span></span></div>
+  <div class="sr"><span>Vessel names</span><span class="group"><label><input type="checkbox" id="ckLookup" checked>look up missing names (OpenSeaFeed, ~250 B each)</label></span></div>
   <div class="sr"><span>Units</span><span class="group"><label><input type="radio" name="units" value="nm" checked>NM / kn</label><label><input type="radio" name="units" value="km">km / kn</label></span></div>
   <div class="sr"><span>Compass</span><span class="group"><label><input type="checkbox" id="ckDecl" checked>apply declination <span id="vDecl"></span></label><label>offset <input type="range" id="rOff" min="-30" max="30" value="0" style="width:80px"> <span class="v" id="vOff" style="min-width:34px">0°</span></label></span></div>
   <div class="sr"><span>Demo speed</span><span><input type="range" id="rDemo" min="1" max="30" value="6"><span class="v" id="vDemo">6×</span></span></div>
@@ -206,6 +208,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
     aton: [], atonStore: null, showAton: true, atonRangeM: 6000, atonLoading: false, atonError: null,
     table: null, provider: null, providerHandle: null, providerChoice: "auto", proxyBase: "", vessels: [], aisError: null, lastAis: 0,
     rangeM: 15000, labelPx: 12, showHull: true, showVector: true, showMoored: false, nautical: true, demoSpeed: 6,
+    nightMode: "auto", night: false, sunAlt: null, lookupStatic: true, staticCache: null,
     selected: null, hits: [], settingsOpen: false, place: null,
 
     init() {
@@ -216,13 +219,14 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       this.laneStore = new Providers.LaneStore({ storage: window.localStorage });
       this.landStore = new Providers.LandStore({ storage: window.localStorage });
       this.atonStore = new Providers.BoxStore({ storage: window.localStorage, key: "marine-ar:aton" });
+      this.staticCache = new Providers.StaticCache({ storage: window.localStorage });
       this.loadPrefs();
       this.resize();
       window.addEventListener("resize", () => this.resize());
       window.addEventListener("orientationchange", () => setTimeout(() => this.resize(), 250));
       this.wireUI();
       $("startBtn").onclick = () => this.start();
-      // URL params: ?lat=47.66&lon=-122.44&eye=18&hdg=340&provider=demo&auto=1&nocam=1
+      // URL params: ?lat=47.66&lon=-122.44&eye=18&hdg=340&provider=demo&auto=1&nocam=1&night=1
       const q = new URLSearchParams(location.search);
       if (q.has("lat") && q.has("lon")) { this.useGps = false; this.lat = +q.get("lat"); this.lon = +q.get("lon"); [...$("presets").children].forEach((x) => x.classList.remove("on")); }
       if (q.has("eye")) { this.eye = +q.get("eye"); $("rEye").value = this.eye; $("vEye").textContent = this.eye.toFixed(1) + " m"; }
@@ -231,18 +235,19 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       if (q.has("provider")) { this.providerChoice = q.get("provider"); $("selProvider").value = this.providerChoice; }
       if (q.has("proxy")) { this.proxyBase = q.get("proxy"); $("inProxy").value = this.proxyBase; }
       this.noCam = q.has("nocam");
+      if (q.has("night")) { this.nightMode = q.get("night") === "0" ? "off" : "on"; $("selNight").value = this.nightMode; }
       if (q.has("auto")) this.start();
     },
 
     loadPrefs() {
       try {
         const p = JSON.parse(localStorage.getItem("marine-ar:prefs") || "{}");
-        for (const k of ["providerChoice", "proxyBase", "rangeM", "eye", "hfov", "labelPx", "showHull", "showVector", "showMoored", "occlude", "hideOccluded", "elevAware", "unknownElevM", "showAton", "atonRangeM", "nautical", "applyDecl", "offset", "demoSpeed"]) if (p[k] != null) this[k] = p[k];
+        for (const k of ["providerChoice", "proxyBase", "rangeM", "eye", "hfov", "labelPx", "showHull", "showVector", "showMoored", "occlude", "hideOccluded", "elevAware", "unknownElevM", "showAton", "atonRangeM", "nightMode", "lookupStatic", "nautical", "applyDecl", "offset", "demoSpeed"]) if (p[k] != null) this[k] = p[k];
         if (p.laneKinds) this.laneKinds = new Set(p.laneKinds);
       } catch (e) { /* */ }
     },
     savePrefs() {
-      const p = {}; for (const k of ["providerChoice", "proxyBase", "rangeM", "eye", "hfov", "labelPx", "showHull", "showVector", "showMoored", "occlude", "hideOccluded", "elevAware", "unknownElevM", "showAton", "atonRangeM", "nautical", "applyDecl", "offset", "demoSpeed"]) p[k] = this[k];
+      const p = {}; for (const k of ["providerChoice", "proxyBase", "rangeM", "eye", "hfov", "labelPx", "showHull", "showVector", "showMoored", "occlude", "hideOccluded", "elevAware", "unknownElevM", "showAton", "atonRangeM", "nightMode", "lookupStatic", "nautical", "applyDecl", "offset", "demoSpeed"]) p[k] = this[k];
       p.laneKinds = [...this.laneKinds];
       try { localStorage.setItem("marine-ar:prefs", JSON.stringify(p)); } catch (e) { /* */ }
     },
@@ -289,6 +294,8 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       ck("ckHull", "showHull"); ck("ckVector", "showVector"); ck("ckMoored", "showMoored"); ck("ckDecl", "applyDecl");
       ck("ckOcclude", "occlude", () => { this.occlusion.clear(); this.occlusionAt = 0; }); ck("ckHideOcc", "hideOccluded");
       ck("ckElev", "elevAware", () => { this.occlusion.clear(); this.occlusionAt = 0; }); ck("ckAton", "showAton");
+      ck("ckLookup", "lookupStatic", () => this.startAis());
+      $("selNight").value = this.nightMode; $("selNight").onchange = () => { this.nightMode = $("selNight").value; this.savePrefs(); this.updateNight(); };
       bind("rUnk", "vUnk", "unknownElevM", (v) => (+v === 0 ? "opaque" : v + " m"), () => { this.occlusion.clear(); this.occlusionAt = 0; });
       $("rAton").value = this.atonRangeM / 1000; $("vAton").textContent = $("rAton").value + " km";
       $("rAton").oninput = () => { this.atonRangeM = +$("rAton").value * 1000; $("vAton").textContent = $("rAton").value + " km"; this.savePrefs(); this.refreshData(); };
@@ -449,6 +456,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       const ctx = {
         table: this.table, lanes: this.lanes, pollMs: p.pollMs, proxyBase: this.proxyBase || (location.port === "8788" ? location.origin : ""),
         getCenter: () => ({ lat: this.lat, lon: this.lon, radiusM: this.rangeM }),
+        staticCache: this.staticCache, lookupStatic: this.lookupStatic,
         onUpdate: () => { this.lastAis = Date.now(); this.aisError = null; },
         onError: (e) => { this.aisError = e.message; if (p.id === "proxy" && /503|Failed to fetch/.test(e.message) && this.providerChoice === "auto") { this.toast("Proxy has no AIS key — switching to demo traffic"); this.providerChoice = "demo"; $("selProvider").value = "demo"; setTimeout(() => this.startAis(), 0); } },
       };
@@ -481,6 +489,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
         this.updatePose();
         this.vessels = this.table.snapshot();
         this.updateOcclusion();
+        if (!this._nightAt || Date.now() - this._nightAt > 30e3) this.updateNight();
         this.draw();
         this.drawRadar();
         this.updateChips();
@@ -649,10 +658,10 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       }
       items.sort((p, q) => q.d - p.d);
       cx.textAlign = "center"; cx.textBaseline = "bottom"; cx.font = `500 ${fs}px -apple-system,Segoe UI,Roboto,sans-serif`;
-      const placed = [];
+      const placed = [], nowS = Date.now() / 1000;
       for (const it of items) {
         const { a, d, sp } = it, occ = !!a.occluded;
-        cx.globalAlpha = occ ? 0.4 : 1;
+        cx.globalAlpha = occ ? 0.4 : (this.night && a.light ? 0.55 : 1);   // at night the structure is barely visible, the light is what you see
         // glyph: buoy = cone, beacon/daymark = post with topmark, loose light = star; sized by distance
         const s = Math.max(4, Math.min(12, 2500 / Math.max(d, 150)));
         const col = a.color, isBuoy = a.kind.startsWith("BOY") || a.kind === "LITFLT";
@@ -665,7 +674,22 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
         } else {
           cx.fillRect(sp.x - s * 0.25, sp.y - s * 2.2, s * 0.5, s * 2.2); cx.beginPath(); cx.moveTo(sp.x - s * 0.8, sp.y - s * 2.2); cx.lineTo(sp.x + s * 0.8, sp.y - s * 2.2); cx.lineTo(sp.x, sp.y - s * 3.4); cx.closePath(); cx.fill(); cx.stroke();
         }
-        if (a.light && !occ) { cx.beginPath(); cx.arc(sp.x, sp.y - s * 2.6, s * 0.45, 0, Math.PI * 2); cx.fillStyle = a.light.colour; cx.fill(); cx.strokeStyle = "rgba(0,0,0,.6)"; cx.stroke(); }
+        if (a.light && !occ) {
+          const ly = sp.y - s * 2.6;
+          if (this.night && a.light.chr != null) {
+            // real rhythm: schedule from LITCHR/SIGPER/SIGGRP, phase offset per light so neighbours are not in step
+            if (!a.light.sched) { a.light.sched = Geo.lightSchedule(a.light.chr, a.light.periodS, a.light.group); a.light.phase = (hashId(a.id) % 1000) / 1000 * a.light.sched.period; }
+            const slot = Geo.lightState(a.light.sched, nowS, a.light.phase);
+            if (slot >= 0) {
+              const col = a.light.colours[Math.min(slot, a.light.colours.length - 1)] || a.light.colour;
+              const glow = s * (1.2 + Math.min(3, (a.light.rangeNM || 3) / 4));
+              const g = cx.createRadialGradient(sp.x, ly, 0, sp.x, ly, glow);
+              g.addColorStop(0, col); g.addColorStop(0.35, hexA(col, 0.55)); g.addColorStop(1, hexA(col, 0));
+              cx.fillStyle = g; cx.beginPath(); cx.arc(sp.x, ly, glow, 0, Math.PI * 2); cx.fill();
+              cx.beginPath(); cx.arc(sp.x, ly, s * 0.5, 0, Math.PI * 2); cx.fillStyle = "#fff"; cx.fill();
+            } else { cx.beginPath(); cx.arc(sp.x, ly, s * 0.3, 0, Math.PI * 2); cx.fillStyle = "rgba(255,255,255,.15)"; cx.fill(); }
+          } else { cx.beginPath(); cx.arc(sp.x, ly, s * 0.45, 0, Math.PI * 2); cx.fillStyle = a.light.colour; cx.fill(); cx.strokeStyle = "rgba(0,0,0,.6)"; cx.stroke(); }
+        }
         this.hits.push({ x: sp.x, y: sp.y - s, r: s + 10, a });
         // label: short name (drop the "Lighted Buoy" boilerplate) + light character, only when close enough
         if (d < this.atonRangeM * 0.7) {
@@ -705,6 +729,13 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       $("info").classList.add("vis");
     },
 
+    /** Night = sun more than 3° below the horizon at the viewer (civil twilight is when lights are lit), unless forced. */
+    updateNight() {
+      this._nightAt = Date.now();
+      this.sunAlt = Geo.sunAltitude(this.lat, this.lon, new Date());
+      this.night = this.nightMode === "on" ? true : this.nightMode === "off" ? false : this.sunAlt < -3;
+      const v = $("vNight"); if (v) v.textContent = `sun ${this.sunAlt >= 0 ? "+" : ""}${this.sunAlt.toFixed(0)}° · ${this.night ? "flashing" : "day"}`;
+    },
     /** Name, or "Unnamed <type>" while the static report is still in transit; falls back to the MMSI. */
     displayName(v) {
       if (v.name) return v.name;
@@ -901,7 +932,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       if (!this.showAton) { at.textContent = "ATON off"; at.className = "chip"; }
       else if (this.atonLoading) { at.textContent = "ATON loading"; at.className = "chip warn"; }
       else if (this.atonError) { at.textContent = "ATON error"; at.className = "chip bad"; at.title = this.atonError; }
-      else { at.textContent = this.aton.length ? `ATON ${this.aton.length}` : "ATON none charted"; at.className = "chip " + (this.aton.length ? "ok" : ""); }
+      else { at.textContent = this.aton.length ? `ATON ${this.aton.length}${this.night ? " · night" : ""}` : "ATON none charted"; at.className = "chip " + (this.aton.length ? "ok" : ""); at.title = this.sunAlt != null ? `sun altitude ${this.sunAlt.toFixed(1)}°` : ""; }
       const l = $("chipLanes");
       if (this.lanesLoading) { l.textContent = "LANES loading"; l.className = "chip warn"; }
       else if (this.lanesError) { l.textContent = "LANES error"; l.className = "chip bad"; l.title = this.lanesError; }
@@ -941,6 +972,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
 
   // ---- helpers ----------------------------------------------------------------
   function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+  function hashId(str) { let h = 2166136261; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
   function esc(s) { return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
   function hexA(hex, a) { const m = hex.replace("#", ""); const n = parseInt(m.length === 3 ? m.split("").map((c) => c + c).join("") : m, 16); return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`; }
   function roundRect(cx, x, y, w, h, r) { cx.beginPath(); cx.moveTo(x + r, y); cx.arcTo(x + w, y, x + w, y + h, r); cx.arcTo(x + w, y + h, x, y + h, r); cx.arcTo(x, y + h, x, y, r); cx.arcTo(x, y, x + w, y, r); cx.closePath(); }

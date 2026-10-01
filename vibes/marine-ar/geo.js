@@ -478,6 +478,78 @@
 
   // ---- compass / formatting -----------------------------------------------
 
+  // ---- Light rhythms (IHO / IALA characters) --------------------------------
+
+  /**
+   * On/off schedule of a light over one period, as [startSec, endSec, colourIndex] "on" intervals.
+   * Built from the S-57 LITCHR code, SIGPER (s) and SIGGRP ("(2)", "(2+1)"). Durations follow the
+   * usual conventions: flash 0.5 s, long flash 2 s, quick 1 Hz, very quick 2 Hz, ultra 4 Hz,
+   * isophase half/half, occulting 3:1 light to dark. Returned once per light and reused.
+   */
+  function lightSchedule(chr, periodS, group) {
+    const groups = String(group || "").replace(/[()]/g, "").split("+").map(Number).filter((n) => n > 0);
+    const g = groups.length ? groups : [1];
+    const P = periodS > 0 ? periodS : null;
+    const on = [];
+    const push = (s, e, c) => { if (e > s) on.push([s, e, c || 0]); };
+    const flashes = (dur, gap, count, start, c) => { let t = start; for (let i = 0; i < count; i++) { push(t, t + dur, c); t += dur + gap; } return t - gap; };
+    const flashGroups = (dur, gap, period, c) => {
+      // groups of flashes separated by a longer eclipse, all inside the period
+      let t = 0; const groupGap = dur * 4;
+      for (const n of g) { flashes(dur, gap, n, t, c); t += n * (dur + gap) - gap + groupGap; }
+      return period || t;
+    };
+    switch (chr) {
+      case 1: push(0, 1); return { period: 1, on };                                                  // F: fixed
+      case 2: return { period: P || 4, on: (flashGroups(0.5, 0.7, P || 4), on) };                      // Fl
+      case 3: return { period: P || 10, on: (flashGroups(2, 1.5, P || 10), on) };                      // LFl
+      case 4: { const per = g[0] > 1 || P ? (P || 10) : 1; if (groups.length) flashGroups(0.5, 0.5, per); else for (let t = 0; t < per; t += 1) push(t, t + 0.5); return { period: per, on }; }                 // Q
+      case 5: { const per = groups.length || P ? (P || 10) : 0.5; if (groups.length) flashGroups(0.25, 0.25, per); else for (let t = 0; t < per; t += 0.5) push(t, t + 0.25); return { period: per, on }; }  // VQ
+      case 6: { const per = 0.25; push(0, 0.125); return { period: per, on }; }                       // UQ
+      case 7: { const per = P || 4; push(0, per / 2); return { period: per, on }; }                   // Iso
+      case 8: {                                                                                   // Oc: long light, then n short eclipses
+        const per = P || 4, dark = Math.min(per / 4, 1.5);
+        let t = 0;
+        for (const n of g) {
+          const span = per / g.length, lit = Math.max(dark, span - (2 * n - 1) * dark);
+          push(t, t + lit); t += lit;
+          for (let i = 0; i < n; i++) { t += dark; if (i < n - 1) { push(t, t + dark); t += dark; } }
+        }
+        return { period: per, on };
+      }
+      case 9: case 10: case 11: { const per = P || 10, rate = chr === 9 ? 1 : chr === 10 ? 0.5 : 0.25; for (let t = 0; t < per * 0.6; t += rate) push(t, t + rate / 2); return { period: per, on }; }   // IQ, IVQ, IUQ
+      case 12: { const per = P || 8; push(0, 0.5); push(1, 1.5); push(2, 3.5); return { period: per, on }; }   // Mo: approximated as "U"
+      case 13: case 16: { const per = P || 6; push(per - 1, per - 0.5, 0); push(0, per, 1); return { period: per, on }; }   // FFl: fixed light (slot 1 = dim) with a brighter flash (slot 0); first match wins
+      case 14: { const per = P || 10; push(0, 0.5); push(1.5, 3.5); return { period: per, on }; }     // FlLFl
+      case 15: { const per = P || 10; push(0, per * 0.5); push(per * 0.6, per * 0.6 + 0.5); return { period: per, on }; }   // OcFl
+      case 17: case 18: case 19: case 29: { const per = P || 10; const n = Math.max(2, g.reduce((x, y) => x + y, 0)); const dur = chr === 18 ? 2 : 0.5; const slot = per / n; for (let i = 0; i < n; i++) push(i * slot, i * slot + (chr === 17 ? slot * 0.75 : dur), i % 2); return { period: per, on }; }   // alternating flashes
+      case 20: case 28: { const per = P || 4; push(0, per / 2, 0); push(per / 2, per, 1); return { period: per, on }; }   // Al / AlFF: alternating steady colours
+      case 25: case 26: case 27: { const per = P || 15, rate = chr === 25 ? 1 : chr === 26 ? 0.5 : 0.25; const n = groups.length ? groups[0] : 6; let t = 0; for (let i = 0; i < n; i++) { push(t, t + rate / 2); t += rate; } push(t + rate, t + rate + 2); return { period: per, on }; }   // Q+LFl
+      default: push(0, 1); return { period: 1, on };
+    }
+  }
+
+  /** Whether a scheduled light is lit at time tSec (with a per-light phase offset so neighbours are not in step). Returns colour slot index or -1. */
+  function lightState(sched, tSec, phaseS) {
+    const per = sched.period || 1;
+    const t = ((tSec + (phaseS || 0)) % per + per) % per;
+    for (const [s, e, c] of sched.on) if (t >= s && t < e) return c;
+    return -1;
+  }
+
+  /** Sun altitude in degrees above the horizon (NOAA low-precision algorithm, good to ~0.1°). */
+  function sunAltitude(lat, lon, date) {
+    const d = (date || new Date()).getTime() / 86400000 + 2440587.5 - 2451545.0;   // days since J2000
+    const g = D2R * wrap360(357.529 + 0.98560028 * d), q = wrap360(280.459 + 0.98564736 * d);
+    const L = D2R * wrap360(q + 1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g));
+    const e = D2R * (23.439 - 0.00000036 * d);
+    const ra = Math.atan2(Math.cos(e) * Math.sin(L), Math.cos(L)), dec = Math.asin(Math.sin(e) * Math.sin(L));
+    const gmst = wrap360(280.46061837 + 360.98564736629 * d);
+    const ha = D2R * wrap360(gmst + lon) - ra;
+    const phi = D2R * lat;
+    return Math.asin(Math.sin(phi) * Math.sin(dec) + Math.cos(phi) * Math.cos(dec) * Math.cos(ha)) * R2D;
+  }
+
   function smoothHeading(prev, next, alpha) {
     if (prev == null || !isFinite(prev)) return wrap360(next);
     return wrap360(prev + alpha * angleDiff(next, prev));
@@ -506,6 +578,7 @@
     horizonDip, horizonDistance, seaPitch, Camera,
     hullFootprint, deadReckon, cpa, velocity, laneArrows,
     segmentsCross, ringCrossings, landOcclusion, estimateAirDraught,
+    lightSchedule, lightState, sunAltitude,
     smoothHeading, cardinal, fmtDistance, fmtSpeed, fmtBearing, fmtDuration,
   };
 }));

@@ -254,6 +254,36 @@ describe("AIS providers", () => {
     const polar = P.aisstreamBox(89.9, 179.9, 50000)[0];
     expect(polar[1][0]).toBe(90); expect(polar[1][1]).toBe(180);
   });
+  test("lookupMissingStatic fills names from /v1/vessels, caches hits and misses, nearest nameless first", async () => {
+    const t = new P.VesselTable({ maxAgeMs: 1e15 });
+    t.upsertPosition({ mmsi: 1, lat: 47.70, lon: -122.44, sog: 5, at: Date.now() });            // nameless, 4.4 km
+    t.upsertPosition({ mmsi: 2, lat: 47.665, lon: -122.44, sog: 5, at: Date.now() });           // nameless, 0.5 km -> first
+    t.upsertPosition({ mmsi: 3, lat: 47.661, lon: -122.44, sog: 5, at: Date.now() }); t.upsertStatic({ mmsi: 3, name: "KNOWN" }); t.get(3).staticAt = 0;   // named via metadata, nearest
+    const storage = new Map(), ls = { getItem: (k) => storage.get(k) || null, setItem: (k, v) => storage.set(k, v) };
+    const cache = new P.StaticCache({ storage: ls });
+    const calls = [];
+    const fetchImpl = async (u) => { calls.push(u); const m = Number(u.split("/").pop());
+      if (m === 2) return { ok: true, json: async () => ({ mmsi: 2, name: "WSF PUYALLUP", type: 60, imo: 9137363, callsign: "WCY7938", dest: "FERRY TERMINAL", draught: 5.6, len: 140, beam: 28 }) };
+      if (m === 1) return { ok: true, json: async () => ({ mmsi: 1, lat: 47.7, lon: -122.44, sog: 5 }) };   // OSF knows the position only
+      return { ok: false, status: 404 }; };
+    const inflight = new Set(); let updates = 0;
+    const n = P.lookupMissingStatic(t, { base: "https://x/v1/vessels", cache, fetchImpl, inflight, limit: 2, center: { lat: 47.6603, lon: -122.4412 }, onUpdate: () => updates++ });
+    expect(n).toBe(2);
+    expect(calls.map((u) => u.split("/").pop())).toEqual(["2", "1"]);          // nameless before named, nearest first
+    await new Promise((r) => setTimeout(r, 10));
+    const v2 = t.get(2);
+    expect(v2.name).toBe("WSF PUYALLUP"); expect(v2.length).toBe(140); expect(v2.beam).toBe(28); expect(v2.dims.a).toBe(70); expect(v2.draught).toBe(5.6); expect(v2.imo).toBe(9137363);
+    expect(t.get(1).name).toBeFalsy(); expect(t.get(1).staticAt).toBeTruthy();   // looked up, nothing known, not retried this session
+    expect(updates).toBe(1);
+    expect(cache.get(2).name).toBe("WSF PUYALLUP"); expect(cache.get(1)).toBeNull();   // miss remembered
+    cache.flush();
+    const again = new P.StaticCache({ storage: ls });                                   // fresh page load
+    expect(again.get(2).name).toBe("WSF PUYALLUP");
+    const t2 = new P.VesselTable({ maxAgeMs: 1e15 }); t2.upsertPosition({ mmsi: 2, lat: 47.665, lon: -122.44, sog: 5, at: Date.now() });
+    const calls2 = [];
+    P.lookupMissingStatic(t2, { base: "https://x/v1/vessels", cache: again, fetchImpl: async (u) => { calls2.push(u); return { ok: false, status: 500 }; }, inflight: new Set(), limit: 3 });
+    expect(calls2.length).toBe(0); expect(t2.get(2).name).toBe("WSF PUYALLUP");      // served from cache, no request
+  });
   test("aisstreamSocket subscribes with a box, ingests, reconnects on close", async () => {
     const sent = [], sockets = [];
     class FakeWS {
@@ -465,6 +495,44 @@ describe("Aids to navigation (ENC Direct)", () => {
     const empty = []; await P.fetchAton(WEST_POINT.lat, WEST_POINT.lon, 5000, async (u) => { empty.push(u); return { ok: true, json: async () => ({ features: [] }) }; });
     expect(empty.length).toBe(21);                                   // nothing at harbour scale -> coastal too
     expect(r.length).toBe(new Set(lights.map((a) => a.lat.toFixed(4) + "," + a.lon.toFixed(4))).size);
+  });
+});
+
+describe("Light rhythms", () => {
+  const sched = (c, p, g) => Geo.lightSchedule(c, p, g).on.map((x) => x.map((v) => +v.toFixed(2)));
+  test("characters produce the textbook on/off patterns", () => {
+    expect(Geo.lightSchedule(1).on).toEqual([[0, 1, 0]]);                                   // F: always on
+    expect(sched(2, 4)).toEqual([[0, 0.5, 0]]);                                          // Fl 4s
+    expect(sched(2, 10, "(2)")).toEqual([[0, 0.5, 0], [1.2, 1.7, 0]]);                    // Fl(2) 10s
+    expect(sched(2, 15, "(2+1)")).toEqual([[0, 0.5, 0], [1.2, 1.7, 0], [3.7, 4.2, 0]]);  // Fl(2+1) 15s: composite group
+    expect(sched(3, 10)).toEqual([[0, 2, 0]]);                                           // LFl 10s: 2 s flash
+    expect(Geo.lightSchedule(4).period).toBe(1); expect(sched(4)).toEqual([[0, 0.5, 0]]);  // Q: 60/min
+    expect(Geo.lightSchedule(5).period).toBe(0.5);                                         // VQ: 120/min
+    expect(sched(7, 4)).toEqual([[0, 2, 0]]);                                            // Iso 4s
+    expect(sched(8, 4)).toEqual([[0, 3, 0]]);                                            // Oc 4s: 3 s light, 1 s dark
+    expect(sched(8, 10, "(2)")).toEqual([[0, 5.5, 0], [7, 8.5, 0]]);                      // Oc(2) 10s: two eclipses
+    expect(sched(28, 4)).toEqual([[0, 2, 0], [2, 4, 1]]);                                 // Al WR: colour slots alternate
+    expect(sched(19, 10)).toEqual([[0, 0.5, 0], [5, 5.5, 1]]);                            // AlFl WR 10s
+    expect(sched(25, 15).length).toBe(7);                                                // Q(6)+LFl 15s: six quick + one long
+  });
+  test("lightState: lit slot or -1, with per-light phase", () => {
+    const s = Geo.lightSchedule(2, 4);
+    expect(Geo.lightState(s, 0.2)).toBe(0); expect(Geo.lightState(s, 1)).toBe(-1); expect(Geo.lightState(s, 4.1)).toBe(0);
+    expect(Geo.lightState(s, 1, 3.2)).toBe(0);                                             // phase shifts the schedule
+    const al = Geo.lightSchedule(28, 4); expect(Geo.lightState(al, 3)).toBe(1);
+    const oc = Geo.lightSchedule(8, 4); let lit = 0; for (let t = 0; t < 4; t += 0.01) if (Geo.lightState(oc, t) >= 0) lit++; expect(lit / 400).toBeCloseTo(0.75, 1);
+  });
+  test("sun altitude: Seattle solstice noon ~66°, midnight ~-19°, equinox sunset near 0", () => {
+    expect(Geo.sunAltitude(47.6, -122.4, new Date("2026-06-21T20:15:00Z"))).toBeCloseTo(65.8, 0);
+    expect(Geo.sunAltitude(47.6, -122.4, new Date("2026-06-21T08:15:00Z"))).toBeCloseTo(-19, 0);
+    expect(Math.abs(Geo.sunAltitude(47.6, -122.4, new Date("2026-09-23T02:05:00Z")))).toBeLessThan(2);   // sunset 19:05 PDT
+  });
+  test("normalizeAton keeps the raw character for the rhythm engine", () => {
+    const lights = require("./fixture_aton_lights.json");
+    const a = P.normalizeAton(lights.features.find((f) => f.attributes.SIGPER), "LIGHTS", "harbour");
+    expect(a.light.chr).toBeGreaterThan(0); expect(a.light.periodS).toBeGreaterThan(0); expect(a.light.colours.length).toBeGreaterThan(0);
+    const s = Geo.lightSchedule(a.light.chr, a.light.periodS, a.light.group);
+    expect(s.period).toBe(a.light.periodS);
   });
 });
 
