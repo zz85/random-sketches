@@ -17,22 +17,26 @@ ScoreShift does not re-engrave the music. It reads the page, then edits the page
 That is why it never has to understand rhythm, voices or layout. Transposition is a vertical
 shift of the pitched symbols, and the page already has the layout.
 
+PDFs work too, such as scores and parts from IMSLP: pick a page from the thumbnail strip, or
+export the whole file transposed as a new PDF.
+
 Runs entirely on the device: plain ES modules, a Web Worker for recognition, no build step,
 no dependencies, nothing uploaded. Installable PWA that works offline.
 
 ```
 python3 -m http.server              # any static server, then open /vibes/scoreshift/
 bun test                            # theory, image primitives, recognition accuracy: 18 tests
-node smoke.js                       # headless Chromium over CDP through the real UI, export, offline: 17 checks
+node smoke.js                       # headless Chromium over CDP: UI, PDF, export, offline: 23 checks
 bun eval.js [tune|all] [condition]  # accuracy table; condition = clean | scan | photo | phone
 bun debug.js <tune> [cond] [x0 y0 x1 y1]   # colour overlay of what was recognised
 node tools/make_fixtures.mjs        # rebuild fixtures + glyphs.js from Verovio (dev-only dependency)
 node tools/make_sample.mjs          # rebuild sample.jpg
+node tools/make_pdf_fixture.mjs     # rebuild fixtures/parts.pdf (title page + 2 music pages)
 ```
 
 ## Using it
 
-**Photo** (camera) or **Open**, or drop / paste an image. Pick what the music is
+**Photo** (camera) or **Open**, or drop / paste an image or a PDF. Pick what the music is
 **written for** (concert pitch by default; a B♭ trumpet part works too) and what to
 **transpose for**. **Octave** is chosen automatically per staff to keep the most notes inside the
 target instrument's written range, or set it with −/+. **Clef** follows the target instrument
@@ -43,6 +47,15 @@ every recognised notehead labelled with its pitch, colour-coded by letter name),
 **Transposed**. In Interpreted view, tap a staff label to correct its clef or key (for one or
 all staves); tap a note to move it a step, change its accidental, or mark it as not a note.
 Corrections feed the transposed page immediately. **⬇ PNG** exports the current view.
+
+**PDFs** (IMSLP, Internet Archive, anything): rendered with pdf.js, including the JBIG2 and
+JPEG 2000 images scanned PDFs are made of. Opening probes each page at low resolution for staves
+(~0.3 s a page) and starts at the first page mostly covered by music, skipping the cover, title
+page and preface. A thumbnail strip and ◀ ▶ move between pages; corrections are remembered per
+page. **⬇ Transposed PDF** transposes every page and writes a new PDF of the same page size
+(pages with no music are kept as they are). On a 30-page Internet Archive scan of a Haydn
+quartet (31 JBIG2 + 60 JPEG 2000 images) it opens at the first page of music in ~12 s and
+exports the whole file in ~80 s (~3 s a 16-staff page in headless Chromium).
 
 Works best with printed music, the page flat, the whole staff width in frame and even light.
 Phone photos down to about 13 px per staff space work (see below); more is better.
@@ -128,6 +141,9 @@ grace notes. The transposed page is readable but shows its seams at that resolut
 - Ties and slurs stay put: fine for steps, visibly off for big moves such as clef changes.
 - Moving a note does not re-flip stems or re-slope beams; with a clef change notes can collide.
 - One staff size per page; cross-staff beams move with one staff.
+- A misread key signature on one staff of a score (the page consensus only fills staves where
+  something key-like was seen) gives that staff a different target key; fix it in Interpreted view.
+- Exported PDFs are page images (JPEG), not vector or text; about 0.7 MB a page.
 
 ## Research notes
 
@@ -192,11 +208,13 @@ segmentation net would be the natural upgrade for heads and accidentals in poor 
 | `imgproc.js` | Sauvola / Wolf binarisation, run-length metrics, skew, resampling, morphology, components |
 | `theory.js` | pitch spelling, clefs, key signatures, 18 instruments, intervals, bar-scoped accidentals |
 | `render.js` | transposition plan, in-place page rewrite, interpretation overlay |
-| `app.js`, `index.html`, `worker.js` | UI, corrections, export; recognition in a worker |
+| `app.js`, `index.html`, `worker.js` | UI, corrections, export, PDF paging; recognition (and the page probe) in a worker |
+| `pdfsource.js` | pdf.js loading and page rendering; a ~40-line PDF writer for the transposed export |
+| `vendor/pdfjs/` | pdf.js 6.3.289 legacy build + JBIG2 / OpenJPEG / QCMS wasm decoders (Apache-2.0 and listed licences) |
 | `glyphs.js` | SMuFL outlines (noteheads, accidentals, clefs) from 5 fonts, extracted from Verovio |
 | `degrade.js` | deterministic photo simulator with exact point mapping for ground truth |
 | `eval.js`, `debug.js`, `scoreshift.test.js`, `smoke.js`, `cdp.js`, `png.js` | evaluation, tests, tiny CDP driver and PNG codec |
 | `tools/` | fixture / glyph / sample builders (Verovio 6.3, dev-only) |
-| `fixtures/` | 7 clean engravings + ground truth (every head's box, pitch, accidental; staves, clefs, keys) |
+| `fixtures/` | `parts.pdf` (PDF smoke test), 7 clean engravings + ground truth (every head's box, pitch, accidental; staves, clefs, keys) |
 
 Fonts: glyph outlines from Leipzig, Bravura, Leland, Gootville and Petaluma (SIL OFL 1.1).

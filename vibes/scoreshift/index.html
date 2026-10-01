@@ -42,6 +42,13 @@
   #pop .row button { min-width:2.4rem; }
   #busy { position:fixed; inset:0; display:none; place-items:center; background:#f3f1ecc0; z-index:20; font-size:1.1rem; }
   .sr { position:absolute; left:-9999px; }
+  #pages { display:flex; gap:.5rem; align-items:center; padding:.35rem .75rem; border-bottom:1px solid var(--line); background:#faf8f4; }
+  #pages > span { min-width:4.5rem; text-align:center; font-variant-numeric:tabular-nums; }
+  #thumbs { display:flex; gap:.4rem; overflow-x:auto; flex:1; padding:2px; }
+  #thumbs button { position:relative; flex:0 0 auto; width:62px; height:80px; padding:0; overflow:hidden; background:#fff; }
+  #thumbs button canvas { width:100%; height:100%; object-fit:contain; display:block; }
+  #thumbs button span { position:absolute; right:2px; bottom:1px; font-size:11px; background:#fffc; padding:0 3px; border-radius:4px; }
+  #thumbs button[aria-current="page"] { outline:3px solid var(--acc); outline-offset:-3px; }
   @media (max-width:600px) { #bar select { max-width:11rem; } #wrap { height:calc(100vh - 13rem); } }
 </style>
 </head>
@@ -49,9 +56,10 @@
 <header>
   <h1>Score<span>Shift</span></h1>
   <label class="btn" id="camBtn">📷 Photo<input id="cam" type="file" accept="image/*" capture="environment"></label>
-  <label class="btn">🖼 Open<input id="file" type="file" accept="image/*"></label>
+  <label class="btn">🖼 Open image / PDF<input id="file" type="file" accept="image/*,application/pdf,.pdf"></label>
   <button id="sample">Sample</button>
   <button id="export" disabled>⬇ PNG</button>
+  <button id="exportPdf" hidden>⬇ Transposed PDF</button>
 </header>
 <div id="bar">
   <label>Written for <select id="from"></select></label>
@@ -64,6 +72,10 @@
   <label><input type="checkbox" id="labels"> note names</label>
   <label>Zoom <input type="range" id="zoom" min="0.25" max="2" step="0.05" value="1" aria-label="Zoom"></label>
 </div>
+<nav id="pages" hidden aria-label="PDF pages">
+  <button id="prevPage" aria-label="Previous page">◀</button><span id="pageNo" aria-live="polite"></span><button id="nextPage" aria-label="Next page">▶</button>
+  <div id="thumbs"></div>
+</nav>
 <div id="status" aria-live="polite"></div>
 <div id="wrap">
   <div id="empty">
@@ -73,6 +85,7 @@
       signature are replaced, ledger lines regenerated. The layout, beams, slurs, dynamics and lyrics stay exactly
       where the engraver put them. Everything runs on this device.</p>
     <div class="big"><label class="btn">📷 Take photo<input id="cam2" type="file" accept="image/*" capture="environment"></label><button id="sample2">Try the sample</button></div>
+    <p>Or open a PDF, such as a score or part from IMSLP: pick a page, or export the whole file transposed as a PDF.</p>
     <p>Best results: printed music, flat page, whole width of the staff in frame, even light. Check the
       <b>Interpreted</b> view and tap anything it got wrong.</p>
   </div>

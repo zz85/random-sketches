@@ -170,6 +170,32 @@ export class Renderer {
       }
     }
   }
+  // Same mask as maskOf, but only for the crop (x0, y0, cw, ch): per-symbol work stays
+  // proportional to the symbol, not the page (a full-page mask per pasted note made a
+  // 350-note score page take ~9 s).
+  maskCrop(ids, grow, paperOnly, st, x0, y0, cw, ch) {
+    const { w, h, labels, comps, bin } = this.m, sc = (this.scratch ||= new Uint8Array(w * h));
+    for (const id of ids) { const c = comps[id]; if (!c) continue; for (let y = c.y0; y <= c.y1; y++) for (let x = c.x0; x <= c.x1; x++) if (labels[y * w + x] === id) sc[y * w + x] = 1; }
+    if (st) this.stripLineStubs(sc, ids, st);
+    let m = new Uint8Array(cw * ch);
+    for (let y = 0; y < ch; y++) { const yy = y + y0; if (yy < 0 || yy >= h) continue; for (let x = 0; x < cw; x++) { const xx = x + x0; if (xx >= 0 && xx < w) m[y * cw + x] = sc[yy * w + xx]; } }
+    for (const id of ids) { const c = comps[id]; if (!c) continue; for (let y = c.y0; y <= c.y1; y++) sc.fill(0, y * w + c.x0, y * w + c.x1 + 1); }
+    for (let g = 0; g < grow; g++) {
+      const o = new Uint8Array(m);
+      for (let y = 1; y < ch - 1; y++) for (let x = 1; x < cw - 1; x++) {
+        const i = y * cw + x, gi = (y + y0) * w + x + x0;
+        if (!m[i] && (!paperOnly || !bin[gi]) && (m[i - 1] || m[i + 1] || m[i - cw] || m[i + cw])) o[i] = 1;
+      }
+      m = o;
+    }
+    return m;
+  }
+  cropCanvas(m, cw, ch) {
+    const c = canvas(cw, ch), ctx = c.getContext('2d'), id = ctx.createImageData(cw, ch);
+    for (let i = 0; i < cw * ch; i++) if (m[i]) id.data[i * 4 + 3] = 255;
+    ctx.putImageData(id, 0, 0);
+    return c;
+  }
   maskCanvas(mask, x0 = 0, y0 = 0, cw = this.m.w, ch = this.m.h) {
     const { w } = this.m, c = canvas(cw, ch), ctx = c.getContext('2d'), id = ctx.createImageData(cw, ch);
     for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) { const v = mask[(y + y0) * w + x + x0]; if (v) id.data[(y * cw + x) * 4 + 3] = 255; }
@@ -213,7 +239,7 @@ export class Renderer {
     this.samples = {};
     const take = (type, ids, box, ref, S) => {
       const name = ACC_GLYPH[type]; if (this.samples[name]) return;
-      const m = this.maskOf(ids, 1, null, true), mc = this.maskCanvas(m, box[0] - 1, box[1] - 1, box[2] - box[0] + 3, box[3] - box[1] + 3);
+      const cw = box[2] - box[0] + 3, ch = box[3] - box[1] + 3, mc = this.cropCanvas(this.maskCrop(ids, 1, true, null, box[0] - 1, box[1] - 1, cw, ch), cw, ch);
       this.samples[name] = { box, ref, ids, S, mask: mc };
     };
     for (const st of this.m.staves) {
@@ -406,7 +432,7 @@ export class Renderer {
     if (x1 < 0) return;
     x0 -= 1; y0 -= 1; x1 += 1; y1 += 1;
     const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
-    const mask = this.maskCanvas(this.maskOf(ids, 1, null, true, st), x0, y0, bw, bh);
+    const mask = this.cropCanvas(this.maskCrop(ids, 1, true, st, x0, y0, bw, bh), bw, bh);
     const tmp = canvas(bw * r, bh * r), t = tmp.getContext('2d');
     t.drawImage(this.src, x0 * r, y0 * r, bw * r, bh * r, 0, 0, bw * r, bh * r);
     t.globalCompositeOperation = 'destination-in'; t.imageSmoothingEnabled = true;

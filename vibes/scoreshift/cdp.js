@@ -2,6 +2,8 @@
 import { spawn } from 'child_process';
 import http from 'http';
 import path from 'path';
+import fs from 'fs';
+import os from 'os';
 
 export const CHROME = process.env.CHROME || path.join(process.env.HOME, '.cache/ms-playwright/chromium-1134/chrome-linux/chrome');
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -17,7 +19,9 @@ function connect(wsUrl) {
 
 // Launch headless Chromium and attach to its first page.
 export async function launch({ port = 9341, width = 1280, height = 900 } = {}) {
-  const chrome = spawn(CHROME, ['--headless=new', '--no-sandbox', '--disable-gpu', '--hide-scrollbars', `--window-size=${width},${height}`, `--remote-debugging-port=${port}`, 'about:blank'], { stdio: 'ignore' });
+  // fresh profile per launch: a shared one keeps service-worker caches (stale code) between runs
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'ss-chrome-'));
+  const chrome = spawn(CHROME, ['--headless=new', `--user-data-dir=${profile}`, '--no-sandbox', '--disable-gpu', '--hide-scrollbars', `--window-size=${width},${height}`, `--remote-debugging-port=${port}`, 'about:blank'], { stdio: 'ignore' });
   const list = await waitFor(() => getJson(`http://127.0.0.1:${port}/json`), 15000);
   const page = list.find((t) => t.type === 'page');
   const c = await connect(page.webSocketDebuggerUrl);
@@ -27,5 +31,5 @@ export async function launch({ port = 9341, width = 1280, height = 900 } = {}) {
     if (r.result.exceptionDetails) throw new Error(r.result.exceptionDetails.exception?.description || r.result.exceptionDetails.text);
     return r.result.result.value;
   };
-  return { ...c, evaluate, kill: () => { c.close(); chrome.kill('SIGKILL'); } };
+  return { ...c, evaluate, kill: () => { c.close(); chrome.kill('SIGKILL'); setTimeout(() => fs.rmSync(profile, { recursive: true, force: true }), 300); } };
 }

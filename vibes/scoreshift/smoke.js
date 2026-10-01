@@ -10,7 +10,7 @@ import { launch, sleep, waitFor } from './cdp.js';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const PORT = 8799;
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
+const MIME = { '.pdf': 'application/pdf', '.mjs': 'text/javascript', '.wasm': 'application/wasm', '.html': 'text/html', '.js': 'text/javascript', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
 const server = http.createServer((req, res) => {
   const u = decodeURIComponent(new URL(req.url, 'http://x').pathname);
   const f = path.join(DIR, u === '/' ? 'index.html' : u);
@@ -76,6 +76,29 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
       if (to === 'alto-sax') await shot('altosax');
       if (to === 'cello') await shot('cello');
     }
+    // PDF: title page is skipped, page 2 (minuet) opens, thumbnails, paging, whole-file export
+    await b.evaluate(`fetch('fixtures/parts.pdf').then(r=>r.blob()).then(bl=>__ss.load(new File([bl],'parts.pdf',{type:'application/pdf'}),'parts.pdf')).then(()=>1)`);
+    const pdf = await b.evaluate(`({page:__ss.S.pdf?.page,n:__ss.S.pdf?.n,staves:__ss.S.model?.staves.length,notes:__ss.S.model?.notes.length,keys:__ss.S.model?.staves.map(s=>s.key.fifths),status:document.getElementById('status').textContent,thumbs:document.querySelectorAll('#thumbs button').length})`);
+    check('PDF opens at the first page with music', pdf.n === 3 && pdf.page === 2, JSON.stringify(pdf).slice(0, 160));
+    check('PDF page recognised (minuet: 4 staves, G major)', pdf.staves === 4 && pdf.notes >= 90 && pdf.keys.every((k) => k === 1), `${pdf.notes} notes`);
+    await sleep(800);
+    const th = await b.evaluate(`document.querySelectorAll('#thumbs canvas').length`);
+    check('page thumbnails', pdf.thumbs === 3 && th === 3, `${th}/3`);
+    await shot('pdf');
+    await b.evaluate(`document.getElementById('nextPage').click();1`);
+    await waitFor(() => b.evaluate(`__ss.S.pdf.page===3 && __ss.S.model && __ss.S.model.staves.length===3`), 20000).catch(() => {});
+    const p3 = await b.evaluate(`({page:__ss.S.pdf.page,keys:__ss.S.model.staves.map(s=>s.key.fifths)})`);
+    check('next page: flats (B♭ major)', p3.page === 3 && p3.keys.every((k) => k === -2), JSON.stringify(p3));
+    await b.evaluate(`document.querySelector('#thumbs button[data-page="1"]').click();1`); await sleep(2500);
+    const p1 = await b.evaluate(`({page:__ss.S.pdf.page,model:!!__ss.S.model,status:document.getElementById('status').textContent})`);
+    check('title page shown as is', p1.page === 1 && !p1.model && /no staves/.test(p1.status), p1.status.slice(0, 80));
+    const pdfOut = await b.evaluate(`new Promise((res)=>{const a=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){HTMLAnchorElement.prototype.click=a;const name=this.download;
+      fetch(this.href).then(r=>r.arrayBuffer()).then(async buf=>{const {openPdf}=await import('./pdfsource.js');const d=await openPdf(new Blob([buf]));const pg=await d.getPage(2);const v=pg.getViewport({scale:1});res({name,size:buf.byteLength,pages:d.numPages,w:Math.round(v.width),h:Math.round(v.height)})})};
+      document.getElementById('exportPdf').click();})`);
+    check('transposed PDF export (3 Letter pages, re-readable)', pdfOut.pages === 3 && pdfOut.w === 612 && pdfOut.h === 792 && pdfOut.size > 100000, JSON.stringify(pdfOut));
+    await b.evaluate(`document.getElementById('sample').click();1`);
+    await waitFor(() => b.evaluate(`!__ss.S.pdf && __ss.S.model && __ss.S.model.notes.length > 90`), 20000).catch(async () => console.log(await b.evaluate(`JSON.stringify({pdf:!!__ss.S.pdf,m:__ss.S.model?.notes.length,st:document.getElementById("status").textContent,busy:document.getElementById("busy").style.display})`)));
+
     // export produces a PNG blob
     const exp = await b.evaluate(`new Promise((res)=>{const a=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){HTMLAnchorElement.prototype.click=a;fetch(this.href).then(r=>r.blob()).then(bl=>res({name:this.download,type:bl.type,size:bl.size}))};document.getElementById('export').click();})`);
     check('export PNG', exp.type === 'image/png' && exp.size > 50000, JSON.stringify(exp));
