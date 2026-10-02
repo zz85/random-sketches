@@ -21,7 +21,7 @@ function connect(wsUrl) {
 export async function launch({ port = 9341, width = 1280, height = 900 } = {}) {
   // fresh profile per launch: a shared one keeps service-worker caches (stale code) between runs
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'ss-chrome-'));
-  const chrome = spawn(CHROME, ['--headless=new', `--user-data-dir=${profile}`, '--no-sandbox', '--disable-gpu', '--hide-scrollbars', `--window-size=${width},${height}`, `--remote-debugging-port=${port}`, 'about:blank'], { stdio: 'ignore' });
+  const chrome = spawn(CHROME, ['--headless=new', `--user-data-dir=${profile}`, '--no-sandbox', '--disable-gpu', '--hide-scrollbars', '--autoplay-policy=no-user-gesture-required', `--window-size=${width},${height}`, `--remote-debugging-port=${port}`, 'about:blank'], { stdio: 'ignore' });
   const list = await waitFor(() => getJson(`http://127.0.0.1:${port}/json`), 15000);
   const page = list.find((t) => t.type === 'page');
   const c = await connect(page.webSocketDebuggerUrl);

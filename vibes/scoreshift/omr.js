@@ -5,6 +5,7 @@
 // the page keeps its own layout, so durations do not have to be understood to move notes.
 import * as IP from './imgproc.js';
 import { CLEFS, readStaff, nameOf, keySigPositions } from './theory.js';
+import { readRhythm } from './rhythm.js';
 
 export const TARGET = 16; // staff space (line to line) in normalized pixels
 const odd = (n) => (n | 1);
@@ -194,7 +195,13 @@ export function strokes(mask, minLen, gapMax = 0) {
 export function classifyAccidental(labels, w, c, S, t = 0.13 * S) {
   const cw = c.x1 - c.x0 + 1, ch = c.y1 - c.y0 + 1, W = cw / S, H = ch / S;
   if (W < 0.3 || W > 2.2 || H < 0.5 || H > 3.8) return null;
-  const mask = compMask(labels, w, c), st = strokes(mask, 1.1 * S, Math.round(0.15 * S + t)) // gaps: photo breaks + removed staff lines.filter((s) => s.x1 - s.x0 + 1 <= 0.35 * S + 1);
+  const narrow = (s) => s.x1 - s.x0 + 1 <= 0.35 * S + 1;
+  const mask = compMask(labels, w, c);
+  let st = strokes(mask, 1.1 * S, Math.round(0.15 * S + t)); // gaps: photo breaks + removed staff lines
+  // heavy fonts and scans: a flat's stem and its bowl's right side bridge into one wide
+  // "stroke"; without gap bridging the bowl's hole separates them again
+  let flatOnly = false;
+  if (st.length === 1 && !narrow(st[0])) { const g = strokes(mask, 1.1 * S, 0).filter(narrow); if (g.length) { st = g; flatOnly = true; } }
   const fill = c.n / (cw * ch);
   if (st.length === 0) {
     // double sharp: small square X, centre ink, edge midpoints empty
@@ -207,19 +214,20 @@ export function classifyAccidental(labels, w, c, S, t = 0.13 * S) {
   if (H < 1.6) return null;
   // ink right of the first stroke, top vs bottom half: flats are bottom-heavy (bowl)
   const right = (s) => {
-    let top = 0, bot = 0; const { m } = mask;
-    for (let y = 0; y < ch; y++) for (let x = s.x1 + 2; x < cw; x++) if (m[y * cw + x]) { if (y < ch * 0.55) top++; else bot++; }
-    return { top, bot };
+    let top = 0, bot = 0, cap = 0; const { m } = mask;
+    for (let y = 0; y < ch; y++) for (let x = s.x1 + 2; x < cw; x++) if (m[y * cw + x]) { if (y < ch * 0.55) top++; else bot++; if (y < ch * 0.3) cap++; }
+    return { top, bot, cap };
   };
   // a flat's bowl can read as a short second stroke: only strokes near full height count
   let stv = st;
   if (st.length >= 2) { const L0 = Math.max(...st.map((s) => s.bot - s.top)); stv = st.filter((s) => s.bot - s.top >= 0.6 * L0); }
   if (stv.length === 1) {
     const s = stv[0], r = right(s);
-    if (s.x0 <= 0.3 * cw && r.bot > 1.5 * r.top && W >= 0.45 && W <= 1.3 && H >= 1.8 && H <= 3.4 && s.top <= 0.15 * ch)
+    if (s.x0 <= 0.3 * cw && (r.bot > 1.5 * r.top || (r.cap <= 0.02 * cw * ch && r.bot > r.top)) && W >= 0.45 && W <= 1.3 && H >= 1.8 && H <= 3.4 && s.top <= 0.15 * ch)
       return { type: -1, ref: c.y1 - 0.45 * S };
     return null;
   }
+  if (flatOnly) return null;
   if (stv.length === 2) {
     const [a, b] = stv, la = a.bot - a.top, lb = b.bot - b.top;
     const ov = Math.min(a.bot, b.bot) - Math.max(a.top, b.top);
@@ -393,12 +401,12 @@ export function analyze(norm, opts = {}) {
   for (const hl of holes) {
     if (!hl) continue;
     const hw = hl.x1 - hl.x0 + 1, hh = hl.y1 - hl.y0 + 1;
-    if (hh > 1.05 * S0 || hw > 1.1 * S0) continue;
+    if (hh > 1.05 * S0 || hw > 1.3 * S0) continue; // (tilted holes of some fonts are wide)
     if (hl.n / (hw * hh) > 0.86 && !hl.split) continue; // rectangular pocket between stems and lines, not an oval
     const cx = Math.round((hl.x0 + hl.x1) / 2), cy = Math.round((hl.y0 + hl.y1) / 2);
     const st = staffAt(cx, cy); if (!st) continue;
     const S = spaceAt(st, cx);
-    if (st.clef.box && cx <= st.clef.box[2] + 0.2 * S) continue;
+    if (st.clef.box && cx <= st.clef.box[2] + 0.9 * S) continue; // (the curls of a C clef, the gap to the key)
     // a row inside the hole (the centre row may be a staff line through it)
     let ry = cy; if (black(cx, ry)) { for (let d = 1; d < hh; d++) { if (!black(cx, cy - d)) { ry = cy - d; break; } if (!black(cx, cy + d)) { ry = cy + d; break; } } }
     let lx = cx; while (lx > hl.x0 && !black(lx - 1, ry)) lx--;
@@ -509,6 +517,10 @@ export function analyze(norm, opts = {}) {
     if (ch > 1.6 * S && ch < 2.4 * S && (Math.abs(c.y0 - ya) < 0.35 * S || Math.abs(c.y1 - yb) < 0.35 * S) && c.x1 - c.x0 > 1.0 * S) return false;
     return true;
   });
+  // a "whole note" right in front of another head at its height is an accidental (a double
+  // sharp's hole, a natural's box)
+  notes = notes.filter((n) => n.kind !== 'whole' || !notes.some((o) => o !== n && o.st === n.st && Math.abs(o.p - n.p) <= 1 &&
+    o.box[0] - n.box[2] > -0.2 * S0 && o.box[0] - n.box[2] < 1.0 * S0));
   const headComps = new Set(notes.map((n) => n.comp));
 
   // ---- other symbols per staff ----
@@ -541,7 +553,9 @@ export function analyze(norm, opts = {}) {
     const S = spaceAt(st, c.cx), cw = c.x1 - c.x0 + 1, chh = c.y1 - c.y0 + 1;
     if (st.clef.box && c.x1 <= st.clef.box[2] + 0.2 * S) continue;
     const ya = lineY(st, 0, c.cx), yb = lineY(st, 4, c.cx);
-    if (cw <= 0.75 * S && c.y0 <= ya + 0.4 * S && c.y1 >= yb - 0.4 * S && c.n / chh <= Math.max(0.35 * S, 2.5 * t) && c.n / chh >= 0.6 * t &&
+    // (a stem cut off its hollow head by staff removal is not a barline)
+    const stemOf = notes.some((n) => n.stem && n.st === st && Math.abs(n.stem.x - c.cx) <= 0.4 * S && Math.min(n.y, n.stem.tip) <= c.y0 + 0.5 * S && Math.max(n.y, n.stem.tip) >= c.y1 - 1.0 * S);
+    if (!stemOf && cw <= 0.75 * S && c.y0 <= ya + 0.4 * S && c.y1 >= yb - 0.4 * S && c.n / chh <= Math.max(0.35 * S, 2.5 * t) && c.n / chh >= 0.6 * t &&
       (chh <= (yb - ya) + 1.2 * S || staves.some((o) => o !== st && (c.y1 >= lineY(o, 0, c.cx) || c.y0 <= lineY(o, 4, c.cx)) && Math.abs(lineY(o, 2, c.cx) - lineY(st, 2, c.cx)) < 20 * S))) { // thin; may span a whole system
       for (const o of staves) { // a system barline counts for every staff it crosses
         if (c.cx < o.x0 - S || c.cx > o.x1 + S) continue;
@@ -551,11 +565,48 @@ export function analyze(norm, opts = {}) {
     }
     const a = classifyAccidental(L, w, c, S, t);
     if (a) { accs.push({ st, c, ...a, p: Math.round(pOfY(st, a.ref, c.cx)) }); continue; }
-    if (cw >= 0.2 * S && cw <= 0.75 * S && chh >= 0.2 * S && chh <= 0.75 * S && c.n / (cw * chh) > 0.5) dots.push({ st, c });
+    if (cw >= 0.2 * S && cw <= 0.75 * S && chh >= 0.2 * S && chh <= 0.75 * S && c.n / (cw * chh) > 0.5 && cw / chh > 0.55 && cw / chh < 1.8) {
+      // a dot stands alone; pieces of a tie or slur cut up by staff-line removal have neighbours
+      // just across the removed line
+      const r = Math.ceil(t) + 2; let near = 0;
+      for (let y = Math.max(0, c.y0 - r); y <= Math.min(h - 1, c.y1 + r); y++) for (let x = Math.max(0, c.x0 - r); x <= Math.min(w - 1, c.x1 + r); x++) {
+        const l = L[y * w + x]; if (l && !c.ids.includes(l)) near++;
+      }
+      const onLine = [0, 1, 2, 3, 4].some((k) => { const yl = lineY(st, k, c.cx); return c.y0 - yl <= t + 2 && yl - c.y1 <= t + 2; });
+      if (near < 3 || !onLine) dots.push({ st, c });
+    }
+  }
+  // Barlines touched by a slur or a hairpin are part of a bigger component and fail the shape
+  // test above: find them as columns of ink covering the whole staff inside such components,
+  // thin, and not the stem of a note.
+  for (const st of staves) {
+    const S = spaceAt(st, (st.x0 + st.x1) / 2), x0 = Math.round((st.clef.box ? st.clef.box[2] : st.x0) + S);
+    let run = 0;
+    for (let x = x0; x <= st.x1 + 1; x++) {
+      const ya = Math.round(lineY(st, 0, x)), yb = Math.round(lineY(st, 4, x));
+      let miss = 0;
+      for (let y = ya + 1; miss <= 2 && y < yb; y++) if (!L[y * w + x]) miss++;
+      const full = x <= st.x1 && miss <= 2;
+      if (full) { run++; continue; }
+      if (run && run <= 0.45 * S) {
+        const xb = x - run, xc = (xb + x - 1) / 2;
+        let id = 0; for (let y = ya + 1; !id && y < yb; y++) id = L[y * w + Math.round(xc)];
+        const c = cc.comps[id];
+        const big = c && !headComps.has(id) && (c.x1 - c.x0 > 0.75 * S || c.y1 - c.y0 > (yb - ya) + 2.5 * S);
+        const stem = notes.some((n) => n.stem && Math.abs(n.stem.x - xc) <= 0.5 * S && n.st === st);
+        const near = st.bars.some((b) => Math.abs(b.x - xc) < 1.5 * S);
+        // nothing pokes out sideways along most of it (a slur crossing it touches it at one place)
+        let side = 0; for (let y = ya; y <= yb; y++) if (L[y * w + xb - 2] === id || L[y * w + x + 1] === id) side++;
+        if (big && !stem && !near && side < 0.35 * (yb - ya)) st.bars.push({ x: xc, x0: xb, x1: x - 1, ids: [], merged: true });
+      }
+      run = 0;
+    }
   }
   for (const st of staves) {
     st.bars.sort((a, b) => a.x - b.x);
-    st.bars = st.bars.filter((b, i, arr) => !(i > 0 && b.x - arr[i - 1].x < 1.5 * S0)); // double / final bar = one
+    // double / final bar = one, marked (a piece or section may end on a short bar)
+    st.bars = st.bars.filter((b, i, arr) => { if (i > 0 && b.x - arr[i - 1].x < 1.5 * S0) { arr[i - 1].double = true; arr[i - 1].ids = [...arr[i - 1].ids, ...b.ids]; return false; } return true; });
+    for (const b of st.bars) if (!b.double && b.x1 - b.x0 + 1 > 2.2 * t + 2) b.double = true; // a thick (final) bar
   }
 
   // key signature: accidentals right after the clef, same type, closely spaced
@@ -563,11 +614,13 @@ export function analyze(norm, opts = {}) {
     const S = spaceAt(st, st.x0 + 4 * S0);
     const firstNote = Math.min(...notes.filter((n) => n.st === st).map((n) => n.box[0]), st.x1);
     let x = st.clef.box ? st.clef.box[2] : st.x0 + 2 * S;
-    const mine = accs.filter((a) => a.st === st && a.c.x0 > x - 0.3 * S && a.c.x1 < firstNote && (a.type === 1 || a.type === -1)).sort((a, b) => a.c.x0 - b.c.x0);
+    const mine = accs.filter((a) => a.st === st && a.c.x0 > x - 0.3 * S && a.c.x1 < firstNote && (a.type === 1 || a.type === -1) && a.p >= -2 && a.p <= 10).sort((a, b) => a.c.x0 - b.c.x0);
     const key = [];
     for (const a of mine) {
       if (a.c.x0 - x > 2.0 * S || key.length >= 7) break;
       if (key.length && a.type !== key[0].type) break;
+      // glyphs of one signature are one size (a C or cut-C time signature can read as a sharp)
+      if (key.length && (a.c.x1 - a.c.x0) > 1.35 * (key[0].c.x1 - key[0].c.x0) + 1) break;
       // key signature glyphs are evenly spaced; a wider jump is the time signature or the music
       if (key.length >= 2) { const d = (key[key.length - 1].c.x0 - key[0].c.x0) / (key.length - 1); if (a.c.x0 - key[key.length - 1].c.x0 > 1.4 * d) break; }
       key.push(a); x = a.c.x1;
@@ -622,11 +675,34 @@ export function analyze(norm, opts = {}) {
     return n >= 2 && n >= 0.5 * tot ? k : 0;
   };
   const sysOf = (st) => staves.filter((o) => Math.abs(o.x0 - st.x0) < 2 * S0 && o.bars.some((b) => st.bars.some((q) => q.ids[0] === b.ids[0])));
-  const pageKey = plural(staves);
+  // A page can hold several pieces in different keys (audition sheets, études): a key that
+  // two or more staves read is real and is never voted away. A staff whose reading nobody
+  // shares takes the confirmed key of the same kind closest in count, then the nearest staff's.
+  const count = new Map(); for (const st of staves) if (st.key.detected) count.set(st.key.detected, (count.get(st.key.detected) || 0) + 1);
+  const confirmed = [...count].filter(([, n]) => n >= 2).map(([k]) => k);
+  const nearestKey = (st, ok) => {
+    for (let d = 1; d < staves.length; d++) for (const o of [staves[st.index + d], staves[st.index - d]]) if (o && ok(o.key.detected)) return o.key.detected;
+    return 0;
+  };
   if (opts.fifths == null) for (const st of staves) {
-    const sys = sysOf(st), k = (sys.length >= 3 && plural(sys)) || pageKey;
+    const sys = sysOf(st);
+    let k = sys.length >= 3 && plural(sys);
+    if (!k && st.key.detected && confirmed.includes(st.key.detected)) continue;
+    if (!k && st.key.detected) {
+      const same = confirmed.filter((c) => Math.sign(c) === Math.sign(st.key.detected));
+      const best = Math.min(...same.map((c) => Math.abs(Math.abs(c) - Math.abs(st.key.detected))));
+      const near = same.filter((c) => Math.abs(Math.abs(c) - Math.abs(st.key.detected)) === best);
+      k = near.length === 1 ? near[0] : near.length ? nearestKey(st, (v) => near.includes(v)) : 0;
+    }
+    if (!k) k = nearestKey(st, (v) => confirmed.includes(v)) || plural(staves);
     if (!k || st.key.detected === k) continue;
-    if (Math.sign(st.key.detected) === Math.sign(k)) { st.key.fifths = k; st.key.inferred = true; continue; }
+    if (Math.sign(st.key.detected) === Math.sign(k)) {
+      st.key.fifths = k; st.key.inferred = true;
+      // one glyph too many read: it is something else (a time signature), not part of the key
+      const n = Math.abs(k), K = st.key;
+      if (K.glyphs.length > n) { K.idsPer = K.idsPer.slice(0, n); K.glyphs = K.glyphs.slice(0, n); K.ids = K.idsPer.flat(); K.x1 = K.glyphs[n - 1].box[2]; }
+      continue;
+    }
     if (st.key.detected) continue;
     const S = spaceAt(st, st.key.x0), first = Math.min(st.x1, ...notes.filter((q) => q.st === st).map((q) => q.box[0]));
     const ya = lineY(st, 0, st.key.x0), yb = lineY(st, 4, st.key.x0);
@@ -687,6 +763,7 @@ export function analyze(norm, opts = {}) {
     st.clef.ids = b ? cc.comps.filter((c) => c && c.cx >= b[0] && c.cx <= b[2] && c.cy >= b[1] && c.cy <= b[3] &&
       c.x1 - c.x0 <= b[2] - b[0] + 4 && c.y1 - c.y0 <= b[3] - b[1] + 4 && !headComps.has(c.id)).map((c) => c.id) : [];
   }
+  readRhythm({ w, h, S0, t, staves, notes, L, comps: cc.comps, accs, dots, headComps });
   return { w, h, space: S0, thick: t, staves, labels: L, comps: cc.comps, ledgerPx: Int32Array.from(ledgerPx), notes, attach, bin: bin.data, A: norm.A, scale: norm.scale, angle: norm.angle };
 }
 

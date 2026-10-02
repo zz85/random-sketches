@@ -9,7 +9,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { launch } from '../cdp.js';
 import { decodeGray, encodeGray } from '../png.js';
-import { TUNES, FONTS, GLYPHS, GLYPH_ABC } from './tunes.js';
+import { TUNES, FONTS, GLYPHS, GLYPH_ABC, GLYPH_TUNES, toMEI } from './tunes.js';
 import { keyAlter, natMidi } from '../theory.js';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -34,7 +34,7 @@ async function render(svg) {
 const glyphs = {};
 for (const font of FONTS) {
   glyphs[font] = {};
-  for (const abc of GLYPH_ABC) {
+  for (const abc of [...GLYPH_ABC, ...GLYPH_TUNES.map(toMEI)]) {
   tk = new VerovioToolkit(VM);
   tk.setOptions({ font, scale: 100, pageWidth: 2100, adjustPageHeight: true, header: 'none', footer: 'none' });
   tk.loadData(abc);
@@ -54,12 +54,12 @@ console.log('glyphs.js written');
 
 // ---- fixtures ----
 fs.mkdirSync(path.join(ROOT, 'fixtures'), { recursive: true });
-const SIZES = [16, 20, 24, 18, 22, 14, 26];
+const SIZES = [16, 20, 24, 18, 22, 14, 26, 18, 20, 17];
 for (let i = 0; i < TUNES.length; i++) {
   const t = TUNES[i], font = FONTS[i % FONTS.length], S = SIZES[i];
   tk = new VerovioToolkit(VM); // fresh: the ABC importer leaks key state between loads
   tk.setOptions({ font, scale: Math.round((S / 18) * 100), pageWidth: 1900, pageHeight: 6000, adjustPageHeight: true, header: 'none', footer: 'none', pageMarginLeft: 60, pageMarginRight: 60, pageMarginTop: 60, pageMarginBottom: 60, breaks: 'auto', spacingSystem: 10 });
-  tk.loadData(t.abc);
+  if (!tk.loadData(t.src ? toMEI(t) : t.abc)) throw new Error('Verovio could not load ' + t.name);
   tk.renderToMIDI();
   const svg = tk.renderToSVG(1);
   const size = await render(svg);
@@ -75,7 +75,13 @@ for (let i = 0; i < TUNES.length; i++) {
       return {id:n.id,sys:systems.indexOf(n.closest('g.system')),bar:[...document.querySelectorAll('g.measure')].indexOf(n.closest('g.measure')),head:R(n.querySelector('.notehead')),
         accid:a?a.getAttribute('xlink:href').slice(1,5):null,accidBox:a?R(a):null,
         glyph:n.querySelector('.notehead use').getAttribute('xlink:href').slice(1,5)}});
-    return {staves,notes};})()`);
+    // rhythm: every event (note, chord, rest, measure rest) of every measure in reading order
+    const measures=[...document.querySelectorAll('g.measure')].map(m=>({sys:systems.indexOf(m.closest('g.system')),
+      events:[...m.querySelectorAll('g.note, g.chord, g.rest, g.mRest')].filter(e=>!(e.matches('g.note')&&e.parentElement.closest('g.chord'))).map(e=>({
+        id:e.id, kind:e.classList[0], notes:e.matches('g.chord')?[...e.querySelectorAll('g.note')].map(q=>q.id):e.matches('g.note')?[e.id]:[],
+        tuplet:e.closest('g.tuplet')?.id||null, beam:e.closest('g.beam')?.id||null, box:e.matches('g.rest, g.mRest')?R(e):null}))}));
+    const ties=[...document.querySelectorAll('g.tie')].map(t=>t.id);
+    return {staves,notes,measures,ties};})()`);
   const shot = await b.send('Page.captureScreenshot', { format: 'png', clip: { x: 0, y: 0, width: size[0], height: size[1], scale: 1 } });
   const img = decodeGray(Buffer.from(shot.result.data, 'base64'));
   // crop to content + margin to keep the files small
@@ -94,6 +100,23 @@ for (let i = 0; i < TUNES.length; i++) {
       pname: a.pname, oct: +a.oct, midi, accid: n.accid ? ACC[n.accid] : null, accidBox: n.accidBox, type: { E0A2: 'whole', E0A3: 'half', E0A4: 'black' }[n.glyph] };
   });
   const truth = { tune: t.name, font, space: S, clef: t.clef, fifths: t.fifths, w: out.w, h: out.h, staves: geo.staves, notes };
+  // rhythm truth: per measure the events in order with written value (dur 1 2 4 8 16 32,
+  // dots), tuplet ratio and sounding length in ticks (96 per quarter); notes refer to events
+  const meter = t.meter ? null : (t.abc.match(/^M:(.*)$/m) || [])[1].trim();
+  truth.meter = t.meter || (meter === 'C' ? [4, 4] : meter === 'C|' ? [2, 2] : meter.split('/').map(Number));
+  const tieStarts = new Set(geo.ties.map((id) => tk.getElementAttr(id).startid?.replace('#', '')));
+  const noteIdx = new Map(geo.notes.map((n, i) => [n.id, i]));
+  truth.measures = geo.measures.map((m) => ({ sys: m.sys, events: m.events.map((e) => {
+    const a = tk.getElementAttr(e.id), dur = e.kind === 'mRest' ? 1 : +a.dur, dots = +(a.dots || 0);
+    const tup = e.tuplet ? tk.getElementAttr(e.tuplet) : null, ratio = tup ? [+tup.num, +tup.numbase] : null;
+    let tk0 = (4 / dur) * 96, add = tk0; for (let k = 0; k < dots; k++) { add /= 2; tk0 += add; }
+    if (ratio) tk0 = (tk0 * ratio[1]) / ratio[0];
+    return { kind: e.kind === 'chord' ? 'note' : e.kind, dur, dots, tuplet: ratio, ticks: e.kind === 'mRest' ? null : tk0, notes: e.notes.map((id) => noteIdx.get(id)),
+      tie: e.notes.some((id) => tieStarts.has(id)), beam: !!e.beam, box: e.box };
+  }) }));
+  const cap = (truth.meter[0] * 4 / truth.meter[1]) * 96;
+  truth.measures.forEach((m, mi) => { if (mi === 0 && m.events.reduce((s, e) => s + (e.ticks ?? cap), 0) < cap) m.pickup = true; });
+  truth.measures.forEach((m, mi) => m.events.forEach((e, ei) => e.notes.forEach((k) => Object.assign(notes[k], { ev: [mi, ei], dur: e.dur, dots: e.dots, tuplet: e.tuplet }))));
   fs.writeFileSync(path.join(ROOT, 'fixtures', t.name + '.png'), encodeGray(out));
   fs.writeFileSync(path.join(ROOT, 'fixtures', t.name + '.json'), JSON.stringify(truth));
   console.log(t.name, font, `S=${S}`, `${out.w}x${out.h}`, geo.staves.length, 'staves', notes.length, 'notes');

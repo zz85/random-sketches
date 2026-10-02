@@ -1,0 +1,282 @@
+// Rhythm symbols on the staff-removed page (pixel side, runs inside analyze in the worker):
+//  - beams and flags on every stem -> the written value of each chord
+//  - rests, time signatures and tuplet numbers, by template matching against the SMuFL glyphs
+//    of five engraving fonts (glyphs.js), rasterized at the normalized staff space
+//  - ties (arcs joining two heads at the same position) and grace notes (small heads)
+// Results are annotations on the analysis model: note.dur/beams/flags/grace/tie, st.rests,
+// st.times, st.tuplets. Measures and bar-fill repair are built from these in score.js.
+import { GLYPHS } from './glyphs.js';
+import { rasterGlyph, descriptor, shapeDistance } from './raster.js';
+import { lineY, yOfP, pOfY, spaceAt, TARGET } from './omr.js';
+
+const CLASSES = {
+  rest: ['restWhole', 'restQuarter', 'rest8th', 'rest16th', 'rest32nd'],
+  digit: ['timeSig0', 'timeSig1', 'timeSig2', 'timeSig3', 'timeSig4', 'timeSig5', 'timeSig6', 'timeSig7', 'timeSig8', 'timeSig9'],
+  meterSym: ['timeSigCommon', 'timeSigCutCommon'],
+  tuplet: ['tuplet3', 'tuplet5', 'tuplet6'],
+};
+let TEMPLATES = null;
+export function templates() {
+  if (TEMPLATES) return TEMPLATES;
+  TEMPLATES = [];
+  for (const font of Object.keys(GLYPHS)) for (const [cls, names] of Object.entries(CLASSES)) for (const name of names) {
+    const g = GLYPHS[font][name]; if (!g) continue;
+    const r = rasterGlyph(g.d, TARGET), dsc = descriptor(r.m, r.w, r.h);
+    if (dsc) TEMPLATES.push({ font, cls, name, dsc, hS: dsc.bh / TARGET, wS: dsc.bw / TARGET });
+  }
+  return TEMPLATES;
+}
+
+// best template of a class family for a component mask: { name, dist, cls }
+function match(mask, cw, ch, families, S) {
+  const d = descriptor(mask, cw, ch); if (!d) return null;
+  let best = null; const all = {};
+  for (const T of templates()) {
+    if (!families.includes(T.cls)) continue;
+    // size matters within a family (a 16th rest is taller than an 8th); across fonts it varies
+    const dist = shapeDistance(d, T.dsc) + 0.25 * Math.abs(Math.log(d.bh / S / T.hS));
+    if (!(T.name in all) || dist < all[T.name]) all[T.name] = dist;
+    if (!best || dist < best.dist) best = { name: T.name, cls: T.cls, dist };
+  }
+  if (best) best.all = all; // best distance per glyph name
+  return best;
+}
+
+// Meters that actually occur, for choosing between digit readings of similar distance
+const COMMON_METERS = new Set(['2/2', '3/2', '4/2', '2/4', '3/4', '4/4', '5/4', '6/4', '3/8', '6/8', '9/8', '12/8', '5/8', '7/8', '2/8', '4/8', '6/16', '9/16', '12/16', '7/4', '1/4']);
+function readMeter(top, bot) {
+  if (!top.length || !bot.length || top.length > 2 || bot.length > 2 || [...top, ...bot].some((d) => !d)) return null;
+  const opts = (ds) => { // candidate numbers with their worst digit distance
+    let out = [['', 0]];
+    for (const d of ds) { const nx = []; for (const [s, w] of out) for (let v = 0; v <= 9; v++) { const dist = d.all['timeSig' + v]; if (dist != null && dist < d.dist + 0.12) nx.push([s + v, Math.max(w, dist)]); } out = nx; }
+    return out.filter(([s]) => s[0] !== '0');
+  };
+  let best = null;
+  for (const [b, db] of opts(top)) for (const [u, du] of opts(bot)) {
+    if (![1, 2, 4, 8, 16, 32].includes(+u)) continue;
+    const dist = Math.max(db, du), score = dist + (COMMON_METERS.has(b + '/' + u) ? 0 : 0.1);
+    if (!best || score < best.score) best = { beats: +b, unit: +u, dist, score };
+  }
+  return best && best.dist < 0.5 ? { beats: best.beats, unit: best.unit, dist: best.dist } : null;
+}
+
+const REST_DUR = { restWhole: 1, restQuarter: 4, rest8th: 8, rest16th: 16, rest32nd: 32 };
+const DIGIT = (name) => +name.slice(-1);
+
+export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, headComps }) {
+  const ink = (x, y) => x >= 0 && y >= 0 && x < w && y < h && L[y * w + x] > 0;
+  // ---------------------------------------------------------------- stems: beams and flags
+  // vertical ink runs in column x between y0 and y1 (either order), as [start, len] from y0
+  const runs = (x, y0, y1) => {
+    const dir = y1 >= y0 ? 1 : -1, out = []; let s = -1;
+    for (let y = Math.round(y0), k = 0; dir > 0 ? y <= y1 : y >= y1; y += dir, k++) {
+      if (ink(x, y)) { if (s < 0) s = k; } else if (s >= 0) { out.push([s, k - s]); s = -1; }
+    }
+    if (s >= 0) out.push([s, Math.round(Math.abs(y1 - y0)) + 1 - s]);
+    return out;
+  };
+  // head widths per staff: grace notes are clearly smaller than the staff's typical head
+  for (const st of staves) {
+    const ws = notes.filter((n) => n.st === st && n.kind === 'black').map((n) => n.box[2] - n.box[0]).sort((a, b) => a - b);
+    st.headW = ws.length ? ws[ws.length >> 1] : 1.2 * S0;
+  }
+  const chords = new Map();
+  for (const n of notes) { const k = n.st.index + ':' + n.chord; if (!chords.has(k)) chords.set(k, []); chords.get(k).push(n); }
+  for (const ch of chords.values()) {
+    const st = ch[0].st, S = spaceAt(st, ch[0].x);
+    const withStem = ch.filter((n) => n.stem);
+    const grace = ch.every((n) => n.box[2] - n.box[0] < 0.8 * st.headW) && withStem.length > 0 && Math.max(...withStem.map((n) => n.stem.len)) < 3.0 * S;
+    let dur, beams = 0, flags = 0, beamed = false;
+    if (!withStem.length) dur = 1;
+    else if (ch.every((n) => n.kind === 'half')) dur = 2;
+    else {
+      const dir = withStem[0].stem.dir, sx = withStem[0].stem.x;
+      const tip = dir < 0 ? Math.min(...withStem.map((n) => n.stem.tip)) : Math.max(...withStem.map((n) => n.stem.tip));
+      const near = Math.min(...ch.map((n) => Math.abs(n.y - tip))); // head closest to the tip
+      // scan from just beyond the tip toward the heads, stopping a space short of them
+      const a = tip + dir * 0.25 * S, len = Math.max(0, near - 1.0 * S + 0.25 * S), b = a - dir * len;
+      const k = (r) => Math.max(1, Math.round((r + 0.25 * S) / (0.75 * S)));
+      const side = (sd) => {
+        const cols = [0.6, 1.1, 1.6].map((o) => runs(Math.round(sx + sd * o * S), a, b).filter((r) => r[1] >= 0.3 * S));
+        const isBeam = cols.every((c) => c.length && c[0][0] <= 1.4 * S);
+        // beams stack from the stem end, a quarter space apart: a run further off (a slur
+        // passing over the beam) ends the stack
+        let count = 0, end = -Infinity;
+        for (const r of cols[0]) { if (r[0] > 3.2 * S || (count && r[0] - end > 0.45 * S)) break; if (r[1] < 0.36 * S) continue; count += k(r[1]); end = r[0] + r[1]; }
+        return { isBeam, count };
+      };
+      const L_ = side(-1), R_ = side(1);
+      if (L_.isBeam || R_.isBeam) { beamed = true; beams = Math.max(L_.isBeam ? L_.count : 0, R_.isBeam ? R_.count : 0); }
+      else { // flags hang on the right of the stem, one crossing each in a column beside it
+        flags = Math.max(...[0.55, 0.75, 0.95].map((o) => runs(Math.round(sx + o * S), a, b).filter((r) => r[1] >= 0.2 * S && r[0] <= 2.2 * S).length));
+      }
+      dur = 4 * 2 ** Math.min(3, beams + flags);
+    }
+    const nd = Math.min(2, Math.max(0, ...ch.map((n) => (n.dots || []).length)));
+    for (const n of ch) Object.assign(n, { dur, dots: n.dots, ndots: nd, beams, flags, beamed, grace });
+  }
+
+  // ---------------------------------------------------------------- free symbols
+  const used = new Set(headComps);
+  for (const st of staves) { st.key.ids.forEach((i) => used.add(i)); st.bars.forEach((b) => b.ids.forEach((i) => used.add(i))); (st.clef.ids || []).forEach((i) => used.add(i)); }
+  // accidentals that belong to a note (an unattached "flat" is often an 8th rest)
+  for (const n of notes) n.accid?.ids.forEach((i) => used.add(i));
+  for (const n of notes) n.dots?.forEach((d) => d.ids.forEach((i) => used.add(i)));
+  const staffOf = (c) => staves.find((st) => c.cx >= st.x0 - S0 && c.cx <= st.x1 + S0 && c.cy >= st.band[0] && c.cy < st.band[1]);
+  // mask of a component or a group (c.ids); rows a removed staff line cut out of a symbol are
+  // filled back where there is ink just above and just below them
+  const maskOf = (c) => {
+    const cw = c.x1 - c.x0 + 1, ch = c.y1 - c.y0 + 1, m = new Uint8Array(cw * ch), ids = c.ids || [c.id];
+    for (let y = c.y0; y <= c.y1; y++) for (let x = c.x0; x <= c.x1; x++) if (ids.includes(L[y * w + x])) m[(y - c.y0) * cw + x - c.x0] = 1;
+    if (ids.length > 1) {
+      const gap = Math.ceil(t) + 3;
+      for (let x = 0; x < cw; x++) for (let y = 1; y < ch; y++) {
+        if (m[y * cw + x] || !m[(y - 1) * cw + x]) continue;
+        let e = y; while (e < ch && !m[e * cw + x] && e - y < gap) e++;
+        if (e < ch && m[e * cw + x]) for (let k = y; k < e; k++) m[k * cw + x] = 1;
+      }
+    }
+    return { m, cw, ch };
+  };
+  for (const st of staves) { st.rests = []; st.times = []; st.tuplets = []; }
+  readTimes();
+  const arcs = [];
+  // Time signatures: right after the key signature, or right after a barline. The two digits
+  // touch the middle line, so staff removal fuses them (and can split one): read the ink of
+  // the region as a top half and a bottom half, each a number of column-separated digits.
+  // A second pass at the start of a staff lets the digits take components already read as
+  // noteheads (a 4's closed triangle passes for a filled head); those notes are then dropped.
+  function readTimes() {
+    const fixed = new Set(); // key signatures, barlines, clefs: never part of a time signature
+    for (const st of staves) { st.key.ids.forEach((i) => fixed.add(i)); st.bars.forEach((b) => b.ids.forEach((i) => fixed.add(i))); (st.clef.ids || []).forEach((i) => fixed.add(i)); }
+    for (const st of staves) {
+      const S = spaceAt(st, st.x0), anchors = [st.key.x1 + 1, ...st.bars.map((b) => b.x1 + 1)];
+      for (const [ai, ax] of anchors.entries()) for (const heads of ai === 0 ? [false, true] : [false]) {
+        if (heads && st.times.length) continue;
+        const firstNote = heads ? st.x1 : Math.min(st.x1, ...st.notes.filter((n) => n.box[0] > ax).map((n) => n.box[0] - 0.2 * S));
+        const xl = ax, xr = Math.min(firstNote, ax + 4.5 * S);
+        const yt = lineY(st, 0, ax), yb = lineY(st, 4, ax), ym = lineY(st, 2, ax);
+        const cl = comps.filter((c) => c && (!used.has(c.id) || (heads && !fixed.has(c.id))) && c.x0 >= xl - 0.2 * S && c.x0 < xr && c.x1 < xr + 2 * S && c.y1 > yt - 0.6 * S && c.y0 < yb + 0.6 * S && c.y1 - c.y0 < 7.5 * S);
+        if (!cl.length) continue;
+        // keep the run of glyphs starting at the anchor (no wide gaps)
+        cl.sort((a, b) => a.x0 - b.x0);
+        const grp = []; let gx = xl;
+        for (const c of cl) { if (c.x0 - gx > 1.2 * S) break; grp.push(c); gx = Math.max(gx, c.x1); }
+        if (!grp.length) continue;
+        const X0 = Math.min(...grp.map((c) => c.x0)), X1 = Math.max(...grp.map((c) => c.x1)), Y0 = Math.min(...grp.map((c) => c.y0)), Y1 = Math.max(...grp.map((c) => c.y1));
+        if (X1 - X0 > 3.6 * S || Y1 - Y0 < 1.5 * S) continue;
+        const ids = new Set(grp.map((c) => c.id));
+        const half = (ya, yz) => { // one number in rows [ya, yz): one digit, or two side by side
+          ya = Math.round(ya); yz = Math.round(yz);
+          const cw = X1 - X0 + 1, ch = Math.max(1, yz - ya), m = new Uint8Array(cw * ch), colInk = new Uint16Array(cw);
+          for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) { const yy = ya + y; if (yy >= 0 && yy < h && ids.has(L[yy * w + X0 + x])) { m[y * cw + x] = 1; colInk[x]++; } }
+          const cut = (s0, s1) => { const dw = s1 - s0, dm = new Uint8Array(dw * ch); for (let y = 0; y < ch; y++) for (let k = 0; k < dw; k++) dm[y * dw + k] = m[y * cw + s0 + k]; return match(dm, dw, ch, ['digit'], S); };
+          const pieces = []; let x = 0;
+          while (x < cw) { while (x < cw && colInk[x] === 0) x++; if (x >= cw) break; const s0 = x; while (x < cw && colInk[x] > 0) x++; pieces.push([s0, x]); }
+          if (!pieces.length) return [];
+          const one = [cut(pieces[0][0], pieces[pieces.length - 1][1])];
+          // two digits: split at the widest gap, both halves digit-sized
+          let two = null;
+          if (pieces.length >= 2) {
+            let g = 1; for (let k = 2; k < pieces.length; k++) if (pieces[k][0] - pieces[k - 1][1] > pieces[g][0] - pieces[g - 1][1]) g = k;
+            const a = [pieces[0][0], pieces[g - 1][1]], b = [pieces[g][0], pieces[pieces.length - 1][1]];
+            if (a[1] - a[0] >= 0.45 * S && b[1] - b[0] >= 0.45 * S) two = [cut(...a), cut(...b)];
+          }
+          const worst = (ds) => Math.max(...ds.map((d) => (d ? d.dist : 9)));
+          return two && worst(two) < worst(one) ? two : one;
+        };
+        const top = half(Math.min(Y0, yt - 0.3 * S), ym), bot = half(ym, Math.max(Y1, yb + 0.3 * S) + 1);
+        let tsig;
+        tsig = readMeter(top, bot);
+        if (tsig && ai > 0 && tsig.dist > 0.42) tsig = null; // a change mid-staff must read cleanly
+        if (!tsig && Y1 - Y0 > 1.6 * S && Y1 - Y0 < 2.7 * S && X1 - X0 > 1.0 * S && X1 - X0 < 2.4 * S && Math.abs((Y0 + Y1) / 2 - ym) < 0.6 * S) { // C, cut C
+          const cw = X1 - X0 + 1, ch = Y1 - Y0 + 1, m = new Uint8Array(cw * ch);
+          for (let y = Y0; y <= Y1; y++) for (let x = X0; x <= X1; x++) if (ids.has(L[y * w + x])) m[(y - Y0) * cw + x - X0] = 1;
+          const g = match(m, cw, ch, ['meterSym', 'digit', 'rest'], S);
+          if (g && g.cls === 'meterSym' && g.dist < (ai ? 0.3 : 0.4)) tsig = g.name === 'timeSigCommon' ? { beats: 4, unit: 4, sym: 'common', dist: g.dist } : { beats: 2, unit: 2, sym: 'cut', dist: g.dist };
+        }
+        if (!tsig) continue;
+        if (heads && tsig.dist > 0.36) continue;
+        // the stroke of a cut C passes for a barline
+        if (tsig.sym === 'common') { const k = st.bars.findIndex((b) => Math.abs(b.x - (X0 + X1) / 2) < 0.3 * (X1 - X0)); if (k >= 0) { tsig = { beats: 2, unit: 2, sym: 'cut' }; grp.push(...st.bars[k].ids.map((i) => comps[i])); st.bars.splice(k, 1); } }
+        for (const c of grp) ids.add(c.id);
+        st.times.push({ x: (X0 + X1) / 2, x0: X0, x1: X1, ...tsig, ids: [...ids] });
+        for (const i of ids) used.add(i);
+        // accidentals in it are gone with it, notes are dropped
+        for (let k = accs.length - 1; k >= 0; k--) if (accs[k].c.ids.some((i) => ids.has(i))) accs.splice(k, 1);
+        if (heads) for (let k = notes.length - 1; k >= 0; k--) if (ids.has(notes[k].comp)) { st.notes.splice(st.notes.indexOf(notes[k]), 1); headComps.delete(notes[k].comp); notes.splice(k, 1); }
+      }
+    }
+  }
+  // pieces of one symbol split by staff-line removal: overlapping columns, a line-thick gap
+  // between them at a staff line
+  const free = comps.filter((c) => c && !used.has(c.id) && c.n >= 3).sort((a, b) => a.y0 - b.y0);
+  const parent = new Map(free.map((c) => [c.id, c]));
+  const root = (c) => { while (parent.get(c.id) !== c) c = parent.get(c.id); return c; };
+  for (let i = 0; i < free.length; i++) for (let j = i + 1; j < free.length; j++) {
+    const a = free[i], b = free[j];
+    if (b.y0 - a.y1 > Math.ceil(t) + 3) continue;
+    if (b.y0 < a.y1 - 2 || Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0) < 0.25 * Math.min(a.x1 - a.x0 + 1, b.x1 - b.x0 + 1)) continue;
+    const st = staffOf(b); if (!st) continue;
+    const yg = (a.y1 + b.y0) / 2;
+    if (b.y0 - a.y1 > 1 && ![0, 1, 2, 3, 4].some((k) => Math.abs(lineY(st, k, (b.x0 + b.x1) / 2) - yg) <= t + 1)) continue; // (or touching corners)
+    const ra = root(a), rb = root(b); if (ra !== rb) parent.set(rb.id, ra);
+  }
+  const groups = new Map();
+  for (const c of free) { const r = root(c); if (!groups.has(r.id)) groups.set(r.id, []); groups.get(r.id).push(c); }
+  const syms = [...groups.values()].map((cs) => cs.length === 1 ? cs[0] : {
+    id: cs[0].id, ids: cs.map((c) => c.id), x0: Math.min(...cs.map((c) => c.x0)), y0: Math.min(...cs.map((c) => c.y0)), x1: Math.max(...cs.map((c) => c.x1)), y1: Math.max(...cs.map((c) => c.y1)),
+    n: cs.reduce((s, c) => s + c.n, 0), cx: cs.reduce((s, c) => s + c.cx * c.n, 0) / cs.reduce((s, c) => s + c.n, 0), cy: cs.reduce((s, c) => s + c.cy * c.n, 0) / cs.reduce((s, c) => s + c.n, 0) });
+  for (const c of syms) {
+    if (!c || used.has(c.id)) continue;
+    const st = staffOf(c); if (!st) continue;
+    const S = spaceAt(st, c.cx), cw = c.x1 - c.x0 + 1, ch = c.y1 - c.y0 + 1, W = cw / S, H = ch / S;
+    const yt = lineY(st, 0, c.cx), yb = lineY(st, 4, c.cx), fill = c.n / (cw * ch);
+    if (st.clef.box && c.x1 < st.clef.box[2]) continue;
+    const inside = c.cy > yt - 0.5 * S && c.cy < yb + 0.5 * S;
+    // arcs (ties and slurs): wide, flat, thin
+    if (W >= 0.9 && H <= Math.max(1.4, 0.3 * W) && fill < 0.5 && c.n / cw < 0.45 * S) { arcs.push({ st, c }); continue; }
+    // whole / half rests: a solid slab hanging from the 4th line or sitting on the middle one
+    if (inside && W >= 0.8 && W <= 1.9 && H >= 0.3 && H <= 0.8 && fill > 0.88 && W / H >= 1.6) {
+      const y1l = lineY(st, 1, c.cx), y2l = lineY(st, 2, c.cx);
+      const whole = Math.abs(c.y0 - y1l) < 0.3 * S, half = Math.abs(c.y1 - y2l) < 0.3 * S;
+      if (whole !== half) st.rests.push({ x: c.cx, y: c.cy, dur: whole ? 1 : 2, box: [c.x0, c.y0, c.x1, c.y1], ids: c.ids || [c.id] });
+      continue;
+    }
+    if (W < 0.35 || W > 2.4 || H < 0.7 || H > 4.8) continue;
+    const { m } = maskOf(c);
+    // rests
+    if (inside && H >= 1.2 && H <= 4.6 && W <= 1.7) {
+      const g = match(m, cw, ch, ['rest'], S);
+      if (g && g.dist < 0.36 && g.name !== 'restWhole') { st.rests.push({ x: c.cx, y: c.cy, dur: REST_DUR[g.name], box: [c.x0, c.y0, c.x1, c.y1], ids: c.ids || [c.id], dist: g.dist }); continue; }
+    }
+    // tuplet numbers: small digits outside (or at the edge of) the staff
+    if (H >= 0.7 && H <= 1.9 && W <= 1.5 && (c.y1 < yt + 0.6 * S || c.y0 > yb - 0.6 * S)) {
+      const g = match(m, cw, ch, ['tuplet', 'digit'], S);
+      if (g && g.dist < 0.36) { const v = DIGIT(g.name); if (v === 3 || v === 5 || v === 6) st.tuplets.push({ x: c.cx, y: c.cy, n: v, box: [c.x0, c.y0, c.x1, c.y1], ids: c.ids || [c.id], dist: g.dist }); }
+    }
+  }
+  // dotted rests: an augmentation dot right of a rest
+  for (const st of staves) for (const r of st.rests) {
+    const S = spaceAt(st, r.x);
+    r.dots = dots.filter((d) => d.st === st && !used.has(d.c.ids[0]) && d.c.cx > r.box[2] && d.c.cx - r.box[2] < 1.2 * S && d.c.cy > r.box[1] - 0.3 * S && d.c.cy < r.box[3]).length > 0 ? 1 : 0;
+  }
+  // ties: an arc from just right of one head to just left of the next head at the same position
+  // (on the next chord of the staff). An arc running off the end of the staff ties over the
+  // system break to the same note at the start of the next one.
+  for (const n of notes) n.tie = false;
+  for (const { st, c } of arcs) {
+    const S = spaceAt(st, c.cx);
+    const col = (x) => { for (let y = c.y0; y <= c.y1; y++) if (L[y * w + x] === c.id) return y; return c.cy; };
+    const yl = col(c.x0), yr = col(c.x1);
+    const ns = st.notes;
+    for (const a of ns) {
+      if (Math.abs(c.x0 - a.box[2]) > 1.2 * S && Math.abs(c.x0 - a.x) > 0.9 * S) continue;
+      if (Math.abs(yl - a.y) > 1.3 * S) continue;
+      const next = ns.filter((b) => b.chord === a.chord + 1);
+      const b = next.find((q) => q.p === a.p && Math.abs(c.x1 - q.box[0]) < 1.4 * S && Math.abs(yr - q.y) < 1.3 * S);
+      if (b) { a.tie = true; a.tieIds = [c.id]; break; }
+      if (!next.length && c.x1 > st.x1 - 1.8 * S) { a.tie = true; a.tieIds = [c.id]; break; }
+    }
+  }
+}

@@ -1,14 +1,17 @@
 // ScoreShift UI: load a photo, recognise in a worker, show original / interpretation /
 // transposed page, let the user correct recognition, export.
-import { INSTRUMENTS, keyName, CLEFS } from './theory.js';
+import { INSTRUMENTS, keyName, CLEFS, instrument, midiOf } from './theory.js';
+import { buildScore, evTicks } from './score.js';
+import { toMusicXML, toMidi } from './export.js';
+import { Player } from './player.js';
 import { interpret, yOfP, lineY, spaceAt } from './omr.js';
 import { Renderer, plan, describe, drawOverlay } from './render.js';
 
 const $ = (id) => document.getElementById(id);
 const cv = $('cv'), ov = $('ov'), ctx = cv.getContext('2d'), octx = ov.getContext('2d');
 const store = JSON.parse(localStorage.getItem('scoreshift') || '{}');
-const S = { from: store.from || 'C', to: store.to || 'Bb-clarinet', octave: 'auto', clef: store.clef || 'auto', view: 'transposed', labels: !!store.labels, zoom: 1, model: null, rend: null, name: 'score', sel: null };
-const save = () => localStorage.setItem('scoreshift', JSON.stringify({ from: S.from, to: S.to, clef: S.clef, labels: S.labels }));
+const S = { from: store.from || 'C', to: store.to || 'Bb-clarinet', octave: 'auto', clef: store.clef || 'auto', view: 'transposed', labels: !!store.labels, zoom: 1, model: null, rend: null, name: 'score', sel: null, tempo: store.tempo || 100, score: null, sounding: null };
+const save = () => localStorage.setItem('scoreshift', JSON.stringify({ from: S.from, to: S.to, clef: S.clef, labels: S.labels, tempo: S.tempo }));
 
 for (const sel of [$('from'), $('to')]) for (const i of INSTRUMENTS) sel.add(new Option(i.name, i.id));
 $('from').value = S.from; $('to').value = S.to; $('clef').value = S.clef; $('labels').checked = S.labels;
@@ -73,6 +76,8 @@ function probe(src) {
 function show(model, img, name) {
   S.model = model; S.rend = new Renderer(img, model); S.name = name; S.octave = S.octave ?? 'auto';
   $('empty').hidden = true; $('stage').hidden = false; $('export').disabled = false;
+  for (const id of ['play', 'xml', 'midi']) $(id).disabled = false;
+  player.stop(); S.selM = null;
   fitZoom(); update();
 }
 async function busy(fn, label = 'Reading the music…') {
@@ -227,6 +232,7 @@ function update() {
   $('octAuto').setAttribute('aria-pressed', S.octave === 'auto');
   const m = S.model; if (!m) return;
   const pl = (S.plan = plan(m, { from: S.from, to: S.to, octave: S.octave, clef: S.clef }));
+  S.score = buildScore(m);
   const R = S.rend;
   if (S.view === 'transposed') R.render(ctx, pl);
   else { cv.width = R.W; cv.height = R.H; ctx.drawImage(R.src, 0, 0); }
@@ -234,11 +240,91 @@ function update() {
   if (S.view === 'interpreted') drawOverlay(octx, m, R.r, null, 'original', S.sel);
   else if (S.labels && S.view === 'transposed') drawOverlay(octx, m, R.r, pl, 'transposed', S.sel);
   else if (S.labels) drawOverlay(octx, m, R.r, null, 'original', S.sel);
+  if (S.view === 'interpreted') drawRhythm(octx, m, S.score, R.r, S.selM);
+  drawPlayhead();
   chips();
   layoutStage();
   const n = m.notes.length, octs = [...new Set(pl.staves.map((p) => p.octave))], oc = octs.length === 1 && octs[0] ? ` · ${octs[0] > 0 ? '+' : ''}${octs[0]} oct${pl.octave === 'auto' ? ' (auto)' : ''}` : octs.length > 1 ? ' · octave per staff (auto)' : '';
-  setStatus(`${S.pdf ? `Page ${S.pdf.page} of ${S.pdf.n} · ` : ''}<b>${m.staves.length}</b> staves · <b>${n}</b> notes · ${describe(m, pl)}${oc} · read in ${Math.round(m.ms)} ms${S.view === 'interpreted' ? ' · tap a note or a staff label to correct it' : ''}`);
+  setStatus(`${S.pdf ? `Page ${S.pdf.page} of ${S.pdf.n} · ` : ''}<b>${m.staves.length}</b> staves · <b>${n}</b> notes · ${describe(m, pl)}${oc} · read in ${Math.round(m.ms)} ms · ${barSummary(S.score)}${S.view === 'interpreted' ? ' · tap a note, rest, bar or staff label to correct it' : ''}`);
 }
+function barSummary(sc) {
+  const st = sc.stats, bad = st.under + st.over, n = sc.measures.length;
+  return `<b>${n}</b> bars: ${bad ? `<b class="bad">${bad} don't add up</b>` : 'all add up'}${st.repaired ? `, ${st.repaired} auto-fixed` : ''}`;
+}
+
+// ---------- rhythm overlay (interpreted view) ----------
+const DUR_GLYPH = { 1: '𝅝', 2: '𝅗𝅥', 4: '♩', 8: '♪', 16: '𝅘𝅥𝅯', 32: '𝅘𝅥𝅰' };
+const evLabel = (e) => `${e.kind === 'rest' ? 'r' : ''}${e.full ? 'bar' : e.dur}${'.'.repeat(e.dots || 0)}${e.tuplet ? '³' : ''}${e.tie ? '⁀' : ''}`;
+function drawRhythm(g, model, sc, r, selM) {
+  g.save(); g.scale(r, r);
+  for (const m of sc.measures) {
+    const st = m.st, ya = lineY(st, 0, m.x0) - 2, yb = lineY(st, 4, m.x0) + 2;
+    const bad = m.status === 'under' || m.status === 'over', fixed = m.repairs.length > 0;
+    if (bad || fixed || m === selM) {
+      g.fillStyle = bad ? 'rgba(230,40,40,.13)' : 'rgba(255,170,0,.10)';
+      g.fillRect(m.x0 + 2, ya, m.x1 - m.x0 - 4, yb - ya);
+      if (m === selM) { g.strokeStyle = '#0a58ca'; g.lineWidth = 2; g.strokeRect(m.x0 + 2, ya, m.x1 - m.x0 - 4, yb - ya); }
+    }
+    // bar check under the staff: ticks used / bar length
+    g.font = '700 14px system-ui, sans-serif'; g.textAlign = 'center';
+    const tx = (m.x0 + m.x1) / 2, ty = lineY(st, 4, tx) + 36;
+    const label = bad ? `${m.ticks / 96}/${m.cap / 96} beats` : fixed ? `fixed: ${m.repairs.join(', ')}` : m.timeShown ? `${m.time.beats}/${m.time.unit}${m.time.inferred ? '?' : ''}` : '';
+    if (label) { g.lineWidth = 3; g.strokeStyle = 'rgba(255,255,255,.9)'; g.strokeText(label, tx, ty); g.fillStyle = bad ? '#b4141e' : '#8a5a00'; g.fillText(label, tx, ty); }
+    g.font = '700 12px system-ui, sans-serif';
+    for (const e of m.events) {
+      if (e.removed) continue;
+      if (e.kind === 'rest') { const b = e.rest.box; g.strokeStyle = 'rgba(120,60,200,.85)'; g.lineWidth = 1.5; g.strokeRect(b[0] - 1, b[1] - 1, b[2] - b[0] + 2, b[3] - b[1] + 2); }
+      const y = e.kind === 'rest' ? e.rest.box[3] + 10 : Math.max(...e.notes.map((n) => n.y)) + (e.notes[0].stem && e.notes[0].stem.dir > 0 ? Math.max(0, e.notes[0].stem.tip - Math.max(...e.notes.map((n) => n.y))) + 10 : 20);
+      const t = evLabel(e);
+      g.lineWidth = 3; g.strokeStyle = 'rgba(255,255,255,.9)'; g.strokeText(t, e.x, y);
+      g.fillStyle = e.repaired ? '#c2410c' : e.fixed ? '#0a7d32' : '#4b2a8a'; g.fillText(t, e.x, y);
+    }
+  }
+  g.restore();
+}
+function drawPlayhead() {
+  if (!S.sounding || !S.sounding.length) return;
+  const r = S.rend.r; octx.save(); octx.scale(r, r); octx.fillStyle = 'rgba(255,90,0,.45)';
+  for (const o of S.sounding) {
+    const e = o.e;
+    if (e.kind === 'rest') { const b = e.rest.box; octx.fillRect(b[0], b[1], b[2] - b[0], b[3] - b[1]); continue; }
+    for (const n of e.notes) {
+      const nn = S.view === 'transposed' ? S.plan.staves[n.st.index].notes.find((q) => q.n === n) : null;
+      const y = nn ? yOfP(n.st, nn.p, n.x) : n.y;
+      octx.beginPath(); octx.ellipse(n.x, y, 13, 10, 0, 0, Math.PI * 2); octx.fill();
+    }
+  }
+  octx.restore();
+}
+
+// ---------- playback and music export ----------
+const player = new Player();
+player.onStop = () => { S.sounding = null; $('play').textContent = '▶ Play'; $('play').setAttribute('aria-pressed', 'false'); update(); };
+const musicOpts = () => {
+  const transposed = S.view === 'transposed';
+  return { plan: transposed ? S.plan : null, from: instrument(S.from), instrument: transposed ? instrument(S.to) : instrument(S.from), tempo: S.tempo };
+};
+$('tempo').value = S.tempo;
+$('tempo').onchange = (e) => { S.tempo = Math.max(20, Math.min(320, +e.target.value || 100)); e.target.value = S.tempo; save(); };
+$('play').onclick = () => {
+  if (!S.model) return;
+  if (player.playing) { player.stop(); return; }
+  $('play').textContent = '■ Stop'; $('play').setAttribute('aria-pressed', 'true');
+  let last = '';
+  player.play(S.model, S.score, musicOpts(), (on) => {
+    const key = on.map((o) => o.tick).join();
+    if (key === last) return; last = key; S.sounding = on;
+    // redraw only the overlay (cheap); the page itself does not change while playing
+    const R = S.rend; octx.clearRect(0, 0, R.W, R.H);
+    if (S.view === 'interpreted') { drawOverlay(octx, S.model, R.r, null, 'original', S.sel); drawRhythm(octx, S.model, S.score, R.r, S.selM); }
+    else if (S.labels) drawOverlay(octx, S.model, R.r, S.view === 'transposed' ? S.plan : null, S.view === 'transposed' ? 'transposed' : 'original', S.sel);
+    drawPlayhead();
+  });
+};
+const download = (data, type, name) => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([data], { type })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 10000); };
+const exportName = (ext) => `${S.name}${S.pdf ? `-p${S.pdf.page}` : ''}-${S.view === 'transposed' ? S.to : 'as-written'}.${ext}`;
+$('xml').onclick = () => { if (!S.model) return; const o = musicOpts(); download(toMusicXML(S.model, S.score, { ...o, title: S.name }), 'application/vnd.recordare.musicxml+xml', exportName('musicxml')); };
+$('midi').onclick = () => { if (!S.model) return; download(toMidi(S.model, S.score, { ...musicOpts(), title: S.name }), 'audio/midi', exportName('mid')); };
 function fitZoom() {
   const w = $('wrap').clientWidth - 4;
   S.zoom = Math.max(0.25, Math.min(2, w / (S.rend.W / devicePixelRatio)));
@@ -268,7 +354,7 @@ function chips() {
 
 // ---------- corrections ----------
 const pop = $('pop');
-function hidePop() { pop.style.display = 'none'; S.sel = null; }
+function hidePop() { pop.style.display = 'none'; S.sel = null; S.selM = null; }
 function showPop(html, e) {
   pop.innerHTML = html; pop.style.display = 'block';
   const r = pop.getBoundingClientRect();
@@ -292,6 +378,70 @@ function staffPop(st, e) {
   };
   $('pX').onclick = () => { hidePop(); update(); };
 }
+// ---------- rhythm corrections ----------
+// A correction is stored on the analysis objects (note.fix on every head of the chord, rest.fix,
+// st.timeFix) and the score is rebuilt from them, so it survives re-reading the bars.
+function eventOf(n) { for (const m of S.score.measures) for (const e of m.events) if (e.notes && e.notes.includes(n)) return e; return null; }
+function measureOf(e) { return S.score.measures.find((m) => m.events.includes(e)); }
+const DURS = [1, 2, 4, 8, 16, 32];
+function rhythmRow(ev) {
+  if (!ev) return '';
+  const m = measureOf(ev);
+  return `<div class="row" role="group" aria-label="Note value">${DURS.map((d) => `<button data-dur="${d}" aria-pressed="${ev.dur === d}" aria-label="${['whole', 'half', 'quarter', 'eighth', 'sixteenth', 'thirty-second'][DURS.indexOf(d)]}">${DUR_GLYPH[d]}</button>`).join('')}</div>
+    <div class="row"><button data-r="dot" aria-pressed="${!!ev.dots}">dot</button><button data-r="tuplet" aria-pressed="${!!ev.tuplet}">triplet</button>${ev.kind === 'note' ? `<button data-r="tie" aria-pressed="${!!ev.tie}">tie →</button><button data-r="grace" aria-pressed="${!!ev.grace}">grace</button>` : ''}</div>
+    <p class="hint">Bar ${m.number}: ${m.ticks / 96} of ${m.cap / 96} beats${m.repairs.length ? ` · auto-fixed: ${m.repairs.join(', ')}` : ''}${ev.repaired ? ` (this ${ev.kind}: ${ev.repaired})` : ''}</p>`;
+}
+function setFix(ev, patch) {
+  const cur = { dur: ev.dur, dots: ev.dots, tuplet: ev.tuplet, tie: ev.tie, grace: ev.grace };
+  const f = { ...cur, ...patch };
+  if (ev.kind === 'rest') { ev.rest.fix = f; delete ev.rest.fix.tie; delete ev.rest.fix.grace; }
+  else for (const n of ev.notes) n.fix = f;
+  markEdited();
+}
+function bindRhythm(ev, reopen) {
+  if (!ev) return;
+  const redo = (patch) => { setFix(ev, patch); update(); reopen(); };
+  pop.querySelectorAll('[data-dur]').forEach((b) => (b.onclick = () => redo({ dur: +b.dataset.dur })));
+  pop.querySelectorAll('[data-r]').forEach((b) => (b.onclick = () => {
+    const k = b.dataset.r;
+    if (k === 'dot') redo({ dots: ev.dots ? 0 : 1 });
+    if (k === 'tuplet') {
+      // a triplet is three notes: mark this one and its two neighbours of the same value
+      const m = measureOf(ev), evs = m.events.filter((q) => !q.removed && !q.grace), i = evs.indexOf(ev);
+      const on = !ev.tuplet;
+      let win = [ev];
+      if (on) { for (const a of [i - 1, i - 2, i + 1, i + 2].map((j) => evs[j])) if (a && win.length < 3 && !a.tuplet && Math.abs(evs.indexOf(a) - i) <= 2) win.push(a); }
+      else win = ev.tg || [ev];
+      for (const q of win) setFix(q, { tuplet: on ? [3, 2] : null });
+      update(); reopen();
+    }
+    if (k === 'tie') redo({ tie: !ev.tie });
+    if (k === 'grace') redo({ grace: !ev.grace });
+  }));
+}
+function restPop(ev, e) {
+  showPop(`<h3>Rest</h3>${rhythmRow(ev)}<div class="row"><button id="rDel">Not a rest</button><button id="rX">Close</button></div>`, e);
+  bindRhythm(ev, () => { const ne = measureOf(ev) ? ev : findRest(ev.rest); if (ne) restPop(ne, e); });
+  $('rDel').onclick = () => { ev.rest.deleted = true; markEdited(); hidePop(); update(); };
+  $('rX').onclick = () => { hidePop(); update(); };
+}
+const findRest = (r) => { for (const m of S.score.measures) for (const e of m.events) if (e.rest === r) return e; return null; };
+function measurePop(m, e) {
+  S.selM = m; update();
+  const t = m.time || { beats: 4, unit: 4 };
+  const status = { ok: 'adds up', pickup: 'pickup (short on purpose)', end: 'last bar (short on purpose)', rest: 'whole-bar rest', under: 'too short: a note or rest is missing or misread', over: 'too long: a value is misread, or a note is not a note' }[m.status];
+  showPop(`<h3>Bar ${m.number}</h3>
+    <p class="hint">${m.ticks / 96} of ${m.cap / 96} beats: ${status}${m.repairs.length ? `<br>auto-fixed: ${m.repairs.join(', ')}` : ''}</p>
+    <div class="row"><label>Time signature <input id="mB" type="number" min="1" max="32" value="${t.beats}" style="width:3.5rem"> / <select id="mU">${[1, 2, 4, 8, 16].map((u) => `<option ${u === t.unit ? 'selected' : ''}>${u}</option>`).join('')}</select></label></div>
+    <div class="row"><button id="mOk">Set from this bar on</button><button id="mPlay">▶ from here</button><button id="mX">Close</button></div>`, e);
+  $('mOk').onclick = () => {
+    const st = m.st, k = S.score.measures.filter((q) => q.st === st).indexOf(m);
+    st.timeFix = { ...(st.timeFix || {}), [k]: { beats: +$('mB').value, unit: +$('mU').value } };
+    markEdited(); S.selM = null; hidePop(); update();
+  };
+  $('mPlay').onclick = () => { hidePop(); const part = S.score.parts[m.part]; let t = 0; for (const q of part.measures) { if (q === m) break; t += q.status === 'rest' ? q.cap : q.ticks; } $('play').click(); player.stop(); $('play').textContent = '■ Stop'; player.play(S.model, S.score, musicOpts(), (on) => { S.sounding = on; const R = S.rend; octx.clearRect(0, 0, R.W, R.H); if (S.view === 'interpreted') { drawOverlay(octx, S.model, R.r, null, 'original', S.sel); drawRhythm(octx, S.model, S.score, R.r, null); } drawPlayhead(); }, t); };
+  $('mX').onclick = () => { S.selM = null; hidePop(); update(); };
+}
 function notePop(n, e) {
   S.sel = n; update();
   const accLabel = { '-2': '𝄫', '-1': '♭', 0: '♮', 1: '♯', 2: '𝄪' };
@@ -299,7 +449,10 @@ function notePop(n, e) {
     <div class="row"><button id="nUp" aria-label="Move up a step">▲</button><button id="nDn" aria-label="Move down a step">▼</button>
       ${[-1, 0, 1].map((t) => `<button data-acc="${t}" aria-pressed="${n.accid?.type === t}">${accLabel[t]}</button>`).join('')}
       <button data-acc="none" aria-pressed="${!n.accid}">no acc.</button></div>
-    <div class="row"><button id="nDel">Not a note</button><button id="nX">Close</button></div>`, e);
+    ${rhythmRow(eventOf(n))}
+    <div class="row"><button id="nDel">Not a note</button><button id="nPlay" aria-label="Hear it">🔊</button><button id="nX">Close</button></div>`, e);
+  bindRhythm(eventOf(n), () => notePop(n, e));
+  $('nPlay').onclick = () => { const ev = eventOf(n); player.preview((ev ? ev.notes : [n]).map((q) => midiOf(q.pitch) + instrument(S.from).ds)); };
   const redo = () => { interpret(n.st); markEdited(); notePop(n, e); };
   $('nUp').onclick = () => { n.p++; n.y = yOfP(n.st, n.p, n.x); redo(); };
   $('nDn').onclick = () => { n.p--; n.y = yOfP(n.st, n.p, n.x); redo(); };
@@ -323,7 +476,13 @@ $('stage').addEventListener('click', (e) => {
     if (d < bd) { bd = d; best = n; }
   }
   if (best) notePop(best, e);
-  else if (S.view === 'interpreted') { const st = S.model.staves.find((s) => x < s.x0 + 5 * spaceAt(s, s.x0) && y > lineY(s, 0, s.x0) - 30 && y < lineY(s, 4, s.x0) + 30); if (st) staffPop(st, e); else hidePop(); }
+  else if (S.view === 'interpreted') {
+    const st = S.model.staves.find((s) => x < s.x0 + 5 * spaceAt(s, s.x0) && y > lineY(s, 0, s.x0) - 30 && y < lineY(s, 4, s.x0) + 30);
+    if (st) { staffPop(st, e); return; }
+    for (const m of S.score.measures) for (const ev of m.events) if (ev.kind === 'rest' && !ev.removed) { const b = ev.rest.box; if (x > b[0] - 6 && x < b[2] + 6 && y > b[1] - 6 && y < b[3] + 6) { restPop(ev, e); return; } }
+    const m = S.score.measures.find((q) => x > q.x0 && x < q.x1 && y > lineY(q.st, 0, x) - 20 && y < lineY(q.st, 4, x) + 40);
+    if (m) measurePop(m, e); else hidePop();
+  }
   else hidePop();
 });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { hidePop(); update(); } });
@@ -337,4 +496,4 @@ $('export').onclick = () => {
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
 // test hook
-window.__ss = { S, load, update, plan, openPage, exportPdf }; window.__yOfP = yOfP;
+window.__ss = { S, load, update, plan, openPage, exportPdf, player, setFix, eventOf, toMusicXML, toMidi, musicOpts }; window.__yOfP = yOfP;

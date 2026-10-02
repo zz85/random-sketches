@@ -4,7 +4,11 @@ import { test, expect, describe } from 'bun:test';
 import { decodeGray, encodeGray } from './png.js';
 import * as IP from './imgproc.js';
 import { CLEFS, INSTRUMENTS, instrument, partInterval, transposePitch, keySigPositions, readStaff, spellStaff, bestOctave, nameOf, intervalFifths, pOfD, dOfP } from './theory.js';
-import { evaluate, FIXTURES, loadFixture } from './eval.js';
+import { evaluate, evaluateRhythm, FIXTURES, loadFixture } from './eval.js';
+import { buildScore, evTicks, baseTicks } from './score.js';
+import { toMusicXML, toMidi, performance } from './export.js';
+import { rasterGlyph } from './raster.js';
+import { GLYPHS } from './glyphs.js';
 import { plan } from './render.js';
 import { CONDITIONS } from './degrade.js';
 import { normalize, analyze } from './omr.js';
@@ -132,6 +136,89 @@ describe('recognition (Verovio fixtures, 5 engraving fonts)', () => {
     expect(pl.staves[0].notes[0].p - pl.staves[0].notes[0].n.p).toBe(-6); // D3: middle line in bass, first ledger below in alto
   });
   test('fixtures load', () => { expect(loadFixture('minuet').truth.notes.length).toBe(96); });
+  // rhythm: written value of every note (dur, dots, tuplet) and whole bars against the truth
+  const rh = {}; for (const cond of ['clean', 'photo', 'phone']) rh[cond] = runs[cond].map(evaluateRhythm);
+  test('rhythm, clean engravings: note values and bars', () => {
+    const rs = rh.clean;
+    expect(sum(rs, 'val') / sum(rs, 'n')).toBeGreaterThan(0.99);
+    expect(sum(rs, 'bars') / sum(rs, 'nbars')).toBeGreaterThan(0.97);
+    expect(rs.every((r) => r.rests === r.trests)).toBe(true);
+    // time signatures, including C | (cut) and 6/8, read on the first staff
+    const m = (name) => runs.clean.find((x) => x.name === name).res.staves[0].times[0];
+    expect(m('triplets').sym).toBe('cut');
+    expect([m('sixeight').beats, m('sixeight').unit]).toEqual([6, 8]);
+    expect([m('viola').beats, m('viola').unit]).toEqual([2, 4]);
+  });
+  test('rhythm, photos', () => {
+    expect(sum(rh.photo, 'val') / sum(rh.photo, 'n')).toBeGreaterThan(0.94);
+    expect(sum(rh.photo, 'bars') / sum(rh.photo, 'nbars')).toBeGreaterThan(0.85);
+    expect(sum(rh.phone, 'val') / sum(rh.phone, 'n')).toBeGreaterThan(0.85);
+  });
+  test('MusicXML and MIDI from a recognised page', () => {
+    const r = runs.clean.find((x) => x.name === 'triplets'), sc = buildScore(r.res);
+    const xml = toMusicXML(r.res, sc, { title: 't' });
+    expect(xml.match(/<measure /g).length).toBe(9);
+    expect(xml).toContain('<time symbol="cut"><beats>2</beats><beat-type>2</beat-type></time>');
+    expect(xml.match(/<actual-notes>3<\/actual-notes>/g).length).toBe(18);
+    expect(xml.match(/<tuplet type="start"\/>/g).length).toBe(6);
+    expect(xml).toContain('<tie type="start"/>');
+    // every measure's durations add up to 2/2 (480 divisions per quarter)
+    for (const m of xml.split('<measure ').slice(1)) expect([...m.matchAll(/<duration>(\d+)<\/duration>/g)].filter((d, i, a) => !m.split('<note>')[i + 1]?.includes('<chord/>')).reduce((a, d) => a + +d[1], 0)).toBe(1920);
+    const p = performance(r.res, sc);
+    expect(p.notes.find((n) => n.midi === 79 && n.dur === 576)).toBeTruthy(); // g5 whole tied to a half: one sounding note
+    const mid = toMidi(r.res, sc, { tempo: 90 });
+    expect(String.fromCharCode(...mid.slice(0, 4))).toBe('MThd');
+  });
+});
+
+describe('score assembly and bar repair', () => {
+  const st = (events) => ({ index: 0, system: 1, x0: 0, x1: 1000, key: { x1: 0, fifths: 0 }, clef: { type: 'treble' }, bars: [{ x: 500, ids: [] }], times: [{ x: 1, x1: 2, beats: 3, unit: 4 }], tuplets: [],
+    notes: events.filter((e) => e.k !== 'r').map((e, i) => ({ x: e.x, y: 50, p: 4, chord: i + 1, dur: e.d, ndots: e.dots || 0, beamed: !!e.b, comp: e.b ? 7 : 100 + i, flags: e.d >= 8 && !e.b ? 1 : 0, pitch: { d: 32, alter: 0 }, box: [e.x - 6, 44, e.x + 6, 56] })),
+    rests: events.filter((e) => e.k === 'r').map((e) => ({ x: e.x, dur: e.d, dots: 0, box: [e.x - 5, 40, e.x + 5, 60] })) });
+  const build = (evs) => { const s = st(evs); return buildScore({ space: 16, staves: [s] }); };
+  test('a missed dot is put back, a misread flag is corrected', () => {
+    const sc = build([{ x: 100, d: 2 }, { x: 600, d: 2 }, { x: 800, d: 8 }]); // bar 1: a half alone, bar 2: half + 8th
+    expect(sc.measures[0].repairs).toEqual(['dot added']); expect(sc.measures[0].events[0].dots).toBe(1);
+    expect(sc.measures[1].repairs).toEqual(['one beam fewer']); expect(sc.measures[1].events[1].dur).toBe(4);
+    expect(sc.measures.every((m) => m.status === 'ok')).toBe(true);
+  });
+  test('an unmarked beamed triplet', () => {
+    const sc = build([{ x: 100, d: 8, b: 1 }, { x: 150, d: 8, b: 1 }, { x: 200, d: 8, b: 1 }, { x: 300, d: 2 }, { x: 600, d: 2 }, { x: 800, d: 4 }]);
+    expect(sc.measures[0].repairs).toEqual(['triplet']);
+    expect(sc.measures[0].events.slice(0, 3).every((e) => e.tuplet && e.tuplet[0] === 3)).toBe(true);
+  });
+  test('a pickup stays short, a corrected value is kept', () => {
+    const s = st([{ x: 100, d: 4 }, { x: 600, d: 2 }, { x: 800, d: 4 }]);
+    s.bars = [{ x: 200, ids: [] }, { x: 900, ids: [] }];
+    let sc = buildScore({ space: 16, staves: [s] });
+    expect(sc.measures.map((m) => m.status)).toEqual(['pickup', 'ok']);
+    s.notes[1].fix = { dur: 4, dots: 0, tuplet: null }; // the user says the half is a quarter
+    sc = buildScore({ space: 16, staves: [s] });
+    expect(evTicks(sc.measures[1].events[0])).toBe(96); // kept; the repair goes elsewhere
+    expect(sc.measures[1].events[0].repaired).toBeUndefined();
+  });
+  test('tick arithmetic', () => {
+    expect(baseTicks(4, 1)).toBe(144); expect(evTicks({ dur: 8, dots: 0, tuplet: [3, 2] })).toBe(32);
+  });
+  test('glyph rasterizer', () => {
+    const r = rasterGlyph(GLYPHS.Bravura.restQuarter.d, 16);
+    expect(r.h).toBeGreaterThan(40); expect(r.m.reduce((a, v) => a + v, 0)).toBeGreaterThan(200);
+  });
+});
+
+// The CODA audition sheet (Brahms 2 + Fledermaus, viola, alto clef) is not committed; put its
+// page render at fixtures/local/coda_p1.png (rendered at 3000 px and scaled to 2400, as the app
+// does) to run this.
+const CODA = new URL('./fixtures/local/coda_p1.png', import.meta.url);
+describe.skipIf(!fs.existsSync(CODA))('real page: CODA viola audition sheet', () => {
+  test('every bar adds up', () => {
+    const r = analyze(normalize(decodeGray(fs.readFileSync(CODA)))), sc = buildScore(r);
+    expect(r.staves.map((s) => s.key.fifths)).toEqual([2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3]);
+    expect(r.staves[0].times[0]).toMatchObject({ beats: 3, unit: 4 });
+    expect(r.staves[6].times[0].sym).toBe('cut');
+    expect(sc.stats.under + sc.stats.over).toBe(0);
+    expect(sc.measures.length).toBeGreaterThanOrEqual(66);
+  });
 });
 
 // One system from three pages of a real scan: Haydn op. 17 no. 5, Philharmonia study score

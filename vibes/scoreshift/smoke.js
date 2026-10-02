@@ -105,6 +105,56 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
     const exp = await b.evaluate(`new Promise((res)=>{const a=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){HTMLAnchorElement.prototype.click=a;fetch(this.href).then(r=>r.blob()).then(bl=>res({name:this.download,type:bl.type,size:bl.size}))};document.getElementById('export').click();})`);
     check('export PNG', exp.type === 'image/png' && exp.size > 50000, JSON.stringify(exp));
 
+    // rhythm: bar check in the status line, corrections in Interpreted view, playback, MusicXML / MIDI
+    await b.evaluate(`document.querySelector('[data-view=interpreted]').click();1`); await sleep(300);
+    const rh = await b.evaluate(`(()=>{const sc=__ss.S.score;return {bars:sc.measures.length,stats:sc.stats,status:document.getElementById('status').textContent}})()`);
+    check('sample: 24 bars read, most add up', rh.bars === 24 && rh.stats.ok + rh.stats.pickup + rh.stats.end >= 20, JSON.stringify(rh.stats));
+    const clickAt = (x, y) => `(()=>{const R=__ss.S.rend,k=R.r/devicePixelRatio*__ss.S.zoom,r=document.getElementById('cv').getBoundingClientRect();
+      document.getElementById('stage').dispatchEvent(new MouseEvent('click',{bubbles:true,clientX:r.left+${x}*k,clientY:r.top+${y}*k}));return 1})()`;
+    const n0 = await b.evaluate(`(()=>{const n=__ss.S.model.staves[0].notes[1];return {x:n.x,y:n.y,dur:__ss.eventOf(n).dur}})()`);
+    await b.evaluate(`document.getElementById('stage').scrollIntoView();1`);
+    await b.evaluate(clickAt(n0.x, n0.y)); await sleep(200);
+    const hasDur = await b.evaluate(`!!document.querySelector('#pop [data-dur="2"]')`);
+    await b.evaluate(`document.querySelector('#pop [data-dur="2"]')?.click();1`); await sleep(200);
+    const n1 = await b.evaluate(`(()=>{const n=__ss.S.model.staves[0].notes[1],e=__ss.eventOf(n);return {dur:e.dur,fixed:e.fixed,hint:document.querySelector('#pop .hint')?.textContent}})()`);
+    check('tap a note: set it to a half note', hasDur && n1.dur === 2 && n1.fixed, JSON.stringify({ before: n0.dur, ...n1 }));
+    await b.evaluate(`document.querySelector('#pop [data-dur="${n0.dur}"]').click();1`); await sleep(150);
+    await b.evaluate(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}));1`);
+    const mb = await b.evaluate(`(()=>{const m=__ss.S.score.measures[3];return {x:(m.x0+m.x1)/2+3,y:__ss.S.model.staves[0].pts?0:0,st:m.st.index}})()`);
+    const my = await b.evaluate(`(()=>{const m=__ss.S.score.measures[3];const st=m.st;const x=m.x0+6;return {x, y:(window.__lineY?0:0)}})()`);
+    await b.evaluate(`(()=>{const m=__ss.S.score.measures[3],st=m.st,x=m.x0+6,y=st.pts?0:0;return 1})()`);
+    const barY = await b.evaluate(`(()=>{const m=__ss.S.score.measures[3];const n=m.events.find(e=>e.notes);return n.notes[0].st.band ? (n.notes[0].st.band[0]+n.notes[0].st.band[1])/2 : 0})()`);
+    await b.evaluate(clickAt(mb.x + 4, barY)); await sleep(200);
+    const bp = await b.evaluate(`document.querySelector('#pop h3')?.textContent || ''`);
+    check('tap a bar: bar popup with its time signature', /^Bar 4/.test(bp) && (await b.evaluate(`!!document.getElementById('mB')`)), bp);
+    await b.evaluate(`document.getElementById('mX')?.click();1`);
+    await shot('rhythm');
+    const dl = (id) => `new Promise((res)=>{const a=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){HTMLAnchorElement.prototype.click=a;const name=this.download;fetch(this.href).then(r=>r.arrayBuffer()).then(buf=>res({name,size:buf.byteLength,head:String.fromCharCode(...new Uint8Array(buf.slice(0,4))),text:new TextDecoder().decode(buf).slice(0,200000)}))};document.getElementById('${id}').click();})`;
+    const xml = await b.evaluate(dl('xml'));
+    check('MusicXML export (as written)', /as-written\.musicxml$/.test(xml.name) && xml.text.includes('<score-partwise') && (xml.text.match(/<measure /g) || []).length === 24, `${xml.name} ${xml.size} B`);
+    await b.evaluate(`document.querySelector('[data-view=transposed]').click();1`); await sleep(200);
+    const xmlT = await b.evaluate(dl('xml'));
+    check('MusicXML export (transposed, with <transpose>)', /cello\.musicxml$/.test(xmlT.name) && xmlT.text.includes('<clef><sign>F</sign>'), xmlT.name);
+    const mid = await b.evaluate(dl('midi'));
+    check('MIDI export', mid.head === 'MThd' && mid.size > 300, `${mid.name} ${mid.size} B`);
+    await b.evaluate(`document.getElementById('tempo').value='240';document.getElementById('tempo').dispatchEvent(new Event('change'));document.getElementById('play').click();1`);
+    await sleep(900);
+    const pl = await b.evaluate(`({playing:__ss.player.playing,sounding:(__ss.S.sounding||[]).length,label:document.getElementById('play').textContent})`);
+    await b.evaluate(`document.getElementById('play').click();1`); await sleep(100);
+    const pl2 = await b.evaluate(`({playing:__ss.player.playing,label:document.getElementById('play').textContent})`);
+    check('playback with a playhead, and stop', pl.playing && pl.sounding > 0 && !pl2.playing && /Play/.test(pl2.label), JSON.stringify([pl, pl2]));
+
+    // the CODA audition sheet, if present locally (not committed): every bar adds up
+    if (fs.existsSync(path.join(DIR, 'fixtures/local/coda.pdf'))) {
+      await b.evaluate(`fetch('fixtures/local/coda.pdf').then(r=>r.blob()).then(bl=>__ss.load(new File([bl],'coda.pdf',{type:'application/pdf'}),'coda.pdf')).then(()=>1)`);
+      await waitFor(() => b.evaluate(`!!(__ss.S.pdf && __ss.S.model && __ss.S.score)`), 30000).catch(() => {});
+      const c = await b.evaluate(`(()=>{const sc=__ss.S.score;return {bars:sc.measures.length,stats:sc.stats,keys:__ss.S.model.staves.map(s=>s.key.fifths).join('')}})()`);
+      check('CODA sheet: every bar adds up', c.bars >= 66 && c.stats.under + c.stats.over === 0 && c.keys === '22222233333', JSON.stringify(c));
+      await b.evaluate(`document.querySelector('[data-view=interpreted]').click();1`); await sleep(300); await shot('coda');
+      await b.evaluate(`document.getElementById('sample').click();1`);
+      await waitFor(() => b.evaluate(`!__ss.S.pdf && __ss.S.model && __ss.S.model.notes.length > 90`), 20000).catch(() => {});
+    }
+
     // offline: once the service worker has cached the shell, the app and the sample load with no network
     await b.evaluate(`navigator.serviceWorker.ready.then(()=>1)`); await sleep(1500);
     await b.send('Network.enable');

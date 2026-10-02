@@ -20,14 +20,19 @@ shift of the pitched symbols, and the page already has the layout.
 PDFs work too, such as scores and parts from IMSLP: pick a page from the thumbnail strip, or
 export the whole file transposed as a new PDF.
 
+It also reads the rhythm: note values from beams and flags, dots, rests, time signatures,
+triplets and ties, assembled into measures that are checked against the time signature. So the
+page can be **played** (with the sounding notes lit up on the page) and exported as
+**MusicXML** or **MIDI**, as written or transposed.
+
 Runs entirely on the device: plain ES modules, a Web Worker for recognition, no build step,
 no dependencies, nothing uploaded. Installable PWA that works offline.
 
 ```
 python3 -m http.server              # any static server, then open /vibes/scoreshift/
-bun test                            # theory, image primitives, recognition accuracy, real-scan regression: 21 tests
-node smoke.js                       # headless Chromium over CDP: UI, PDF, export, offline: 24 checks
-bun eval.js [tune|all] [condition]  # accuracy table; condition = clean | scan | photo | phone
+bun test                            # theory, recognition + rhythm accuracy, bar repair, export, real scans: 30 tests
+node smoke.js                       # headless Chromium over CDP: UI, corrections, PDF, playback, exports, offline: 32 checks
+bun eval.js [tune|all] [condition]  # accuracy table (pitch and rhythm); condition = clean | scan | photo | phone
 bun debug.js <tune> [cond] [x0 y0 x1 y1]   # colour overlay of what was recognised
 node tools/make_fixtures.mjs        # rebuild fixtures + glyphs.js from Verovio (dev-only dependency)
 node tools/make_sample.mjs          # rebuild sample.jpg
@@ -47,6 +52,21 @@ every recognised notehead labelled with its pitch, colour-coded by letter name),
 **Transposed**. In Interpreted view, tap a staff label to correct its clef or key (for one or
 all staves); tap a note to move it a step, change its accidental, or mark it as not a note.
 Corrections feed the transposed page immediately. **⬇ PNG** exports the current view.
+
+**Rhythm.** Interpreted view also shows each note's and rest's value (`8`, `4.`, `16³`, `r4`,
+`⁀` for a tie) and checks every bar against the time signature. Bars that do not add up are
+shaded red with how many beats they hold; bars that were made to add up automatically are shaded
+amber with what was changed (`dot added`, `one beam fewer`, `triplet`, `rest value`, `tuplet number
+ignored`). Tap a note or a rest to set its value, dot, triplet, tie or grace note (or mark a rest
+as not a rest); tap inside a bar to see its count, set the time signature from that bar on, or
+play from there. Corrections are kept and win over the automatic repair.
+
+**▶ Play** plays the page at the **Tempo** set (quarter notes per minute), at concert pitch,
+highlighting the sounding notes on whichever view is showing. **⬇ MusicXML** and **⬇ MIDI**
+export the music of the current page: in Transposed view the transposed part (key, clef and
+pitches for the target instrument, with a `<transpose>` element so notation apps play it at
+concert pitch), otherwise the music as written. MusicXML opens in MuseScore, Dorico, Sibelius,
+Finale and Verovio.
 
 **PDFs** (IMSLP, Internet Archive, anything): rendered with pdf.js, including the JBIG2 and
 JPEG 2000 images scanned PDFs are made of. Opening probes each page at low resolution for staves
@@ -126,20 +146,84 @@ moves round the circle of fifths and is respelled enharmonically past six sharps
 whenever the new alteration differs from what the new key and the bar imply, and cautionary
 accidentals in the source stay cautionary.
 
+### Reading the rhythm
+
+`rhythm.js` runs in the worker after the pitch pass, on the staff-removed page; `score.js` builds
+the music from it on the main thread (a few ms, so it is rebuilt after every correction).
+
+1. **Stems.** Each chord's stem end is scanned in columns 0.6, 1.1 and 1.6 spaces either side. Ink
+   in all three is a beam; the beams stacked from the stem end are counted from the run lengths
+   (a beam is half a space thick, a quarter space apart), stopping at a gap so a slur over the beam
+   does not count. With no beam, flags are counted as crossings of a column just right of the stem,
+   near its end. Value: hollow head with stem = half, without = whole, else 4 × 2^(beams+flags).
+   Augmentation dots are the dots right of a head; dot-sized pieces with neighbours across a staff
+   line are a tie or slur cut up by staff removal, not dots. Heads clearly smaller than the staff's
+   typical head on short stems are grace notes.
+2. **Templates.** Rests, time-signature digits, C / cut C and tuplet numbers are matched against
+   the SMuFL glyphs of the five fonts, rasterized at the normalized staff space by a 90-line path
+   rasterizer (`raster.js`, no canvas, so it runs in workers and under bun): a 10 × 10 coverage grid
+   of the ink box plus aspect and size. Pieces of one symbol split by staff-line removal are joined
+   first. Whole and half rests are solid slabs told apart by the line they hang from or sit on.
+3. **Time signatures** are read as a region right after the key signature or a barline, not as
+   components: the two digits touch the middle line and fuse through it. The region is split at
+   the middle line, each half into one or two digits, and the reading is chosen among close
+   alternatives with a prior on meters that occur (a scanned 2/4 should not read 7/4). A second
+   pass at the start of a staff may take components the pitch pass called noteheads (a 4's
+   triangle is a filled head) and drops those notes. A cut C's stroke reads as a barline and is
+   taken back. Measures before any time signature use the first one; with none at all, the meter
+   the bars agree on.
+4. **Ties** are arcs from just right of a head to just left of the next head at the same position,
+   or off the end of the staff (tied over the system break).
+5. **Measures.** Each staff is split at its barlines (including barlines touched by a slur, found
+   as thin full-height columns inside a bigger component, and excluding stems cut off their hollow
+   head); heads on one stem, or at one x, are one chord. Parts: one per staff row of the system, so
+   a single part page is one part and a quartet score is four. A tuplet number applies to the n
+   events under it whose written values make n equal units.
+6. **Bar check and repair.** A bar must add up to its time signature, except a pickup (first bar,
+   or after a double bar) and the bar closing a section. A bar that does not is repaired with the
+   cheapest edit, or pair of edits, that makes it exactly full: a dot added or removed (1.0), a rest
+   value (1.2), an unmarked beamed triplet (1.3), a beam more or fewer (1.6), a flag (2.0), half ↔
+   quarter (2.2), a rest that is not one (2.5), and reading the bar without its tuplet numbers
+   (0.8). Ambiguous or expensive repairs are not made; the bar is shown red instead.
+7. **Export and playback** (`export.js`, `player.js`): MusicXML 4.0 partwise at 480 divisions per
+   quarter (3-, 5- and 6-tuplets are whole numbers) with keys, clefs, time signatures, pickup as
+   measure 0, dots, tuplets, ties, accidentals as engraved, double and final barlines and system
+   breaks; MIDI format 0, one channel per part; Web Audio playback with ties merged into one
+   sounding note.
+
 ### Accuracy
 
-Seven test tunes engraved by Verovio in five different music fonts (Leipzig, Bravura, Leland,
+Ten test tunes engraved by Verovio in five different music fonts (Leipzig, Bravura, Leland,
 Gootville, Petaluma) at 14–26 px per space: treble, bass and alto clefs, keys from 4♯ to 3♭,
-chords, beams, 16ths, ledger lines up to five, all accidentals including double sharps. Each is
-then run through a deterministic photo simulator (`degrade.js`: rotation, keystone, page curl,
-scale, uneven lighting, blur, sensor noise). 378 notes per condition:
+chords, beams, 16ths and 32nds, ledger lines up to five, all accidentals including double sharps,
+and for rhythm: rests of every value, dotted values, flags and beams, eighth and quarter
+triplets, ties across barlines, 4/4, 3/4, 2/4, cut time and 6/8 with a pickup (ground truth is
+every event of every bar from Verovio's own encoding). Each is then run through a deterministic
+photo simulator (`degrade.js`: rotation, keystone, page curl, scale, uneven lighting, blur,
+sensor noise). 499 notes and 124 bars per condition:
 
-| condition | heads found | precision | pitch correct | staves | clefs | keys |
-|---|---|---|---|---|---|---|
-| clean engraving | 99.7% | 99.7% | 99.2% | 19/19 | 19/19 | 19/19 |
-| scan (1.2°, blur, light noise) | 95.8% | 96.8% | 93.1% | 19/19 | 19/19 | 17/19 |
-| photo (−2.5°, keystone, curl, 1.25×, shadow) | 97.9% | 97.9% | 95.5% | 19/19 | 19/19 | 17/19 |
-| phone (4°, strong keystone and curl, 0.85×, heavy noise, ~13 px/space) | 94.2% | 96.5% | 89.2% | 19/19 | 19/19 | 17/19 |
+| condition | heads found | pitch correct | note values correct | bars exactly right |
+|---|---|---|---|---|
+| clean engraving | 99.6% | 99.0% | 99.6% | 123/124 |
+| scan (1.2°, blur, light noise) | 96.0% | 94.6% | 94.8% | 103/124 |
+| photo (−2.5°, keystone, curl, 1.25×, shadow) | 98.0% | 96.4% | 96.0% | 111/124 |
+| phone (4°, strong keystone and curl, 0.85×, heavy noise, ~13 px/space) | 93.6% | 83.0% | 88.6% | 89/124 |
+
+"Note values" counts every note of the truth, so a missed head counts as wrong; most wrong bars
+under degradation are bars with a missed note, which the bar check marks red. All staves and
+clefs are found in every condition. Petaluma's handwritten-style key signatures are the main
+loss on phone photos.
+
+**A real page:** the CODA 2026–27 viola audition sheet (Brahms 2 and the Fledermaus overture,
+alto clef, 11 staves, 321 notes, a PDF engraved with a Finale-style font) reads with every key
+signature, both time signatures (3/4, cut time, and 3/4 again at the waltz) and every one of its
+67 bars adding up: 5 bars by automatic repair, 1 pickup, 2 section-ending bars, 1 whole-bar rest.
+Getting there fixed things the generated fixtures never showed: half notes whose tilted hole is
+wider than a space, a tempo-mark letter read as a flat ahead of the key signature, a cut C read as
+a fourth sharp, a barline fused with the slur that crosses it, tie fragments taken for dots, a
+double sharp taken for a whole note. That page is not committed; with its render at
+`fixtures/local/coda_p1.png` (and the PDF at `fixtures/local/coda.pdf`) `bun test` and
+`node smoke.js` check it too.
 
 About 250–400 ms per page on a desktop core. The misses that remain are mostly Petaluma's
 handwritten-style key signatures under degradation and a few hollow heads in noise.
@@ -151,8 +235,12 @@ grace notes. The transposed page is readable but shows its seams at that resolut
 ### Limitations
 
 - Printed music only; no handwriting, tablature, percussion or early notation.
-- Grace and cue notes are smaller than the head detector's opening and are not moved.
-- Rhythm is never interpreted, so there is no playback or MusicXML export.
+- Grace and cue notes are smaller than the head detector's opening and are not moved; when one is
+  found it plays as a short grace note.
+- Rhythm: one voice per staff (notes of two voices at one x become one chord, with the longer
+  value); no tremolos, repeats, voltas, multi-bar rests or tempo marks (set the tempo by hand);
+  dynamics and articulations are not read, so playback is flat. A note missed by the head
+  detector cannot be added by hand yet; its bar shows red.
 - Ties and slurs stay put: fine for steps, visibly off for big moves such as clef changes.
 - Moving a note does not re-flip stems or re-slope beams; with a clef change notes can collide.
 - One staff size per page; cross-staff beams move with one staff.
@@ -223,13 +311,17 @@ segmentation net would be the natural upgrade for heads and accidentals in poor 
 | `imgproc.js` | Sauvola / Wolf binarisation, run-length metrics, skew, resampling, morphology, components |
 | `theory.js` | pitch spelling, clefs, key signatures, 18 instruments, intervals, bar-scoped accidentals |
 | `render.js` | transposition plan, in-place page rewrite, interpretation overlay |
+| `rhythm.js` | beams and flags per stem, dots, grace notes, rests / time signatures / tuplet numbers by template, ties |
+| `raster.js` | SVG path rasterizer and shape descriptor for the glyph templates |
+| `score.js` | parts, measures, events, tuplet assignment, bar check and repair, timeline |
+| `export.js`, `player.js` | MusicXML 4.0, MIDI, the note list for playback; Web Audio player |
 | `app.js`, `index.html`, `worker.js` | UI, corrections, export, PDF paging; recognition (and the page probe) in a worker |
 | `pdfsource.js` | pdf.js loading and page rendering; a ~40-line PDF writer for the transposed export |
 | `vendor/pdfjs/` | pdf.js 6.3.289 legacy build + JBIG2 / OpenJPEG / QCMS wasm decoders (Apache-2.0 and listed licences) |
-| `glyphs.js` | SMuFL outlines (noteheads, accidentals, clefs) from 5 fonts, extracted from Verovio |
+| `glyphs.js` | SMuFL outlines (noteheads, accidentals, clefs, rests, flags, digits, C / cut C) from 5 fonts, extracted from Verovio |
 | `degrade.js` | deterministic photo simulator with exact point mapping for ground truth |
 | `eval.js`, `debug.js`, `scoreshift.test.js`, `smoke.js`, `cdp.js`, `png.js` | evaluation, tests, tiny CDP driver and PNG codec |
 | `tools/` | fixture / glyph / sample builders (Verovio 6.3, dev-only) |
-| `fixtures/` | `scan_haydn_p*.png` (one system each from a real 1920s scan, regression test), `parts.pdf` (PDF smoke test), 7 clean engravings + ground truth (every head's box, pitch, accidental; staves, clefs, keys) |
+| `fixtures/` | `scan_haydn_p*.png` (one system each from a real 1920s scan, regression test), `parts.pdf` (PDF smoke test), 10 clean engravings + ground truth (every head's box, pitch, accidental and value; every bar's events; staves, clefs, keys, meter); `local/` (gitignored) for pages that cannot be committed |
 
 Fonts: glyph outlines from Leipzig, Bravura, Leland, Gootville and Petaluma (SIL OFL 1.1).
