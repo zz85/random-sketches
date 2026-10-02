@@ -37,6 +37,8 @@ bun debug.js <tune> [cond] [x0 y0 x1 y1]   # colour overlay of what was recognis
 node tools/make_fixtures.mjs        # rebuild fixtures + glyphs.js from Verovio (dev-only dependency)
 node tools/make_sample.mjs          # rebuild sample.jpg
 node tools/make_pdf_fixture.mjs     # rebuild fixtures/parts.pdf (title page + 2 music pages)
+node tools/compare.mjs truth fixtures/<tune>.json a.musicxml [b.mxl ...]   # score MusicXML (ours, Audiveris) against ground truth
+node tools/compare.mjs pair a.musicxml b.mxl                               # or two outputs against each other
 ```
 
 ## Using it

@@ -461,14 +461,20 @@ export function analyze(norm, opts = {}) {
   // (rejects letters of tempo marks, lyrics and dynamics that look like noteheads)
   const ledgerUnder = (hd) => {
     if (hd.p > -3 && hd.p < 11) return true;
-    const S = spaceAt(hd.st, hd.x), q = hd.p >= 11 ? 10 : -2, y = Math.round(yOfP(hd.st, q, hd.x));
-    for (let dy = -Math.ceil(t) - 1; dy <= Math.ceil(t) + 1; dy++) {
-      const yy = y + dy; if (yy < 0 || yy >= h) continue;
-      let run = 0, best = 0;
-      for (let x = Math.round(hd.box[0] - 0.6 * S); x <= Math.round(hd.box[2] + 0.6 * S); x++) { if (x >= 0 && x < w && bin.data[yy * w + x]) { run++; best = Math.max(best, run); } else run = 0; }
-      if (best >= 0.9 * (hd.box[2] - hd.box[0])) return true;
-    }
-    return false;
+    // every ledger between the staff and the head (a dynamic's bowl below the staff has none)
+    const S = spaceAt(hd.st, hd.x), qs = [];
+    if (hd.p >= 11) for (let q = 10; q <= hd.p - 1; q += 2) qs.push(q);
+    else for (let q = -2; q >= hd.p + 1; q -= 2) qs.push(q);
+    return qs.every((q) => {
+      const y = Math.round(yOfP(hd.st, q, hd.x));
+      for (let dy = -Math.ceil(t) - 1; dy <= Math.ceil(t) + 1; dy++) {
+        const yy = y + dy; if (yy < 0 || yy >= h) continue;
+        let run = 0, best = 0;
+        for (let x = Math.round(hd.box[0] - 0.6 * S); x <= Math.round(hd.box[2] + 0.6 * S); x++) { if (x >= 0 && x < w && bin.data[yy * w + x]) { run++; best = Math.max(best, run); } else run = 0; }
+        if (best >= 0.9 * (hd.box[2] - hd.box[0])) return true;
+      }
+      return false;
+    });
   };
   let notes = uniq.filter((hd) => (hd.kind === 'hollow' || hd.stem) && ledgerUnder(hd));
   // a stem carries one duration: a "half note" sharing its stem with black heads is the
@@ -504,7 +510,7 @@ export function analyze(norm, opts = {}) {
     if (n.kind !== 'whole') return true;
     const c = cc.comps[n.comp]; if (!c) return false;
     const S = spaceAt(n.st, n.x);
-    return c.y1 - c.y0 < 1.7 * S && c.x1 - c.x0 < 3 * S;
+    return c.y1 - c.y0 < 1.7 * S && c.x1 - c.x0 < 3 * S && n.box[2] - n.box[0] >= 1.15 * S; // (a whole note is wide; the bowl of a dynamic p is not)
   });
   // holes inside sharps, naturals and double sharps pass the ring test: drop those
   notes = notes.filter((n) => {
