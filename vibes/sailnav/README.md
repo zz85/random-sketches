@@ -36,11 +36,27 @@ IndexedDB, so a normal day's sailing never touches NOAA's servers after the firs
   current tide height from the nearest CO-OPS station so you get depth *now*, not just MLLW.
   Coloured red / amber / green against your required depth. Tap anywhere on the chart for the
   same readout at that point.
-- **Automatic water routing** between two points ("Google Maps for boats"): downloads the ENC depth
-  areas, dredged areas, land, rocks, wrecks and obstructions for the bounding box, rasterises them
-  into a ~40 m grid, blocks anything shallower than draft + clearance, keeps a hard shore margin and
-  a soft preference for channel centres, then runs A* and string-pulls the result into a few
-  rhumb-line legs. Shilshole to Blake Island: 4 legs in ~130 ms on top of a 2 s download.
+- **Automatic water routing** between two points ("Google Maps for boats"). The ENC depth areas,
+  dredged areas, land, rocks, wrecks and obstructions for the area are rasterised into a ~40 m grid;
+  anything shallower than draft + clearance is blocked (charted depth at MLLW, no tide credit), with a
+  hard shore margin and a soft preference for channel centres. A* finds the path, which is then
+  string-pulled into a few rhumb-line legs. In narrow water (Agate Pass, Eagle Harbor, marina entrances)
+  the margin steps down automatically and the status says so.
+- **Red/green lateral marks.** Mutually nearest port/starboard marks (`BOYLAT`/`BCNLAT`, side from
+  `CATLAM`) become gates: walls run outward from each mark until they meet shoal water, so the route
+  has to go between them. A single mark gets a wall to the shoal it guards, so the route can't pass
+  inside it. This works in both directions and in both IALA regions. The leg table lists each gate
+  and which side each mark is passed on (northbound into Eagle Harbor: green 3 to port, red 4 to
+  starboard, i.e. red right returning). If the marks make a route impossible (for example a channel
+  that shoaled after the buoys were set), it routes without them and warns. Toggle: BUOYS.
+- **Bridges and overhead cables.** `BRIDGE`, `CBLOHD`, `PIPOHD` and `CONVYR` footprints whose charted
+  clearance (`VERCLR`, or `VERCSA` for cables when lower) is below MAST + HEADROOM are blocked.
+  Opening bridges (bascule, swing, lift: `CATBRG` 2-5, 7) are passable unless their open clearance
+  `VERCOP` is too low, and are flagged "opening required". Unnamed bank sections with no clearance
+  take it from the charted span they touch; anything still uncharted counts as too low. If a low
+  bridge is the only way through, the router widens the search to look for a way round (around
+  Bainbridge instead of under the 22.8 m Agate Pass bridge for a 24 m mast) or names the bridge.
+  US charts give clearance above MHW, so headroom should cover the gap to a high tide.
 - **Active navigation** with OpenCPN `Routeman` semantics: BRG/DTG/TTG, cross-track error with
   steer-left/right arrow, arrival by perpendicular crossing (not radius), auto-advance to the next
   waypoint, virtual "Begin" point at the boat when a leg is activated, Ctrl-N to skip a waypoint.
@@ -59,6 +75,7 @@ IndexedDB, so a normal day's sailing never touches NOAA's servers after the firs
 | `s57.js` | ISO 8211 reader (DDR field formats, directory, binary subfields), S-57 feature assembly (nodes/edges into points, lines, rings with holes), `toRoutingData`, local `depthAt`, ZIP reader on `DecompressionStream` |
 | `chartstore.js` | IndexedDB persistence of cells, merged dataset, coverage tests (`M_COVR`) |
 | `router.js` | Scanline rasteriser, hazard buffers, BFS distance transform, binary-heap A*, supercover line-of-sight simplification, `route(data, from, to, opts)` |
+| `lateral.test.js` | Buoy gates (both directions), single marks, fallback, narrow-water margin, bridge/cable clearance rules, real Agate Pass bridge |
 | `sailnav.test.js` | `bun test` unit tests including a synthetic harbour that forces the router around an island, through a gap in a shallow bar and away from a rock |
 | `s57.test.js` | Parses the real US5SEAGK cell (fetched once into /tmp) and checks geometry closure, known depths and an offline route around West Point |
 | `live_check.js` | Network smoke test against NOAA |
@@ -105,4 +122,4 @@ Studied from source (`libs/s52plib/src/s52cnsy.cpp`, `model/src/georef.cpp`, `mo
 Planning aid only. ENC Direct is refreshed weekly but NOAA says it is "not intended for navigation".
 Soundings are point samples; the depth card prefers a sounding within 120 m, otherwise the depth
 area's minimum. Routing data is capped at ~1.2M grid cells, so very long routes get coarser cells.
-Tide predictions still need the network (CO-OPS); porting `cosmos/tides.js` with bundled constituents would remove that. No AIS, no wind, no currents yet (see `tidewise/PLAN.md` and `cosmos/tides.js` for harmonic tides).
+Routing can't go through the Ballard Locks yet (the lock chamber isn't a charted depth area), so Ship Canal and Lake Union routes fail; the bridge clearances there (Ballard 8.8 m and Fremont 4.2 m closed, Aurora 22.2 m) are parsed and checked. The depth card adds the Seattle tide everywhere, which is wrong above the locks where the water level is controlled. Tide predictions still need the network (CO-OPS); porting `cosmos/tides.js` with bundled constituents would remove that. No AIS, no wind, no currents yet (see `tidewise/PLAN.md` and `cosmos/tides.js` for harmonic tides).

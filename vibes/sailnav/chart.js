@@ -37,6 +37,8 @@
       service: "enc_harbour",
       depthArea: 227, dredgedArea: 228, landArea: 233, sounding: 76,
       depthContour: 104, obstruction: 33, rock: 34, wreck: 36,
+      beaconLateral: 1, buoyLateral: 6, bridgeArea: 141, bridgeLine: 87, cableOverhead: 88, pipeOverhead: 92,
+      conveyorLine: 89, conveyorArea: 144,
     },
     approach: {
       service: "enc_approach",
@@ -268,6 +270,19 @@
       queryBbox("harbour", "obstruction", bbox, "VALSOU,WATLEV,CATOBS", n => prog("obstructions", n)).catch(() => ({ features: [] })),
       queryBbox("harbour", "wreck", bbox, "VALSOU,WATLEV,CATWRK", n => prog("wrecks", n)).catch(() => ({ features: [] })),
     ]);
+    const none = { features: [] };
+    const [bcn, boy, brA, brL, cbl, pip, cvL, cvA] = await Promise.all([
+      queryBbox("harbour", "beaconLateral", bbox, "CATLAM,COLOUR,OBJNAM", n => prog("beacons", n)).catch(() => none),
+      queryBbox("harbour", "buoyLateral", bbox, "CATLAM,COLOUR,OBJNAM", n => prog("buoys", n)).catch(() => none),
+      queryBbox("harbour", "bridgeArea", bbox, "CATBRG,VERCLR,VERCCL,VERCOP,OBJNAM,INFORM", n => prog("bridges", n)).catch(() => none),
+      queryBbox("harbour", "bridgeLine", bbox, "CATBRG,VERCLR,VERCCL,VERCOP,OBJNAM,INFORM").catch(() => none),
+      queryBbox("harbour", "cableOverhead", bbox, "VERCLR,VERCSA,OBJNAM,INFORM", n => prog("overhead cables", n)).catch(() => none),
+      queryBbox("harbour", "pipeOverhead", bbox, "VERCLR,OBJNAM,INFORM").catch(() => none),
+      queryBbox("harbour", "conveyorLine", bbox, "VERCLR,OBJNAM").catch(() => none),
+      queryBbox("harbour", "conveyorArea", bbox, "VERCLR,OBJNAM").catch(() => none),
+    ]);
+    const markOf = (kind) => f => ({ lon: f.geometry.coordinates[0], lat: f.geometry.coordinates[1], kind, name: (f.properties || {}).OBJNAM || null, props: f.properties || {} });
+    const over = (kind) => f => ({ kind, geometry: f.geometry, properties: f.properties || {} });
     let approach = { features: [] }, approachLand = { features: [] };
     if (dep.features.length === 0) {
       approach = await queryBbox("approach", "depthArea", bbox, "DRVAL1,DRVAL2", n => prog("approach depth", n));
@@ -282,6 +297,10 @@
         rocks.features.map(f => tagHazard(f, "rock")),
         obst.features.map(f => tagHazard(f, "obstruction")),
         wrecks.features.map(f => tagHazard(f, "wreck"))),
+      lateralMarks: [].concat(bcn.features.filter(f => f.geometry).map(markOf("BCNLAT")), boy.features.filter(f => f.geometry).map(markOf("BOYLAT"))),
+      overheads: [].concat(
+        brA.features.map(over("bridge")), brL.features.map(over("bridge")), cbl.features.map(over("cable")),
+        pip.features.map(over("pipe")), cvL.features.map(over("conveyor")), cvA.features.map(over("conveyor"))).filter(o => o.geometry),
     };
   }
 

@@ -10,6 +10,7 @@
 <title>SailNav - Puget Sound chart plotter</title>
 <link rel="stylesheet" href="vendor/leaflet.css">
 <link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="vendor/icon.svg" type="image/svg+xml">
 <style>
   *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   :root {
@@ -113,6 +114,12 @@
   .btn.danger { color: var(--bad); }
   .btn:active { transform: scale(0.97); }
   .btn:disabled { opacity: 0.45; }
+  label.chk { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+  label.chk input { width: 16px; height: 16px; }
+  #status .warn { display: block; color: var(--warn); font-weight: 700; margin-top: 3px; }
+  #legs td.note { font-size: 11px; color: var(--fg-dim); }
+  #legs td.note .low { color: var(--bad); font-weight: 800; }
+  #legs td.note .open { color: var(--warn); font-weight: 800; }
   .pick { font-size: 11px; font-weight: 800; padding: 5px 8px; border-radius: 6px; border: 1px dashed var(--accent); background: transparent; color: var(--accent); cursor: pointer; }
   .pick.armed { background: var(--accent); color: #fff; border-style: solid; }
   #legs { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12px; font-variant-numeric: tabular-nums; }
@@ -273,6 +280,11 @@
         <label>SPEED</label><input type="number" id="speed" value="5.5" step="0.5" min="0.5"><span style="font-size:11px">kn</span>
       </div>
       <div class="row">
+        <label title="Air draft: highest point of the boat above the waterline (masthead incl. antenna). 0 = ignore bridges and cables">MAST</label><input type="number" id="mast" value="15" step="0.5" min="0"><span style="font-size:11px" id="mast-u">m</span>
+        <label title="Extra vertical clearance wanted under bridges and cables">HEADROOM</label><input type="number" id="headroom" value="1.0" step="0.5" min="0"><span style="font-size:11px" id="head-u">m</span>
+        <label class="chk" title="Pass between red/green lateral marks and keep off the shoal side of single marks"><input type="checkbox" id="lateral" checked> BUOYS</label>
+      </div>
+      <div class="row">
         <button class="btn primary" id="btn-route">ROUTE</button>
         <button class="btn" id="btn-direct">DIRECT LEG</button>
         <button class="btn" id="btn-activate" disabled>ACTIVATE</button>
@@ -361,7 +373,7 @@ function applyUnits() {
   const u = state.depthUnit;
   $("btn-units").textContent = u;
   $("depth-unit").textContent = u;
-  $("draft-u").textContent = u; $("clr-u").textContent = u;
+  $("draft-u").textContent = u; $("clr-u").textContent = u; $("mast-u").textContent = u; $("head-u").textContent = u;
   renderDepth();
 }
 $("btn-units").onclick = () => {
@@ -369,10 +381,11 @@ $("btn-units").onclick = () => {
   const cur = state.depthUnit;
   const next = order[(order.indexOf(cur) + 1) % 3];
   // convert draft/clearance inputs to keep the same physical value
-  for (const id of ["draft", "clearance"]) {
+  for (const id of ["draft", "clearance", "mast", "headroom"]) {
     const m = Nav.depthToMetres(parseFloat($(id).value) || 0, cur);
     $(id).value = (+Nav.fmtDepth(m, next)).toString();
   }
+  saveBoat();
   state.depthUnit = next; store.set("depthUnit", next); applyUnits(); rebuildChartLayer();
 };
 
@@ -465,9 +478,28 @@ function renderVectorChart() {
     for (const f of aids) {
       const [lon, lat] = f.geometry.coordinates;
       const isLight = f.objl === S57.OBJL.LIGHTS;
-      vectorLayer.addLayer(L.circleMarker([lat, lon], { radius: isLight ? 4 : 5, color: isLight ? P.CHMGD : P.CHBLK, fillColor: isLight ? P.CHYLW : P.CHWHT, fillOpacity: 1, weight: 1.5 })
-        .bindTooltip(`${f.klass}${f.properties.OBJNAM ? " " + f.properties.OBJNAM : ""}${f.properties.LITCHR ? " lit" : ""}`));
+      const lateral = f.objl === S57.OBJL.BOYLAT || f.objl === S57.OBJL.BCNLAT;
+      const col = lateral ? Router.markColour(f.properties) : null;
+      const fill = isLight ? P.CHYLW : col === "red" ? P.CHRED : col === "green" ? P.CHGRN : P.CHWHT;
+      const side = lateral ? Router.markSide(f.properties) : null;
+      vectorLayer.addLayer(L.circleMarker([lat, lon], { radius: isLight ? 4 : lateral ? 6 : 5, color: isLight ? P.CHMGD : P.CHBLK, fillColor: fill, fillOpacity: 1, weight: 1.5 })
+        .bindTooltip(`${f.properties.OBJNAM || f.klass}${side ? " (" + side + "-hand)" : ""}`));
     }
+  }
+  // Bridges, overhead cables and pipes: red when below the boat's air draft + headroom.
+  const need = airDraftM() > 0 ? airDraftM() + headroomM() : null, u = state.depthUnit;
+  for (const o of data.overheads || []) {
+    const info = Router.overheadInfo(o);
+    const low = need != null && (info.opening ? false : info.clearance == null || info.clearance < need);
+    const openNeeded = need != null && info.opening && (info.clearance == null || info.clearance < need);
+    const color = low ? P.CHRED : openNeeded ? P.CHYLW : (o.kind === "bridge" ? P.CHGRD : P.CHMGD);
+    const style = o.kind === "bridge" ? { color, weight: 2, fillColor: color, fillOpacity: 0.55 } : { color, weight: 2, dashArray: "6 4" };
+    const label = `${info.name || (o.kind === "bridge" ? "Bridge" : "Overhead " + o.kind)}: ` +
+      (info.clearance == null ? "clearance not charted" : (info.opening ? info.category + ", closed " : "") + Nav.fmtDepth(info.clearance, u) + " " + u) +
+      (info.opening && info.openClearance != null ? `, open ${Nav.fmtDepth(info.openClearance, u)} ${u}` : "") +
+      (low ? " \u2014 TOO LOW" : openNeeded ? " \u2014 opening required" : "") +
+      (info.inform ? `<br><span style="font-size:11px">${escapeHtml(info.inform)}</span>` : "");
+    vectorLayer.addLayer(L.geoJSON(o.geometry, { style }).bindTooltip(label, { sticky: true }));
   }
   // Hazards and soundings (soundings only when zoomed in; refreshed on zoomend)
   drawVectorDetail();
@@ -582,6 +614,22 @@ function requiredDepthM() {
   const clr = Nav.depthToMetres(parseFloat($("clearance").value) || 0, state.depthUnit);
   return draft + clr;
 }
+function airDraftM() { return Nav.depthToMetres(parseFloat($("mast").value) || 0, state.depthUnit); }
+function headroomM() { return Nav.depthToMetres(parseFloat($("headroom").value) || 0, state.depthUnit); }
+// Boat settings persist (stored in the current display unit; units toggle converts them).
+const BOAT_FIELDS = ["draft", "clearance", "margin", "speed", "mast", "headroom"];
+function saveBoat() {
+  const b = {}; for (const id of BOAT_FIELDS) b[id] = $(id).value; b.lateral = $("lateral").checked; b.unit = state.depthUnit;
+  store.set("boat", b);
+}
+(function loadBoat() {
+  const b = store.get("boat", null); if (!b) return;
+  for (const id of BOAT_FIELDS) if (b[id] != null) $(id).value = b[id];
+  if (b.lateral != null) $("lateral").checked = b.lateral;
+})();
+for (const id of BOAT_FIELDS) $(id).addEventListener("change", saveBoat);
+$("lateral").addEventListener("change", saveBoat);
+
 async function maybeQueryDepth(force) {
   if (!state.pos) return;
   const now = Date.now();
@@ -703,7 +751,10 @@ $("sheet-head").onclick = () => collapseSheet(!$("sheet").classList.contains("co
   }
 })();
 
-function setStatus(msg, isErr) { const s = $("status"); s.textContent = msg || ""; s.className = isErr ? "err" : ""; }
+function setStatus(msg, isErr, warnings) {
+  const s = $("status"); s.textContent = msg || ""; s.className = isErr ? "err" : "";
+  for (const w of warnings || []) { const d = document.createElement("span"); d.className = "warn"; d.textContent = "\u26A0 " + w; s.appendChild(d); }
+}
 function readEndpoints() {
   const a = Nav.parseLatLon($("from").value), b = Nav.parseLatLon($("to").value);
   if (!a) { setStatus("Enter or pick a FROM position", true); return null; }
@@ -741,14 +792,33 @@ async function planRoute() {
     setStatus("Routing\u2026");
     await new Promise(r => setTimeout(r, 10));
     const margin = parseFloat($("margin").value) || 0;
-    const res = Router.route(routingData, a, b, { requiredDepth: req, marginM: margin, comfortM: Math.max(margin * 3, 250), cellM: 40, maxCells: 1.2e6 });
+    const mast = airDraftM();
+    const ropts = { requiredDepth: req, marginM: margin, comfortM: Math.max(margin * 3, 250), cellM: 40, maxCells: 1.2e6,
+      lateral: $("lateral").checked, airDraft: mast > 0 ? mast : null, headroomM: headroomM() };
+    let res = Router.route(routingData, a, b, ropts);
+    // A low bridge or a closed-off basin may only have a way round outside the first search box
+    // (around Bainbridge instead of under Agate Pass). Widen once before giving up.
+    if (res.error && !/^(Start|Destination) is not/.test(res.error)) {
+      const wide = Router.routingBbox(a, b, 1.0, 20000);
+      setStatus((res.blockedBy ? res.error + ". " : "") + "Searching a wider area\u2026");
+      const wideData = await routingDataFor(wide, a, b);
+      if (wideData) {
+        const r2 = Router.route(wideData.data, a, b, { ...ropts, cellM: 50, maxCells: 1.6e6 });
+        if (!r2.error) { res = r2; source = wideData.source + ", wide search"; }
+      }
+    }
     if (res.error) { setStatus(res.error, true); return; }
-    setRoute(res.waypoints.map((w, i) => ({ ...w, name: i === 0 ? "Start" : i === res.waypoints.length - 1 ? "Dest" : "WP" + i })), "auto");
-    const s = res.stats;
-    let msg = `${res.waypoints.length - 1} legs, ${Nav.fmtNm(Nav.routeLength(res.waypoints))}. Min charted depth ${Nav.fmtDepth(s.minChartedDepth, state.depthUnit)} ${state.depthUnit} (need ${Nav.fmtDepth(req, state.depthUnit)}). ${s.ms} ms, ${source}.`;
+    const notes = legNotes(res);
+    setRoute(res.waypoints.map((w, i) => ({ ...w, name: i === 0 ? "Start" : i === res.waypoints.length - 1 ? "Dest" : "WP" + i })), "auto", notes);
+    const s = res.stats, u = state.depthUnit;
+    let msg = `${res.waypoints.length - 1} legs, ${Nav.fmtNm(Nav.routeLength(res.waypoints))}. Min charted depth ${Nav.fmtDepth(s.minChartedDepth, u)} ${u} (need ${Nav.fmtDepth(req, u)}).`;
+    if (ropts.lateral) msg += ` ${s.lateral.gatesPassed.length} buoy gate${s.lateral.gatesPassed.length === 1 ? "" : "s"} on route (${s.lateral.gates} gates, ${s.lateral.marks} lateral marks in area).`;
+    if (s.overheads.length) msg += ` Under ${s.overheads.length} bridge/cable section${s.overheads.length === 1 ? "" : "s"}` + (s.neededClearance ? `, need ${Nav.fmtDepth(s.neededClearance, u)} ${u}.` : ".");
+    msg += ` ${s.ms} ms, ${source}.`;
     if (s.endMovedM > 50) msg += ` Destination moved ${Math.round(s.endMovedM)} m to reach navigable water.`;
     if (s.startMovedM > 50) msg += ` Start moved ${Math.round(s.startMovedM)} m.`;
-    setStatus(msg);
+    setStatus(msg, false, res.warnings);
+    lastRouteRes = res;
     drawGridDebug(res);
     collapseSheet(true);
     map.fitBounds(routeLine.getBounds().pad(0.15));
@@ -756,6 +826,39 @@ async function planRoute() {
     setStatus("Routing failed: " + e.message, true);
   } finally { $("btn-route").disabled = false; }
 }
+// Routing data for a bbox: local cells when both ends are covered, else ENC Direct.
+async function routingDataFor(bbox, a, b) {
+  if (ChartStore.catalogCovering(bbox).length) await ChartStore.ensureCoverage(bbox, (name, i, total) => setStatus(`Loading bundled chart ${name} (${i}/${total})\u2026`));
+  const local = ChartStore.data();
+  if (local && ChartStore.covers(a.lat, a.lon) && ChartStore.covers(b.lat, b.lon)) {
+    const lb = local.bbox;
+    return { data: Object.assign({}, local, { bbox: [Math.max(bbox[0], lb[0]), Math.max(bbox[1], lb[1]), Math.min(bbox[2], lb[2]), Math.min(bbox[3], lb[3])] }), source: "offline cells" };
+  }
+  if (!navigator.onLine) return null;
+  try { return { data: await Chart.fetchRoutingData(bbox, (stage, n) => setStatus(`Downloading ENC: ${stage} ${n}\u2026`)), source: "NOAA ENC Direct" }; }
+  catch (e) { return null; }
+}
+let lastRouteRes = null;
+
+// Per-leg notes: gates passed (with which side each mark goes) and overheads passed under.
+function legNotes(res) {
+  const u = state.depthUnit, notes = {};
+  const add = (leg, html) => { (notes[leg] = notes[leg] || []).push(html); };
+  for (const gp of res.stats.lateral.gatesPassed) {
+    const txt = gp.marks.map(m => `${m.colour === "red" ? "\uD83D\uDD34" : m.colour === "green" ? "\uD83D\uDFE2" : ""}${m.name ? m.name.replace(/ (Lighted )?(Buoy|Light|Beacon|Daybeacon)/i, "") : m.side} to ${m.passedTo}`).join(", ");
+    add(gp.leg, "gate: " + txt);
+  }
+  const seen = new Set();
+  for (const o of res.stats.overheads) {
+    const key = (o.name || o.kind) + "|" + o.clearance + "|" + o.leg; if (seen.has(key)) continue; seen.add(key);
+    const clr = o.clearance == null ? "clearance ?" : (o.opening ? "closed " : "") + Nav.fmtDepth(o.clearance, u) + " " + u;
+    const cls = o.needsOpening ? "open" : o.clearance == null ? "low" : "";
+    add(o.leg, `<span class="${cls}">under ${escapeHtml(o.name || ("unnamed " + (o.kind === "bridge" ? "bridge" : o.kind)))} (${clr}${o.needsOpening ? ", opening required" : ""})</span>`);
+  }
+  return notes;
+}
+function escapeHtml(t) { return String(t).replace(/[<>&"]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c])); }
+
 function bboxContains(outer, inner) { return outer[0] <= inner[0] && outer[1] <= inner[1] && outer[2] >= inner[2] && outer[3] >= inner[3]; }
 $("btn-route").onclick = planRoute;
 $("btn-direct").onclick = () => {
@@ -775,13 +878,20 @@ function drawGridDebug(res) {
     const i = y * g.cols + x;
     if (m.ok[i]) continue;
     const c = Router.cellCenter(g, x, y), half = g.dLat * step / 2, halfL = g.dLon * step / 2;
-    L.rectangle([[c.lat - half, c.lon - halfL], [c.lat + half, c.lon + halfL]], { stroke: false, fillColor: "#f15469", fillOpacity: 0.25, interactive: false }).addTo(gridLayer);
+    // walls (buoy gates, too-low bridges) in purple, depth/land/hazards in red
+    L.rectangle([[c.lat - half, c.lon - halfL], [c.lat + half, c.lon + halfL]], { stroke: false, fillColor: g.wall[i] ? "#7c3aed" : "#f15469", fillOpacity: g.wall[i] ? 0.6 : 0.25, interactive: false }).addTo(gridLayer);
   }
+  // walls are thin: draw them at full resolution even when the background is decimated
+  if (step > 1) for (let i = 0; i < g.wall.length; i++) if (g.wall[i]) {
+    const c = Router.cellCenter(g, i % g.cols, Math.floor(i / g.cols));
+    L.rectangle([[c.lat - g.dLat / 2, c.lon - g.dLon / 2], [c.lat + g.dLat / 2, c.lon + g.dLon / 2]], { stroke: false, fillColor: "#7c3aed", fillOpacity: 0.6, interactive: false }).addTo(gridLayer);
+  }
+  for (const gt of res.gates || []) L.polyline(gt.map(m => [m.lat, m.lon]), { color: "#16a34a", weight: 2, dashArray: "3 3", interactive: false }).addTo(gridLayer);
   gridLayer.addTo(map);
 }
 
-function setRoute(waypoints, source) {
-  state.route = waypoints.length >= 2 ? { waypoints, source } : null;
+function setRoute(waypoints, source, notes) {
+  state.route = waypoints.length >= 2 ? { waypoints, source, notes: notes || {} } : null;
   state.activeIdx = null; state.legStart = null;
   store.set("route", state.route);
   renderRoute();
@@ -803,7 +913,7 @@ function renderRoute() {
     const active = i === state.activeIdx;
     const mk = L.marker([w.lat, w.lon], { icon: L.divIcon({ className: "wpicon" + (active ? " active" : ""), iconSize: active ? [18, 18] : [14, 14] }), draggable: true });
     mk.bindTooltip(w.name, { permanent: true, direction: "right", className: "wplabel", offset: [8, 0] });
-    mk.on("dragend", () => { const ll = mk.getLatLng(); w.lat = ll.lat; w.lon = ll.lng; r.source = "manual"; store.set("route", r); renderRoute(); });
+    mk.on("dragend", () => { const ll = mk.getLatLng(); w.lat = ll.lat; w.lon = ll.lng; r.source = "manual"; r.notes = {}; store.set("route", r); renderRoute(); });
     mk.on("click", () => {
       const html = `<b>${w.name}</b><br>${Nav.fmtPos(w.lat, w.lon)}<div class="acts"><button class="p" data-a="go">GO TO</button><button data-a="del">DELETE</button></div>`;
       const pp = L.popup().setLatLng([w.lat, w.lon]).setContent(html).openOn(map);
@@ -825,17 +935,19 @@ function renderLegs() {
   const spd = (parseFloat($("speed").value) || 5) / Nav.MS_TO_KN;
   const total = legs.length ? legs[legs.length - 1].cumulative : 0;
   $("sheet-sum").textContent = `${legs.length} legs \u00B7 ${Nav.fmtNm(total)} \u00B7 ${Nav.fmtDuration(total / spd)} @ ${$("speed").value} kn`;
-  let html = `<tr><th>#</th><th>TO</th><th>BRG</th><th>DIST</th><th>CUM</th><th>ETE</th></tr>`;
+  const notes = r.notes || {};
+  const hasNotes = Object.keys(notes).length > 0;
+  let html = `<tr><th>#</th><th>TO</th><th>BRG</th><th>DIST</th><th>CUM</th><th>ETE</th>${hasNotes ? "<th>NOTES</th>" : ""}</tr>`;
   legs.forEach((l, i) => {
-    html += `<tr class="${i + 1 === state.activeIdx ? "active" : ""}" data-i="${i + 1}"><td>${i + 1}</td><td>${l.to.name || ""}</td><td>${Nav.fmtBrg(l.bearing)}</td><td>${Nav.fmtNm(l.distance)}</td><td>${Nav.fmtNm(l.cumulative)}</td><td>${Nav.fmtDuration(l.cumulative / spd)}</td></tr>`;
+    html += `<tr class="${i + 1 === state.activeIdx ? "active" : ""}" data-i="${i + 1}"><td>${i + 1}</td><td>${l.to.name || ""}</td><td>${Nav.fmtBrg(l.bearing)}</td><td>${Nav.fmtNm(l.distance)}</td><td>${Nav.fmtNm(l.cumulative)}</td><td>${Nav.fmtDuration(l.cumulative / spd)}</td>${hasNotes ? `<td class="note">${(notes[i + 1] || []).join("<br>")}</td>` : ""}</tr>`;
   });
   $("legs").innerHTML = html;
   $("legs").querySelectorAll("tr[data-i]").forEach(tr => tr.onclick = () => { const i = +tr.dataset.i; map.panTo([r.waypoints[i].lat, r.waypoints[i].lon]); });
 }
 $("speed").oninput = renderLegs;
-["draft", "clearance"].forEach(id => $(id).onchange = () => { renderDepth(); if (encLayer) encLayer.redraw(); if (state.chartLayer === "local") renderVectorChart(); });
+["draft", "clearance", "mast", "headroom"].forEach(id => $(id).onchange = () => { renderDepth(); if (encLayer) encLayer.redraw(); if (state.chartLayer === "local") renderVectorChart(); });
 
-$("btn-reverse").onclick = () => { if (!state.route) return; setRoute(state.route.waypoints.slice().reverse(), state.route.source); };
+$("btn-reverse").onclick = () => { if (!state.route) return; setRoute(state.route.waypoints.slice().reverse(), state.route.source); setStatus("Reversed. Route again to refresh buoy and bridge notes for this direction."); };
 $("btn-clear").onclick = () => {
   setRoute([], null); $("from").value = ""; $("to").value = ""; setStatus("");
   for (const k of ["from", "to"]) if (pickMarkers[k]) { map.removeLayer(pickMarkers[k]); pickMarkers[k] = null; }

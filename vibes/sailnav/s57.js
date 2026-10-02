@@ -29,20 +29,24 @@
   const ascii = new TextDecoder("latin1");
 
   // S-57 object class codes (OBJL) and attribute codes (ATTL) used here.
+  // Codes verified against OpenCPN data/s57data/s57objectclasses.csv and s57attributes.csv.
   const OBJL = {
-    DEPARE: 42, DRGARE: 46, LNDARE: 71, SOUNDG: 129, DEPCNT: 43, UWTROC: 153, OBSTRN: 86, WRECKS: 159,
-    COALNE: 30, SLCONS: 122, PONTON: 95, BRIDGE: 11, LIGHTS: 75, BOYLAT: 17, BOYSPP: 19, BOYCAR: 14, BOYSAW: 18,
-    BOYISD: 15, BCNLAT: 7, BCNSPP: 9, LNDMRK: 74, SEAARE: 119, FAIRWY: 51, ACHARE: 4, RESARE: 112, CBLSBM: 22,
-    PIPSOL: 94, MORFAC: 84, UNSARE: 154, M_COVR: 302, M_QUAL: 308, DAYMAR: 39, PILPNT: 90, FLODOC: 57, HULKES: 65,
+    ACHARE: 4, BCNCAR: 5, BCNISD: 6, BCNLAT: 7, BCNSAW: 8, BCNSPP: 9, BRIDGE: 11, BOYCAR: 14, BOYINB: 15,
+    BOYISD: 16, BOYLAT: 17, BOYSAW: 18, BOYSPP: 19, CBLOHD: 21, CBLSUB: 22, COALNE: 30, CONVYR: 34, DAYMAR: 39,
+    DEPARE: 42, DEPCNT: 43, DRGARE: 46, FAIRWY: 51, FLODOC: 57, GATCON: 61, HULKES: 65, LNDARE: 71, LNDMRK: 74,
+    LIGHTS: 75, LOKBSN: 79, MORFAC: 84, OBSTRN: 86, PILPNT: 90, PIPOHD: 93, PIPSOL: 94, PONTON: 95, PYLONS: 98,
+    RESARE: 112, SEAARE: 119, SLCONS: 122, SOUNDG: 129, TSELNE: 145, TSSLPT: 148, UWTROC: 153, UNSARE: 154,
+    WRECKS: 159, M_COVR: 302, M_NSYS: 305, M_QUAL: 308, M_SDAT: 309, M_VDAT: 312,
   };
   const OBJL_NAME = Object.fromEntries(Object.entries(OBJL).map(([k, v]) => [v, k]));
   const ATTL = {
-    87: "DRVAL1", 88: "DRVAL2", 179: "VALSOU", 187: "WATLEV", 42: "CATOBS", 71: "CATWRK", 116: "OBJNAM",
-    174: "VALDCO", 125: "QUASOU", 93: "EXPSOU", 133: "SCAMIN", 181: "VERCLR", 75: "COLOUR", 107: "LITCHR",
-    141: "SIGPER", 36: "CATLAM", 66: "CATSPM", 103: "INFORM", 149: "STATUS", 156: "TECSOU", 147: "SORDAT",
-    148: "SORIND", 178: "VALNMR", 83: "HEIGHT", 49: "CATSEA", 92: "ELEVAT", 111: "NATSUR", 22: "CATACH",
-    17: "BOYSHP", 8: "BCNSHP", 113: "NOBJNM", 62: "CATRES", 138: "SIGGRP", 137: "SECTR1", 139: "SECTR2",
-    30: "CATCOV", 131: "RESTRN", 19: "CATBRG", 121: "QUAPOS", 56: "CONVIS", 60: "CONRAD",
+    2: "BCNSHP", 4: "BOYSHP", 8: "CATACH", 9: "CATBRG", 11: "CATCBL", 17: "CATCON", 18: "CATCOV", 29: "CATGAT",
+    36: "CATLAM", 42: "CATOBS", 49: "CATPYL", 59: "CATSEA", 60: "CATSLC", 66: "CATSPM", 71: "CATWRK", 75: "COLOUR",
+    76: "COLPAT", 81: "CONDTN", 82: "CONRAD", 83: "CONVIS", 87: "DRVAL1", 88: "DRVAL2", 90: "ELEVAT", 93: "EXPSOU",
+    95: "HEIGHT", 98: "HORCLR", 102: "INFORM", 107: "LITCHR", 113: "NATSUR", 116: "OBJNAM", 125: "QUASOU",
+    131: "RESTRN", 133: "SCAMIN", 136: "SECTR1", 137: "SECTR2", 141: "SIGGRP", 142: "SIGPER", 147: "SORDAT",
+    148: "SORIND", 149: "STATUS", 156: "TECSOU", 158: "TXTDSC", 174: "VALDCO", 178: "VALNMR", 179: "VALSOU",
+    181: "VERCLR", 182: "VERCCL", 183: "VERCOP", 184: "VERCSA", 185: "VERDAT", 187: "WATLEV", 301: "NOBJNM", 402: "QUAPOS",
   };
   // Enumerated WATLEV names for tooltips
   const WATLEV = { 1: "partly submerged at high water", 2: "always dry", 3: "always under water", 4: "covers and uncovers", 5: "awash", 6: "subject to inundation", 7: "floating" };
@@ -326,7 +330,8 @@
   // ---------------------------------------------------------------------
   function toRoutingData(cells) {
     const list = Array.isArray(cells) ? cells : [cells];
-    const out = { bbox: null, depthAreas: [], dredgedAreas: [], land: [], hazards: [], soundings: [] };
+    const out = { bbox: null, depthAreas: [], dredgedAreas: [], land: [], hazards: [], soundings: [],
+      lateralMarks: [], overheads: [] };
     for (const cell of list) {
       const b = cellBounds(cell);
       out.bbox = out.bbox ? [Math.min(out.bbox[0], b[0]), Math.min(out.bbox[1], b[1]), Math.max(out.bbox[2], b[2]), Math.max(out.bbox[3], b[3])] : b;
@@ -341,6 +346,13 @@
             for (const c of pts) if (c.length >= 3 && isFinite(c[2])) out.soundings.push({ lon: c[0], lat: c[1], depth: c[2], date: p.SORDAT });
             break;
           }
+          case OBJL.BOYLAT: case OBJL.BCNLAT:
+            if (f.geometry.type === "Point") out.lateralMarks.push({ lon: f.geometry.coordinates[0], lat: f.geometry.coordinates[1], kind: f.klass, name: p.OBJNAM || null, props: p });
+            break;
+          case OBJL.BRIDGE: out.overheads.push({ kind: "bridge", geometry: f.geometry, properties: p }); break;
+          case OBJL.CBLOHD: out.overheads.push({ kind: "cable", geometry: f.geometry, properties: p }); break;
+          case OBJL.PIPOHD: out.overheads.push({ kind: "pipe", geometry: f.geometry, properties: p }); break;
+          case OBJL.CONVYR: out.overheads.push({ kind: "conveyor", geometry: f.geometry, properties: p }); break;
           case OBJL.UWTROC: case OBJL.OBSTRN: case OBJL.WRECKS: {
             const kind = f.objl === OBJL.UWTROC ? "rock" : f.objl === OBJL.OBSTRN ? "obstruction" : "wreck";
             const pts = f.geometry.type === "Point" ? [f.geometry.coordinates] : f.geometry.type === "MultiPoint" ? f.geometry.coordinates : centroidPts(f.geometry);
