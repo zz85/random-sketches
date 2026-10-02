@@ -6,6 +6,7 @@
 import * as IP from './imgproc.js';
 import { CLEFS, readStaff, nameOf, keySigPositions } from './theory.js';
 import { readRhythm } from './rhythm.js';
+import { classify } from './glyphnet.js';
 
 export const TARGET = 16; // staff space (line to line) in normalized pixels
 const odd = (n) => (n | 1);
@@ -134,7 +135,8 @@ export function findStaves(bin, S, t) {
   // drop duplicates (same staff found twice, e.g. a few slices that took a beam or hairpin
   // above it as the top line): the one supported by the most slices wins
   const bySupport = staves.slice().sort((a, b) => b.pts.length - a.pts.length);
-  const keep = bySupport.filter((s, i) => !bySupport.some((o, j) => j < i && Math.abs(lineY(o, 2, s.x0) - lineY(s, 2, s.x0)) < 2 * S && o.x0 < s.x1 && s.x0 < o.x1));
+  // (staves never overlap: two whose line spans intersect are one staff found twice)
+  const keep = bySupport.filter((s, i) => !bySupport.some((o, j) => j < i && Math.abs(lineY(o, 2, s.x0) - lineY(s, 2, s.x0)) < 4.5 * S && o.x0 < s.x1 && s.x0 < o.x1));
   return staves.filter((s) => keep.includes(s));
 }
 
@@ -172,12 +174,14 @@ export function strokes(mask, minLen, gapMax = 0) {
   const { m, cw, ch } = mask, cols = [];
   for (let x = 0; x < cw; x++) {
     // longest run in the column, bridging gaps of up to gapMax px (strokes broken in photos)
-    let best = 0, bt = 0, start = -1, last = -1;
+    // ... but only runs that are mostly ink: bridging must not turn the stack of crossbars
+    // between a sharp's two stems into a third "stem"
+    let best = 0, bt = 0, start = -1, last = -1, ink = 0;
     for (let y = 0; y < ch; y++) {
       if (!m[y * cw + x]) continue;
-      if (start < 0 || y - last - 1 > gapMax) start = y;
-      last = y;
-      if (last - start + 1 > best) { best = last - start + 1; bt = start; }
+      if (start < 0 || y - last - 1 > gapMax) { start = y; ink = 0; }
+      last = y; ink++;
+      if (last - start + 1 > best && ink >= 0.7 * (last - start + 1)) { best = last - start + 1; bt = start; }
     }
     cols.push(best >= minLen ? { x, top: bt, bot: bt + best - 1 } : null);
   }
@@ -197,7 +201,7 @@ export function classifyAccidental(labels, w, c, S, t = 0.13 * S) {
   if (W < 0.3 || W > 2.2 || H < 0.5 || H > 3.8) return null;
   const narrow = (s) => s.x1 - s.x0 + 1 <= 0.35 * S + 1;
   const mask = compMask(labels, w, c);
-  let st = strokes(mask, 1.1 * S, Math.round(0.15 * S + t)); // gaps: photo breaks + removed staff lines
+  let st = strokes(mask, Math.max(1.1 * S, 0.62 * ch), Math.round(0.15 * S + t)); // gaps: photo breaks + removed staff lines
   // heavy fonts and scans: a flat's stem and its bowl's right side bridge into one wide
   // "stroke"; without gap bridging the bowl's hole separates them again
   let flatOnly = false;
@@ -476,7 +480,10 @@ export function analyze(norm, opts = {}) {
       return false;
     });
   };
-  let notes = uniq.filter((hd) => (hd.kind === 'hollow' || hd.stem) && ledgerUnder(hd));
+  // a stem going up from the left of a "head" is a flat (its bowl survives the opening in
+  // bold engravings); real up-stems stand on the right
+  const flatLike = (hd) => hd.kind === 'black' && hd.stem && hd.stem.dir < 0 && hd.stem.x < (hd.box[0] + hd.box[2]) / 2;
+  let notes = uniq.filter((hd) => (hd.kind === 'hollow' || hd.stem) && ledgerUnder(hd) && !flatLike(hd));
   // a stem carries one duration: a "half note" sharing its stem with black heads is the
   // loop of a curly flag
   // loop of a curly flag: a "half note" sharing a stem with black heads, or threaded on one
@@ -516,7 +523,10 @@ export function analyze(norm, opts = {}) {
   notes = notes.filter((n) => {
     const c = cc.comps[n.comp]; if (!c) return n.kind === 'black';
     const S = spaceAt(n.st, n.x), a = classifyAccidental(L, w, c, S, t);
-    if (a && a.type >= 0) return false; // also filled: a sharp's crossings survive the opening in heavy scans
+    // also filled: a sharp's crossings and a flat's bowl survive the opening in heavy scans.
+    // (A real note never classifies as a flat: its stem is on the right going up, or on the
+    // left going down with the head at the top, where a flat's bowl is at the bottom.)
+    if (a) return false;
     if (n.kind === 'black') return true;
     // time-signature digits: two spaces tall, hanging from the top line or standing on the bottom one
     const ch = c.y1 - c.y0 + 1, ya = lineY(n.st, 0, n.x), yb = lineY(n.st, 4, n.x);
@@ -541,9 +551,9 @@ export function analyze(norm, opts = {}) {
   for (const g of groups.values()) {
     if (!(isStroke(g) || isHalf(g)) || g.merged) continue;
     for (const q of groups.values()) {
-      if (q === g || q.merged || q.x0 - g.x1 < 0 || q.x0 - g.x1 > 0.6 * S0 || q.x1 - q.x0 > 1.4 * S0) continue;
+      if (q === g || q.merged || q.x0 - g.x1 < -1 || q.x0 - g.x1 > 0.6 * S0 || q.x1 - q.x0 > 1.4 * S0) continue;
       const ov = Math.min(g.y1, q.y1) - Math.max(g.y0, q.y0);
-      const bowl = isStroke(g) && q.y0 >= g.y0 + 0.4 * S0 && q.y1 <= g.y1 + 0.3 * S0 && q.x0 - g.x1 <= 0.3 * S0; // flat: bowl fragment
+      const bowl = isStroke(g) && q.y0 >= g.y0 + 0.4 * S0 && q.y1 <= g.y1 + 0.3 * S0 && q.x0 - g.x1 <= 0.5 * S0; // flat: bowl fragment
       const pair = (isStroke(q) || isHalf(q)) && ov > 0.6 * Math.min(g.y1 - g.y0, q.y1 - q.y0) && q.x1 - g.x0 <= 1.9 * S0; // sharp / natural halves
       if (!bowl && !pair) continue;
       const m = { ...g, ids: [...g.ids, ...q.ids], x1: Math.max(g.x1, q.x1), y0: Math.min(g.y0, q.y0), y1: Math.max(g.y1, q.y1), n: g.n + q.n, cx: (g.cx * g.n + q.cx * q.n) / (g.n + q.n), cy: (g.cy * g.n + q.cy * q.n) / (g.n + q.n) };
@@ -552,6 +562,43 @@ export function analyze(norm, opts = {}) {
     }
   }
   for (const [k, g] of groups) if (g.merged) groups.delete(k);
+  // a double sharp cut through its middle by a staff line comes apart into two small halves side
+  // by side; the classifier reads the pair
+  if (opts.glyphnet !== false) {
+    const small = [...groups.values()].filter((g) => g.x1 - g.x0 + 1 <= 0.7 * S0 && g.y1 - g.y0 + 1 <= 1.4 * S0 && g.y1 - g.y0 + 1 >= 0.5 * S0);
+    for (const g of small) for (const q of small) {
+      if (g === q || g.merged || q.merged || q.x0 <= g.x1 || q.x0 - g.x1 > 0.35 * S0 || Math.abs(q.cy - g.cy) > 0.3 * S0) continue;
+      const box = [g.x0, Math.min(g.y0, q.y0), q.x1, Math.max(g.y1, q.y1)];
+      if (box[2] - box[0] + 1 > 1.4 * S0) continue;
+      const pr = classify(bin, box);
+      if (pr.dsharp < 0.9) continue;
+      Object.assign(g, { ids: [...g.ids, ...q.ids], x1: box[2], y0: box[1], y1: box[3], n: g.n + q.n, cx: (box[0] + box[2]) / 2, cy: (box[1] + box[3]) / 2, pairDsharp: true }); q.merged = true;
+    }
+    for (const [k, g] of groups) if (g.merged) groups.delete(k);
+  }
+  // Competing readings of an accidental-sized symbol: the stroke rules (classifyAccidental) and
+  // the learned classifier (glyphnet.js) each give evidence; the reading with the most combined
+  // support wins. The rules carry a fixed prior weight, so the classifier overrides them only
+  // when it is confident (a double sharp the rules miss, a sharp cut up in a phone photo).
+  // A narrow piece the rules could not pair with its neighbour is also tried as a pair.
+  const ACC_OF = { sharp: 1, flat: -1, natural: 0, dsharp: 2, dflat: -2 }, NAME_OF = { 1: 'sharp', '-1': 'flat', 0: 'natural', 2: 'dsharp', '-2': 'dflat' };
+  const RULE_W = Math.log(opts.ruleWeight ?? 8), useNet = opts.glyphnet !== false;
+  const readAccidental = (c, S, st) => {
+    const rule = classifyAccidental(L, w, c, S, t);
+    const W = (c.x1 - c.x0 + 1) / S, H = (c.y1 - c.y0 + 1) / S;
+    if (!useNet || W < 0.3 || W > 2.2 || H < (c.pairDsharp ? 0.5 : 0.8) || H > 3.8) return rule;
+    const pr = classify(bin, [c.x0, c.y0, c.x1, c.y1]);
+    const pNone = Math.max(1e-4, 1 - Object.keys(ACC_OF).reduce((q, k) => q + pr[k], 0));
+    // (the classifier may add or retype an accidental but not delete one the rules found: on real
+    // scans unlike its synthetic training pages it is less sure of what is not a symbol)
+    let best = { type: null, s: rule ? -Infinity : Math.log(pNone) + RULE_W };
+    for (const [k, v] of Object.entries(ACC_OF)) { const agree = rule && rule.type === v; if (!agree && pr[k] < 0.9) continue; const sc = Math.log(pr[k] + 1e-4) + (agree ? RULE_W : 0); if (sc > best.s) best = { type: v, s: sc }; }
+    c.readings = { rule: rule ? NAME_OF[rule.type] : null, net: Object.entries(pr).sort((x, y) => y[1] - x[1])[0], chose: best.type == null ? null : NAME_OF[best.type] };
+    if (best.type == null) return null;
+    if (rule && rule.type === best.type) return rule;
+    const ref = best.type === -1 || best.type === -2 ? c.y1 - 0.45 * S : (c.y0 + c.y1) / 2;
+    return { type: best.type, ref, net: true };
+  };
   const accs = [], dots = [];
   for (const c of groups.values()) {
     if (!c || headComps.has(c.id)) continue;
@@ -569,7 +616,7 @@ export function analyze(norm, opts = {}) {
       }
       continue;
     }
-    const a = classifyAccidental(L, w, c, S, t);
+    const a = readAccidental(c, S, st);
     if (a) { accs.push({ st, c, ...a, p: Math.round(pOfY(st, a.ref, c.cx)) }); continue; }
     if (cw >= 0.2 * S && cw <= 0.75 * S && chh >= 0.2 * S && chh <= 0.75 * S && c.n / (cw * chh) > 0.5 && cw / chh > 0.55 && cw / chh < 1.8) {
       // a dot stands alone; pieces of a tie or slur cut up by staff-line removal have neighbours
@@ -624,6 +671,9 @@ export function analyze(norm, opts = {}) {
     const key = [];
     for (const a of mine) {
       if (a.c.x0 - x > 2.0 * S || key.length >= 7) break;
+      // a local accidental hugs its note (~0.2-0.3 spaces); a key signature keeps a full space
+      // or more before the music, so an accidental with a head at its pitch right after it ends the key
+      if (notes.some((n) => n.st === st && Math.abs(n.p - a.p) <= 0 && n.box[0] - a.c.x1 > -0.3 * S && n.box[0] - a.c.x1 < 0.55 * S)) break;
       if (key.length && a.type !== key[0].type) break;
       // glyphs of one signature are one size (a C or cut-C time signature can read as a sharp)
       if (key.length && (a.c.x1 - a.c.x0) > 1.35 * (key[0].c.x1 - key[0].c.x0) + 1) break;
@@ -769,7 +819,7 @@ export function analyze(norm, opts = {}) {
     st.clef.ids = b ? cc.comps.filter((c) => c && c.cx >= b[0] && c.cx <= b[2] && c.cy >= b[1] && c.cy <= b[3] &&
       c.x1 - c.x0 <= b[2] - b[0] + 4 && c.y1 - c.y0 <= b[3] - b[1] + 4 && !headComps.has(c.id)).map((c) => c.id) : [];
   }
-  readRhythm({ w, h, S0, t, staves, notes, L, comps: cc.comps, accs, dots, headComps });
+  readRhythm({ w, h, S0, t, staves, notes, L, comps: cc.comps, accs, dots, headComps, bin, useNet: opts.glyphnet !== false });
   return { w, h, space: S0, thick: t, staves, labels: L, comps: cc.comps, ledgerPx: Int32Array.from(ledgerPx), notes, attach, bin: bin.data, A: norm.A, scale: norm.scale, angle: norm.angle };
 }
 

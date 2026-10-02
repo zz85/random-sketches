@@ -200,6 +200,20 @@ describe('score assembly and bar repair', () => {
   test('tick arithmetic', () => {
     expect(baseTicks(4, 1)).toBe(144); expect(evTicks({ dur: 8, dots: 0, tuplet: [3, 2] })).toBe(32);
   });
+  test('glyph classifier reads rasterized accidentals and rests on a staff', async () => {
+    const { classify } = await import('./glyphnet.js');
+    const read = (name, font) => {
+      const g = rasterGlyph(GLYPHS[font][name].d, 16), w = 80, h = 120, data = new Uint8Array(w * h);
+      for (let k = 0; k < 5; k++) for (let x = 0; x < w; x++) for (let y = 28 + 16 * k; y < 30 + 16 * k; y++) data[y * w + x] = 1;
+      for (let y = 0; y < g.h; y++) for (let x = 0; x < g.w; x++) if (g.m[y * g.w + x]) data[(60 - (g.h >> 1) + y) * w + 40 - (g.w >> 1) + x] = 1;
+      const p = classify({ w, h, data }, [40 - (g.w >> 1), 60 - (g.h >> 1), 40 - (g.w >> 1) + g.w - 1, 60 - (g.h >> 1) + g.h - 1]);
+      return Object.entries(p).sort((a, b) => b[1] - a[1])[0][0];
+    };
+    for (const font of ['Bravura', 'Leland']) {
+      expect(read('sharp', font)).toBe('sharp'); expect(read('flat', font)).toBe('flat'); expect(read('natural', font)).toBe('natural');
+      expect(read('doubleSharp', font)).toBe('dsharp'); expect(read('rest8th', font)).toBe('rest8');
+    }
+  });
   test('glyph rasterizer', () => {
     const r = rasterGlyph(GLYPHS.Bravura.restQuarter.d, 16);
     expect(r.h).toBeGreaterThan(40); expect(r.m.reduce((a, v) => a + v, 0)).toBeGreaterThan(200);

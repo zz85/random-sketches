@@ -8,6 +8,7 @@
 import { GLYPHS } from './glyphs.js';
 import { rasterGlyph, descriptor, shapeDistance } from './raster.js';
 import { lineY, yOfP, pOfY, spaceAt, TARGET } from './omr.js';
+import { classify } from './glyphnet.js';
 
 const CLASSES = {
   rest: ['restWhole', 'restQuarter', 'rest8th', 'rest16th', 'rest32nd'],
@@ -63,7 +64,7 @@ function readMeter(top, bot) {
 const REST_DUR = { restWhole: 1, restQuarter: 4, rest8th: 8, rest16th: 16, rest32nd: 32 };
 const DIGIT = (name) => +name.slice(-1);
 
-export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, headComps }) {
+export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, headComps, bin, useNet = true }) {
   const ink = (x, y) => x >= 0 && y >= 0 && x < w && y < h && L[y * w + x] > 0;
   // ---------------------------------------------------------------- stems: beams and flags
   // vertical ink runs in column x between y0 and y1 (either order), as [start, len] from y0
@@ -102,7 +103,7 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
         // beams stack from the stem end, a quarter space apart: a run further off (a slur
         // passing over the beam) ends the stack
         let count = 0, end = -Infinity;
-        for (const r of cols[0]) { if (r[0] > 3.2 * S || (count && r[0] - end > 0.45 * S)) break; if (r[1] < 0.36 * S) continue; count += k(r[1]); end = r[0] + r[1]; }
+        for (const r of cols[0]) { if (r[0] > 3.2 * S || (count && r[0] - end > 0.33 * S)) break; if (r[1] < 0.36 * S) continue; count += k(r[1]); end = r[0] + r[1]; }
         return { isBeam, count };
       };
       const L_ = side(-1), R_ = side(1);
@@ -247,8 +248,20 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
     const { m } = maskOf(c);
     // rests
     if (inside && H >= 1.2 && H <= 4.6 && W <= 1.7) {
+      // competing readings of the value: template distances and the classifier's probabilities
+      // combine into a score per value; the runners-up are kept as alternatives (a cost per
+      // value) for the bar check to choose from
       const g = match(m, cw, ch, ['rest'], S);
-      if (g && g.dist < 0.36 && g.name !== 'restWhole') { st.rests.push({ x: c.cx, y: c.cy, dur: REST_DUR[g.name], box: [c.x0, c.y0, c.x1, c.y1], ids: c.ids || [c.id], dist: g.dist }); continue; }
+      const pr = useNet && bin ? classify(bin, [c.x0, c.y0, c.x1, c.y1]) : null;
+      const pRest = pr ? pr.rest4 + pr.rest8 + pr.rest16 : 0;
+      if (g && g.name !== 'restWhole' && (g.dist < 0.36 || (pr && pRest > 0.95 && g.dist < 0.5))) {
+        const sc = {};
+        for (const [nm, d] of Object.entries(REST_DUR)) if (d >= 4) sc[d] = -6 * (g.all[nm] ?? 1) + (pr ? Math.log((pr['rest' + Math.min(16, d)] ?? 0) + 1e-3) : 0);
+        const best = +Object.keys(sc).reduce((a, b) => (sc[b] > sc[a] ? b : a));
+        const alt = {}; for (const d in sc) if (+d !== best) alt[d] = +(sc[best] - sc[d]).toFixed(2);
+        st.rests.push({ x: c.cx, y: c.cy, dur: best, alt, box: [c.x0, c.y0, c.x1, c.y1], ids: c.ids || [c.id], dist: g.dist });
+        continue;
+      }
     }
     // tuplet numbers: small digits outside (or at the edge of) the staff
     if (H >= 0.7 && H <= 1.9 && W <= 1.5 && (c.y1 < yt + 0.6 * S || c.y0 > yb - 0.6 * S)) {
@@ -259,7 +272,9 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
   // dotted rests: an augmentation dot right of a rest
   for (const st of staves) for (const r of st.rests) {
     const S = spaceAt(st, r.x);
-    r.dots = dots.filter((d) => d.st === st && !used.has(d.c.ids[0]) && d.c.cx > r.box[2] && d.c.cx - r.box[2] < 1.2 * S && d.c.cy > r.box[1] - 0.3 * S && d.c.cy < r.box[3]).length > 0 ? 1 : 0;
+    r.dots = dots.filter((d) => d.st === st && !used.has(d.c.ids[0]) && d.c.cx > r.box[2] && d.c.cx - r.box[2] < 1.2 * S && d.c.cy > r.box[1] - 0.3 * S && d.c.cy < r.box[3] &&
+      // (not the staccato of the next note: just above or below its head)
+      !st.notes.some((n) => Math.abs(n.x - d.c.cx) < 0.8 * S && Math.abs(n.y - d.c.cy) < 1.6 * S)).length > 0 ? 1 : 0;
   }
   // ties: an arc from just right of one head to just left of the next head at the same position
   // (on the next chord of the staff). An arc running off the end of the staff ties over the

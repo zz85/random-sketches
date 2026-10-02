@@ -10,7 +10,7 @@
 export const DIV = 96;
 export const WHOLE = 4 * DIV;
 export const baseTicks = (dur, dots) => { let t = WHOLE / dur, a = t; for (let i = 0; i < dots; i++) { a /= 2; t += a; } return t; };
-export const evTicks = (e) => (e.grace ? 0 : e.full ? e.cap : (baseTicks(e.dur, e.dots) * (e.tuplet ? e.tuplet[1] : 1)) / (e.tuplet ? e.tuplet[0] : 1));
+export const evTicks = (e) => (e.grace || e.removed ? 0 : e.full ? e.cap : (baseTicks(e.dur, e.dots) * (e.tuplet ? e.tuplet[1] : 1)) / (e.tuplet ? e.tuplet[0] : 1));
 export const capOf = (time) => (time.beats * WHOLE) / time.unit;
 const TUPLET_OF = { 3: [3, 2], 5: [5, 4], 6: [6, 4] };
 const METERS = [[4, 4], [3, 4], [2, 4], [2, 2], [6, 8], [3, 8], [9, 8], [12, 8], [5, 4], [6, 4], [3, 2]];
@@ -210,9 +210,17 @@ function candidates(evs) {
     if (e.kind === 'note' && e.dur === 4 && !e.notes[0].beamed && !e.notes[0].flags) add(2.0, 'flag added', { dur: 8 });
     if (e.kind === 'note' && e.dur === 2) add(2.2, 'half → quarter', { dur: 4 });
     if (e.kind === 'note' && e.dur === 4 && !e.notes[0].beamed) add(2.2, 'quarter → half', { dur: 2 });
+    if (e.kind === 'note' && !e.notes.some((n) => n.fix)) {
+      // a false head (a fragment, a letter): cheap when an unbeamed note sits inside a beam group
+      const prev = evs[k - 1], next = evs[k + 1];
+      const inside = !e.beamComp && prev?.beamComp != null && prev.beamComp === next?.beamComp;
+      out.push({ k, cost: inside ? 1.1 : 3.4, delta: -t0(e), text: 'not a note', apply: () => { e.removed = true; e.repaired = 'not a note'; } });
+    }
     if (e.kind === 'rest') {
-      if (e.dur >= 8) add(1.2, 'rest value', { dur: e.dur / 2 }); // rest glyphs vary most between fonts
-      if (e.dur <= 16 && e.dur >= 4) add(1.2, 'rest value', { dur: e.dur * 2 });
+      // rest glyphs vary most between fonts; a value the glyph also resembles is cheaper
+      const altCost = (d) => Math.min(1.2, 0.8 + 0.1 * (e.rest.alt?.[d] ?? 9));
+      if (e.dur >= 8) add(altCost(e.dur / 2), 'rest value', { dur: e.dur / 2 });
+      if (e.dur <= 16 && e.dur >= 4) add(altCost(e.dur * 2), 'rest value', { dur: e.dur * 2 });
       out.push({ k, cost: 2.5, delta: -t0(e), text: 'rest removed', apply: () => { e.grace = true; e.removed = true; e.repaired = 'rest removed'; } });
     }
   });

@@ -39,6 +39,7 @@ node tools/make_sample.mjs          # rebuild sample.jpg
 node tools/make_pdf_fixture.mjs     # rebuild fixtures/parts.pdf (title page + 2 music pages)
 node tools/compare.mjs truth fixtures/<tune>.json a.musicxml [b.mxl ...]   # score MusicXML (ours, Audiveris) against ground truth
 node tools/compare.mjs pair a.musicxml b.mxl                               # or two outputs against each other
+node tools/make_glyphset.mjs 120 /tmp/glyphset && bun tools/glyphnet.mjs /tmp/glyphset 25 && node tools/glyphnet_export.mjs   # retrain the classifier
 ```
 
 ## Using it
@@ -193,6 +194,83 @@ the music from it on the main thread (a few ms, so it is rebuilt after every cor
    breaks; MIDI format 0, one channel per part; Web Audio playback with ties merged into one
    sounding note.
 
+### Competing readings and the glyph classifier
+
+Doubtful symbols keep more than one reading, and the reading that best fits the rest of the
+evidence wins:
+
+- **Accidentals:** the stroke rules and a small learned classifier (`glyphnet.js`) both read every
+  accidental-sized symbol. The rules carry a fixed prior; the classifier can add an accidental the
+  rules missed, or change its type, only when it is at least 90% sure, and it can never delete one
+  (on real scans, unlike its training pages, it is less reliable about what is *not* a symbol).
+  A double sharp cut in two by a staff line is reassembled when the classifier reads the pair.
+- **Rests:** the template distance and the classifier score every value; the runner-up values
+  are kept with their costs, so the bar check can pick a value the glyph also resembles.
+- **Bars:** the bar check chooses among dots, beam counts, rest values, triplets, ignored tuplet
+  numbers and, now, "not a note" (cheap for an unbeamed head stranded inside a beam group).
+- **Beams:** beams counted from the stem end must stack tightly (a slur running close under a
+  beam was being counted as a second beam).
+
+**The classifier** is an MLP: input 962 (a 24 × 40 crop, 3 × 5 staff spaces of the binarized page
+with its staff lines, plus box size); hidden layers 96 and 48; output 12 classes (5 accidentals,
+black and hollow heads, 4 rest values, other). It has 98k parameters, stored as 130 KB of int8
+weights in `glyphnet-weights.js`, and runs in plain JS at ~0.1 ms per glyph, adding a few hundred
+ms to a page. It is trained by `tools/glyphnet.mjs` on 120 random pages from
+`tools/make_glyphset.mjs`: tunes dense in accidentals, key signatures up to six sharps or flats and
+rests, engraved by Verovio in the 5 fonts at 13–26 px per space and degraded at random. That gives
+13,800 crops cut from the page as the pipeline sees it. The evaluation fixtures are other tunes.
+
+Note accidentals in the fixtures, given the symbol's pieces:
+
+| | clean | scan | photo | phone |
+|---|---|---|---|---|
+| stroke rules | 28/30 | 28/30 | 28/30 | 20/30 |
+| classifier | 30/30 | 30/30 | 30/30 | 29/30 |
+
+The classifier wrongly reads about 2% of other symbols as accidentals, which is why it adds or
+changes one only when it is very sure. Combined, pitch rose from 94.6 to 96.0% on scans, 96.4 to
+97.2% on photos and 83.0 to 91.6% on phone photos, with clean pages unchanged. On the CODA sheet
+it agrees with the rules on 70 of 71 accidentals and finds the two double sharps the rules
+missed. On the Haydn scan the keys of 8 pages are unchanged.
+
+**Why not a bigger network.** Models were checked for size, licence and whether they report
+symbol positions, which the in-place rewrite needs:
+
+| model | what it does | size | licence | positions? |
+|---|---|---|---|---|
+| Legato / Legato 2 (2025–26) | page image → ABC notation, LLM-style decoder | 430 MB (small: 44 MB) | MIT | no |
+| SMT (Sheet Music Transformer) | system image → kern tokens | 86 MB | MIT | no |
+| homr (TrOMR-based) | U-Net segmentation + transformer per staff | ~20–85 MB ONNX | AGPL-3.0 | segmentation only |
+| oemer | U-Net segmentation + rules | tens of MB, ONNX (not measured) | MIT | yes (pixels) |
+| glyphnet (here) | one symbol crop → class | 130 KB | (this repo) | yes, from the pipeline |
+
+The sequence models transcribe music but cannot say where on the page each note is, so they
+cannot drive an edit of the photo. They would need transformers.js or onnxruntime-web, tens to
+hundreds of MB downloaded, and seconds per page on a phone. homr's licence would make the app
+AGPL. oemer's segmentation would be the plausible next step if notehead *detection* on photos
+becomes the bottleneck (it is the biggest remaining loss on phone photos). That needs ONNX
+Runtime Web with WebGPU or wasm, and a check of its weights' size and licence.
+
+### Against Audiveris
+
+Audiveris 5.11 (built from source; batch export) and ScoreShift on the same images, scored by
+`tools/compare.mjs` (notes aligned by pitch; values and whole bars compared):
+
+| | ScoreShift pitch / +value / bars | Audiveris pitch / +value / bars |
+|---|---|---|
+| clean fixtures | 99.0 / 99.0 / 120 of 124 | 96.8 / 95.0 / 113 |
+| scan | 96.0 / 95.0 / 105 | 97.0 / 94.8 / 111 |
+| photo | 97.2 / 95.4 / 109 | 75.6 / 71.9 / 80 |
+| phone (~13 px/space) | 91.6 / 87.2 / 90 | 10.8 / 7.2 / 1 (finds almost no staff lines) |
+| CODA sheet (67 bars) | 100 / 100 / 67 | 96.5 / 95.6 / 55 |
+
+`compare.mjs` aligns notes, which counts a little differently from `eval.js`. The CODA reference
+is not independent: it is the two outputs where they agree, plus the 13 bars where they differed,
+settled by looking at the page. ScoreShift matches all 13 now, and the fixes that got it there
+were made on this same page, so its 100% is a fitted score, not a held-out one. Audiveris runs
+about 17 s a page in Java; ScoreShift about 1.5 s in the browser. Audiveris reads far more:
+several voices, text, repeats, tremolos, and a full editor.
+
 ### Accuracy
 
 Ten test tunes engraved by Verovio in five different music fonts (Leipzig, Bravura, Leland,
@@ -207,14 +285,14 @@ sensor noise). 499 notes and 124 bars per condition:
 | condition | heads found | pitch correct | note values correct | bars exactly right |
 |---|---|---|---|---|
 | clean engraving | 99.6% | 99.0% | 99.6% | 123/124 |
-| scan (1.2°, blur, light noise) | 96.0% | 94.6% | 94.8% | 103/124 |
-| photo (−2.5°, keystone, curl, 1.25×, shadow) | 98.0% | 96.4% | 96.0% | 111/124 |
-| phone (4°, strong keystone and curl, 0.85×, heavy noise, ~13 px/space) | 93.6% | 83.0% | 88.6% | 89/124 |
+| scan (1.2°, blur, light noise) | 96.0% | 96.0% | 95.0% | 105/124 |
+| photo (−2.5°, keystone, curl, 1.25×, shadow) | 98.0% | 97.2% | 96.2% | 112/124 |
+| phone (4°, strong keystone and curl, 0.85×, heavy noise, ~13 px/space) | 93.6% | 91.6% | 89.2% | 97/124 |
 
 "Note values" counts every note of the truth, so a missed head counts as wrong; most wrong bars
 under degradation are bars with a missed note, which the bar check marks red. All staves and
-clefs are found in every condition. Petaluma's handwritten-style key signatures are the main
-loss on phone photos.
+clefs are found in every condition. Most of what remains on phone photos is noteheads the
+detector misses, and key signatures it cannot read.
 
 **A real page:** the CODA 2026–27 viola audition sheet (Brahms 2 and the Fledermaus overture,
 alto clef, 11 staves, 321 notes, a PDF engraved with a Finale-style font) reads with every key
@@ -313,6 +391,7 @@ segmentation net would be the natural upgrade for heads and accidentals in poor 
 | `imgproc.js` | Sauvola / Wolf binarisation, run-length metrics, skew, resampling, morphology, components |
 | `theory.js` | pitch spelling, clefs, key signatures, 18 instruments, intervals, bar-scoped accidentals |
 | `render.js` | transposition plan, in-place page rewrite, interpretation overlay |
+| `glyphnet.js`, `glyphnet-weights.js` | learned glyph classifier (98k-parameter MLP, int8) |
 | `rhythm.js` | beams and flags per stem, dots, grace notes, rests / time signatures / tuplet numbers by template, ties |
 | `raster.js` | SVG path rasterizer and shape descriptor for the glyph templates |
 | `score.js` | parts, measures, events, tuplet assignment, bar check and repair, timeline |
