@@ -271,6 +271,38 @@ were made on this same page, so its 100% is a fitted score, not a held-out one. 
 about 17 s a page in Java; ScoreShift about 1.5 s in the browser. Audiveris reads far more:
 several voices, text, repeats, tremolos, and a full editor.
 
+### Real IMSLP files with MusicXML ground truth
+
+Telemann's 12 Fantasias for solo flute (TWV 40:2-13) on IMSLP come with a MusicXML
+transcription of all twelve (#236786, ~8,460 notes), which serves as the answer key for two PDFs:
+the edition engraved from that same MusicXML (#236783, 24 pages, key exact) and a scanned 1955
+Bärenreiter edition (#96616, 24 music pages; a different edition, so a few "errors" are edition
+differences).
+
+```
+node tools/imslp_fetch.mjs /tmp/imslp 236786 236783 96616      # resolve via headless Chromium, download
+node tools/imslp_fetch.mjs --render /tmp/imslp/<file>.pdf /tmp/imslp/haus 2400 2-25
+bun tools/imslp_eval.js /tmp/imslp/haus /tmp/imslp/xml/*.xml   # after unzipping the MusicXML
+```
+
+`imslp_eval.js` aligns every detected notehead in reading order against the true notes by edit
+distance on MIDI pitch (a missed or extra note costs once instead of shifting everything after
+it), then maps each staff to the true system its notes align with to score its clef and key.
+
+| | heads found | pitch right | extra | clefs | keys |
+|---|---|---|---|---|---|
+| typeset edition, before | 99.9% | 98.1% | 26 | 264/264 | 227/264 |
+| typeset edition, now | 99.9% | 99.6% | 22 | 264/264 | 263/264 |
+| Bärenreiter scan, before | 99.4% | 96.0% | 134 | 264/266 | 243/266 |
+| Bärenreiter scan, now | 99.7% | 98.6% | 102 | 264/264 | 261/264 |
+
+Fixes the comparison drove: a flat's bowl split off its stem by a staff line re-joined; a sharp's
+crossbar stack no longer bridged into one wide stroke (strokes must be mostly ink, and as tall
+as the glyph); flat bowls and sharp crossings rejected as noteheads; an accidental right against
+its note ends the key signature; overlapping staves are one staff. Left: mid-line key changes
+(Fantasia 12's minore/maggiore sections), and ~60 semitone errors on the scan from missed or
+misassigned accidentals.
+
 ### Accuracy
 
 Ten test tunes engraved by Verovio in five different music fonts (Leipzig, Bravura, Leland,
