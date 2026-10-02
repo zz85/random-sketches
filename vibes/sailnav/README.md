@@ -57,6 +57,17 @@ IndexedDB, so a normal day's sailing never touches NOAA's servers after the firs
   bridge is the only way through, the router widens the search to look for a way round (around
   Bainbridge instead of under the 22.8 m Agate Pass bridge for a 24 m mast) or names the bridge.
   US charts give clearance above MHW, so headroom should cover the gap to a high tide.
+- **Ballard Locks, Ship Canal and Lakes.** Lock chambers are found from the chart itself (dredged
+  areas that share vertices with `GATCON` lock gates, `CATGAT` 4) and burnt in as corridors with the
+  shore margin waived around them, so a 24 m chamber between concrete walls survives a 40 m grid; a
+  route never hops from one chamber into the one beside it, and the lock is its own leg. When the ends
+  still aren't connected the grid is refined (20 m, 10 m) for the canal cuts. Shilshole to Lake Union:
+  4.6 NM through the large lock, under the BNSF, Ballard and Fremont bascules (opening required for a
+  15 m mast) and the 22.2 m Aurora bridge, which stops a 23 m mast.
+- **Lake level instead of tide above the Locks.** Cells there reference soundings to Low Water of the
+  Lakes, 20 ft above MLLW (`M_SDAT`). Where a depth query lands in such an area the depth card adds the
+  lake level (20 ft winter, refilled to 22 ft by about June 1, drawn down through autumn) instead of the
+  Seattle tide, and the tide card becomes a LAKE card. Tap it to enter the level the Corps posts.
 - **Active navigation** with OpenCPN `Routeman` semantics: BRG/DTG/TTG, cross-track error with
   steer-left/right arrow, arrival by perpendicular crossing (not radius), auto-advance to the next
   waypoint, virtual "Begin" point at the boat when a leg is activated, Ctrl-N to skip a waypoint.
@@ -75,6 +86,7 @@ IndexedDB, so a normal day's sailing never touches NOAA's servers after the firs
 | `s57.js` | ISO 8211 reader (DDR field formats, directory, binary subfields), S-57 feature assembly (nodes/edges into points, lines, rings with holes), `toRoutingData`, local `depthAt`, ZIP reader on `DecompressionStream` |
 | `chartstore.js` | IndexedDB persistence of cells, merged dataset, coverage tests (`M_COVR`) |
 | `router.js` | Scanline rasteriser, hazard buffers, BFS distance transform, binary-heap A*, supercover line-of-sight simplification, `route(data, from, to, opts)` |
+| `locks.test.js` | Synthetic lock on a coarse grid, the real Ballard Locks route and its bridges, lake datum above/below the locks, lake level schedule |
 | `lateral.test.js` | Buoy gates (both directions), single marks, fallback, narrow-water margin, bridge/cable clearance rules, real Agate Pass bridge |
 | `sailnav.test.js` | `bun test` unit tests including a synthetic harbour that forces the router around an island, through a gap in a shallow bar and away from a rock |
 | `s57.test.js` | Parses the real US5SEAGK cell (fetched once into /tmp) and checks geometry closure, known depths and an offline route around West Point |
@@ -122,4 +134,4 @@ Studied from source (`libs/s52plib/src/s52cnsy.cpp`, `model/src/georef.cpp`, `mo
 Planning aid only. ENC Direct is refreshed weekly but NOAA says it is "not intended for navigation".
 Soundings are point samples; the depth card prefers a sounding within 120 m, otherwise the depth
 area's minimum. Routing data is capped at ~1.2M grid cells, so very long routes get coarser cells.
-Routing can't go through the Ballard Locks yet (the lock chamber isn't a charted depth area), so Ship Canal and Lake Union routes fail; the bridge clearances there (Ballard 8.8 m and Fremont 4.2 m closed, Aurora 22.2 m) are parsed and checked. The depth card adds the Seattle tide everywhere, which is wrong above the locks where the water level is controlled. Tide predictions still need the network (CO-OPS); porting `cosmos/tides.js` with bundled constituents would remove that. No AIS, no wind, no currents yet (see `tidewise/PLAN.md` and `cosmos/tides.js` for harmonic tides).
+The lake level above the Locks is the Corps' seasonal schedule unless you enter the posted level; no live feed with CORS was found. Lock chambers are passable for any beam; check the small lock (8.5 m) yourself. Tide predictions still need the network (CO-OPS); porting `cosmos/tides.js` with bundled constituents would remove that. No AIS, no wind, no currents yet (see `tidewise/PLAN.md` and `cosmos/tides.js` for harmonic tides).

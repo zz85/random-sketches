@@ -28,8 +28,13 @@
  *      are passable when their open clearance suffices, and are reported.
  *      Walls block cells but are not sources for the shore margin, otherwise
  *      a 100 m gate or a bridge span would close entirely.
- *   6. A* (8-connected, binary heap) between the snapped endpoints.
- *   7. String-pull the cell path into as few straight legs as possible.
+ *   6. Locks: a dredged area or lock basin that touches lock gates (GATCON,
+ *      CATGAT 4) is a chamber. Its footprint is burnt in as a corridor that
+ *      survives coarse cells, and the shore margin is waived around it, so a
+ *      24 m chamber between concrete walls is passable on a 40 m grid.
+ *   7. A* (8-connected, binary heap) between the snapped endpoints. If the
+ *      ends are not connected, retry on finer cells (canals, narrow cuts).
+ *   8. String-pull the cell path into as few straight legs as possible.
  *
  * Works as a browser global (window.Router) or CommonJS.
  */
@@ -67,6 +72,9 @@
       hazard: new Uint8Array(cols * rows),     // 1 = point hazard blocks cell
       wall: new Uint8Array(cols * rows),       // 1 = impassable but not a shore-margin source (marks, gate walls, low bridges)
       overId: new Int32Array(cols * rows).fill(-1), // index into the overhead list for cells under a bridge/cable
+      portal: new Uint8Array(cols * rows),     // 1 = lock chamber corridor: navigable whatever the raster says
+      relax: new Uint8Array(cols * rows),      // 1 = shore margin waived (around lock chambers)
+      lockId: new Int16Array(cols * rows).fill(-1),
       widthM, heightM,
     };
     return g;
@@ -158,10 +166,14 @@
 
   /** Block cells around point hazards shallower than requiredDepth. */
   function applyHazards(g, hazards, requiredDepth, bufferM) {
-    const r = Math.max(1, Math.ceil((bufferM || 30) / g.cellM));
+    g.hazard.fill(0);
+    const R = Math.max(0, Math.round((bufferM == null ? 30 : bufferM) / g.cellM));
     for (const h of hazards || []) {
       if (!(h.depth < requiredDepth)) continue;
       const c = toCell(g, h.lat, h.lon);
+      if (!inGrid(g, c.x, c.y)) continue;
+      // inside a lock approach (guide piers, dolphins) only the hazard's own cell is blocked
+      const r = g.relax[c.y * g.cols + c.x] ? 0 : R;
       for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
         if (dx * dx + dy * dy > r * r) continue;
         const x = c.x + dx, y = c.y + dy;
@@ -180,7 +192,9 @@
     const ok = new Uint8Array(n);
     for (let i = 0; i < n; i++) {
       const d = g.minDepth[i];
-      if (g.hazard[i] || g.wall[i]) continue;
+      if (g.wall[i]) continue;
+      if (g.portal[i]) { ok[i] = 1; continue; }
+      if (g.hazard[i]) continue;
       if (Number.isNaN(d)) { if (allowUnknown) ok[i] = 1; continue; }
       if (d === LAND) continue;
       if (d >= requiredDepth) ok[i] = 1;
@@ -204,6 +218,7 @@
         if (dist[j] > d) { dist[j] = d; q[qt++] = j; }
       }
     }
+    for (let i = 0; i < n; i++) if (g.relax[i]) dist[i] = 0xffff;
     return { ok, dist };
   }
 
@@ -410,6 +425,68 @@
     return { marks: ms, gates, unpaired };
   }
 
+  // ---------------------------------------------------------------------
+  // Locks
+  // ---------------------------------------------------------------------
+  const KNOWN_LOCKS = [{ name: "Ballard Locks (Hiram M. Chittenden)", lat: 47.6655, lon: -122.3970 }];
+  const isLockGate = p => { const c = p && p.CATGAT; return Number(c) === 4 || /lock/i.test(String(c || "")); };
+  function vertsOf(geom) { const v = []; const visit = c => { if (typeof c[0] === "number") v.push(c); else c.forEach(visit); }; if (geom) visit(geom.coordinates); return v; }
+  function nearM(a, b, m) {
+    const dy = (a[1] - b[1]) * 111320, dx = (a[0] - b[0]) * 111320 * Math.cos(a[1] * D2R);
+    return dx * dx + dy * dy < m * m;
+  }
+  /**
+   * Find lock chambers (dredged areas / lock basins sharing a vertex with a lock gate)
+   * and burn them into the grid as corridors with a waived shore margin.
+   * Returns [{ id, name, width, depth, lat, lon }].
+   */
+  function applyLocks(g, data, relaxCells) {
+    const gates = (data.gates || []).filter(gt => isLockGate(gt.properties));
+    if (!gates.length) return [];
+    const gateVerts = gates.map(gt => vertsOf(gt.geometry));
+    const candidates = [].concat(data.lockBasins || [], data.dredgedAreas || []);
+    const chambers = [];
+    for (const f of candidates) {
+      const v = vertsOf(f.geometry);
+      const touching = [];
+      gates.forEach((gt, k) => { if (gateVerts[k].some(p => v.some(q => nearM(p, q, 5)))) touching.push(gt); });
+      if (!touching.length) continue;
+      const width = Math.max(...touching.map(gt => Number(gt.properties.HORCLR) || 0)) || null;
+      let lat = 0, lon = 0; for (const q of v) { lon += q[0]; lat += q[1]; } lat /= v.length; lon /= v.length;
+      const known = KNOWN_LOCKS.find(k => nearM([k.lon, k.lat], [lon, lat], 600));
+      chambers.push({ id: chambers.length, name: known ? known.name : "Lock", width, depth: f.properties && f.properties.DRVAL1 != null ? Number(f.properties.DRVAL1) : null, lat, lon, geometry: f.geometry, gates: touching });
+    }
+    if (!chambers.length) return [];
+    const seeds = [];
+    for (const ch of chambers) {
+      const mark = i => { if (!g.portal[i]) seeds.push(i); g.portal[i] = 1; g.lockId[i] = ch.id; };
+      rasterGeom(g, ch.geometry, mark);
+      for (const gt of ch.gates) rasterGeom(g, gt.geometry, mark);
+    }
+    // thicken by one cell so the corridor is 4-connected at any resolution
+    for (const i of seeds.slice()) {
+      const x = i % g.cols, y = (i - x) / g.cols, id = g.lockId[i];
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const nx = x + dx, ny = y + dy; if (!inGrid(g, nx, ny)) continue;
+        const j = ny * g.cols + nx; if (!g.portal[j]) { g.portal[j] = 1; g.lockId[j] = id; }
+      }
+    }
+    // waive the margin in a band around the chambers (guide piers, approach walls)
+    const R = Math.max(2, relaxCells);
+    const d = new Int16Array(g.cols * g.rows).fill(-1), q = [];
+    for (let i = 0; i < g.portal.length; i++) if (g.portal[i]) { d[i] = 0; q.push(i); g.relax[i] = 1; }
+    for (let h = 0; h < q.length; h++) {
+      const i = q[h]; if (d[i] >= R) continue;
+      const x = i % g.cols, y = (i - x) / g.cols;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const nx = x + dx, ny = y + dy; if (!inGrid(g, nx, ny)) continue;
+        const j = ny * g.cols + nx; if (d[j] >= 0) continue;
+        d[j] = d[i] + 1; g.relax[j] = 1; q.push(j);
+      }
+    }
+    return chambers.map(({ geometry, gates, ...c }) => c);
+  }
+
   /** Do segments p1-p2 and q1-q2 intersect (cell space)? */
   function segIntersect(p1, p2, q1, q2) {
     const o = (a, b, c) => Math.sign((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x));
@@ -529,6 +606,9 @@
         if (nx < 0 || ny < 0 || nx >= cols || ny >= g.rows) continue;
         const ni = ny * cols + nx;
         if (closed[ni] || !mask.ok[ni]) continue;
+        // never hop from one lock chamber straight into the one beside it (through the wall)
+        const la = g.lockId[cur], lb = g.lockId[ni];
+        if (la >= 0 && lb >= 0 && la !== lb) continue;
         const dist = mask.dist[ni];
         if (dist <= marginCells && ni !== tIdx) continue;
         // no corner cutting past blocked orthogonal neighbours
@@ -557,10 +637,11 @@
   function lineClear(g, mask, x0, y0, x1, y1, marginCells) {
     const dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
     const sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
-    let err = dx - dy, x = x0, y = y0;
+    let err = dx - dy, x = x0, y = y0, lock = -1;
     for (;;) {
       const i = y * g.cols + x;
       if (!mask.ok[i] || mask.dist[i] <= marginCells) return false;
+      if (g.lockId[i] >= 0) { if (lock < 0) lock = g.lockId[i]; else if (lock !== g.lockId[i]) return false; }
       if (x === x1 && y === y1) return true;
       const e2 = 2 * err;
       // step both axes separately (supercover) so we never slip between diagonal blocked cells
@@ -573,10 +654,15 @@
   function simplify(g, mask, path, marginCells) {
     if (path.length <= 2) return path.slice();
     const pts = path.map(i => ({ x: i % g.cols, y: Math.floor(i / g.cols) }));
+    // Keep a waypoint where the path enters and leaves a lock chamber, so the lock is its
+    // own leg and no shortcut leg crosses the walls between chambers.
+    const keep = [];
+    for (let k = 1; k < path.length; k++) if (g.lockId[path[k]] !== g.lockId[path[k - 1]]) keep.push(g.lockId[path[k]] >= 0 ? k : k - 1);
     const out = [pts[0]];
     let i = 0;
     while (i < pts.length - 1) {
-      let j = pts.length - 1;
+      const stop = keep.find(k => k > i);
+      let j = stop == null ? pts.length - 1 : stop;
       while (j > i + 1 && !lineClear(g, mask, pts[i].x, pts[i].y, pts[j].x, pts[j].y, marginCells)) j--;
       out.push(pts[j]);
       i = j;
@@ -608,15 +694,37 @@
   function route(data, from, to, opts) {
     opts = opts || {};
     const t0 = Date.now();
+    const base = opts.cellM || 40;
+    let res = routeOnce(data, from, to, opts);
+    // Ends not connected at this resolution: canals and cuts narrower than ~2 cells vanish
+    // on a coarse grid. Retry finer (each step halves the cell, bounded by maxCells).
+    const finer = [];
+    if (opts.adaptiveResolution !== false && !opts.grid) for (let c = base / 2; c >= (opts.minCellM || 8); c /= 2) finer.push(c);
+    for (const c of finer) {
+      if (!res.error || !res.disconnected) break;
+      const r2 = routeOnce(data, from, to, Object.assign({}, opts, { cellM: c, maxCells: opts.maxCells || 1.5e6 }));
+      if (r2.grid && r2.grid.cellM > c * 1.5 && r2.error) { res = r2; break; }   // capped by maxCells: no point going finer
+      res = r2;
+      if (!r2.error) r2.warnings.push(`Fine grid (${Math.round(r2.stats.cellM)} m cells) needed for narrow water.`);
+    }
+    if (res.stats) res.stats.ms = Date.now() - t0;
+    if (res.error) delete res.grid;
+    return res;
+  }
+
+  function routeOnce(data, from, to, opts) {
+    const t0 = Date.now();
     const requiredDepth = opts.requiredDepth == null ? 3 : opts.requiredDepth;
     const lateral = opts.lateral !== false;
     const needM = opts.airDraft > 0 ? opts.airDraft + (opts.headroomM == null ? 1 : opts.headroomM) : null;
     const g = opts.grid || rasterize(makeGrid(data.bbox, opts.cellM || 40, opts.maxCells), data);
-    if (!opts.grid) applyHazards(g, data.hazards, requiredDepth, opts.hazardBufferM || 40);
+    const hazardBufferM = opts.hazardBufferM == null ? 40 : opts.hazardBufferM;
     const marginCells = Math.round((opts.marginM == null ? 60 : opts.marginM) / g.cellM);
     const comfortCells = Math.max(marginCells + 1, Math.round((opts.comfortM == null ? 250 : opts.comfortM) / g.cellM));
     const c0 = toCell(g, from.lat, from.lon), c1 = toCell(g, to.lat, to.lon);
     if (!inGrid(g, c0.x, c0.y) || !inGrid(g, c1.x, c1.y)) return { error: "Endpoint outside routing area" };
+    const locks = opts.grid ? [] : applyLocks(g, data, marginCells + 3);
+    applyHazards(g, data.hazards, requiredDepth, hazardBufferM);
 
     const isBlocked = (i) => {
       const d = g.minDepth[i];
@@ -625,6 +733,8 @@
 
     function attempt(useLateral, enforceOverheads, mc) {
       g.wall.fill(0); g.overId.fill(-1);
+      // the hazard keep-off shrinks with the shore margin in narrow water
+      applyHazards(g, data.hazards, requiredDepth, mc >= marginCells ? hazardBufferM : Math.min(hazardBufferM, mc * g.cellM));
       const overheads = applyOverheads(g, data.overheads, needM, opts.blockUnknownClearance !== false, enforceOverheads);
       const lat = useLateral ? applyLateral(g, data.lateralMarks, isBlocked, opts) : { marks: [], gates: [], unpaired: 0 };
       const mask = buildMask(g, requiredDepth, !!opts.allowUnknown);
@@ -677,7 +787,7 @@
           }
         }
       }
-      return { error: "No water route found at " + requiredDepth + " m depth: the destination's water is not connected to the start within the search area. Try a shallower draft, or check the chart for a bar or bridge in between." };
+      return { disconnected: true, grid: g, error: "No water route found at " + requiredDepth + " m depth: the destination's water is not connected to the start within the search area. Try a shallower draft, or check the chart for a bar or bridge in between." };
     }
     const { s, e, mask, path, mc } = a;
     const simple = simplify(g, mask, path, mc);
@@ -686,7 +796,8 @@
     waypoints[waypoints.length - 1] = { lat: to.lat, lon: to.lon };
 
     let minAlong = Infinity;
-    for (const i of path) { const d = g.minDepth[i]; if (!Number.isNaN(d) && d !== LAND && d < minAlong) minAlong = d; }
+    // lock chambers are corridors forced through walls: their raster depth says nothing
+    for (const i of path) { if (g.portal[i]) continue; const d = g.minDepth[i]; if (!Number.isNaN(d) && d !== LAND && d < minAlong) minAlong = d; }
 
     // Report gates passed and overheads passed under, along the actual legs.
     const legsCells = simple.map(i => ({ x: i % g.cols, y: Math.floor(i / g.cols) }));
@@ -702,6 +813,19 @@
       }
     }
     const under = overheadsOnLegs(g, legsCells, a.overheads);
+    const lockLegs = new Map();
+    for (let k = 1; k < legsCells.length; k++) {
+      const p1 = legsCells[k - 1], p2 = legsCells[k];
+      lineCells(p1.x, p1.y, p2.x, p2.y, (x, y) => { const id = g.lockId[y * g.cols + x]; if (id >= 0 && !lockLegs.has(id)) lockLegs.set(id, k); });
+    }
+    const locksPassed = [...lockLegs].map(([id, k]) => Object.assign({}, locks[id], { leg: k }));
+    // Two chambers side by side (large and small lock) are one transit for the warning.
+    const lockNames = [...new Set(locksPassed.map(l => l.name))];
+    for (const n of lockNames) {
+      const ls = locksPassed.filter(l => l.name === n);
+      const w = ls.map(l => l.width).filter(Boolean);
+      warnings.push(`Transits ${n}` + (w.length ? ` (chamber ${Math.min(...w)} m wide)` : "") + ": follow the lock signals and lockmaster; expect a wait. Water level changes across the lock.");
+    }
     for (const o of under) {
       if (o.needsOpening) warnings.push(describeOverhead(o) + ": opening required (closed clearance below " + needM.toFixed(1) + " m)");
       else if (o.clearance == null && needM != null) warnings.push(describeOverhead(o) + ": clearance not charted");
@@ -714,7 +838,7 @@
         startMovedM: s.moved * g.cellM, endMovedM: e.moved * g.cellM,
         minChartedDepth: isFinite(minAlong) ? minAlong : null, requiredDepth, marginM: mc * g.cellM, requestedMarginM: marginCells * g.cellM,
         lateral: { marks: a.lat.marks.length, gates: a.lat.gates.length, unpaired: a.lat.unpaired, gatesPassed },
-        overheads: under, neededClearance: needM,
+        overheads: under, neededClearance: needM, locks: locksPassed,
       },
       gates: a.lat.gates.map(gt => [gt.a, gt.b].map(m => ({ lat: m.lat, lon: m.lon, colour: m.colour }))),
     };
@@ -723,7 +847,7 @@
   function describeOverhead(o) {
     const cat = o.category && o.category !== "bridge" && o.category !== o.kind ? o.category + " " : "";
     const nm = o.name || (o.kind === "bridge" ? "Unnamed " + cat + "bridge" : "Overhead " + o.kind);
-    const clr = o.clearance == null ? "clearance not charted" : (o.opening ? "closed " : "") + o.clearance.toFixed(1) + " m" + (o.inherited ? " (from adjoining section)" : "");
+    const clr = o.clearance == null ? "clearance not charted" : (o.opening ? "closed " : "") + o.clearance.toFixed(1) + " m" + (o.inherited ? ", from adjoining section" : "");
     return `${nm} (${o.opening && o.name ? o.category + ", " : ""}${clr})`;
   }
   function overheadsOnPath(g, path, list) {
@@ -754,6 +878,6 @@
   return {
     LAND, makeGrid, toCell, cellCenter, inGrid, fillPolygon, rasterize, applyHazards, buildMask,
     snapToWater, astar, lineClear, simplify, route, routingBbox, Heap,
-    lineCells, applyOverheads, overheadInfo, applyLateral, markSide, markColour, describeOverhead,
+    lineCells, applyOverheads, overheadInfo, applyLateral, markSide, markColour, describeOverhead, applyLocks, isLockGate,
   };
 }));

@@ -648,12 +648,24 @@ async function maybeQueryDepth(force) {
   }
   renderDepth();
 }
+// Water above chart datum at a depth result's position: lake level above the Ballard Locks
+// (charts there use Low Water of the Lakes, not MLLW), else the predicted tide.
+function lakeOverrideFt() { const v = store.get("lakeLevelFt", null); return v == null || v === "" ? null : Number(v); }
+function waterLevelFor(d, t) {
+  t = t == null ? Date.now() : t;
+  if (d && d.datum && d.datum.lake) {
+    const ov = lakeOverrideFt(), ft = ov != null ? ov : Chart.lakeLevelFt(new Date(t));
+    return { h: Chart.lakeHeightM(t, ov), kind: "lake", ft, estimated: ov == null };
+  }
+  if (state.tide) return { h: Chart.tideAt(state.tide, t), kind: "tide" };
+  return null;
+}
 function renderDepth() {
   const d = state.depth, card = $("depthcard"), u = state.depthUnit;
   card.className = "card";
   if (!d) { $("depth-val").textContent = "--"; $("depth-sub").textContent = state.pos ? "querying NOAA ENC..." : "waiting for position"; return; }
   if (d.error) { $("depth-val").textContent = "?"; $("depth-sub").textContent = "chart query failed: " + d.error; return; }
-  const tideH = state.tide ? Chart.tideAt(state.tide, Date.now()) : null;
+  const wl = waterLevelFor(d), tideH = wl ? wl.h : null;
   let charted = null, label = "";
   if (d.land) { $("depth-val").textContent = "LAND"; $("depth-sub").textContent = "position is on charted land"; card.classList.add("shallow"); return; }
   if (d.sounding && d.sounding.distM < 120) { charted = d.sounding.depth; label = `sounding ${Math.round(d.sounding.distM)} m away`; }
@@ -662,11 +674,11 @@ function renderDepth() {
   if (charted == null) { $("depth-val").textContent = "--"; $("depth-sub").textContent = "no depth data here"; return; }
   const actual = tideH != null ? charted + tideH : charted;
   $("depth-val").textContent = Nav.fmtDepth(actual, u);
-  $("depth-src").textContent = (tideH != null ? "(+TIDE)" : "(MLLW)") + (d.scale && String(d.scale).startsWith("local") ? " \u00B7 OFFLINE" : "");
+  $("depth-src").textContent = (wl ? (wl.kind === "lake" ? "(+LAKE)" : "(+TIDE)") : (d.datum && d.datum.lake ? "(LAKE LW)" : "(MLLW)")) + (d.scale && String(d.scale).startsWith("local") ? " \u00B7 OFFLINE" : "");
   const req = requiredDepthM();
   card.classList.add(actual < req ? "shallow" : actual < req * 2 ? "caution" : "safe");
   let sub = label;
-  if (tideH != null) sub += ` \u00B7 chart ${Nav.fmtDepth(charted, u)} + tide ${tideH >= 0 ? "+" : ""}${tideH.toFixed(1)} m`;
+  if (wl) sub += ` \u00B7 chart ${Nav.fmtDepth(charted, u)} + ${wl.kind} ${tideH >= 0 ? "+" : ""}${tideH.toFixed(1)} m` + (wl.kind === "lake" ? ` (${wl.ft.toFixed(1)} ft at the Locks${wl.estimated ? ", est." : ""})` : "");
   if (d.band && d.sounding && d.sounding.distM < 120) sub += ` \u00B7 area ${Nav.fmtDepth(d.band.min, u)}\u2013${Nav.fmtDepth(d.band.max, u)}`;
   $("depth-sub").textContent = sub;
 }
@@ -678,7 +690,11 @@ $("depthcard").onclick = () => {
   if (d.dredged) lines.push(`Dredged to ${Nav.fmtDepth(d.dredged.min, u)} ${u}`);
   if (d.sounding) lines.push(`Nearest sounding: ${Nav.fmtDepth(d.sounding.depth, u)} ${u} (${Math.round(d.sounding.distM)} m, surveyed ${d.sounding.date || "?"})`);
   if (d.cell) lines.push(`ENC cell ${d.cell} (${d.scale}${String(d.scale).startsWith("local") ? ", offline" : ""})`);
-  lines.push(`<span style="font-size:11px;opacity:.7">Depths below MLLW; tide from ${state.tideStation ? state.tideStation.name : "n/a"}</span>`);
+  if (d.datum && d.datum.lake) {
+    const wl = waterLevelFor(d);
+    lines.push(`Above the Ballard Locks: not tidal. Lake level ${wl.ft.toFixed(2)} ft at the Locks (${wl.estimated ? "estimated from the Corps operating schedule; tap the LAKE card to enter the posted level" : "your entry"}) = +${wl.h.toFixed(2)} m over chart datum.`);
+    lines.push(`<span style="font-size:11px;opacity:.7">${escapeHtml(d.datum.inform || "Depths below Low Water of the Lakes")}</span>`);
+  } else lines.push(`<span style="font-size:11px;opacity:.7">Depths below MLLW; tide from ${state.tideStation ? state.tideStation.name : "n/a"}</span>`);
   L.popup().setLatLng([state.pos.lat, state.pos.lon]).setContent(lines.join("<br>")).openOn(map);
 };
 
@@ -690,11 +706,13 @@ map.on("click", async (e) => {
   try {
     if (!ChartStore.covers(lat, lng) && ChartStore.bundledCovers(lat, lng)) { await ChartStore.ensureCoverage([lng, lat, lng, lat]); renderCellList(); }
     const d = ChartStore.depthAt(lat, lng, { soundingRadiusM: 200 }) || await Chart.depthAt(lat, lng, { soundingRadiusM: 200 });
-    const u = state.depthUnit, tideH = state.tide ? Chart.tideAt(state.tide, Date.now()) : null;
+    const u = state.depthUnit, wl = waterLevelFor(d);
     let html = `<b>${d.land ? "Land" : d.band ? Nav.fmtDepth(d.band.min, u) + "\u2013" + Nav.fmtDepth(d.band.max, u) + " " + u : "no depth data"}</b><br>${Nav.fmtPos(lat, lng)}`;
     if (d.sounding) html += `<br>Nearest sounding ${Nav.fmtDepth(d.sounding.depth, u)} ${u} (${Math.round(d.sounding.distM)} m)`;
     if (d.dredged) html += `<br>Dredged ${Nav.fmtDepth(d.dredged.min, u)} ${u}`;
-    if (tideH != null && !d.land) html += `<br>Tide now ${tideH >= 0 ? "+" : ""}${tideH.toFixed(2)} m`;
+    if (wl && !d.land) html += wl.kind === "lake"
+      ? `<br>Lake (not tidal): ${wl.ft.toFixed(1)} ft at the Locks${wl.estimated ? " est." : ""}, +${wl.h.toFixed(2)} m over chart datum`
+      : `<br>Tide now ${wl.h >= 0 ? "+" : ""}${wl.h.toFixed(2)} m`;
     if (d.cell) html += `<br><span style="font-size:11px;opacity:.7">${d.cell} ${String(d.scale).startsWith("local") ? "(offline)" : ""}</span>`;
     if (state.pos) { const r = Nav.rhumb(state.pos.lat, state.pos.lon, lat, lng); html += `<br>${Nav.fmtNm(r.distance)} @ ${Nav.fmtBrg(r.bearing)} from boat`; }
     html += `<div class="acts"><button class="p" data-a="to">Route here</button><button data-a="from">From here</button><button data-a="wp">+ WP</button></div>`;
@@ -798,14 +816,17 @@ async function planRoute() {
     let res = Router.route(routingData, a, b, ropts);
     // A low bridge or a closed-off basin may only have a way round outside the first search box
     // (around Bainbridge instead of under Agate Pass). Widen once before giving up.
-    if (res.error && !/^(Start|Destination) is not/.test(res.error)) {
-      const wide = Router.routingBbox(a, b, 1.0, 20000);
+    // Two steps: 6 km still allows fine cells for canals (Elliott Bay round Magnolia to the
+    // Locks); 20 km finds the long way round an island (Agate Pass bridge too low).
+    for (const pad of [6000, 20000]) {
+      if (!res.error || /^(Start|Destination) is not/.test(res.error)) break;
+      const wide = Router.routingBbox(a, b, 1.0, pad);
       setStatus((res.blockedBy ? res.error + ". " : "") + "Searching a wider area\u2026");
+      await new Promise(r => setTimeout(r, 10));
       const wideData = await routingDataFor(wide, a, b);
-      if (wideData) {
-        const r2 = Router.route(wideData.data, a, b, { ...ropts, cellM: 50, maxCells: 1.6e6 });
-        if (!r2.error) { res = r2; source = wideData.source + ", wide search"; }
-      }
+      if (!wideData) break;
+      const r2 = Router.route(wideData.data, a, b, { ...ropts, cellM: pad > 10000 ? 50 : 40, maxCells: 1.6e6 });
+      if (!r2.error) { res = r2; source = wideData.source + ", wide search"; }
     }
     if (res.error) { setStatus(res.error, true); return; }
     const notes = legNotes(res);
@@ -813,6 +834,7 @@ async function planRoute() {
     const s = res.stats, u = state.depthUnit;
     let msg = `${res.waypoints.length - 1} legs, ${Nav.fmtNm(Nav.routeLength(res.waypoints))}. Min charted depth ${Nav.fmtDepth(s.minChartedDepth, u)} ${u} (need ${Nav.fmtDepth(req, u)}).`;
     if (ropts.lateral) msg += ` ${s.lateral.gatesPassed.length} buoy gate${s.lateral.gatesPassed.length === 1 ? "" : "s"} on route (${s.lateral.gates} gates, ${s.lateral.marks} lateral marks in area).`;
+    if (s.locks && s.locks.length) msg += ` Through ${s.locks[0].name}` + (s.locks[0].depth != null ? ` (chamber dredged to ${Nav.fmtDepth(s.locks[0].depth, u)} ${u})` : "") + ".";
     if (s.overheads.length) msg += ` Under ${s.overheads.length} bridge/cable section${s.overheads.length === 1 ? "" : "s"}` + (s.neededClearance ? `, need ${Nav.fmtDepth(s.neededClearance, u)} ${u}.` : ".");
     msg += ` ${s.ms} ms, ${source}.`;
     if (s.endMovedM > 50) msg += ` Destination moved ${Math.round(s.endMovedM)} m to reach navigable water.`;
@@ -848,6 +870,7 @@ function legNotes(res) {
     const txt = gp.marks.map(m => `${m.colour === "red" ? "\uD83D\uDD34" : m.colour === "green" ? "\uD83D\uDFE2" : ""}${m.name ? m.name.replace(/ (Lighted )?(Buoy|Light|Beacon|Daybeacon)/i, "") : m.side} to ${m.passedTo}`).join(", ");
     add(gp.leg, "gate: " + txt);
   }
+  for (const l of res.stats.locks || []) add(l.leg, `<span class="open">lock: ${escapeHtml(l.name)}${l.width ? ", chamber " + Nav.fmtDepth(l.width, u) + " " + u + " wide" : ""}</span>`);
   const seen = new Set();
   for (const o of res.stats.overheads) {
     const key = (o.name || o.kind) + "|" + o.clearance + "|" + o.leg; if (seen.has(key)) continue; seen.add(key);
@@ -1047,7 +1070,38 @@ async function loadTide() {
   try { state.tide = await Chart.fetchTide(state.tideStation.id); } catch (e) { $("tide-next").textContent = "unavailable"; return; }
   renderTide(); renderDepth();
 }
+function inLake() { return !!(state.depth && state.depth.datum && state.depth.datum.lake); }
+function renderLakeCard() {
+  const wl = waterLevelFor(state.depth); if (!wl) return;
+  $("tide-station").textContent = "LAKE \u00B7 BALLARD LOCKS";
+  $("tide-h").textContent = wl.ft.toFixed(2);
+  $("tide-h").nextElementSibling.textContent = "ft";
+  const next = Chart.lakeLevelFt(Date.now() + 14 * 86400e3);
+  $("tide-trend").textContent = next > wl.ft + 0.05 ? "\u25B2 refilling" : next < wl.ft - 0.05 ? "\u25BC drawdown" : "\u25CF held";
+  $("tide-next").textContent = wl.estimated ? "est. Corps schedule \u00B7 tap to set" : "posted level (yours) \u00B7 tap to change";
+  // sparkline: the year, with today marked
+  const cv = $("tide-canvas"), ctx = cv.getContext("2d"), W = cv.width, H = cv.height;
+  ctx.clearRect(0, 0, W, H);
+  const y0 = new Date(new Date().getFullYear(), 0, 1).getTime(), y1 = y0 + 365 * 86400e3;
+  const X = t => (t - y0) / (y1 - y0) * W, Y = ft => H - 6 - (ft - 19.8) / 2.4 * (H - 12);
+  ctx.beginPath(); for (let k = 0; k <= 73; k++) { const t = y0 + k * 5 * 86400e3; k ? ctx.lineTo(X(t), Y(Chart.lakeLevelFt(t))) : ctx.moveTo(X(t), Y(Chart.lakeLevelFt(t))); }
+  ctx.strokeStyle = state.night ? "#38bdf8" : "#0a58ca"; ctx.lineWidth = 2.5; ctx.stroke();
+  ctx.strokeStyle = state.night ? "#fb7185" : "#dc4025"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(X(Date.now()), 0); ctx.lineTo(X(Date.now()), H); ctx.stroke();
+  ctx.fillStyle = state.night ? "#d9e2ec" : "#0b1220"; ctx.font = "bold 11px sans-serif"; ctx.fillText("22", 3, 12); ctx.fillText("20", 3, H - 2);
+}
+$("tide").onclick = () => {
+  if (!inLake()) return;
+  const cur = lakeOverrideFt();
+  const v = prompt("Lake Washington level at the Locks, feet (as posted by the Corps). Leave empty to use the seasonal estimate.", cur == null ? "" : String(cur));
+  if (v === null) return;
+  const n = parseFloat(v);
+  store.set("lakeLevelFt", v.trim() === "" || !isFinite(n) ? null : n);
+  renderLakeCard(); renderDepth();
+};
 function renderTide() {
+  if (inLake()) { renderLakeCard(); return; }
+  $("tide-h").nextElementSibling.textContent = "m";
+  if (state.tideStation) $("tide-station").textContent = "TIDE \u00B7 " + state.tideStation.name.toUpperCase();
   const t = state.tide; if (!t || !t.series.length) return;
   const now = Date.now(), h = Chart.tideAt(t, now), h1 = Chart.tideAt(t, now + 30 * 60000);
   $("tide-h").textContent = h.toFixed(2);
@@ -1101,8 +1155,8 @@ function render() {
   updateActiveLeg();
   renderMob();
 }
-setInterval(() => { render(); if (state.tide) renderTide(); }, 1000);
-setInterval(() => { if (state.tide) renderDepth(); }, 60000);
+setInterval(() => { render(); if (state.tide || inLake()) renderTide(); }, 1000);
+setInterval(() => { if (state.tide || inLake()) renderDepth(); }, 60000);
 
 $("btn-center").onclick = () => { state.follow = true; $("btn-follow").classList.add("active"); if (state.pos) map.setView([state.pos.lat, state.pos.lon], Math.max(map.getZoom(), 14)); };
 $("btn-follow").onclick = () => { state.follow = !state.follow; $("btn-follow").classList.toggle("active", state.follow); };

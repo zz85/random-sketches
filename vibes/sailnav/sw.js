@@ -1,6 +1,6 @@
 /* SailNav service worker: app shell precache + runtime cache for bundled charts.
  * Bump VERSION when shipping code changes so old shells are evicted. */
-const VERSION = "sailnav-v2";
+const VERSION = "sailnav-v3";
 const SHELL = ["./", "index.html", "nav.js", "chart.js", "router.js", "s57.js", "chartstore.js", "manifest.webmanifest",
   "vendor/leaflet.js", "vendor/leaflet.css", "vendor/images/marker-icon.png", "vendor/images/marker-icon-2x.png", "vendor/images/marker-shadow.png", "vendor/icon.svg",
   "charts/catalog.json"];

@@ -331,7 +331,7 @@
   function toRoutingData(cells) {
     const list = Array.isArray(cells) ? cells : [cells];
     const out = { bbox: null, depthAreas: [], dredgedAreas: [], land: [], hazards: [], soundings: [],
-      lateralMarks: [], overheads: [] };
+      lateralMarks: [], overheads: [], gates: [], lockBasins: [], datumAreas: [] };
     for (const cell of list) {
       const b = cellBounds(cell);
       out.bbox = out.bbox ? [Math.min(out.bbox[0], b[0]), Math.min(out.bbox[1], b[1]), Math.max(out.bbox[2], b[2]), Math.max(out.bbox[3], b[3])] : b;
@@ -348,6 +348,11 @@
           }
           case OBJL.BOYLAT: case OBJL.BCNLAT:
             if (f.geometry.type === "Point") out.lateralMarks.push({ lon: f.geometry.coordinates[0], lat: f.geometry.coordinates[1], kind: f.klass, name: p.OBJNAM || null, props: p });
+            break;
+          case OBJL.GATCON: out.gates.push({ geometry: f.geometry, properties: p }); break;
+          case OBJL.LOKBSN: out.lockBasins.push(f); break;
+          case OBJL.M_SDAT: case OBJL.M_VDAT:
+            if (f.prim === 3 && /lake/i.test(String(p.INFORM || ""))) out.datumAreas.push({ kind: f.objl === OBJL.M_SDAT ? "sounding" : "vertical", lake: true, geometry: f.geometry, properties: p });
             break;
           case OBJL.BRIDGE: out.overheads.push({ kind: "bridge", geometry: f.geometry, properties: p }); break;
           case OBJL.CBLOHD: out.overheads.push({ kind: "cable", geometry: f.geometry, properties: p }); break;
@@ -426,7 +431,9 @@
       soundings.push(s);
       if (!nearest || d < nearest.distM) nearest = { depth: s.depth, distM: d, lat: s.lat, lon: s.lon, date: s.date };
     }
-    return { scale: "local", band, sounding: nearest, soundings, dredged, land, cell: data.dsnm || null };
+    let datum = null;
+    for (const a of data.datumAreas || []) if (a.kind === "sounding" && pointInGeom(lon, lat, a.geometry)) { datum = { lake: true, inform: a.properties.INFORM }; break; }
+    return { scale: "local", band, sounding: nearest, soundings, dredged, land, datum, cell: data.dsnm || null };
   }
 
   // ---------------------------------------------------------------------

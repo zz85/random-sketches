@@ -38,7 +38,7 @@
       depthArea: 227, dredgedArea: 228, landArea: 233, sounding: 76,
       depthContour: 104, obstruction: 33, rock: 34, wreck: 36,
       beaconLateral: 1, buoyLateral: 6, bridgeArea: 141, bridgeLine: 87, cableOverhead: 88, pipeOverhead: 92,
-      conveyorLine: 89, conveyorArea: 144,
+      conveyorLine: 89, conveyorArea: 144, gateLine: 121, lockBasin: 181, soundingDatum: 224,
     },
     approach: {
       service: "enc_approach",
@@ -215,11 +215,12 @@
     opts = opts || {};
     const radius = opts.soundingRadiusM || 250;
     for (const scale of ["harbour", "approach"]) {
-      const [areas, land, dredged, snd] = await Promise.all([
+      const [areas, land, dredged, snd, sdat] = await Promise.all([
         queryPoint(scale, "depthArea", lat, lon, "DRVAL1,DRVAL2,DSNM"),
         queryPoint(scale, "landArea", lat, lon, "OBJNAM,DSNM").catch(() => []),
         queryPoint(scale, "dredgedArea", lat, lon, "DRVAL1,DRVAL2,DSNM").catch(() => []),
         queryNear(scale, "sounding", lat, lon, radius, "Z,SORDAT,DSNM").catch(() => []),
+        LAYERS[scale].soundingDatum ? queryPoint(scale, "soundingDatum", lat, lon, "VERDAT,INFORM").catch(() => []) : Promise.resolve([]),
       ]);
       if (!areas.length && !land.length && !snd.length) continue;
 
@@ -243,6 +244,7 @@
         soundings: snd.filter(s => s.attrs.Z != null).map(s => ({ depth: s.attrs.Z, lat: s.lat, lon: s.lon })),
         dredged: dredged.length ? { min: dredged[0].DRVAL1, max: dredged[0].DRVAL2 } : null,
         land: land.length > 0,
+        datum: (() => { const a = sdat.find(r => /lake/i.test(String(r.INFORM || ""))); return a ? { lake: true, inform: a.INFORM } : null; })(),
         cell: (band && band.cell) || (areas[0] && areas[0].DSNM) || (land[0] && land[0].DSNM) || null,
       };
     }
@@ -271,7 +273,7 @@
       queryBbox("harbour", "wreck", bbox, "VALSOU,WATLEV,CATWRK", n => prog("wrecks", n)).catch(() => ({ features: [] })),
     ]);
     const none = { features: [] };
-    const [bcn, boy, brA, brL, cbl, pip, cvL, cvA] = await Promise.all([
+    const [bcn, boy, brA, brL, cbl, pip, cvL, cvA, gat, lok, sdat] = await Promise.all([
       queryBbox("harbour", "beaconLateral", bbox, "CATLAM,COLOUR,OBJNAM", n => prog("beacons", n)).catch(() => none),
       queryBbox("harbour", "buoyLateral", bbox, "CATLAM,COLOUR,OBJNAM", n => prog("buoys", n)).catch(() => none),
       queryBbox("harbour", "bridgeArea", bbox, "CATBRG,VERCLR,VERCCL,VERCOP,OBJNAM,INFORM", n => prog("bridges", n)).catch(() => none),
@@ -280,6 +282,9 @@
       queryBbox("harbour", "pipeOverhead", bbox, "VERCLR,OBJNAM,INFORM").catch(() => none),
       queryBbox("harbour", "conveyorLine", bbox, "VERCLR,OBJNAM").catch(() => none),
       queryBbox("harbour", "conveyorArea", bbox, "VERCLR,OBJNAM").catch(() => none),
+      queryBbox("harbour", "gateLine", bbox, "CATGAT,HORCLR,OBJNAM", n => prog("lock gates", n)).catch(() => none),
+      queryBbox("harbour", "lockBasin", bbox, "OBJNAM,HORCLR").catch(() => none),
+      queryBbox("harbour", "soundingDatum", bbox, "VERDAT,INFORM").catch(() => none),
     ]);
     const markOf = (kind) => f => ({ lon: f.geometry.coordinates[0], lat: f.geometry.coordinates[1], kind, name: (f.properties || {}).OBJNAM || null, props: f.properties || {} });
     const over = (kind) => f => ({ kind, geometry: f.geometry, properties: f.properties || {} });
@@ -301,6 +306,10 @@
       overheads: [].concat(
         brA.features.map(over("bridge")), brL.features.map(over("bridge")), cbl.features.map(over("cable")),
         pip.features.map(over("pipe")), cvL.features.map(over("conveyor")), cvA.features.map(over("conveyor"))).filter(o => o.geometry),
+      gates: gat.features.filter(f => f.geometry).map(f => ({ geometry: f.geometry, properties: f.properties || {} })),
+      lockBasins: lok.features.filter(f => f.geometry),
+      datumAreas: sdat.features.filter(f => f.geometry && /lake/i.test(String((f.properties || {}).INFORM || "")))
+        .map(f => ({ kind: "sounding", lake: true, geometry: f.geometry, properties: f.properties })),
     };
   }
 
@@ -378,8 +387,35 @@
     return s[s.length - 1].h;
   }
 
+  // ---------------------------------------------------------------------
+  // Lake Washington / Lake Union / Ship Canal water level (above the Ballard Locks).
+  // Not tidal: the Corps holds the lakes between 20 ft (winter) and 22 ft (summer) on the
+  // project datum, measured at the Locks. Charts above the locks reference soundings to
+  // "Low Water of the Lakes", 20 ft (6.1 m) above MLLW, so depth now = charted + (level - 20 ft).
+  // No public live feed with CORS was found, so this is the Corps' published operating
+  // schedule (refill from Feb 15 to 22 ft by about June 1, hold through summer, draw down
+  // through autumn to 20 ft by Dec 1). The user can override it.
+  // ---------------------------------------------------------------------
+  const LAKE_LOW_WATER_FT = 20;
+  function lakeLevelFt(date) {
+    const d = date instanceof Date ? date : new Date(date == null ? Date.now() : date);
+    const y = d.getFullYear(), t = d.getTime();
+    const at = (m, day) => new Date(y, m - 1, day).getTime();
+    const lerp = (a, b, ta, tb) => a + (b - a) * (t - ta) / (tb - ta);
+    if (t < at(2, 15)) return 20.0;
+    if (t < at(6, 1)) return lerp(20.0, 22.0, at(2, 15), at(6, 1));
+    if (t < at(9, 1)) return 22.0;
+    if (t < at(12, 1)) return lerp(22.0, 20.0, at(9, 1), at(12, 1));
+    return 20.0;
+  }
+  /** Height of the water above the lake chart datum, metres. overrideFt: user-entered level. */
+  function lakeHeightM(date, overrideFt) {
+    const ft = overrideFt != null && isFinite(overrideFt) ? overrideFt : lakeLevelFt(date);
+    return (ft - LAKE_LOW_WATER_FT) * 0.3048;
+  }
+
   return {
-    ENC_ONLINE, ENC_DIRECT, LAYERS, S52, depthBand,
+    ENC_ONLINE, ENC_DIRECT, LAYERS, S52, depthBand, LAKE_LOW_WATER_FT, lakeLevelFt, lakeHeightM,
     tileBounds3857, displayParams, encTileUrl,
     queryPoint, queryNear, queryBbox, depthAt, fetchRoutingData, tagHazard,
     TIDE_STATIONS, nearestTideStation, fetchTide, tideAt,
