@@ -67,6 +67,17 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
     await b.evaluate(`document.querySelector('.chip').click();1`); await sleep(100);
     await b.evaluate(`document.getElementById('pKey').value='1';document.getElementById('pOk').click();1`); await sleep(200);
 
+    // key change by hand in the popup: staff 1 changes to D major after bar 2; notes after it are
+    // read in D major (C♯), the clarinet plan gets E major there; then remove it again
+    await b.evaluate(`document.querySelector('.chip').click();1`); await sleep(100);
+    const kc = await b.evaluate(`(()=>{const sel=document.getElementById('pKcBar');if(!sel)return {ok:false};sel.value=sel.options[2].value;document.getElementById('pKcKey').value='2';document.getElementById('pOk').click();
+      const st=__ss.S.model.staves[0],k=st.keyChanges[0];const after=st.notes.filter(n=>n.x>k.x0&&n.pitch.d%7===0&&!n.accid);
+      return {ok:true,n:st.keyChanges.length,fifths:k.fifths,cs:after.length,sharp:after.every(n=>n.pitch.alter===1),plan:__ss.S.plan.staves[0].changes.map(c=>c.fifths)}})()`);
+    check('key change added in the popup', kc.ok && kc.n === 1 && kc.fifths === 2 && kc.cs > 0 && kc.sharp && kc.plan.join() === '4', JSON.stringify(kc));
+    await b.evaluate(`document.querySelector('.chip').click();1`); await sleep(100);
+    const kc2 = await b.evaluate(`(()=>{const s=document.querySelector('[data-kc="0"]');s.value='none';document.getElementById('pOk').click();return __ss.S.model.staves[0].keyChanges.length})()`);
+    check('key change removed in the popup', kc2 === 0, String(kc2));
+
     // other instruments
     for (const [to, keyExp] of [['alto-sax', 4], ['F-horn', 2], ['A-clarinet', -2], ['cello', 1]]) {
       await b.evaluate(`(()=>{const s=document.getElementById('to');s.value='${to}';s.dispatchEvent(new Event('change'));document.querySelector('[data-view=transposed]').click();return 1})()`);

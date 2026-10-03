@@ -319,3 +319,11 @@ describe('key change inside a staff (Telemann Fantasia 12, IMSLP #96616)', () =>
     expect([...xml.matchAll(/<fifths>(-?\d+)<\/fifths>/g)].map((m) => +m[1])).toEqual([from + 2, to + 2]);
   });
 });
+
+// A bold sharp whose crossbars fill the gap between its stems (Bärenreiter scan, Fantasia 12,
+// G major section): it used to read as one wide stroke, so the staff lost its key signature.
+test('bold scanned sharp in a key signature (IMSLP #96616)', () => {
+  const r = analyze(normalize(decodeGray(fs.readFileSync(new URL('./fixtures/scan_telemann_boldsharp.png', import.meta.url)))));
+  expect(r.staves.length).toBe(1);
+  expect(r.staves[0].key.detected).toBe(1);
+});

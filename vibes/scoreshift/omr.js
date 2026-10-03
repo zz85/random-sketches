@@ -205,6 +205,18 @@ export function classifyAccidental(labels, w, c, S, t = 0.13 * S) {
   // heavy fonts and scans: a flat's stem and its bowl's right side bridge into one wide
   // "stroke"; without gap bridging the bowl's hole separates them again
   let flatOnly = false;
+  // bold sharps and naturals on scans: crossbars as thick as the gap between the stems bridge
+  // both stems into one wide "stroke" too. The stems are still the columns with the most ink
+  // over the glyph's height; two such groups are two strokes.
+  if (st.length === 1 && !narrow(st[0])) {
+    const { m } = mask, cov = [];
+    for (let x = 0; x < cw; x++) { let k = 0; for (let y = 0; y < ch; y++) k += m[y * cw + x]; cov.push(k / ch); }
+    const top = Math.max(...cov), grp = [];
+    for (let x = 0; x < cw; x++) if (cov[x] >= Math.max(0.6, 0.85 * top)) { const g = grp[grp.length - 1]; if (g && x - g.x1 <= 1) g.x1 = x; else grp.push({ x0: x, x1: x }); }
+    if (grp.length === 2 && grp[1].x0 - grp[0].x1 >= 0.2 * S && grp.every(narrow)) {
+      st = grp.map((g) => { let a = ch, b = -1; for (let x = g.x0; x <= g.x1; x++) for (let y = 0; y < ch; y++) if (m[y * cw + x]) { a = Math.min(a, y); b = Math.max(b, y); } return { ...g, top: a, bot: b }; });
+    }
+  }
   if (st.length === 1 && !narrow(st[0])) { const g = strokes(mask, 1.1 * S, 0).filter(narrow); if (g.length) { st = g; flatOnly = true; } }
   const fill = c.n / (cw * ch);
   if (st.length === 0) {

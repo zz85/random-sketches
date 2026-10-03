@@ -368,15 +368,43 @@ function staffPop(st, e) {
   showPop(`<h3>Staff ${st.index + 1}</h3>
     <div class="row"><label>Clef <select id="pClef">${opts(st.clef.type)}</select></label></div>
     <div class="row"><label>Key <select id="pKey">${keys}</select></label></div>
+    ${keyChangeRows(st)}
     <div class="row"><label><input type="checkbox" id="pAll" checked> all staves</label><button id="pOk">Apply</button><button id="pX">Close</button></div>
-    <p style="margin:.3rem 0 0;color:#5d6b78;font-size:.82rem">Detected: ${st.clef.detected || 'no clef'}, ${keyName(st.key.detected)}</p>`, e);
+    <p style="margin:.3rem 0 0;color:#5d6b78;font-size:.82rem">Detected: ${st.clef.detected || 'no clef'}, ${keyName(st.key.detected)}${(st.keyChanges || []).length ? ', ' + st.keyChanges.map((k) => `→ ${keyName(k.detected)}`).join(' ') : ''}</p>`, e);
   $('pOk').onclick = () => {
     const targets = $('pAll').checked ? S.model.staves : [st];
-    for (const t of targets) { t.clef.type = $('pClef').value; t.key.fifths = +$('pKey').value; interpret(t); }
+    for (const t of targets) { t.clef.type = $('pClef').value; t.key.fifths = +$('pKey').value; }
+    readKeyChanges(st);
+    for (const t of new Set([...targets, st])) interpret(t);
     markEdited();
     hidePop(); update();
   };
   $('pX').onclick = () => { hidePop(); update(); };
+}
+// Key changes inside a staff: one row per change found (its key, or "none" to remove it), and
+// a row to add one after any barline that has none. Keys are written as the page writes them;
+// the transposed page redraws each change for the target instrument.
+function keyChangeRows(st) {
+  const keyOpts = (sel, none) => (none ? `<option value="none">${none}</option>` : '') + [...Array(15)].map((_, i) => i - 7).map((f) => `<option value="${f}" ${f === sel ? 'selected' : ''}>${keyName(f)}</option>`).join('');
+  const rows = (st.keyChanges || []).map((k, i) => `<div class="row"><label>Key change after bar ${st.bars.findIndex((b) => b.x === k.x) + 1} <select data-kc="${i}">${keyOpts(k.fifths, 'none (remove)')}</select></label></div>`);
+  const free = st.bars.map((b, i) => ({ b, i })).filter(({ b }) => b.x < st.x1 - 3 * S.model.space && !(st.keyChanges || []).some((k) => k.x === b.x));
+  if (free.length) rows.push(`<div class="row"><label>Add key change after bar <select id="pKcBar"><option value="">–</option>${free.map(({ b, i }) => `<option value="${b.x}">${i + 1}</option>`).join('')}</select></label>
+    <select id="pKcKey" aria-label="Key of the added change">${keyOpts(st.key.fifths)}</select></div>`);
+  return rows.join('');
+}
+function readKeyChanges(st) {
+  const kcs = st.keyChanges || (st.keyChanges = []);
+  pop.querySelectorAll('[data-kc]').forEach((sel) => { const k = kcs[+sel.dataset.kc]; if (sel.value === 'none') k.removed = true; else k.fifths = +sel.value; });
+  for (let i = kcs.length - 1; i >= 0; i--) if (kcs[i].removed) kcs.splice(i, 1); // its glyphs stay on the page as they are
+  const bx = $('pKcBar')?.value;
+  if (bx) {
+    const b = st.bars.find((q) => q.x === +bx), x0 = b.x1 + 0.5 * S.model.space;
+    // added by hand: there is nothing on the page to erase, so the transposed page draws it
+    // after the barline only if the target key differs
+    kcs.push({ x: b.x, x0, x1: x0, detected: null, fifths: +$('pKcKey').value, from: null, ids: [], glyphs: [], manual: true });
+    kcs.sort((a, c) => a.x - c.x);
+  }
+  let cur = st.key.fifths; for (const k of kcs) { k.from = cur; cur = k.fifths; }
 }
 // ---------- rhythm corrections ----------
 // A correction is stored on the analysis objects (note.fix on every head of the chord, rest.fix,
