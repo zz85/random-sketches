@@ -146,12 +146,15 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
   // space apart, the closed end one, the middle two
   const hairpinForm = (c, S) => {
     const cw = c.x1 - c.x0 + 1, ch = c.y1 - c.y0 + 1;
-    if (cw < 2.5 * S || ch > 1.8 * S || ch < 0.35 * S || c.n / (cw * ch) > 0.3) return null;
-    const M = maskOf(c).m, runsAt = (fx) => { const x = Math.min(cw - 1, Math.max(0, Math.round(fx * (cw - 1)))); let n = 0, inside = false; const ys = []; for (let y = 0; y < ch; y++) { const v = M[y * cw + x]; if (v && !inside) { n++; ys.push(y); } inside = !!v; } return { n, ys }; };
-    const L0 = runsAt(0.04), R0 = runsAt(0.96), mid = runsAt(0.5);
-    if (mid.n !== 2) return null;
-    const open = (r) => r.n === 2 && r.ys[1] - r.ys[0] > 0.45 * S, closed = (r) => r.n === 1;
-    return closed(L0) && open(R0) ? 'cresc' : open(L0) && closed(R0) ? 'dim' : null;
+    if (cw < 2.5 * S || ch > 1.8 * S || ch < 0.35 * S || c.n / (cw * ch) > 0.45) return null;
+    // the gap between the two strokes grows steadily from one end to the other
+    const M = maskOf(c).m, at = (fx) => { const x = Math.min(cw - 1, Math.max(0, Math.round(fx * (cw - 1)))); let a = -1, b = -1, n = 0, inside = false; for (let y = 0; y < ch; y++) { const v = M[y * cw + x]; if (v) { if (a < 0) a = y; b = y; if (!inside) n++; } inside = !!v; } return { n, span: a < 0 ? null : b - a }; };
+    const xs = [0.12, 0.3, 0.5, 0.7, 0.88].map(at);
+    if (xs.some((q) => q.span == null) || at(0.5).n !== 2) return null;
+    const sp = xs.map((q) => q.span), inc = sp.every((v, i) => !i || v >= sp[i - 1] - 1), dec = sp.every((v, i) => !i || v <= sp[i - 1] + 1);
+    const lo = Math.min(sp[0], sp[4]), hi = Math.max(sp[0], sp[4]);
+    if (hi - lo < 0.45 * S || lo > 0.45 * S) return null;
+    return inc && sp[4] > sp[0] ? 'cresc' : dec && sp[0] > sp[4] ? 'dim' : null;
   };
   for (const st of staves) { st.rests = []; st.times = []; st.tuplets = []; }
   readTimes();
@@ -476,11 +479,24 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
   for (const { st, c } of arcs) {
     if (c.isTie) continue;
     const S = spaceAt(st, c.cx), col = (x) => { for (let y = c.y0; y <= c.y1; y++) if (L[y * w + x] === c.id) return y; return c.cy; };
-    const a = ends(st, c.x0, col(c.x0), S), b = ends(st, c.x1, col(c.x1), S);
-    const fromEdge = c.x0 < (st.key?.x1 ?? st.x0) + 1.5 * S, toEdge = c.x1 > st.x1 - 1.8 * S;
+    // a slur cut into pieces by staff lines and barlines: follow small fragments along its
+    // direction from the right end
+    let ex = c.x1, ey = col(c.x1);
+    const slope = (ey - col(Math.max(c.x0, Math.round(c.x1 - 0.2 * (c.x1 - c.x0))))) / Math.max(1, 0.2 * (c.x1 - c.x0));
+    for (let grew = true; grew;) {
+      grew = false;
+      for (const q of comps) {
+        if (!q || q.id === c.id || used.has(q.id) || headComps.has(q.id) || q.n > 120 || q.x0 <= ex - 1 || q.x0 - ex > 1.6 * S || q.y1 - q.y0 > 0.8 * S) continue;
+        const py = ey + slope * ((q.x0 + q.x1) / 2 - ex);
+        if (Math.abs((q.y0 + q.y1) / 2 - py) > 0.6 * S) continue;
+        ex = q.x1; ey = (q.y0 + q.y1) / 2; grew = true; used.add(q.id); break;
+      }
+    }
+    const a = ends(st, c.x0, col(c.x0), S), b = ends(st, ex, ey, S);
+    const fromEdge = c.x0 < (st.key?.x1 ?? st.x0) + 1.5 * S, toEdge = ex > st.x1 - 1.8 * S;
     if ((!a && !fromEdge) || (!b && !toEdge) || (a && b && a.chord === b.chord)) continue;
-    const yl = col(c.x0), yr = col(c.x1), above = c.y0 < Math.min(yl, yr) - 2;
-    st.slurs.push({ from: a, to: b, open: !b, cont: !a, box: [c.x0, c.y0, c.x1, c.y1], yl, yr, peak: above ? c.y0 : c.y1, above, ids: c.ids || [c.id] });
+    const yl = col(c.x0), yr = ey, above = c.y0 < Math.min(yl, yr) - 2;
+    st.slurs.push({ from: a, to: b, open: !b, cont: !a, box: [c.x0, c.y0, ex, Math.max(c.y1, ey)], yl, yr, peak: above ? c.y0 : c.y1, above, ids: c.ids || [c.id] });
     used.add(c.id);
   }
 
