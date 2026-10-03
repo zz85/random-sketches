@@ -119,7 +119,7 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
 
   // ---------------------------------------------------------------- free symbols
   const used = new Set(headComps);
-  for (const st of staves) { st.key.ids.forEach((i) => used.add(i)); st.bars.forEach((b) => b.ids.forEach((i) => used.add(i))); (st.clef.ids || []).forEach((i) => used.add(i)); }
+  for (const st of staves) { st.key.ids.forEach((i) => used.add(i)); (st.keyChanges || []).forEach((k) => k.ids.forEach((i) => used.add(i))); st.bars.forEach((b) => b.ids.forEach((i) => used.add(i))); (st.clef.ids || []).forEach((i) => used.add(i)); }
   // accidentals that belong to a note (an unattached "flat" is often an 8th rest)
   for (const n of notes) n.accid?.ids.forEach((i) => used.add(i));
   for (const n of notes) n.dots?.forEach((d) => d.ids.forEach((i) => used.add(i)));
@@ -149,7 +149,7 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
   // noteheads (a 4's closed triangle passes for a filled head); those notes are then dropped.
   function readTimes() {
     const fixed = new Set(); // key signatures, barlines, clefs: never part of a time signature
-    for (const st of staves) { st.key.ids.forEach((i) => fixed.add(i)); st.bars.forEach((b) => b.ids.forEach((i) => fixed.add(i))); (st.clef.ids || []).forEach((i) => fixed.add(i)); }
+    for (const st of staves) { st.key.ids.forEach((i) => fixed.add(i)); (st.keyChanges || []).forEach((k) => k.ids.forEach((i) => fixed.add(i))); st.bars.forEach((b) => b.ids.forEach((i) => fixed.add(i))); (st.clef.ids || []).forEach((i) => fixed.add(i)); }
     for (const st of staves) {
       const S = spaceAt(st, st.x0), anchors = [st.key.x1 + 1, ...st.bars.map((b) => b.x1 + 1)];
       for (const [ai, ax] of anchors.entries()) for (const heads of ai === 0 ? [false, true] : [false]) {

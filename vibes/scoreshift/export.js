@@ -64,13 +64,14 @@ export function toMusicXML(model, score, { plan = null, instrument = null, title
       if (mi > 0 && m.st !== part.measures[mi - 1].st) out.push('<print new-system="yes"/>');
       const sw = W.staves.get(m.st), attrs = [];
       if (mi === 0) attrs.push(`<divisions>${DIVS}</divisions>`);
-      if (sw.fifths !== cur.fifths) attrs.push(`<key><fifths>${sw.fifths}</fifths></key>`);
+      const sp = plan?.staves[m.st.index], kf = sp ? (sp.changes.filter((k) => k.x0 <= m.x0 + 1).pop()?.fifths ?? sw.fifths) : m.fifths ?? sw.fifths;
+      if (kf !== cur.fifths) attrs.push(`<key><fifths>${kf}</fifths></key>`);
       const t = m.time, tk = t ? `${t.beats}/${t.unit}${t.sym || ''}` : null;
       if (t && tk !== cur.time) attrs.push(`<time${t.sym ? ` symbol="${t.sym}"` : ''}><beats>${t.beats}</beats><beat-type>${t.unit}</beat-type></time>`);
       if (sw.clef !== cur.clef) { const c = CLEF_XML[sw.clef]; attrs.push(`<clef><sign>${c[0]}</sign><line>${c[1]}</line>${c[2] ? `<clef-octave-change>${c[2]}</clef-octave-change>` : ''}</clef>`); }
       if (mi === 0 && instrument && (instrument.dd || instrument.ds)) attrs.push(`<transpose><diatonic>${instrument.dd}</diatonic><chromatic>${instrument.ds}</chromatic></transpose>`);
       if (attrs.length) out.push(`<attributes>${attrs.join('')}</attributes>`);
-      cur = { clef: sw.clef, fifths: sw.fifths, time: tk ?? cur.time };
+      cur = { clef: sw.clef, fifths: kf, time: tk ?? cur.time };
       for (const e of m.events) {
         if (e.removed) continue;
         const dur = Math.round(evTicks(e) * 5);

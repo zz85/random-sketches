@@ -2,7 +2,7 @@
 // pitched symbol (head, stem, flag, beam, dots) is cut out of the page and pasted back
 // shifted by the transposition, accidentals and key signatures are rewritten, ledger lines
 // regenerated, and erased paper is refilled with the page's own local paper colour.
-import { lineY, yOfP, pOfY, spaceAt } from './omr.js';
+import { lineY, yOfP, pOfY, spaceAt, keyAt } from './omr.js';
 import { CLEFS, instrument, partInterval, transposePitch, pOfD, spellStaff, keySigPositions, nameOf, keyName, midiOf, bestOctave } from './theory.js';
 import { GLYPHS } from './glyphs.js';
 
@@ -43,11 +43,15 @@ export function plan(model, opts) {
     const iv = partInterval(from, to, st.key.fifths, octave);
     const clefId = opts.clef && opts.clef !== 'auto' ? (opts.clef === 'keep' ? st.clef.type : opts.clef) : to.id === 'C' ? st.clef.type : to.clef;
     const clef = CLEFS[clefId], srcClef = CLEFS[st.clef.type];
-    const pitches = st.notes.map((n) => transposePitch(n.pitch, iv));
-    const accs = spellStaff(pitches, st.notes.map((n) => ({ acc: n.accid ? n.accid.type : null, bar: n.bar })), iv.fifths);
+    // a key change inside the staff gets its own interval (it may respell enharmonically)
+    const ivAt = new Map([[st.key.fifths, iv]]);
+    const ivOf = (f) => { if (!ivAt.has(f)) ivAt.set(f, partInterval(from, to, f, octave)); return ivAt.get(f); };
+    const changes = (st.keyChanges || []).map((k) => ({ ...k, src: k.fifths, fifths: ivOf(k.fifths).fifths, prev: ivOf(k.from ?? st.key.fifths).fifths }));
+    const pitches = st.notes.map((n) => transposePitch(n.pitch, ivOf(keyAt(st, n.x))));
+    const accs = spellStaff(pitches, st.notes.map((n) => ({ acc: n.accid ? n.accid.type : null, bar: n.bar, fifths: ivOf(keyAt(st, n.x)).fifths })), iv.fifths);
     out.staves.push({
       st, iv, octave, clefId, clef, clefChanged: clef.sign !== srcClef.sign || clef.line !== srcClef.line,
-      fifths: iv.fifths, keyChanged: iv.fifths !== st.key.fifths || clef.sign !== srcClef.sign || clef.line !== srcClef.line,
+      fifths: iv.fifths, changes, keyChanged: iv.fifths !== st.key.fifths || clef.sign !== srcClef.sign || clef.line !== srcClef.line,
       notes: st.notes.map((n, i) => ({ n, pitch: pitches[i], p: pOfD(clef, pitches[i].d), acc: accs[i], name: nameOf(pitches[i]) })),
     });
   }
@@ -276,6 +280,7 @@ export class Renderer {
         if (n.accid) erase.push(...n.accid.ids);
       }
       if (sp.keyChanged) erase.push(...st.key.ids);
+      for (const k of sp.changes) if (k.fifths !== k.src || sp.clefChanged) erase.push(...k.ids);
       if (sp.clefChanged && st.clef.ids) erase.push(...st.clef.ids);
       for (const [comp, nns] of byComp) {
         const n0 = nns[0], dp = n0.p - n0.n.p;
@@ -355,6 +360,7 @@ export class Renderer {
       ctx.restore();
     }
     for (const sp of pl.staves) if (sp.keyChanged) this.drawKey(ctx, sp.st, sp, null, font);
+    for (const sp of pl.staves) for (const k of sp.changes) if (k.fifths !== k.src || sp.clefChanged) this.drawKeyChange(ctx, sp.st, sp, k, warps.get(sp.st)?.warp, font);
 
     // ---- clefs ----
     for (const sp of pl.staves) {
@@ -428,6 +434,21 @@ export class Renderer {
     let x = st.key.x0 + 0.3 * S;
     for (const p of ps) { this.glyph(ctx, name, x, yOfP(st, p, x), S, font, null); x += step; }
     void warp;
+  }
+
+  // A key change inside the staff, rewritten where the old one stood: naturals cancelling the
+  // previous (target) key where the new one drops or flips its accidentals, then the new key.
+  // It reuses the old glyphs' space; a longer signature runs towards the music.
+  drawKeyChange(ctx, st, sp, k, warp, font) {
+    const S = spaceAt(st, k.x0), X = warp || ((x) => x);
+    const prev = keySigPositions(sp.clef, k.prev), next = keySigPositions(sp.clef, k.fifths);
+    const keep = Math.sign(k.prev) === Math.sign(k.fifths) ? Math.min(prev.length, next.length) : 0;
+    const nats = prev.slice(keep).filter(() => k.glyphs.some((g) => g.type === 0) || k.fifths === 0 || Math.sign(k.prev) !== Math.sign(k.fifths));
+    const step = 0.95 * S;
+    let x = X(k.x0);
+    for (const p of nats) { this.glyph(ctx, 'natural', x, yOfP(st, p, x), S, font, null); x += step; }
+    const name = k.fifths > 0 ? 'sharp' : 'flat';
+    for (const p of next) { this.glyph(ctx, name, x, yOfP(st, p, x), S, font, null); x += step; }
   }
 
   paste(ctx, ids, dy, wp, st, stems = []) {

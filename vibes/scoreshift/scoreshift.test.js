@@ -260,3 +260,29 @@ describe('real scan regression (Haydn op. 17 no. 5)', () => {
     expect(pl.staves.every((s) => s.fifths === c.key + 2)).toBe(true);
   });
 });
+
+// Key changes inside a staff: Telemann, Fantasia 12 (TWV 40:13), Presto, from the scanned 1955
+// Bärenreiter edition on IMSLP (#96616): g minor -> [Maggiore] G major after a repeat bar
+// (♮♮♯), and back -> [Minore] (♮♭♭). One staff each, quantised to 16 grey levels.
+describe('key change inside a staff (Telemann Fantasia 12, IMSLP #96616)', () => {
+  const read = (n) => analyze(normalize(decodeGray(fs.readFileSync(new URL(`./fixtures/scan_telemann_${n}.png`, import.meta.url)))));
+  for (const [name, from, to] of [['maggiore', -2, 1], ['minore', 1, -2]]) test(name, () => {
+    const r = read(name), st = r.staves[0];
+    expect(r.staves.length).toBe(1);
+    expect(st.key.fifths).toBe(from);
+    expect(st.keyChanges.map((k) => k.fifths)).toEqual([to]);
+    const k = st.keyChanges[0];
+    // notes after the change are read in the new key, before it in the old
+    const before = st.notes.filter((n) => n.x < k.x0), after = st.notes.filter((n) => n.x > k.x1);
+    expect(before.length).toBeGreaterThan(5); expect(after.length).toBeGreaterThan(5);
+    const fs_ = (ns, f) => ns.filter((n) => n.pitch.d % 7 === 3 && !n.accid).every((n) => n.pitch.alter === (f > 0 ? 1 : 0)); // F: ♯ in G major only
+    expect(fs_(after, to) && fs_(before, from)).toBe(true);
+    // B♭ clarinet: g minor -> a minor (0), G major -> A major (3)
+    const pl = plan(r, { from: 'C', to: 'Bb-clarinet', octave: 0, clef: 'keep' });
+    expect(pl.staves[0].fifths).toBe(from + 2);
+    expect(pl.staves[0].changes.map((c) => c.fifths)).toEqual([to + 2]);
+    // MusicXML written for the clarinet carries both keys
+    const xml = toMusicXML(r, buildScore(r), { plan: pl, title: 't' });
+    expect([...xml.matchAll(/<fifths>(-?\d+)<\/fifths>/g)].map((m) => +m[1])).toEqual([from + 2, to + 2]);
+  });
+});

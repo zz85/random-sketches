@@ -311,16 +311,22 @@ it), then maps each staff to the true system its notes align with to score its c
 | | heads found | pitch right | extra | clefs | keys |
 |---|---|---|---|---|---|
 | typeset edition, before | 99.9% | 98.1% | 26 | 264/264 | 227/264 |
-| typeset edition, now | 99.9% | 99.6% | 22 | 264/264 | 263/264 |
+| typeset edition, now | 99.9% | 99.7% | 22 | 264/264 | 263/264 |
 | Bärenreiter scan, before | 99.4% | 96.0% | 134 | 264/266 | 243/266 |
-| Bärenreiter scan, now | 99.7% | 98.6% | 102 | 264/264 | 261/264 |
+| Bärenreiter scan, now | 99.7% | 98.7% | 102 | 264/264 | 262/264 |
 
 Fixes the comparison drove: a flat's bowl split off its stem by a staff line re-joined; a sharp's
 crossbar stack no longer bridged into one wide stroke (strokes must be mostly ink, and as tall
 as the glyph); flat bowls and sharp crossings rejected as noteheads; an accidental right against
-its note ends the key signature; overlapping staves are one staff. Left: mid-line key changes
-(Fantasia 12's minore/maggiore sections), and ~60 semitone errors on the scan from missed or
-misassigned accidentals.
+its note ends the key signature; overlapping staves are one staff. Key changes inside a staff
+(Fantasia 12's maggiore / minore sections) are read too: a run of accidentals right after a
+barline, optionally naturals cancelling the old key, then sharps or flats at the signature
+positions; a lone one needs a double or repeat bar, and naturals alone must cancel the whole
+key. All four changes in the two editions are found, with none invented on the other 46 pages.
+Notes after a change are read in the new key, the transposed page rewrites the change for the
+target key (with cancelling naturals where needed), the next staff of a part inherits it, and
+MusicXML gets a new `<key>`. Left: ~55 semitone errors on the scan from missed or misassigned
+accidentals.
 
 ### Accuracy
 
@@ -377,6 +383,8 @@ grace notes. The transposed page is readable but shows its seams at that resolut
 - One staff size per page; cross-staff beams move with one staff.
 - Clefs and keys on scans: on 8 pages of the Haydn scan (132 staves) 131 clefs and 128 keys are
   right. A wrong key gives that staff a different target key; fix it in Interpreted view.
+- A key change inside a staff is rewritten in the space of the old one; a longer new signature
+  runs towards the music (no squeeze there), and it cannot be corrected in Interpreted view yet.
 - Exported PDFs are page images (JPEG), not vector or text; about 0.7 MB a page.
 
 ## Research notes
