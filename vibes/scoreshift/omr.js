@@ -859,7 +859,7 @@ export function analyze(norm, opts = {}) {
     st.clef.ids = b ? cc.comps.filter((c) => c && c.cx >= b[0] && c.cx <= b[2] && c.cy >= b[1] && c.cy <= b[3] &&
       c.x1 - c.x0 <= b[2] - b[0] + 4 && c.y1 - c.y0 <= b[3] - b[1] + 4 && !headComps.has(c.id)).map((c) => c.id) : [];
   }
-  readRhythm({ w, h, S0, t, staves, notes, L, comps: cc.comps, accs, dots, headComps, bin, useNet: opts.glyphnet !== false });
+  readRhythm({ w, h, S0, t, staves, notes, L, comps: cc.comps, accs, dots, headComps, bin, useNet: opts.glyphnet !== false, textIds });
   // the same part on the previous system (ties over the system break), then pitches again with ties
   for (const st of staves) {
     const row = staves.filter((o) => o.system === st.system).indexOf(st);

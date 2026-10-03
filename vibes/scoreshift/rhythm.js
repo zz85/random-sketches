@@ -64,7 +64,7 @@ function readMeter(top, bot) {
 const REST_DUR = { restWhole: 1, restQuarter: 4, rest8th: 8, rest16th: 16, rest32nd: 32 };
 const DIGIT = (name) => +name.slice(-1);
 
-export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, headComps, bin, useNet = true }) {
+export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, headComps, bin, useNet = true, textIds = new Set() }) {
   const ink = (x, y) => x >= 0 && y >= 0 && x < w && y < h && L[y * w + x] > 0;
   // ---------------------------------------------------------------- stems: beams and flags
   // vertical ink runs in column x between y0 and y1 (either order), as [start, len] from y0
@@ -118,7 +118,7 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
   }
 
   // ---------------------------------------------------------------- free symbols
-  const used = new Set(headComps);
+  const used = new Set([...headComps, ...textIds]); // (letters of words are never rests, digits or marks)
   for (const st of staves) { st.key.ids.forEach((i) => used.add(i)); st.bars.forEach((b) => b.ids.forEach((i) => used.add(i))); (st.clef.ids || []).forEach((i) => used.add(i)); }
   // accidentals that belong to a note (an unattached "flat" is often an 8th rest)
   for (const n of notes) n.accid?.ids.forEach((i) => used.add(i));
@@ -275,7 +275,8 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
     if (st.clef.box && c.x1 < st.clef.box[2]) continue;
     const inside = c.cy > yt - 0.5 * S && c.cy < yb + 0.5 * S;
     // arcs (ties and slurs): wide, flat, thin
-    if (W >= 0.9 && H <= Math.max(1.4, 0.3 * W) && fill < 0.5 && c.n / cw < 0.45 * S) { arcs.push({ st, c }); continue; }
+    // (a short flat tie fills most of its box; what makes an arc is that it is thin)
+    if (W >= 0.9 && H <= Math.max(1.4, 0.3 * W) && (fill < 0.5 || (H <= 0.75 && fill < 0.9)) && c.n / cw < 0.45 * S) { arcs.push({ st, c }); continue; }
     // whole / half rests: a solid slab hanging from a line (whole) or sitting on one (half); the
     // 4th and middle lines normally, any line or ledger position when a second voice moves it
     const near = c.cy > yt - 2.2 * S && c.cy < yb + 2.2 * S;
@@ -331,9 +332,11 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
     const ns = st.notes;
     for (const a of ns) {
       if (Math.abs(c.x0 - a.box[2]) > 1.2 * S && Math.abs(c.x0 - a.x) > 0.9 * S) continue;
-      if (Math.abs(yl - a.y) > 1.3 * S) continue;
+      if (Math.abs(yl - a.y) > 2.0 * S) continue;
       const next = ns.filter((b) => b.chord === a.chord + 1);
-      const b = next.find((q) => q.p === a.p && Math.abs(c.x1 - q.box[0]) < 1.4 * S && Math.abs(yr - q.y) < 1.3 * S);
+      const b = next.find((q) => q.p === a.p && Math.abs(c.x1 - q.box[0]) < 1.4 * S && Math.abs(yr - q.y) < 2.0 * S);
+      // an arc into a note with a staccato or accent is a slur (portato), never a tie
+      if (b && b.artic?.some((k) => k === 'stacc' || k === 'acc')) break;
       if (b) { a.tie = true; a.tieIds = [c.id]; break; }
       if (!next.length && c.x1 > st.x1 - 1.8 * S) { a.tie = true; a.tieIds = [c.id]; break; }
     }
