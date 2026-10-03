@@ -17,6 +17,7 @@ const CLASSES = {
   digit: ['timeSig0', 'timeSig1', 'timeSig2', 'timeSig3', 'timeSig4', 'timeSig5', 'timeSig6', 'timeSig7', 'timeSig8', 'timeSig9'],
   meterSym: ['timeSigCommon', 'timeSigCutCommon'],
   tuplet: ['tuplet3', 'tuplet5', 'tuplet6'],
+  bow: ['stringsDownBow', 'stringsUpBow'],
 };
 let TEMPLATES = null;
 export function templates() {
@@ -260,26 +261,54 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
   // 2.6 spaces (accents 3.4, they go above the staff); an accent may also sit beyond the stem end. Read before the other free
   // symbols so the dots and dashes are not taken for anything else.
   for (const n of notes) n.artic = [];
+  const marked = new Set(); // components taken as articulations (never words or dynamics)
   const chordsOf = new Map(); for (const n of notes) { const k = n.st.index + ':' + n.chord; if (!chordsOf.has(k)) chordsOf.set(k, []); chordsOf.get(k).push(n); }
   const markKind = (c, S) => {
     const cw = c.x1 - c.x0 + 1, ch = c.y1 - c.y0 + 1, W = cw / S, H = ch / S, fill = c.n / (cw * ch);
-    if (W >= 0.2 && W <= 0.6 && H >= 0.2 && H <= 0.6 && fill > 0.5 && W / H > 0.6 && W / H < 1.7) return 'stacc';
+    if (W >= 0.2 && W <= 0.6 && H >= 0.2 && H <= 0.75 && fill > 0.5 && W / H > 0.6 && W / H < 1.7) return "stacc";
     if (W >= 0.65 && W <= 1.7 && ch <= Math.max(0.36 * S, 2.2 * t + 2) && H >= 0.08 && fill > 0.7) return 'ten';
-    if (W >= 0.75 && W <= 1.9 && H >= 0.4 && H <= 1.15 && fill > 0.12 && fill < 0.6) {
+    if (W >= 0.75 && W <= 1.9 && H >= 0.4 && H <= 1.45 && fill > 0.12 && fill < 0.6) {
       // a wedge opening left: the right end's ink sits at mid height, the left end's at top and bottom
       const M = maskOf(c).m, col = (fx) => { const x = Math.min(cw - 1, Math.round(fx * (cw - 1))), ys = []; for (let y = 0; y < ch; y++) if (M[y * cw + x]) ys.push(y / (ch - 1)); return ys; };
       const r = col(0.95), l = col(0.05), mid = (ys) => ys.length && ys.every((y) => y > 0.25 && y < 0.75), ends = (ys) => ys.some((y) => y < 0.3) && ys.some((y) => y > 0.7) && !ys.some((y) => y > 0.4 && y < 0.6);
       if (mid(r) && ends(l)) return 'acc';
     }
+    // bowing: a down-bow (a bar with two legs, open below) or an up-bow (a V), about a space
+    // wide; told apart by template against the SMuFL glyphs of the five fonts, and by shape:
+    // a down-bow's top row is solid across, an up-bow's bottom is one narrow point
+    if (W >= 0.55 && W <= 1.7 && H >= 0.6 && H <= 2.4 && fill > 0.1 && fill < 0.7) {
+      const M = maskOf(c).m, row = (fy) => { const y = Math.min(ch - 1, Math.round(fy * (ch - 1))); let n = 0; for (let x = 0; x < cw; x++) n += M[y * cw + x]; return n / cw; };
+      const g = match(M, cw, ch, ['bow'], S);
+      const top = Math.max(row(0.04), row(0.1)), bot = Math.max(row(0.94), row(0.99)), mid = row(0.6);
+      const dn = top > 0.75 && bot < 0.6 && mid < 0.6, up = top < 0.75 && bot < 0.45 && row(0.1) > bot;
+      if (g && g.dist < 0.42 && g.name === 'stringsDownBow' && dn) return 'dnbow';
+      if (g && g.dist < 0.42 && g.name === 'stringsUpBow' && up && !dn) return 'upbow';
+    }
     return null;
   };
-  for (const c of syms) {
-    if (!c || used.has(c.id)) continue;
+  const BOW = new Set(['upbow', 'dnbow']);
+  // two passes: bowing marks first, then dots, dashes and accents, which may sit beyond a bowing
+  // mark (stacked marks)
+  for (const pass of [0, 1]) for (const c of syms) {
+    if (!c) continue;
+    // (bowing marks above the staff can be grouped into a "word" with each other: take them back)
+    const textOnly = (c.ids || [c.id]).every((i) => textIds.has(i));
+    if (used.has(c.id) && !textOnly) continue;
     const st = staffOf(c); if (!st) continue;
-    const S = spaceAt(st, c.cx), kind = markKind(c, S); if (!kind) continue;
+    const S = spaceAt(st, c.cx), kind = markKind(c, S); if (!kind || (textOnly && !BOW.has(kind)) || BOW.has(kind) !== (pass === 0)) continue;
     let best = null;
     for (const ns of chordsOf.values()) {
-      if (ns[0].st !== st) continue;
+      if (ns[0].st !== st || ns.every((n) => n.grace)) continue; // (a grace note's slash and slur pieces are not marks)
+      if (BOW.has(kind)) {
+        // above the chord's highest point (head or stem end) and above the staff, centred on it
+        const x = ns.reduce((q, n) => q + n.x, 0) / ns.length;
+        if (Math.abs(c.cx - x) > 0.8 * S) continue;
+        const hi = Math.min(...ns.flatMap((n) => [n.y, n.stem ? n.stem.tip : n.y]), lineY(st, 0, x));
+        const d = hi - c.y1;
+        if (d < 0.1 * S || d > 3.2 * S) continue;
+        if (!best || Math.abs(c.cx - x) < best.d) best = { d: Math.abs(c.cx - x), ns };
+        continue;
+      }
       const x = ns.reduce((q, n) => q + n.x, 0) / ns.length;
       if (Math.abs(c.cx - x) > (kind === 'stacc' ? 0.5 : 0.7) * S) continue;
       const stem = ns.find((n) => n.stem)?.stem, top = Math.min(...ns.map((n) => n.y)), bot = Math.max(...ns.map((n) => n.y));
@@ -287,12 +316,14 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
       const sides = stem ? (stem.dir < 0 ? [c.cy - bot, top - c.cy - (top - stem.tip)] : [top - c.cy, c.cy - bot - (stem.tip - bot)]) : [c.cy - bot, top - c.cy];
       // (dots and dashes beyond the stem end are mostly pieces of tuplet numbers and fingerings)
       const d = kind === 'acc' || !stem ? Math.max(...sides) : sides[0];
-      if (d < 0.45 * S || d > (kind === "acc" ? 3.4 : 2.6) * S) continue;
+      // beyond a bowing mark already on this chord, on the same side: allowed further away
+      const bow = ns.find((n) => n.bowBox)?.bowBox, past = bow && c.y1 <= bow[1] + 0.3 * S ? bow[3] - bow[1] + 0.8 * S : 0;
+      if (d < 0.45 * S || d > (kind === "acc" ? 3.4 : 2.6) * S + past) continue;
       if (!best || d < best.d) best = { d, ns };
     }
     if (!best) continue;
-    for (const n of best.ns) if (!n.artic.includes(kind)) n.artic.push(kind);
-    used.add(c.id); (c.ids || [c.id]).forEach((i) => used.add(i));
+    for (const n of best.ns) { if (!n.artic.includes(kind)) n.artic.push(kind); if (BOW.has(kind)) n.bowBox = [c.x0, c.y0, c.x1, c.y1]; }
+    used.add(c.id); (c.ids || [c.id]).forEach((i) => { used.add(i); marked.add(i); });
   }
   // ---------------------------------------------------------------- dynamics and words
   // Expression text outside the staff: components grouped into words (similar height band,
@@ -300,7 +331,7 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
   // A dynamic that matches clearly better than any word attaches to the chord it starts under.
   for (const st of staves) { st.dynamics = []; st.words = []; }
   const isText = (c) => (c.ids || [c.id]).some((i) => textIds.has(i));
-  const cand = syms.filter((c) => c && (!used.has(c.id) || isText(c)) && !headComps.has(c.id)).filter((c) => {
+  const cand = syms.filter((c) => c && (!used.has(c.id) || isText(c)) && !headComps.has(c.id) && !(c.ids || [c.id]).some((i) => marked.has(i))).filter((c) => {
     const st = staffOf(c); if (!st) return false;
     const S = spaceAt(st, c.cx), H = (c.y1 - c.y0 + 1) / S, W = (c.x1 - c.x0 + 1) / S;
     if (H < 0.35 || H > 3.2 || W > 3.8) return false;

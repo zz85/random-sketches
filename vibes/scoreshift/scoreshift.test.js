@@ -221,6 +221,17 @@ describe('expression: dynamics, hairpins, slurs', () => {
   });
 });
 
+describe('bowing marks', () => {
+  test('up-bows and down-bows read, stacked marks kept, exported as <technical>', () => {
+    const r = evaluate('bowing', 'clean');
+    let ok = 0, n = 0, fp = 0;
+    for (const [t, g] of r.pairs) { for (const a of t.artic.filter((x) => x.endsWith('bow'))) { n++; if (g.artic.includes(a)) ok++; } fp += g.artic.filter((a) => a.endsWith('bow') && !t.artic.includes(a)).length; }
+    expect(n).toBe(22); expect(ok).toBe(n); expect(fp).toBe(0);
+    const xml = toMusicXML(r.res, buildScore(r.res), {});
+    expect(xml).toContain('<technical><down-bow/></technical>'); expect(xml).toContain('<technical><up-bow/></technical>');
+  });
+});
+
 describe('grace notes', () => {
   test('found, take no time, play just before their note, export with a slash', () => {
     const r = evaluate('grace', 'clean'), sc = buildScore(r.res), R = evaluateRhythm(r);
@@ -316,6 +327,9 @@ describe.skipIf(!fs.existsSync(CODA))('real page: CODA viola audition sheet', ()
     const pf = performance(r, sc).notes.filter((n) => n.midi === 76);
     expect(pf[0].dur).toBe(96 + 192); // quarter tied to half: one note, three beats
     expect(bar(16)[0].notes[0].name).toBe('G♯4'); // tied from bar 15: keeps its sharp
+    // bowing as printed: bar 11 down, up; bar 12 starts down-bow on its second note
+    expect(bar(11)[0].notes[0].artic).toContain('dnbow'); expect(bar(11)[1].notes[0].artic).toContain('upbow');
+    expect(bar(12)[1].notes[0].artic).toContain('dnbow'); expect(bar(1)[0].notes[0].artic).toContain('upbow');
     // the waltz's acciaccaturas (bars 56 and 58): a G♯4 grace before the F♯4
     for (const k of [56, 58]) { expect(bar(k)[0].grace).toBe(true); expect(bar(k)[0].notes[0].name).toBe('G♯4'); expect(bar(k)[1].notes[0].name).toBe('F♯4'); }
     const dyn = r.staves.flatMap((s) => s.dynamics.map((d) => d.text));

@@ -81,6 +81,11 @@ d5:4@mp+> c5:4 b4:4 | a4:2.+.@pp | g4:4^ a4:4 b4:4$ | c5:4@sf d5:4 c5:4 | b4:4^ 
   { name: 'grace', clef: 'G', fifths: 2, meter: [3, 4], src: `
 g~a5:8^ g5:4$ f5:4 e5:4 | g~e5:8^ d5:4$ c5:4 b4:4 | g=b4:8^ a4:2$ d5:4 | g~f4:8^ g4:4$ g~b4:8^ a4:4$ g4:4 |
 [g~e5:8^ #d5:8$ e5:8 f5:8 g5:8 e5:8 d5:8] | g=c5:16^ b4:2.$ | g~e4:8^ d4:4$ f4:4 a4:4 | d5:2. |` },
+  // bowing: up-bows and down-bows over notes with stems both ways, beamed, with other marks,
+  // alto clef as on the CODA sheet
+  { name: 'bowing', clef: 'C', fifths: 2, meter: [3, 4], src: `
+d4:4N e4:4V f4:4N | [g4:8N a4:8V] b4:4N c5:4V | d5:4N! c5:4V! b4:4N | [a4:8N b4:8 c5:8V d5:8] e5:4N |
+f5:2V e5:4N | [d5:8N! c5:8! b4:8V! a4:8!] g4:4N | f4:4V> g4:4N> a4:4V | d4:2.N |` },
 ];
 
 export const FONTS = ['Leipzig', 'Bravura', 'Leland', 'Gootville', 'Petaluma'];
@@ -90,6 +95,7 @@ export const GLYPHS = { E0A2: 'noteheadWhole', E0A3: 'noteheadHalf', E0A4: 'note
   E4E3: 'restWhole', E4E4: 'restHalf', E4E5: 'restQuarter', E4E6: 'rest8th', E4E7: 'rest16th', E4E8: 'rest32nd',
   E240: 'flag8thUp', E241: 'flag8thDown', E242: 'flag16thUp', E243: 'flag16thDown', E244: 'flag32ndUp', E245: 'flag32ndDown',
   E080: 'timeSig0', E081: 'timeSig1', E082: 'timeSig2', E083: 'timeSig3', E084: 'timeSig4', E085: 'timeSig5', E086: 'timeSig6', E087: 'timeSig7', E088: 'timeSig8', E089: 'timeSig9',
+  E610: 'stringsDownBow', E612: 'stringsUpBow',
   E08A: 'timeSigCommon', E08B: 'timeSigCutCommon', E883: 'tuplet3', E885: 'tuplet5', E886: 'tuplet6' };
 // one tune per clef: mid-tune clef changes are engraved with the smaller change-clef glyphs
 export const GLYPH_ABC = [
@@ -103,11 +109,12 @@ export const GLYPH_TUNES = [
   G([3, 4], `r:1 | r:2 r:4 r:8 r:16 r:32 r:32 | c4:8 c4:16 c4:32 a5:8 a5:16 a5:32 | 3{[c5:8 c5:8 c5:8]} r:4 |`),
   G([10, 8], `r:1 |`), G([2, 2], `r:1 |`), G([5, 16], `r:1 |`), G([7, 8], `r:1 |`), G([9, 8], `r:1 |`),
   G([4, 4], `r:1 |`, 'common'), G([2, 2], `r:1 |`, 'cut'),
+  G([4, 4], `c5:4V c5:4N a4:4V a4:4N |`),
   G([4, 4], `5{[c5:16 c5:16 c5:16 c5:16 c5:16]} 6{[c5:16 c5:16 c5:16 c5:16 c5:16 c5:16]} r:2 |`),
 ];
 
 // Compact notation -> MEI for Verovio. A bar may hold two voices: 'voice 1 tokens & voice 2 tokens'.
-// After a value: ! staccato, _ tenuto, > accent (c5:4! [d5:8_ e5:8>]). Tokens: pitch [accidental # b n x bb] letter octave,
+// After a value: ! staccato, _ tenuto, > accent, V up-bow, N down-bow (c5:4! [d5:8_ e5:8>]). Tokens: pitch [accidental # b n x bb] letter octave,
 // ':' duration (1 2 4 8 16 32) and dots, '~' tie to the next note, r = rest, (a b c):d chord,
 // [ ... ] beam group, 3{ ... } triplet, | barline. A first measure shorter than the meter is a pickup.
 const ACC = { '#': 's', b: 'f', n: 'n', x: 'x', bb: 'ff' };
@@ -137,7 +144,7 @@ export function toMEI(t) {
       const dur = +m[2], dots = m[3].length, tie = !!m[4];
       // suffixes: ! staccato, _ tenuto, > accent, @pp dynamic, ^ $ slur start / end,
       // +< +> hairpin start (cresc / dim), +. hairpin end
-      const suf = m[5], ar = [...suf.replace(/@[a-z]+|\+[<>.]|[\^$]/g, '')].map((c) => ({ '!': 'stacc', _: 'ten', '>': 'acc' })[c]).filter(Boolean).join(' ');
+      const suf = m[5], ar = [...suf.replace(/@[a-z]+|\+[<>.]|[\^$]/g, '')].map((c) => ({ '!': 'stacc', _: 'ten', '>': 'acc', V: 'upbow', N: 'dnbow' })[c]).filter(Boolean).join(' ');
       const id = 'n' + ++nid;
       const dyn = suf.match(/@([a-z]+)/); if (dyn) ctl.push({ bar: cur, kind: 'dynam', id, text: dyn[1] });
       if (suf.includes('^')) open.slur = { bar: cur, id };

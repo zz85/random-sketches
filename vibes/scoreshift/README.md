@@ -254,6 +254,16 @@ the music from it on the main thread (a few ms, so it is rebuilt after every cor
 On the `expr` fixture (7 dynamics, 5 slurs, 2 hairpins, clean): 6 dynamics on the right note
 (none invented), 4 slurs, both hairpins.
 
+### Bowing marks
+
+Down-bows (⊓) and up-bows (V) are read above the chord's highest point and the staff, centred on
+it: a template match against the SMuFL glyphs of the five fonts plus a shape check (a down-bow's
+top row is solid across, an up-bow narrows to a point). They are read before the other marks, so
+a staccato or accent stacked beyond a bowing mark is still found, and taken back from the text
+rows they can be grouped into. Shown in Interpreted view (`down-bow ⊓`, `up-bow V`), toggled on a
+note, exported as MusicXML `<technical>`. `bowing` fixture: 22/22 clean, none invented; on the
+CODA sheet the bowings read match the page in the bars checked (1, 7, 11–17, 21).
+
 ### Grace notes
 
 The CODA waltz (bars 56 and 58) opens two bars with an acciaccatura: a small slashed eighth G♯4,
@@ -411,7 +421,7 @@ few readings where the 1955 edition and the MusicXML simply differ.
 
 ### Accuracy
 
-Fourteen test tunes engraved by Verovio in five different music fonts (Leipzig, Bravura, Leland,
+Fifteen test tunes engraved by Verovio in five different music fonts (Leipzig, Bravura, Leland,
 Gootville, Petaluma) at 14–26 px per space: treble, bass and alto clefs, keys from 4♯ to 3♭,
 chords, beams, 16ths and 32nds, ledger lines up to five, all accidentals including double sharps,
 and for rhythm: rests of every value, dotted values, flags and beams, eighth and quarter
@@ -467,10 +477,10 @@ grace notes. The transposed page is readable but shows its seams at that resolut
 ### Limitations
 
 - Printed music only; no handwriting, tablature, percussion or early notation.
-- Grace notes are read (see above) but are not moved on the transposed page; appoggiaturas play
-  as acciaccaturas.
+- Grace notes move with the transposition (head, stem, flag and slash; the slur into the main
+  note stays put, like every slur); appoggiaturas play as acciaccaturas.
 - Rhythm: at most two voices per staff; no tremolos, repeats, voltas, multi-bar rests or tempo
-  marks (set the tempo by hand); marcato, fermata and bowing marks are not read. A note missed by the head detector cannot be added by hand yet; its bar shows red.
+  marks (set the tempo by hand); marcato and fermata are not read. A note missed by the head detector cannot be added by hand yet; its bar shows red.
 - Ties and slurs stay put: fine for steps, visibly off for big moves such as clef changes.
 - Moving a note does not re-flip stems or re-slope beams; with a clef change notes can collide.
 - One staff size per page; cross-staff beams move with one staff.

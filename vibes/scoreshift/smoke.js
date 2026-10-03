@@ -164,6 +164,18 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
     // at tempo 240 x 0.5 = 120 quarter notes a minute: 0.5 s is one quarter, 96 ticks
     check('position, speed and metronome', tp.from === 1152 && tp.a > 1152 && Math.abs(tp.b - tp.a - 96) < 30 && /bar 5/.test(tp.text) && tp.clicks, JSON.stringify(tp));
 
+    // grace notes move with the transposition: each grace head is ink at its new place
+    await b.evaluate(`fetch('fixtures/grace.png').then(r=>r.blob()).then(bl=>__ss.load(new File([bl],'grace.png',{type:'image/png'}),'grace.png')).then(()=>1)`);
+    await waitFor(() => b.evaluate(`!!(__ss.S.model && !__ss.S.pdf && __ss.S.model.notes.some(n=>n.grace))`), 20000).catch(() => {});
+    await b.evaluate(`(()=>{const s=document.getElementById('to');s.value='Bb-clarinet';s.dispatchEvent(new Event('change'));document.querySelector('[data-view=transposed]').click();return 1})()`); await sleep(400);
+    const gm = await b.evaluate(`(()=>{const S=__ss.S,R=S.rend,c=document.getElementById('cv'),g=c.getContext('2d');let n=0,ink=0,moved=0;
+      const lum=(x,y)=>{const d=g.getImageData(Math.round(x*R.r)-1,Math.round(y*R.r)-1,3,3).data;let s=0;for(let i=0;i<36;i+=4)s+=(d[i]+d[i+1]+d[i+2])/3;return s/9};
+      for(const sp of S.plan.staves) for(const nn of sp.notes){ if(!nn.n.grace) continue; n++; const W=R.warps.get(sp.st), x=W?W.warp(nn.n.x):nn.n.x, y=__yOfP(sp.st,nn.p,nn.n.x);
+        if(lum(x,y)<120) ink++; if(nn.p!==nn.n.p) moved++; }
+      return {n,ink,moved}})()`);
+    check('grace notes move with the transposition', gm.n >= 5 && gm.ink >= gm.n - 1 && gm.moved === gm.n, JSON.stringify(gm));
+    await shot('grace');
+
     // the CODA audition sheet, if present locally (not committed): every bar adds up
     if (fs.existsSync(path.join(DIR, 'fixtures/local/coda.pdf'))) {
       await b.evaluate(`fetch('fixtures/local/coda.pdf').then(r=>r.blob()).then(bl=>__ss.load(new File([bl],'coda.pdf',{type:'application/pdf'}),'coda.pdf')).then(()=>1)`);

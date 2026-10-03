@@ -258,7 +258,7 @@ function barSummary(sc) {
 const DUR_GLYPH = { 1: '𝅝', 2: '𝅗𝅥', 4: '♩', 8: '♪', 16: '𝅘𝅥𝅯', 32: '𝅘𝅥𝅰' };
 const evLabel = (e) => `${e.kind === 'rest' ? 'r' : ''}${e.full ? 'bar' : e.dur}${'.'.repeat(e.dots || 0)}${e.tuplet ? '³' : ''}${e.tie ? '⁀' : ''}${e.voice ? ' v2' : ''}${(e.notes?.[0].artic || []).map((a) => ({ stacc: '·', ten: '–', acc: '>' })[a]).join('')}`;
 // What Interpreted view shows (each can be switched off in the Show menu).
-const SHOW_KEYS = [['bars', 'bar numbers + checks'], ['values', 'note values'], ['artic', 'articulations'], ['ties', 'ties'], ['slurs', 'slurs'], ['dyn', 'dynamics + hairpins'], ['voices', 'voices'], ['text', 'text']];
+const SHOW_KEYS = [['bars', 'bar numbers + checks'], ['values', 'note values'], ['artic', 'articulations + bowing'], ['ties', 'ties'], ['slurs', 'slurs'], ['dyn', 'dynamics + hairpins'], ['voices', 'voices'], ['text', 'text']];
 S.show = Object.assign(Object.fromEntries(SHOW_KEYS.map(([k]) => [k, true])), store.show || {});
 const pill = (g, text, x, y, fg, bg = 'rgba(255,255,255,.92)', align = 'center') => {
   const w = g.measureText(text).width + 6, x0 = align === 'left' ? x - 3 : x - w / 2;
@@ -296,7 +296,7 @@ function drawRhythm(g, model, sc, r, selM) {
       const parts = [];
       if (on.values) parts.push(`${e.kind === 'rest' ? 'r' : ''}${e.full ? 'bar' : e.dur}${'.'.repeat(e.dots || 0)}${e.tuplet ? '³' : ''}`);
       if (on.voices && m.voices > 1) parts.push(`v${(e.voice ?? 0) + 1}`);
-      if (on.artic) parts.push(...(e.notes?.[0].artic || []).map((a) => ({ stacc: 'stacc', ten: 'ten', acc: 'acc' })[a]));
+      if (on.artic) parts.push(...(e.notes?.[0].artic || []).map((a) => ({ stacc: 'stacc', ten: 'ten', acc: 'acc', upbow: 'up-bow V', dnbow: 'down-bow ⊓' })[a]));
       if (parts.length) pill(g, parts.join(' '), e.x, y, e.repaired ? '#c2410c' : e.fixed ? '#0a7d32' : '#4b2a8a');
     }
   }
@@ -485,7 +485,7 @@ function rhythmRow(ev) {
   const m = measureOf(ev);
   return `<div class="row" role="group" aria-label="Note value">${DURS.map((d) => `<button data-dur="${d}" aria-pressed="${ev.dur === d}" aria-label="${['whole', 'half', 'quarter', 'eighth', 'sixteenth', 'thirty-second'][DURS.indexOf(d)]}">${DUR_GLYPH[d]}</button>`).join('')}</div>
     <div class="row"><button data-r="dot" aria-pressed="${!!ev.dots}">dot</button><button data-r="tuplet" aria-pressed="${!!ev.tuplet}">triplet</button>${ev.kind === 'note' ? `<button data-r="tie" aria-pressed="${!!ev.tie}">tie →</button><button data-r="grace" aria-pressed="${!!ev.grace}">grace</button>` : ''}</div>
-    ${ev.kind === 'note' ? `<div class="row" role="group" aria-label="Articulation">${[['stacc', 'staccato ·'], ['ten', 'tenuto –'], ['acc', 'accent >']].map(([k, l]) => `<button data-art="${k}" aria-pressed="${(ev.notes[0].artic || []).includes(k)}">${l}</button>`).join('')}</div>` : ''}
+    ${ev.kind === 'note' ? `<div class="row" role="group" aria-label="Articulation">${[['stacc', 'staccato ·'], ['ten', 'tenuto –'], ['acc', 'accent >'], ['dnbow', 'down-bow ⊓'], ['upbow', 'up-bow V']].map(([k, l]) => `<button data-art="${k}" aria-pressed="${(ev.notes[0].artic || []).includes(k)}">${l}</button>`).join('')}</div>` : ''}
     <p class="hint">Bar ${m.number}: ${m.ticks / 96} of ${m.cap / 96} beats${m.repairs.length ? ` · auto-fixed: ${m.repairs.join(', ')}` : ''}${ev.repaired ? ` (this ${ev.kind}: ${ev.repaired})` : ''}</p>`;
 }
 function setFix(ev, patch) {
@@ -500,8 +500,8 @@ function bindRhythm(ev, reopen) {
   const redo = (patch) => { setFix(ev, patch); update(); reopen(); };
   pop.querySelectorAll('[data-dur]').forEach((b) => (b.onclick = () => redo({ dur: +b.dataset.dur })));
   pop.querySelectorAll('[data-art]').forEach((b) => (b.onclick = () => {
-    const k = b.dataset.art, on = !(ev.notes[0].artic || []).includes(k);
-    for (const n of ev.notes) n.artic = on ? [...new Set([...(n.artic || []), k])] : (n.artic || []).filter((a) => a !== k);
+    const k = b.dataset.art, on = !(ev.notes[0].artic || []).includes(k), other = { upbow: 'dnbow', dnbow: 'upbow' }[k];
+    for (const n of ev.notes) n.artic = on ? [...new Set([...(n.artic || []).filter((a) => a !== other), k])] : (n.artic || []).filter((a) => a !== k);
     markEdited(); update(); reopen();
   }));
   pop.querySelectorAll('[data-r]').forEach((b) => (b.onclick = () => {

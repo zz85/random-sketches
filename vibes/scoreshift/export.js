@@ -107,7 +107,8 @@ export function toMusicXML(model, score, { plan = null, instrument = null, title
           const tied = (tieStop ? '<tied type="stop"/>' : '') + (tieStart ? '<tied type="start"/>' : '');
           const ART = { stacc: '<staccato/>', ten: '<tenuto/>', acc: '<accent/>' }, art = k === 0 ? (e.notes[0].artic || []).map((a) => ART[a]).join('') : '';
           const slurs = k === 0 ? (m.st.slurs || []).flatMap((sl, si) => [sl.from && e.notes.includes(sl.from) ? `<slur type="start" number="${(si % 6) + 1}"/>` : '', sl.to && e.notes.includes(sl.to) ? `<slur type="stop" number="${(si % 6) + 1}"/>` : '']).join('') : '';
-          const nota = tied + slurs + (k === 0 ? tup : '') + (art ? `<articulations>${art}</articulations>` : '');
+          const TECH = { upbow: '<up-bow/>', dnbow: '<down-bow/>' }, tech = k === 0 ? (e.notes[0].artic || []).map((a) => TECH[a] || '').join('') : '';
+          const nota = tied + slurs + (k === 0 ? tup : '') + (art ? `<articulations>${art}</articulations>` : '') + (tech ? `<technical>${tech}</technical>` : '');
           out.push(`<note>${e.grace ? '<grace slash="yes"/>' : ''}${k ? '<chord/>' : ''}<pitch><step>${step}</step>${p.alter ? `<alter>${p.alter}</alter>` : ''}<octave>${oct}</octave></pitch>` +
             `${e.grace ? '' : `<duration>${dur}</duration>`}${ties}${VO}<type>${TYPE[e.dur] || 'quarter'}</type>${dots}` +
             `${w.acc != null ? `<accidental>${ACC[w.acc]}</accidental>` : ''}${tm}${STEM}${nota ? `<notations>${nota}</notations>` : ''}</note>`);

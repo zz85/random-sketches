@@ -22,7 +22,7 @@ let tk = new VerovioToolkit(VM);
 
 const b = await launch({ port: 9343 });
 const ACC = { E262: 1, E260: -1, E261: 0, E263: 2, E264: -2 };
-const ARTIC = { E4A0: 'acc', E4A1: 'acc', E4A2: 'stacc', E4A3: 'stacc', E4A4: 'ten', E4A5: 'ten' };
+const ARTIC = { E4A0: 'acc', E4A1: 'acc', E4A2: 'stacc', E4A3: 'stacc', E4A4: 'ten', E4A5: 'ten', E610: 'dnbow', E611: 'dnbow', E612: 'upbow', E613: 'upbow' };
 
 async function render(svg) {
   await b.evaluate(`document.body.style.margin='0';document.body.style.background='#fff';document.body.innerHTML=${JSON.stringify(svg)};1`);
@@ -55,7 +55,7 @@ console.log('glyphs.js written');
 
 // ---- fixtures ----
 fs.mkdirSync(path.join(ROOT, 'fixtures'), { recursive: true });
-const SIZES = [16, 20, 24, 18, 22, 14, 26, 18, 20, 17, 19, 21, 18, 20];
+const SIZES = [16, 20, 24, 18, 22, 14, 26, 18, 20, 17, 19, 21, 18, 20, 18];
 for (let i = 0; i < TUNES.length; i++) {
   const t = TUNES[i], font = FONTS[i % FONTS.length], S = SIZES[i];
   tk = new VerovioToolkit(VM); // fresh: the ABC importer leaks key state between loads
