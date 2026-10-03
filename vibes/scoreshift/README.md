@@ -254,6 +254,20 @@ the music from it on the main thread (a few ms, so it is rebuilt after every cor
 On the `expr` fixture (7 dynamics, 5 slurs, 2 hairpins, clean): 6 dynamics on the right note
 (none invented), 4 slurs, both hairpins.
 
+### Grace notes
+
+The CODA waltz (bars 56 and 58) opens two bars with an acciaccatura: a small slashed eighth G♯4,
+slurred into the F♯4. The main head detector's opening (0.55 of a staff space) erases heads that
+small, so a second, finer opening (0.32 space) looks for heads half to 0.86 of the staff's own
+head width, followed closely by a full-size note. Such a head is kept only if it then looks like
+a grace note: its own short stem (under 2.75 spaces) with a flag, beam or slash, not against
+another note's stem (beam stubs) and not in a chord with full-size heads. A grace note takes no
+time in the bar, sounds just before the beat of its note (about a 32nd early, very short) and is
+exported as `<grace slash="yes"/>`. Appoggiaturas (unslashed, taking half the note's value) are
+not told apart yet; they play as acciaccaturas. On the `grace` fixture 6 of 8 grace notes are
+found; on the Telemann the additions are real grace notes (that file's answer key leaves them
+out) and the extra detections stay near where they were (22 → 26 typeset).
+
 ### Competing readings and the glyph classifier
 
 Doubtful symbols keep more than one reading, and the reading that best fits the rest of the
@@ -397,7 +411,7 @@ few readings where the 1955 edition and the MusicXML simply differ.
 
 ### Accuracy
 
-Thirteen test tunes engraved by Verovio in five different music fonts (Leipzig, Bravura, Leland,
+Fourteen test tunes engraved by Verovio in five different music fonts (Leipzig, Bravura, Leland,
 Gootville, Petaluma) at 14–26 px per space: treble, bass and alto clefs, keys from 4♯ to 3♭,
 chords, beams, 16ths and 32nds, ledger lines up to five, all accidentals including double sharps,
 and for rhythm: rests of every value, dotted values, flags and beams, eighth and quarter
@@ -453,8 +467,8 @@ grace notes. The transposed page is readable but shows its seams at that resolut
 ### Limitations
 
 - Printed music only; no handwriting, tablature, percussion or early notation.
-- Grace and cue notes are smaller than the head detector's opening and are not moved; when one is
-  found it plays as a short grace note.
+- Grace notes are read (see above) but are not moved on the transposed page; appoggiaturas play
+  as acciaccaturas.
 - Rhythm: at most two voices per staff; no tremolos, repeats, voltas, multi-bar rests or tempo
   marks (set the tempo by hand); marcato, fermata and bowing marks are not read. A note missed by the head detector cannot be added by hand yet; its bar shows red.
 - Ties and slurs stay put: fine for steps, visibly off for big moves such as clef changes.

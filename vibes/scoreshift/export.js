@@ -108,7 +108,7 @@ export function toMusicXML(model, score, { plan = null, instrument = null, title
           const ART = { stacc: '<staccato/>', ten: '<tenuto/>', acc: '<accent/>' }, art = k === 0 ? (e.notes[0].artic || []).map((a) => ART[a]).join('') : '';
           const slurs = k === 0 ? (m.st.slurs || []).flatMap((sl, si) => [sl.from && e.notes.includes(sl.from) ? `<slur type="start" number="${(si % 6) + 1}"/>` : '', sl.to && e.notes.includes(sl.to) ? `<slur type="stop" number="${(si % 6) + 1}"/>` : '']).join('') : '';
           const nota = tied + slurs + (k === 0 ? tup : '') + (art ? `<articulations>${art}</articulations>` : '');
-          out.push(`<note>${e.grace ? '<grace/>' : ''}${k ? '<chord/>' : ''}<pitch><step>${step}</step>${p.alter ? `<alter>${p.alter}</alter>` : ''}<octave>${oct}</octave></pitch>` +
+          out.push(`<note>${e.grace ? '<grace slash="yes"/>' : ''}${k ? '<chord/>' : ''}<pitch><step>${step}</step>${p.alter ? `<alter>${p.alter}</alter>` : ''}<octave>${oct}</octave></pitch>` +
             `${e.grace ? '' : `<duration>${dur}</duration>`}${ties}${VO}<type>${TYPE[e.dur] || 'quarter'}</type>${dots}` +
             `${w.acc != null ? `<accidental>${ACC[w.acc]}</accidental>` : ''}${tm}${STEM}${nota ? `<notations>${nota}</notations>` : ''}</note>`);
         });
@@ -190,7 +190,8 @@ export function performance(model, score, { plan = null, from = null } = {}) {
         const prev = sounding.get(n);
         let s = prev;
         const art = e.notes[0].artic || [];
-        if (!s) { s = { tick, dur: e.grace ? 12 : ticks, midi, part: part.index, vel: Math.min(1, lv + (art.includes('acc') ? 0.2 : 0)) }; notes.push(s); }
+        // a grace note (acciaccatura) sounds just before the beat of its note, very short
+        if (!s) { s = { tick: e.grace ? Math.max(0, tick - 14) : tick, dur: e.grace ? 12 : ticks, midi, part: part.index, vel: Math.min(1, lv + (art.includes('acc') ? 0.2 : 0)) }; notes.push(s); }
         else s.dur += ticks;
         // how much of its length sounds: staccato about half, tenuto and under a slur all of it
         // (joined to the next), otherwise a small gap

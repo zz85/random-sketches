@@ -221,6 +221,18 @@ describe('expression: dynamics, hairpins, slurs', () => {
   });
 });
 
+describe('grace notes', () => {
+  test('found, take no time, play just before their note, export with a slash', () => {
+    const r = evaluate('grace', 'clean'), sc = buildScore(r.res), R = evaluateRhythm(r);
+    const truthG = r.tn.filter((t) => t.grace), found = truthG.filter((t) => r.pairs.some(([q, g]) => q === t && g.grace));
+    expect(found.length).toBeGreaterThanOrEqual(6);
+    expect(R.bars).toBeGreaterThanOrEqual(7); // bars still add up: graces take no time
+    const p = performance(r.res, sc), g = p.notes.find((n) => n.dur === 12 && n.tick > 0), next = p.notes.find((n) => n.tick > g.tick);
+    expect(next.tick - g.tick).toBe(14);
+    expect(toMusicXML(r.res, sc, {})).toContain('<grace slash="yes"/>');
+  });
+});
+
 describe('metronome', () => {
   test('beats follow the meter; a pickup counts back from its bar line', async () => {
     const { beats } = await import('./player.js');
@@ -298,6 +310,8 @@ describe.skipIf(!fs.existsSync(CODA))('real page: CODA viola audition sheet', ()
     const bar = (k) => sc.measures[k - 1].events.filter((e) => e.notes);
     expect(bar(1).at(-1).tie && bar(2).at(-1).tie && bar(3).at(-1).tie).toBe(true);
     expect(bar(16)[0].notes[0].name).toBe('G♯4'); // tied from bar 15: keeps its sharp
+    // the waltz's acciaccaturas (bars 56 and 58): a G♯4 grace before the F♯4
+    for (const k of [56, 58]) { expect(bar(k)[0].grace).toBe(true); expect(bar(k)[0].notes[0].name).toBe('G♯4'); expect(bar(k)[1].notes[0].name).toBe('F♯4'); }
     const dyn = r.staves.flatMap((s) => s.dynamics.map((d) => d.text));
     expect(dyn.filter((d) => d === 'f').length).toBeGreaterThanOrEqual(7); expect(dyn).toContain('pp'); expect(dyn).toContain('mp');
   });

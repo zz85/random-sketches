@@ -49,11 +49,12 @@ export function evaluateRhythm(r) {
   const sc = buildScore(r.res), T = r.truth;
   const where = new Map();
   for (const m of sc.measures) m.events.forEach((e) => (e.notes || []).forEach((n) => where.set(n, { m, e })));
-  let n = 0, dur = 0, val = 0; const confusions = {};
+  let n = 0, dur = 0, val = 0, graces = 0, graceOk = 0; const confusions = {};
   for (const [tn, got] of r.pairs) {
     n++; const w = where.get(got); if (!w) continue;
     const tt = (tn.tuplet ? (baseOf(tn.dur, tn.dots) * tn.tuplet[1]) / tn.tuplet[0] : baseOf(tn.dur, tn.dots));
     if (w.e.dur === tn.dur) dur++;
+    if (tn.grace) { graces++; if (w.e.grace) graceOk++; if (w.e.grace) val++; continue; }
     if (evTicks(w.e) === tt) val++; else { const k = `${tn.dur}${'.'.repeat(tn.dots)}${tn.tuplet ? 't' : ''}->${w.e.dur}${'.'.repeat(w.e.dots)}${w.e.tuplet ? 't' : ''}`; confusions[k] = (confusions[k] || 0) + 1; }
   }
   const cap = (T.meter[0] * 384) / T.meter[1];
@@ -69,7 +70,7 @@ export function evaluateRhythm(r) {
   const tnotes = r.pairs.map(([tn, got]) => [tn, got]), byTruth = new Map(); for (const [tn, got] of tnotes) byTruth.set(tn, got);
   const truthNotes = r.tn || [];
   T.measures.forEach((tm, mi) => {
-    const tseq = seq(tm.events.map((e) => ({ kind: e.kind === 'note' ? 'note' : 'rest', notes: e.notes, voice: e.voice, full: e.kind === 'mRest', dur: e.dur, dots: e.dots, tuplet: e.tuplet })));
+    const tseq = seq(tm.events.map((e) => ({ kind: e.kind === 'note' ? 'note' : 'rest', notes: e.notes, voice: e.voice, full: e.kind === 'mRest', dur: e.dur, dots: e.dots, tuplet: e.tuplet, grace: !!e.grace })));
     // the detected measure holding this bar's first matched note (bars of only rests: skipped)
     const firstNote = tm.events.flatMap((e) => e.notes).map((k) => truthNotes[k]).find((q) => q && byTruth.has(q));
     if (!firstNote) { if (tm.events.every((e) => e.kind !== 'note')) { const ok = sc.measures.some((m) => m.events.every((e) => e.kind === 'rest') && seq(m.events) === tseq); if (ok) bars++; else badBars.push([mi, tseq, '?']); } else badBars.push([mi, tseq, 'notes missing']); return; }
@@ -78,7 +79,7 @@ export function evaluateRhythm(r) {
   });
   const rests = sc.measures.reduce((s, m) => s + m.events.filter((e) => e.kind === 'rest' && !e.removed).length, 0);
   const trests = T.measures.reduce((s, m) => s + m.events.filter((e) => e.kind !== 'note').length, 0);
-  return { n, dur, val, bars, nbars: T.measures.length, badBars, confusions, rests, trests, stats: sc.stats, score: sc };
+  return { graces, graceOk, n, dur, val, bars, nbars: T.measures.length, badBars, confusions, rests, trests, stats: sc.stats, score: sc };
 }
 const baseOf = (dur, dots) => { let t = 384 / dur, a = t; for (let i = 0; i < dots; i++) { a /= 2; t += a; } return t; };
 

@@ -76,6 +76,11 @@ e5:4> d5:4> [c5:8! b4:8!] a4:4_ | xg5:4! bbd5:4 xa4:4 bbg4:4 | [f5:8! e5:8! d5:8
   { name: 'expr', clef: 'G', fifths: -1, meter: [3, 4], src: `
 f4:4@p^ g4:4 a4:4$ | b4:2^@mf c5:4$ | d5:4+< e5:4 f5:4+. | g5:2.@f | a5:4^ g5:4 f5:4 | e5:4 d5:4 c5:4$ |
 d5:4@mp+> c5:4 b4:4 | a4:2.+.@pp | g4:4^ a4:4 b4:4$ | c5:4@sf d5:4 c5:4 | b4:4^ a4:4 g4:4$ | f4:2.@ff |` },
+  // grace notes: slashed acciaccaturas (as in the CODA waltz) and appoggiaturas, slurred into
+  // their note, on the beat and before notes with accidentals, above and below
+  { name: 'grace', clef: 'G', fifths: 2, meter: [3, 4], src: `
+g~a5:8^ g5:4$ f5:4 e5:4 | g~e5:8^ d5:4$ c5:4 b4:4 | g=b4:8^ a4:2$ d5:4 | g~f4:8^ g4:4$ g~b4:8^ a4:4$ g4:4 |
+[g~e5:8^ #d5:8$ e5:8 f5:8 g5:8 e5:8 d5:8] | g=c5:16^ b4:2.$ | g~e4:8^ d4:4$ f4:4 a4:4 | d5:2. |` },
 ];
 
 export const FONTS = ['Leipzig', 'Bravura', 'Leland', 'Gootville', 'Petaluma'];
@@ -142,6 +147,9 @@ export function toMEI(t) {
       if (hp && hp[1] === '.' && open.hp) { ctl.push({ bar: open.hp.bar, kind: 'hairpin', start: open.hp.id, end: id, form: open.hp.form }); open.hp = null; }
       const d = ` dur="${dur}"${dots ? ` dots="${dots}"` : ''}${ar ? ` artic="${ar}"` : ''}`;
       q += len(dur, dots) * tup;
+      // a grace note: g~e5:8 (slashed acciaccatura) or g=e5:8 (appoggiatura); takes no time
+      const gm = m[1].match(/^g([~=])(.+)$/);
+      if (gm) { q -= len(dur, dots) * tup; x += note(gm[2], dur, 0, false, false).replace('<note ', `<note xml:id="${id}" grace="${gm[1] === '~' ? 'unacc' : 'acc'}" stem.dir="up" `); if (suf.includes('^')) open.slur = { bar: cur, id }; continue; }
       if (m[1] === 'r') x += `<rest xml:id="${id}"${d}/>`;
       else if (m[1].includes(',')) x += `<chord xml:id="${id}"${d}>${m[1].split(',').map((p) => note(p, dur, dots, tie, true)).join('')}</chord>`;
       else x += note(m[1], dur, dots, tie, false).replace('<note ', `<note xml:id="${id}" ${ar ? `artic="${ar}" ` : ''}`);

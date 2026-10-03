@@ -390,6 +390,26 @@ export function analyze(norm, opts = {}) {
     }
   }
 
+  // ---- small filled heads (grace and cue notes): a finer opening keeps heads the main one
+  // erases; only blobs clearly smaller than a head, at a staff position, away from other heads,
+  // are kept here (they still need a stem, checked below like every head)
+  const k2 = Math.max(2, Math.round(0.32 * S0)), opened2 = IP.open(sym0, k2), oc2 = IP.components(opened2);
+  const medW = new Map(); for (const st of staves) { const ws = heads.filter((o) => o.st === st).map((o) => o.box[2] - o.box[0]).sort((a, b) => a - b); medW.set(st, ws.length ? ws[ws.length >> 1] : 1.3 * S0); }
+  for (const b of oc2.comps) {
+    if (!b) continue;
+    const st = staffAt(b.cx, b.cy); if (!st) continue;
+    const S = spaceAt(st, b.cx), bw = b.x1 - b.x0 + 1, bh = b.y1 - b.y0 + 1;
+    // a grace head is about two thirds the size of the staff's heads (flat bowls, flags and dots
+    // are smaller or another shape), and a full-size note follows it closely
+    const mw = medW.get(st) + 2;
+    if (bw < 0.5 * mw || bw > 0.86 * mw || bh < 0.4 * S || bh > 1.0 * S || b.n / (bw * bh) < 0.62) continue;
+    if (!heads.some((o) => o.st === st && !o.small && o.x - b.cx > 0.7 * S && o.x - b.cx < 3.2 * S && Math.abs(o.y - b.cy) < 4.5 * S)) continue;
+    if (st.clef.box && b.cx < st.clef.box[2] + 0.9 * S) continue;
+    if (heads.some((o) => o.st === st && Math.abs(o.x - b.cx) < 0.9 * S && Math.abs(o.y - b.cy) < 0.9 * S)) continue;
+    const p = Math.round(pOfY(st, b.cy, b.cx));
+    heads.push({ st, p, x: b.cx, y: b.cy, box: [b.x0 - 1, b.cy - 0.4 * S, b.x1 + 1, b.cy + 0.4 * S], kind: 'black', small: true });
+  }
+
   // ---- hollow heads: enclosed holes with a thick ring, on the binary with staff lines ----
   const wc = IP.components(bin, 0);
   const holes = [];
@@ -479,7 +499,7 @@ export function analyze(norm, opts = {}) {
     const up = bestOf[-1], dn = bestOf[1];
     best = up && (!dn || up.len >= dn.len) ? up : dn;
     if (up && dn && up.len >= 2.5 * S && dn.len >= 2.5 * S && through(best) && !through(best === up ? dn : up)) best = best === up ? dn : up;
-    hd.stem = best && best.len >= 2.0 * S ? best : null;
+    hd.stem = best && best.len >= (hd.small ? 1.5 : 2.0) * S ? best : null;
     if (hd.stem) { // stem is thin: neighbours 0.4S away must not run as long
       const off = Math.round(0.45 * S) * (hd.stem.dir < 0 ? -1 : 1), x2 = hd.stem.x + off;
       if (x2 >= 0 && x2 < w && vrun(x2, hd.y + hd.stem.dir * 0.6 * S, hd.stem.dir) > 0.8 * hd.stem.len) hd.stem = null;
@@ -559,7 +579,8 @@ export function analyze(norm, opts = {}) {
     // also filled: a sharp's crossings and a flat's bowl survive the opening in heavy scans.
     // (A real note never classifies as a flat: its stem is on the right going up, or on the
     // left going down with the head at the top, where a flat's bowl is at the bottom.)
-    if (a) return false;
+    // (a grace note's stem, flag and slash can pass for an accidental; accidentals are taller)
+    if (a && !(n.small && c.y1 - c.y0 + 1 < 2.4 * S)) return false;
     if (n.kind === 'black') return true;
     // time-signature digits: two spaces tall, hanging from the top line or standing on the bottom one
     const ch = c.y1 - c.y0 + 1, ya = lineY(n.st, 0, n.x), yb = lineY(n.st, 4, n.x);

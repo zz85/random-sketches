@@ -89,7 +89,8 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
   for (const ch of chords.values()) {
     const st = ch[0].st, S = spaceAt(st, ch[0].x);
     const withStem = ch.filter((n) => n.stem);
-    const grace = ch.every((n) => n.box[2] - n.box[0] < 0.8 * st.headW) && withStem.length > 0 && Math.max(...withStem.map((n) => n.stem.len)) < 3.0 * S;
+    // grace (cue) notes: smaller heads on shorter stems than the staff's own
+    const grace = withStem.length > 0 && ch.every((n) => n.small || n.box[2] - n.box[0] < 0.86 * st.headW) && Math.max(...withStem.map((n) => n.stem.len)) < (ch.every((n) => n.small) ? 2.75 : 2.7) * S;
     let dur, beams = 0, flags = 0, beamed = false;
     if (!withStem.length) dur = 1;
     else if (ch.every((n) => n.kind === 'half')) dur = 2;
@@ -116,10 +117,19 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
       }
       dur = 4 * 2 ** Math.min(3, beams + flags);
     }
+    // a head found only by the small-head pass must look like a grace note: short stem with a
+    // flag, beam or slash; anything else there is a fragment (flag piece, dot, letter) and is dropped
+    // ... and must not sit against another note's stem (beam stubs, flags of a full-size note)
+    const onStem = ch.some((n) => notes.some((o) => !o.small && o.stem && o.st === st && o.stem.x >= n.box[0] - 0.45 * S && o.stem.x <= n.box[2] + 0.45 * S &&
+      n.y > Math.min(o.y, o.stem.tip) - 0.3 * S && n.y < Math.max(o.y, o.stem.tip) + 0.3 * S));
+    if (ch.every((n) => n.small) && (!grace || (!flags && !beamed) || onStem)) { for (const n of ch) n.dropSmall = true; continue; }
+    // a small head in a chord with full-size ones is a fragment beside the chord, never a note
+    if (ch.some((n) => n.small) && ch.some((n) => !n.small)) for (const n of ch) if (n.small) n.dropSmall = true;
     const nd = Math.min(2, Math.max(0, ...ch.map((n) => (n.dots || []).length)));
     for (const n of ch) Object.assign(n, { dur, dots: n.dots, ndots: nd, beams, flags, beamed, grace });
   }
 
+  for (let k = notes.length - 1; k >= 0; k--) if (notes[k].dropSmall) { const n = notes[k], i = n.st.notes.indexOf(n); if (i >= 0) n.st.notes.splice(i, 1); headComps.delete(n.comp); notes.splice(k, 1); }
   // ---------------------------------------------------------------- free symbols
   const used = new Set([...headComps, ...textIds]); // (letters of words are never rests, digits or marks)
   for (const st of staves) { st.key.ids.forEach((i) => used.add(i)); (st.keyChanges || []).forEach((k) => k.ids.forEach((i) => used.add(i))); st.bars.forEach((b) => b.ids.forEach((i) => used.add(i))); (st.clef.ids || []).forEach((i) => used.add(i)); }

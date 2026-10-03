@@ -55,7 +55,7 @@ console.log('glyphs.js written');
 
 // ---- fixtures ----
 fs.mkdirSync(path.join(ROOT, 'fixtures'), { recursive: true });
-const SIZES = [16, 20, 24, 18, 22, 14, 26, 18, 20, 17, 19, 21, 18];
+const SIZES = [16, 20, 24, 18, 22, 14, 26, 18, 20, 17, 19, 21, 18, 20];
 for (let i = 0; i < TUNES.length; i++) {
   const t = TUNES[i], font = FONTS[i % FONTS.length], S = SIZES[i];
   tk = new VerovioToolkit(VM); // fresh: the ABC importer leaks key state between loads
@@ -120,12 +120,13 @@ for (let i = 0; i < TUNES.length; i++) {
     const tup = e.tuplet ? tk.getElementAttr(e.tuplet) : null, ratio = tup ? [+tup.num, +tup.numbase] : null;
     let tk0 = (4 / dur) * 96, add = tk0; for (let k = 0; k < dots; k++) { add /= 2; tk0 += add; }
     if (ratio) tk0 = (tk0 * ratio[1]) / ratio[0];
-    return { kind: e.kind === 'chord' ? 'note' : e.kind, dur, dots, tuplet: ratio, ticks: e.kind === 'mRest' ? null : tk0, notes: e.notes.map((id) => noteIdx.get(id)),
+    const grace = !!a.grace;
+    return { kind: e.kind === 'chord' ? 'note' : e.kind, dur, dots, tuplet: ratio, ticks: e.kind === 'mRest' ? null : grace ? 0 : tk0, grace: grace ? a.grace : undefined, notes: e.notes.map((id) => noteIdx.get(id)),
       tie: e.notes.some((id) => tieStarts.has(id)), beam: !!e.beam, box: e.box, voice: Math.max(0, e.layer) };
   }) }));
   const cap = (truth.meter[0] * 4 / truth.meter[1]) * 96;
   truth.measures.forEach((m, mi) => { if (mi === 0 && m.events.filter((e) => !e.voice).reduce((s, e) => s + (e.ticks ?? cap), 0) < cap) m.pickup = true; });
-  truth.measures.forEach((m, mi) => m.events.forEach((e, ei) => e.notes.forEach((k) => Object.assign(notes[k], { ev: [mi, ei], dur: e.dur, dots: e.dots, tuplet: e.tuplet }))));
+  truth.measures.forEach((m, mi) => m.events.forEach((e, ei) => e.notes.forEach((k) => Object.assign(notes[k], { ev: [mi, ei], dur: e.dur, dots: e.dots, tuplet: e.tuplet, grace: e.grace }))));
   // expression: dynamics (text, box, the note it is attached to), slurs and hairpins (first and
   // last note); notes referred to by index
   const startOf = (id) => { const a = tk.getElementAttr(id); return { from: (a.startid || '').replace('#', ''), to: (a.endid || '').replace('#', '') }; };
