@@ -309,6 +309,12 @@ describe.skipIf(!fs.existsSync(CODA))('real page: CODA viola audition sheet', ()
     // ties the page has: the opening E4 over bars 1-2-3, E5 bar 3 into 4, G♯4 bar 15 into 16
     const bar = (k) => sc.measures[k - 1].events.filter((e) => e.notes);
     expect(bar(1).at(-1).tie && bar(2).at(-1).tie && bar(3).at(-1).tie).toBe(true);
+    // the E5 at the end of bar 3 is tied into bar 4 (that tie touches the phrase slur); playback
+    // must sound it once, held over the barline
+    expect(bar(3).at(-1).notes[0].name).toBe('E5'); expect(bar(3).at(-1).tie).toBe(true);
+    expect(bar(4)[0].notes[0].name).toBe('E5');
+    const pf = performance(r, sc).notes.filter((n) => n.midi === 76);
+    expect(pf[0].dur).toBe(96 + 192); // quarter tied to half: one note, three beats
     expect(bar(16)[0].notes[0].name).toBe('G♯4'); // tied from bar 15: keeps its sharp
     // the waltz's acciaccaturas (bars 56 and 58): a G♯4 grace before the F♯4
     for (const k of [56, 58]) { expect(bar(k)[0].grace).toBe(true); expect(bar(k)[0].notes[0].name).toBe('G♯4'); expect(bar(k)[1].notes[0].name).toBe('F♯4'); }
