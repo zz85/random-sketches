@@ -66,7 +66,11 @@ as not a rest); tap inside a bar to see its count, set the time signature from t
 play from there. Corrections are kept and win over the automatic repair.
 
 **▶ Play** plays the page at the **Tempo** set (quarter notes per minute), at concert pitch,
-highlighting the sounding notes on whichever view is showing. **⬇ MusicXML** and **⬇ MIDI**
+highlighting the sounding notes on whichever view is showing. The playback bar under the
+toolbar has a **Position** slider (drag to any bar; playback starts on that bar's downbeat, and
+Stop keeps the place), **Speed** from ×0.25 to ×2 that applies while playing, and a
+**metronome** for practice: it clicks the beats of each bar's time signature (dotted quarters in
+6/8, the downbeat accented, a pickup counted back from its bar line), with or without the music. **⬇ MusicXML** and **⬇ MIDI**
 export the music of the current page: in Transposed view the transposed part (key, clef and
 pitches for the target instrument, with a `<transpose>` element so notation apps play it at
 concert pitch), otherwise the music as written. MusicXML opens in MuseScore, Dorico, Sibelius,

@@ -154,6 +154,15 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
     await b.evaluate(`document.getElementById('play').click();1`); await sleep(100);
     const pl2 = await b.evaluate(`({playing:__ss.player.playing,label:document.getElementById('play').textContent})`);
     check('playback with a playhead, and stop', pl.playing && pl.sounding > 0 && !pl2.playing && /Play/.test(pl2.label), JSON.stringify([pl, pl2]));
+    // speed, metronome, position: start from bar 5 at half speed with the metronome on
+    const tp = await b.evaluate(`(async()=>{const S=__ss.S;document.getElementById('speed').value='0.5';document.getElementById('speed').dispatchEvent(new Event('input'));
+      document.getElementById('metro').checked=true;document.getElementById('metro').dispatchEvent(new Event('change'));
+      const pos=document.getElementById('pos');pos.value=String(4*288+10);pos.dispatchEvent(new Event('input'));pos.dispatchEvent(new Event('change'));
+      const from=S.startTick;document.getElementById('play').click();await new Promise(r=>setTimeout(r,700));
+      const a=__ss.player.pos;await new Promise(r=>setTimeout(r,500));const b2=__ss.player.pos;document.getElementById('play').click();
+      return {from,a:Math.round(a),b:Math.round(b2),text:document.getElementById('posText').textContent,clicks:__ss.player.metronome}})()`);
+    // at tempo 240 x 0.5 = 120 quarter notes a minute: 0.5 s is one quarter, 96 ticks
+    check('position, speed and metronome', tp.from === 1152 && tp.a > 1152 && Math.abs(tp.b - tp.a - 96) < 30 && /bar 5/.test(tp.text) && tp.clicks, JSON.stringify(tp));
 
     // the CODA audition sheet, if present locally (not committed): every bar adds up
     if (fs.existsSync(path.join(DIR, 'fixtures/local/coda.pdf'))) {

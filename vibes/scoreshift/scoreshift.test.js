@@ -221,6 +221,18 @@ describe('expression: dynamics, hairpins, slurs', () => {
   });
 });
 
+describe('metronome', () => {
+  test('beats follow the meter; a pickup counts back from its bar line', async () => {
+    const { beats } = await import('./player.js');
+    const r = evaluate('sixeight', 'clean'), b = beats(buildScore(r.res));
+    // 6/8 with an eighth pickup: no click in the pickup (it is the last eighth of a bar), then
+    // two dotted-quarter beats a bar, accent on each downbeat
+    expect(b[0]).toEqual({ tick: 48, accent: true }); expect(b[1]).toEqual({ tick: 48 + 144, accent: false });
+    const m = evaluate('minuet', 'clean'), bm = beats(buildScore(m.res));
+    expect(bm.slice(0, 4).map((q) => q.tick)).toEqual([0, 96, 192, 288]); expect(bm.filter((q) => q.accent).length).toBe(24);
+  });
+});
+
 describe('score assembly and bar repair', () => {
   const st = (events) => ({ index: 0, system: 1, x0: 0, x1: 1000, key: { x1: 0, fifths: 0 }, clef: { type: 'treble' }, bars: [{ x: 500, ids: [] }], times: [{ x: 1, x1: 2, beats: 3, unit: 4 }], tuplets: [],
     notes: events.filter((e) => e.k !== 'r').map((e, i) => ({ x: e.x, y: 50, p: 4, chord: i + 1, dur: e.d, ndots: e.dots || 0, beamed: !!e.b, comp: e.b ? 7 : 100 + i, flags: e.d >= 8 && !e.b ? 1 : 0, pitch: { d: 32, alter: 0 }, box: [e.x - 6, 44, e.x + 6, 56] })),

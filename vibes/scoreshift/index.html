@@ -41,6 +41,9 @@
   .showmenu { position:relative; } .showmenu summary { cursor:pointer; border:1px solid var(--line); border-radius:8px; padding:.4rem .7rem; background:var(--card); list-style:none; min-height:36px; box-sizing:border-box; }
   .showmenu .panel { position:absolute; z-index:20; top:110%; left:0; background:var(--card); border:1px solid var(--line); border-radius:10px; box-shadow:0 8px 24px #0002; padding:.4rem .6rem; }
   .showmenu .panel label { display:block; white-space:nowrap; padding:.15rem 0; }
+  #transport { display:flex; flex-wrap:wrap; gap:.4rem .8rem; align-items:center; padding:.35rem .8rem; border-bottom:1px solid var(--line); background:var(--card); }
+  #transport[hidden] { display:none; } #transport .grow { flex:1 1 16rem; display:flex; gap:.4rem; align-items:center; } #transport .grow input { flex:1; }
+  #posText { font-variant-numeric:tabular-nums; min-width:11rem; }
   #pop .hint { margin:.3rem 0 0; color:#5d6b78; font-size:.82rem; }
   #status .bad { color:#b4141e; }
   #pop .row { display:flex; gap:.35rem; flex-wrap:wrap; margin:.3rem 0; align-items:center; }
@@ -65,7 +68,6 @@
   <button id="sample">Sample</button>
   <button id="export" disabled>⬇ PNG</button>
   <button id="exportPdf" hidden>⬇ Transposed PDF</button>
-  <button id="play" disabled aria-pressed="false">▶ Play</button>
   <button id="xml" disabled title="MusicXML of the current view: transposed, or as written">⬇ MusicXML</button>
   <button id="midi" disabled>⬇ MIDI</button>
 </header>
@@ -79,8 +81,15 @@
   </span>
   <label><input type="checkbox" id="labels"> note names</label>
   <details id="show" class="showmenu"></details>
-  <label>Tempo <input type="number" id="tempo" min="20" max="320" value="100" style="width:4.2rem" aria-label="Tempo in quarter notes per minute"> ♩/min</label>
   <label>Zoom <input type="range" id="zoom" min="0.25" max="2" step="0.05" value="1" aria-label="Zoom"></label>
+</div>
+<div id="transport" hidden role="group" aria-label="Playback">
+  <button id="play" disabled aria-pressed="false">▶ Play</button>
+  <label class="grow">Position <input type="range" id="pos" min="0" max="1000" value="0" step="1" aria-label="Playback position"></label>
+  <span id="posText" aria-live="off">bar 1 · 0:00 / 0:00</span>
+  <label>Tempo <input type="number" id="tempo" min="20" max="320" value="100" style="width:4.2rem" aria-label="Tempo in quarter notes per minute"> ♩/min</label>
+  <label>Speed <input type="range" id="speed" min="0.25" max="2" step="0.05" value="1" aria-label="Playback speed"> <span id="speedText">×1.00</span></label>
+  <label><input type="checkbox" id="metro"> metronome</label>
 </div>
 <nav id="pages" hidden aria-label="PDF pages">
   <button id="prevPage" aria-label="Previous page">◀</button><span id="pageNo" aria-live="polite"></span><button id="nextPage" aria-label="Next page">▶</button>

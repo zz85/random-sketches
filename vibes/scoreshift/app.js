@@ -10,8 +10,8 @@ import { Renderer, plan, describe, drawOverlay } from './render.js';
 const $ = (id) => document.getElementById(id);
 const cv = $('cv'), ov = $('ov'), ctx = cv.getContext('2d'), octx = ov.getContext('2d');
 const store = JSON.parse(localStorage.getItem('scoreshift') || '{}');
-const S = { from: store.from || 'C', to: store.to || 'Bb-clarinet', octave: 'auto', clef: store.clef || 'auto', view: 'transposed', labels: !!store.labels, zoom: 1, model: null, rend: null, name: 'score', sel: null, tempo: store.tempo || 100, score: null, sounding: null };
-const save = () => localStorage.setItem('scoreshift', JSON.stringify({ from: S.from, to: S.to, clef: S.clef, labels: S.labels, tempo: S.tempo, show: S.show }));
+const S = { speed: store.speed || 1, metro: !!store.metro, startTick: 0, from: store.from || 'C', to: store.to || 'Bb-clarinet', octave: 'auto', clef: store.clef || 'auto', view: 'transposed', labels: !!store.labels, zoom: 1, model: null, rend: null, name: 'score', sel: null, tempo: store.tempo || 100, score: null, sounding: null };
+const save = () => localStorage.setItem('scoreshift', JSON.stringify({ from: S.from, to: S.to, clef: S.clef, labels: S.labels, tempo: S.tempo, show: S.show, speed: S.speed, metro: S.metro }));
 
 for (const sel of [$('from'), $('to')]) for (const i of INSTRUMENTS) sel.add(new Option(i.name, i.id));
 $('from').value = S.from; $('to').value = S.to; $('clef').value = S.clef; $('labels').checked = S.labels;
@@ -77,7 +77,8 @@ function show(model, img, name) {
   S.model = model; S.rend = new Renderer(img, model); S.name = name; S.octave = S.octave ?? 'auto';
   $('empty').hidden = true; $('stage').hidden = false; $('export').disabled = false;
   for (const id of ['play', 'xml', 'midi']) $(id).disabled = false;
-  player.stop(); S.selM = null;
+  $('transport').hidden = false;
+  player.stop(); S.selM = null; S.startTick = 0;
   fitZoom(); update();
 }
 async function busy(fn, label = 'Reading the music…') {
@@ -242,6 +243,7 @@ function update() {
   else if (S.labels) drawOverlay(octx, m, R.r, null, 'original', S.sel);
   if (S.view === 'interpreted') drawRhythm(octx, m, S.score, R.r, S.selM);
   drawPlayhead();
+  if (!player.playing) showPos(S.startTick);
   chips();
   layoutStage();
   const n = m.notes.length, octs = [...new Set(pl.staves.map((p) => p.octave))], oc = octs.length === 1 && octs[0] ? ` · ${octs[0] > 0 ? '+' : ''}${octs[0]} oct${pl.octave === 'auto' ? ' (auto)' : ''}` : octs.length > 1 ? ' · octave per staff (auto)' : '';
@@ -334,28 +336,59 @@ function drawPlayhead() {
 
 // ---------- playback and music export ----------
 const player = new Player();
-player.onStop = () => { S.sounding = null; $('play').textContent = '▶ Play'; $('play').setAttribute('aria-pressed', 'false'); update(); };
 const musicOpts = () => {
   const transposed = S.view === 'transposed';
   return { plan: transposed ? S.plan : null, from: instrument(S.from), instrument: transposed ? instrument(S.to) : instrument(S.from), tempo: S.tempo };
 };
 $('tempo').value = S.tempo;
-$('tempo').onchange = (e) => { S.tempo = Math.max(20, Math.min(320, +e.target.value || 100)); e.target.value = S.tempo; save(); };
+$('tempo').onchange = (e) => { S.tempo = Math.max(20, Math.min(320, +e.target.value || 100)); e.target.value = S.tempo; save(); if (player.playing) { player.setSpeed(S.speed); player.tempo = S.tempo; } showPos(S.startTick); };
+// ---------- transport: play / stop, position, speed, metronome ----------
+// Length of the music in ticks and where each bar starts (first part), for the position slider.
+function barStarts(sc) { const out = []; let t = 0; for (const m of sc.parts[0]?.measures || []) { out.push({ m, tick: t }); t += m.status === 'rest' ? m.cap : m.ticks; } return { out, total: t }; }
+const mmss = (sec) => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
+function showPos(tick) {
+  if (!S.score) return;
+  const { out, total } = barStarts(S.score), spt = 60 / (S.tempo * S.speed) / 96;
+  const bar = [...out].reverse().find((q) => q.tick <= tick + 1e-6);
+  $('posText').textContent = `bar ${bar ? bar.m.number : 1} · ${mmss(tick * spt)} / ${mmss(total * spt)}`;
+  if (!S.dragPos) { $('pos').max = Math.max(1, Math.round(total)); $('pos').value = Math.round(tick); }
+}
+function redrawPlay(on) {
+  S.sounding = on;
+  const R = S.rend; octx.clearRect(0, 0, R.W, R.H);
+  if (S.view === 'interpreted') { drawOverlay(octx, S.model, R.r, null, 'original', S.sel); drawRhythm(octx, S.model, S.score, R.r, S.selM); }
+  else if (S.labels) drawOverlay(octx, S.model, R.r, S.view === 'transposed' ? S.plan : null, S.view === 'transposed' ? 'transposed' : 'original', S.sel);
+  drawPlayhead();
+}
+function startPlay(fromTick) {
+  $('play').textContent = '■ Stop'; $('play').setAttribute('aria-pressed', 'true');
+  let last = '';
+  player.speed = S.speed; player.metronome = S.metro;
+  player.play(S.model, S.score, musicOpts(), (on, now) => {
+    S.startTick = now; showPos(now);
+    const key = on.map((o) => o.tick).join();
+    if (key !== last) { last = key; redrawPlay(on); }
+  }, fromTick);
+}
 $('play').onclick = () => {
   if (!S.model) return;
   if (player.playing) { player.stop(); return; }
-  $('play').textContent = '■ Stop'; $('play').setAttribute('aria-pressed', 'true');
-  let last = '';
-  player.play(S.model, S.score, musicOpts(), (on) => {
-    const key = on.map((o) => o.tick).join();
-    if (key === last) return; last = key; S.sounding = on;
-    // redraw only the overlay (cheap); the page itself does not change while playing
-    const R = S.rend; octx.clearRect(0, 0, R.W, R.H);
-    if (S.view === 'interpreted') { drawOverlay(octx, S.model, R.r, null, 'original', S.sel); drawRhythm(octx, S.model, S.score, R.r, S.selM); }
-    else if (S.labels) drawOverlay(octx, S.model, R.r, S.view === 'transposed' ? S.plan : null, S.view === 'transposed' ? 'transposed' : 'original', S.sel);
-    drawPlayhead();
-  });
+  const total = barStarts(S.score).total;
+  startPlay(S.startTick >= total - 1 ? 0 : S.startTick);
 };
+$('pos').oninput = () => { S.dragPos = true; S.startTick = +$('pos').value; showPos(S.startTick); };
+$('pos').onchange = () => {
+  S.dragPos = false; S.startTick = +$('pos').value;
+  // snap to the start of the bar it falls in, so playback starts on a downbeat
+  const bar = [...barStarts(S.score).out].reverse().find((q) => q.tick <= S.startTick + 1e-6); if (bar) S.startTick = bar.tick;
+  if (player.playing) { player.onStop = null; player.stop(); player.onStop = onPlayStop; startPlay(S.startTick); } else showPos(S.startTick);
+};
+$('speed').value = S.speed; $('speedText').textContent = `×${S.speed.toFixed(2)}`;
+$('speed').oninput = () => { S.speed = +$('speed').value; $('speedText').textContent = `×${S.speed.toFixed(2)}`; player.setSpeed(S.speed); showPos(S.startTick); save(); };
+$('metro').checked = S.metro;
+$('metro').onchange = () => { S.metro = $('metro').checked; player.metronome = S.metro; save(); };
+function onPlayStop() { S.sounding = null; $('play').textContent = '▶ Play'; $('play').setAttribute('aria-pressed', 'false'); update(); }
+player.onStop = onPlayStop;
 const download = (data, type, name) => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([data], { type })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 10000); };
 const exportName = (ext) => `${S.name}${S.pdf ? `-p${S.pdf.page}` : ''}-${S.view === 'transposed' ? S.to : 'as-written'}.${ext}`;
 $('xml').onclick = () => { if (!S.model) return; const o = musicOpts(); download(toMusicXML(S.model, S.score, { ...o, title: S.name }), 'application/vnd.recordare.musicxml+xml', exportName('musicxml')); };
@@ -508,7 +541,7 @@ function measurePop(m, e) {
     st.timeFix = { ...(st.timeFix || {}), [k]: { beats: +$('mB').value, unit: +$('mU').value } };
     markEdited(); S.selM = null; hidePop(); update();
   };
-  $('mPlay').onclick = () => { hidePop(); const part = S.score.parts[m.part]; let t = 0; for (const q of part.measures) { if (q === m) break; t += q.status === 'rest' ? q.cap : q.ticks; } $('play').click(); player.stop(); $('play').textContent = '■ Stop'; player.play(S.model, S.score, musicOpts(), (on) => { S.sounding = on; const R = S.rend; octx.clearRect(0, 0, R.W, R.H); if (S.view === 'interpreted') { drawOverlay(octx, S.model, R.r, null, 'original', S.sel); drawRhythm(octx, S.model, S.score, R.r, null); } drawPlayhead(); }, t); };
+  $('mPlay').onclick = () => { hidePop(); const bar = barStarts(S.score).out.find((q) => q.m === m); player.onStop = null; player.stop(); player.onStop = onPlayStop; startPlay(bar ? bar.tick : 0); };
   $('mX').onclick = () => { S.selM = null; hidePop(); update(); };
 }
 function notePop(n, e) {
