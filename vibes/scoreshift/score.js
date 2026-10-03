@@ -1,4 +1,4 @@
-import { lineY, spaceAt } from './omr.js';
+import { lineY, spaceAt, keyAt } from './omr.js';
 // From recognised symbols to music: parts -> measures -> events with exact durations, then a
 // bar-fill check that repairs the likeliest misreadings. Pure (no DOM, no pixels): runs in the
 // main thread after every correction, and under bun for the evaluation.
@@ -154,7 +154,7 @@ export function buildScore(model) {
         const ts = (st.timeFix && st.timeFix[ms.length]) || (st.times || []).find((t) => t.x >= (i === 0 ? st.key?.x1 ?? st.x0 : x0) - 0.5 * S && t.x < Math.min(x1, events[0]?.x ?? x1));
         const shown = !!ts;
         if (ts) time = { beats: ts.beats, unit: ts.unit, sym: ts.sym, dist: ts.dist, fixed: !!st.timeFix?.[ms.length] };
-        ms.push({ part: part.index, st, x0, x1, raw, events, time, timeShown: shown, double: !!edges[i + 1].double, endBar: !!edges[i + 1].end, fifths: st.key.fifths, clef: st.clef.type });
+        ms.push({ part: part.index, st, x0, x1, raw, events, time, timeShown: shown, double: !!edges[i + 1].double, endBar: !!edges[i + 1].end, fifths: keyAt(st, x0 + 1), clef: st.clef.type });
       }
       for (const m of ms) applyTuplets(st, m, m.events, S);
       part.measures.push(...ms);

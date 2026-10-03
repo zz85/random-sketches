@@ -96,7 +96,7 @@ export function readStaff(notes, clef, fifths) {
     const d = dOfP(clef, n.p);
     let alter;
     if (n.acc != null) { alter = n.acc; state.set(d, alter); }
-    else alter = state.has(d) ? state.get(d) : keyAlter(fifths, step(d));
+    else alter = state.has(d) ? state.get(d) : keyAlter(n.fifths ?? fifths, step(d)); // n.fifths: a key change inside the staff
     return { d, alter };
   });
 }
@@ -109,7 +109,7 @@ export function spellStaff(pitches, notes, fifths) {
   return pitches.map((pt, i) => {
     const n = notes[i];
     if (n.bar !== bar) { bar = n.bar; state = new Map(); }
-    const implied = state.has(pt.d) ? state.get(pt.d) : keyAlter(fifths, step(pt.d));
+    const implied = state.has(pt.d) ? state.get(pt.d) : keyAlter(n.fifths ?? fifths, step(pt.d));
     const show = pt.alter !== implied || n.acc != null;
     state.set(pt.d, pt.alter);
     return show ? pt.alter : null;

@@ -629,7 +629,8 @@ export function analyze(norm, opts = {}) {
     const ya = lineY(st, 0, c.cx), yb = lineY(st, 4, c.cx);
     // (a stem cut off its hollow head by staff removal is not a barline)
     const stemOf = notes.some((n) => n.stem && n.st === st && Math.abs(n.stem.x - c.cx) <= 0.4 * S && Math.min(n.y, n.stem.tip) <= c.y0 + 0.5 * S && Math.max(n.y, n.stem.tip) >= c.y1 - 1.0 * S);
-    if (!stemOf && cw <= 0.75 * S && c.y0 <= ya + 0.4 * S && c.y1 >= yb - 0.4 * S && c.n / chh <= Math.max(0.35 * S, 2.5 * t) && c.n / chh >= 0.6 * t &&
+    if (!stemOf && cw <= 0.75 * S && c.y0 <= ya + 0.4 * S && c.y1 >= yb - 0.4 * S && (c.n / chh <= Math.max(0.35 * S, 2.5 * t) || (c.n / (cw * chh) > 0.7 && c.n / chh <= 0.65 * S)) && c.n / chh >= 0.6 * t && // (or a thick, solid final / repeat bar)
+      
       (chh <= (yb - ya) + 1.2 * S || staves.some((o) => o !== st && (c.y1 >= lineY(o, 0, c.cx) || c.y0 <= lineY(o, 4, c.cx)) && Math.abs(lineY(o, 2, c.cx) - lineY(st, 2, c.cx)) < 20 * S))) { // thin; may span a whole system
       for (const o of staves) { // a system barline counts for every staff it crosses
         if (c.cx < o.x0 - S || c.cx > o.x1 + S) continue;
@@ -733,6 +734,58 @@ export function analyze(norm, opts = {}) {
     const box = [a.c.x0, Math.min(a.c.y0, ...extra.map((q) => q.y0)), Math.max(a.c.x1, ...extra.map((q) => q.x1)), Math.max(a.c.y1, ...extra.map((q) => q.y1))];
     if (classify(bin, box).dflat >= 0.9) { a.type = -2; a.c = { ...a.c, ids: [...a.c.ids, ...extra.map((q) => q.id)], x1: box[2] }; }
   }
+  // Key changes inside a staff (a new section after a double bar, Telemann's minore / maggiore):
+  // a run of accidentals right after a barline, not hugging a note at its pitch, optionally
+  // naturals cancelling the old key first, then sharps or flats of one kind at the key-signature
+  // positions for the clef. Only the run's first glyphs need to be found right after the bar.
+  for (const st of staves) {
+    st.keyChanges = [];
+    const clef = CLEFS[st.clef.type];
+    let cur = st.key.detected;
+    for (const b of st.bars) {
+      const S = spaceAt(st, b.x), xs = b.x1;
+      const run = [];
+      let x = xs;
+      // (inside the staff, like any signature: text such as "[Minore]" above it is not part of it)
+      for (const a of accs.filter((q) => q.st === st && !q.isKey && q.c.x0 > xs && q.c.x0 - xs < 6 * S && q.p >= -2 && q.p <= 10).sort((p, q) => p.c.x0 - q.c.x0)) {
+        // (a repeat sign's thin line and dots stand between the barline and the key)
+        if (a.c.x0 - x > (run.length ? 1.6 : b.double ? 3.4 : 2.2) * S || run.length >= 11) break;
+        if (notes.some((n) => n.st === st && n.box[0] > xs && n.box[2] < a.c.x0)) break; // music started
+        if (notes.some((n) => n.st === st && n.p === a.p && n.box[0] - a.c.x1 > -0.3 * S && n.box[0] - a.c.x1 < 0.55 * S)) break; // hugs a note
+        run.push(a); x = a.c.x1;
+      }
+      if (!run.length) continue;
+      let i = 0; while (i < run.length && run[i].type === 0) i++;
+      const nat = run.slice(0, i), acc = run.slice(i);
+      // the new signature is the prefix of one kind at its positions; it ends at the first glyph
+      // that is not (the first accidental of the music)
+      let j = 0; while (j < acc.length && Math.abs(acc[j].type) === 1 && acc[j].type === acc[0].type && Math.abs(acc[j].p - keySigPositions(clef, acc[0].type * (j + 1))[j]) <= 1) j++;
+      acc.length = j; run.length = nat.length + j;
+      if (run.length) x = run[run.length - 1].c.x1;
+      // naturals stand where the old key's glyphs were; the new glyphs where the new key's go
+      const oldPos = keySigPositions(clef, cur);
+      if (nat.length && (!cur || nat.some((a) => !oldPos.some((p) => Math.abs(p - a.p) <= 1)))) continue;
+      const nf = acc.length ? acc[0].type * acc.length : 0, exp = keySigPositions(clef, nf);
+      if (acc.some((a, k) => Math.abs(a.p - exp[k]) > 1)) continue;
+      if (!nat.length && !acc.length) continue;
+      // a lone sharp or flat with no naturals is only a key change if it differs from the key
+      // and keeps clear of the music like a signature does
+      const next = Math.min(st.x1, ...notes.filter((n) => n.st === st && n.box[0] > x).map((n) => n.box[0]));
+      if (next - x < 0.5 * S || next >= st.x1) continue; // (one at the very end, with no music after, is not trusted)
+      if (nf === cur) continue;
+      // plausibility, from false positives on IMSLP pages: a lone accidental after a plain barline
+      // is a local one (its note can be a grace note, which is not detected); naturals alone must
+      // cancel the whole old key; fewer accidentals of the same kind need naturals to say so
+      if (run.length < 2 && !b.double) continue;
+      if (!acc.length && nat.length !== Math.abs(cur)) continue;
+      if (Math.sign(nf) === Math.sign(cur) && Math.abs(nf) < Math.abs(cur) && !nat.length) continue;
+      run.forEach((a) => (a.isKey = true));
+      st.keyChanges.push({ x: b.x, x0: run[0].c.x0, x1: x, detected: nf, fifths: nf, from: cur,
+        ids: run.flatMap((a) => a.c.ids), glyphs: run.map((a) => ({ p: a.p, type: a.type, box: [a.c.x0, a.c.y0, a.c.x1, a.c.y1] })) });
+      cur = nf;
+    }
+  }
+
   // local accidentals: nearest head to the right at the same position
   for (const a of accs) {
     if (a.isKey) continue;
@@ -783,6 +836,11 @@ export function analyze(norm, opts = {}) {
   if (opts.fifths == null) for (const st of staves) {
     const sys = sysOf(st);
     let k = sys.length >= 3 && plural(sys);
+    // in a part, a key change inside the previous staff carries into this one (its signature is
+    // the strongest evidence there is, stronger than what the rest of the page reads)
+    const prev = staves[st.index - 1], endK = sys.length < 2 && prev?.keyChanges?.length ? prev.keyChanges[prev.keyChanges.length - 1].fifths : null;
+    if (!k && endK != null && st.key.detected !== endK && (!st.key.detected || (Math.sign(st.key.detected) === Math.sign(endK) && Math.abs(st.key.detected) < Math.abs(endK)))) k = endK;
+    const fromPrev = k === endK && k != null;
     if (!k && st.key.detected && confirmed.includes(st.key.detected)) continue;
     if (!k && st.key.detected) {
       const same = confirmed.filter((c) => Math.sign(c) === Math.sign(st.key.detected));
@@ -804,7 +862,7 @@ export function analyze(norm, opts = {}) {
     const ya = lineY(st, 0, st.key.x0), yb = lineY(st, 4, st.key.x0);
     const something = cc.comps.some((c) => c && c.x0 >= st.key.x0 - 0.2 * S && c.x1 <= Math.min(first, st.key.x0 + 1.5 * S * Math.abs(k) + S) &&
       c.y1 - c.y0 >= 1.2 * S && c.x1 - c.x0 <= 1.6 * S && c.y1 > ya && c.y0 < yb);
-    if (something) { st.key.fifths = k; st.key.inferred = true; }
+    if (something || fromPrev) { st.key.fifths = k; st.key.inferred = true; }
   }
 
   // ---- assemble per staff: chords, bars, pitches ----
@@ -824,7 +882,7 @@ export function analyze(norm, opts = {}) {
   // fragments that belong to a note but lost contact with it (thin stems and flags broken
   // up by binarisation in photos): they travel with the note's component
   const taken = new Set([...headComps]);
-  for (const st of staves) { st.key.ids.forEach((i) => taken.add(i)); st.bars.forEach((b) => b.ids.forEach((i) => taken.add(i))); }
+  for (const st of staves) { st.key.ids.forEach((i) => taken.add(i)); st.keyChanges.forEach((k) => k.ids.forEach((i) => taken.add(i))); st.bars.forEach((b) => b.ids.forEach((i) => taken.add(i))); }
   for (const n of notes) { n.accid?.ids.forEach((i) => taken.add(i)); n.dots?.forEach((d) => d.ids.forEach((i) => taken.add(i))); }
   const attach = {};
   const byComp = new Map(); for (const n of notes) { if (!byComp.has(n.comp)) byComp.set(n.comp, []); byComp.get(n.comp).push(n); }
@@ -904,12 +962,18 @@ export function findText(comps, S, noteComps = new Set(), staves = []) {
   return out;
 }
 
+// Key in effect at x on a staff: the signature, then any key changes inside the staff.
+export function keyAt(st, x) {
+  let f = st.key.fifths;
+  for (const k of st.keyChanges || []) if (k.x0 <= x) f = k.fifths;
+  return f;
+}
 // Pitches from clef + key + accidentals (re-run after a manual correction).
 // A tied note keeps the pitch it is tied from, also across a barline or a system break where the
 // bar's accidentals no longer apply (F♯ tied into the next bar stays F♯ without a new sharp).
 export function interpret(st) {
   const clef = CLEFS[st.clef.type];
-  const ps = readStaff(st.notes.map((n) => ({ p: n.p, acc: n.accid ? n.accid.type : null, bar: n.bar })), clef, st.key.fifths);
+  const ps = readStaff(st.notes.map((n) => ({ p: n.p, acc: n.accid ? n.accid.type : null, bar: n.bar, fifths: keyAt(st, n.x) })), clef, st.key.fifths);
   st.notes.forEach((n, i) => { n.pitch = ps[i]; n.name = nameOf(ps[i]); });
   const tied = (n) => (n.fix && n.fix.tie !== undefined ? n.fix.tie : n.tie);
   // ties into the first chord of this staff from the end of the previous one (same part)
