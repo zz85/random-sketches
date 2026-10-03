@@ -20,8 +20,9 @@ ISO 8211 / S-57 `.000` cell (`DataView`, ~60 ms per cell), stores the bytes in I
 on depth, routing and a vector S-52 chart all run from local data with no network. Local cells take
 priority wherever they cover the position.
 
-**Bundled charts.** `charts/` ships the 62 NOAA harbour-scale (1:12,000) cells covering central Puget
-Sound from the Tacoma Narrows to Everett / Port Townsend approaches: 4.9 MB total, the largest cell
+**Bundled charts.** `charts/` ships 70 NOAA harbour-scale (1:12,000) cells: central Puget Sound
+from the Tacoma Narrows to Everett / Port Townsend approaches, plus Lake Washington from Renton to
+Kenmore (8 cells, 0.6 MB): 5.5 MB total, the largest cell
 is 335 KB. NOAA's user agreement allows redistribution (the copies are just not "official" for
 carriage requirements). `charts/catalog.json` lists each cell with its bbox; the app fetches the cells
 around the boat (about 16, ~1.5 MB) on the first GPS fix and any others a route needs, then keeps them in
@@ -64,6 +65,13 @@ IndexedDB, so a normal day's sailing never touches NOAA's servers after the firs
   still aren't connected the grid is refined (20 m, 10 m) for the canal cuts. Shilshole to Lake Union:
   4.6 NM through the large lock, under the BNSF, Ballard and Fremont bascules (opening required for a
   15 m mast) and the 22.2 m Aurora bridge, which stops a 23 m mast.
+- **Floating bridges.** Pontoon bridges (`CATBRG` 6, SR 520) block at any mast height, including
+  none. I-90's Lacey V. Murrow bridge is charted as one 2.4 km fixed bridge at 8.8 m (the clearance of
+  its 59 m navigation opening); for long bridges whose footprint is far longer than their horizontal
+  clearance, only the water within reach of the bridge piers keeps the clearance. So a 6 m mast passes
+  I-90 at the west high-rise, a 15 m mast goes round Mercer Island under the 21.6 m East Channel
+  bridge, and SR 520 routes through the 12.4 m west or 20.4 m east high-rise. When a mast is too tall
+  the error names the highest span at that crossing.
 - **Lake level instead of tide above the Locks.** Cells there reference soundings to Low Water of the
   Lakes, 20 ft above MLLW (`M_SDAT`). Where a depth query lands in such an area the depth card adds the
   lake level (20 ft winter, refilled to 22 ft by about June 1, drawn down through autumn) instead of the

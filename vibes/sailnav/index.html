@@ -827,6 +827,7 @@ async function planRoute() {
       if (!wideData) break;
       const r2 = Router.route(wideData.data, a, b, { ...ropts, cellM: pad > 10000 ? 50 : 40, maxCells: 1.6e6 });
       if (!r2.error) { res = r2; source = wideData.source + ", wide search"; }
+      else if (r2.blockedBy && !res.blockedBy) res = r2;    // "too low" beats "not connected"
     }
     if (res.error) { setStatus(res.error, true); return; }
     const notes = legNotes(res);

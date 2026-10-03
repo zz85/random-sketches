@@ -248,6 +248,12 @@
   }
   /** Visit every cell touched by a line or polygon (outline plus interior). */
   function rasterGeom(g, geom, visit) {
+    if (geom && (geom.type === "Point" || geom.type === "MultiPoint")) {
+      for (const c of geom.type === "Point" ? [geom.coordinates] : geom.coordinates) {
+        const p = toCell(g, c[1], c[0]); if (inGrid(g, p.x, p.y)) visit(p.y * g.cols + p.x);
+      }
+      return;
+    }
     for (const line of geomLines(geom)) {
       for (let i = 1; i < line.length; i++) {
         const a = toCell(g, line[i - 1][1], line[i - 1][0]), b = toCell(g, line[i][1], line[i][0]);
@@ -269,19 +275,30 @@
   const OPENING_BRIDGE = new Set([2, 3, 4, 5, 7]);
   const CATBRG_NAME = { 1: "fixed", 2: "opening", 3: "swing", 4: "lifting", 5: "bascule", 6: "pontoon", 7: "drawbridge", 8: "transporter", 9: "footbridge", 10: "viaduct", 11: "aqueduct", 12: "suspension" };
   const num = v => (v === "" || v == null || !isFinite(Number(v))) ? null : Number(v);
+  // ENC Direct returns enumerations as text ("bascule bridge"), base cells as codes (5).
+  const CATBRG_TEXT = { fixed: 1, opening: 2, swing: 3, lifting: 4, lift: 4, bascule: 5, pontoon: 6, floating: 6, draw: 7, transporter: 8, foot: 9, viaduct: 10, aqueduct: 11, suspension: 12 };
+  function catbrgCode(v) {
+    const n = num(v); if (n != null) return n;
+    const t = String(v || "").toLowerCase();
+    for (const k in CATBRG_TEXT) if (t.startsWith(k)) return CATBRG_TEXT[k];
+    return null;
+  }
 
   /** Normalise one overhead feature: clearances in metres (US charts: above MHW). */
   function overheadInfo(o) {
     const p = o.properties || {};
-    const cat = num(p.CATBRG);
+    const cat = catbrgCode(p.CATBRG);
     const opening = o.kind === "bridge" && OPENING_BRIDGE.has(cat);
+    // A pontoon (floating) bridge sits on the water: no boat passes under it, whatever its mast.
+    const floating = o.kind === "bridge" && cat === 6;
     let closed = num(p.VERCLR);
     if (closed == null) closed = num(p.VERCCL);
     if (o.kind === "cable" && num(p.VERCSA) != null) closed = closed == null ? num(p.VERCSA) : Math.min(closed, num(p.VERCSA));
     const open = opening ? num(p.VERCOP) : null;   // null on an opening bridge = unlimited when open
     return {
       kind: o.kind, name: p.OBJNAM || null, category: o.kind === "bridge" ? (CATBRG_NAME[cat] || "bridge") : o.kind,
-      clearance: closed, opening, openClearance: open, inform: p.INFORM || null,
+      clearance: floating ? 0 : closed, opening, floating, openClearance: open, inform: p.INFORM || null,
+      horizontal: num(p.HORCLR),
     };
   }
 
@@ -291,17 +308,20 @@
    * blockUnknown (conservative: an uncharted span over water may be low).
    * Returns the info list with .blocks set.
    */
-  function applyOverheads(g, overheads, needM, blockUnknown, enforce) {
+  function applyOverheads(g, overheads, needM, blockUnknown, enforce, pylons) {
     const list = (overheads || []).map(o => Object.assign(overheadInfo(o), { geometry: o.geometry }));
     inheritClearances(list);
+    const floatCells = longBridgeFloatingCells(g, list, pylons);
     list.forEach((info, id) => {
-      if (needM == null) info.blocks = false;
+      if (info.floating) info.blocks = true;
+      else if (needM == null) info.blocks = false;
       else if (info.opening) info.blocks = info.openClearance != null && info.openClearance < needM && (info.clearance == null || info.clearance < needM);
       else if (info.clearance == null) info.blocks = !!blockUnknown;
       else info.blocks = info.clearance < needM;
       info.needsOpening = info.opening && needM != null && (info.clearance == null || info.clearance < needM) && !info.blocks;
       info.index = id;
       rasterGeom(g, info.geometry, i => {
+        if (floatCells && floatCells[i] === id + 1) { g.overId[i] = id; g.wall[i] = 1; return; }
         // a cell under several pieces keeps the most restrictive one for reporting
         const prev = g.overId[i] >= 0 ? list[g.overId[i]] : null;
         if (!prev || (info.blocks && !prev.blocks) || (info.clearance != null && (prev.clearance == null || info.clearance < prev.clearance))) g.overId[i] = id;
@@ -310,6 +330,44 @@
     });
     for (const info of list) delete info.geometry;
     return list;
+  }
+
+  /**
+   * Some floating bridges are charted as one long fixed BRIDGE carrying the clearance of its
+   * high-rise navigation openings (I-90's Lacey V. Murrow: 2.4 km long, VERCLR 8.8 m,
+   * HORCLR 59.4 m, pontoons in between). For a fixed bridge longer than 1 km whose
+   * footprint is much longer than its horizontal clearance (or has none), with bridge piers
+   * (PYLONS) inside it, only cells within max(200 m, HORCLR) of a pier keep the clearance;
+   * the rest is treated as floating. A long span whose opening is most of its length
+   * (Tacoma Narrows: 1.7 km, HORCLR 834 m) is left alone. Returns Int32Array of (id + 1) or null.
+   */
+  function longBridgeFloatingCells(g, list, pylons) {
+    if (!pylons || !pylons.length) return null;
+    const pylonCells = [];
+    for (const p of pylons) rasterGeom(g, p.geometry, i => pylonCells.push(i));
+    if (!pylonCells.length) return null;
+    let out = null;
+    list.forEach((info, id) => {
+      if (info.kind !== "bridge" || info.opening || info.floating) return;
+      const v = vertsOf(info.geometry); if (v.length < 2) return;
+      let w = 180, e = -180, s = 90, n = -90;
+      for (const c of v) { if (c[0] < w) w = c[0]; if (c[0] > e) e = c[0]; if (c[1] < s) s = c[1]; if (c[1] > n) n = c[1]; }
+      const lenM = Math.hypot((e - w) * 111320 * Math.cos(s * D2R), (n - s) * 111320);
+      if (lenM < 1000) return;
+      if (info.horizontal != null && lenM < 2.5 * info.horizontal) return;
+      const foot = []; rasterGeom(g, info.geometry, i => foot.push(i));
+      const inFoot = new Set(foot);
+      const piers = pylonCells.filter(i => inFoot.has(i)).map(i => ({ x: i % g.cols, y: Math.floor(i / g.cols) }));
+      if (!piers.length) return;
+      const R = Math.max(200, info.horizontal || 0) / g.cellM;
+      out = out || new Int32Array(g.cols * g.rows);
+      for (const i of foot) {
+        const x = i % g.cols, y = (i - x) / g.cols;
+        if (!piers.some(p => Math.hypot(p.x - x, p.y - y) <= R)) out[i] = id + 1;
+      }
+      info.partlyFloating = true;
+    });
+    return out;
   }
 
   /**
@@ -735,7 +793,7 @@
       g.wall.fill(0); g.overId.fill(-1);
       // the hazard keep-off shrinks with the shore margin in narrow water
       applyHazards(g, data.hazards, requiredDepth, mc >= marginCells ? hazardBufferM : Math.min(hazardBufferM, mc * g.cellM));
-      const overheads = applyOverheads(g, data.overheads, needM, opts.blockUnknownClearance !== false, enforceOverheads);
+      const overheads = applyOverheads(g, data.overheads, needM, opts.blockUnknownClearance !== false, enforceOverheads, data.pylons);
       const lat = useLateral ? applyLateral(g, data.lateralMarks, isBlocked, opts) : { marks: [], gates: [], unpaired: 0 };
       const mask = buildMask(g, requiredDepth, !!opts.allowUnknown);
       const snapR = Math.ceil(1500 / g.cellM);
@@ -778,11 +836,34 @@
       if (needM != null && probe.overheads.some(o => o.blocks)) {
         const c = attempt(lateral, false, minMc);
         if (c.path) {
-          const hit = overheadsOnPath(g, c.path, c.overheads).filter(o => o.blocks);
+          let hit = overheadsOnPath(g, c.path, c.overheads).filter(o => o.blocks);
+          // A bridge drawn as several pieces (fixed approach + bascule span) is not the blocker
+          // when one of its pieces is passable: name the ones that have no way through.
+          const passable = new Set(c.overheads.filter(o => !o.blocks && o.name).map(o => o.name));
+          const strict = hit.filter(o => !o.name || !passable.has(o.name));
+          if (strict.length) hit = strict;
+          // one entry per bridge name
+          const seen = new Set(); hit = hit.filter(o => { const k = (o.name || o.kind) + "|" + o.clearance; if (seen.has(k)) return false; seen.add(k); return true; });
           if (hit.length) {
+            // The straight-through probe may cross the floating part of a bridge; point at
+            // the highest charted span of the same crossing instead, which is what to check.
+            const hitIds = new Set(hit.map(o => o.index));
+            const near = (o) => { for (const i of c.path) if (hitIds.has(g.overId[i])) return true; return false; };
+            let best = null;
+            if (hit.some(o => o.floating || o.partlyFloating)) {
+              const pathCells = c.path.filter(i => hitIds.has(g.overId[i]));
+              const cx = pathCells.length ? pathCells[0] % g.cols : 0, cy = pathCells.length ? Math.floor(pathCells[0] / g.cols) : 0;
+              const R2 = Math.pow(4000 / g.cellM, 2);
+              for (let i = 0; i < g.overId.length; i++) {
+                const o = c.overheads[g.overId[i]]; if (!o || o.floating || o.clearance == null) continue;
+                const dx = (i % g.cols) - cx, dy = Math.floor(i / g.cols) - cy; if (dx * dx + dy * dy > R2) continue;
+                if (!best || o.clearance > best.clearance) best = o;
+              }
+            }
+            const shown = best ? [best] : hit;
             return {
-              error: "Blocked overhead: " + hit.map(o => describeOverhead(o) + " < " + needM.toFixed(1) + " m needed").join("; "),
-              blockedBy: hit,
+              error: "Blocked overhead: " + shown.map(o => describeOverhead(o) + " < " + needM.toFixed(1) + " m needed").join("; ") + (best ? " (highest span at this crossing)" : ""),
+              blockedBy: shown,
             };
           }
         }
@@ -847,7 +928,7 @@
   function describeOverhead(o) {
     const cat = o.category && o.category !== "bridge" && o.category !== o.kind ? o.category + " " : "";
     const nm = o.name || (o.kind === "bridge" ? "Unnamed " + cat + "bridge" : "Overhead " + o.kind);
-    const clr = o.clearance == null ? "clearance not charted" : (o.opening ? "closed " : "") + o.clearance.toFixed(1) + " m" + (o.inherited ? ", from adjoining section" : "");
+    const clr = o.floating ? "floating, no clearance" : o.clearance == null ? "clearance not charted" : (o.opening ? "closed " : "") + o.clearance.toFixed(1) + " m" + (o.inherited ? ", from adjoining section" : "");
     return `${nm} (${o.opening && o.name ? o.category + ", " : ""}${clr})`;
   }
   function overheadsOnPath(g, path, list) {

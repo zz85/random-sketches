@@ -331,7 +331,7 @@
   function toRoutingData(cells) {
     const list = Array.isArray(cells) ? cells : [cells];
     const out = { bbox: null, depthAreas: [], dredgedAreas: [], land: [], hazards: [], soundings: [],
-      lateralMarks: [], overheads: [], gates: [], lockBasins: [], datumAreas: [] };
+      lateralMarks: [], overheads: [], gates: [], lockBasins: [], datumAreas: [], pylons: [] };
     for (const cell of list) {
       const b = cellBounds(cell);
       out.bbox = out.bbox ? [Math.min(out.bbox[0], b[0]), Math.min(out.bbox[1], b[1]), Math.max(out.bbox[2], b[2]), Math.max(out.bbox[3], b[3])] : b;
@@ -349,6 +349,7 @@
           case OBJL.BOYLAT: case OBJL.BCNLAT:
             if (f.geometry.type === "Point") out.lateralMarks.push({ lon: f.geometry.coordinates[0], lat: f.geometry.coordinates[1], kind: f.klass, name: p.OBJNAM || null, props: p });
             break;
+          case OBJL.PYLONS: out.pylons.push({ geometry: f.geometry, properties: p }); break;
           case OBJL.GATCON: out.gates.push({ geometry: f.geometry, properties: p }); break;
           case OBJL.LOKBSN: out.lockBasins.push(f); break;
           case OBJL.M_SDAT: case OBJL.M_VDAT:

@@ -115,3 +115,67 @@ describe("lake level", () => {
     expect(Chart.lakeHeightM(at("2026-01-15"), 21.5)).toBeCloseTo(0.4572, 4);  // user-entered posted level
   });
 });
+
+describe("Lake Washington cells", () => {
+  let all;
+  const LAKE = ["US5SEAEM", "US5SEAEN", "US5SEAFM", "US5SEAFN", "US5SEAGM", "US5SEAGN", "US5SEAHM", "US5SEAHN"];
+  const load = async () => {
+    if (all) return all;
+    const cells = [];
+    for (const n of LAKE.concat(["US5SEAGL"])) cells.push(...await S57.loadEncArchive(fs.readFileSync(__dirname + "/charts/" + n + ".zip")));
+    return (all = S57.toRoutingData(cells));
+  };
+  const sub = (d, a, b, pad) => Object.assign({}, d, { bbox: Router.routingBbox(a, b, 1.0, pad || 6000) });
+  const crossLon = (r, lat) => { const w = r.waypoints; for (let k = 1; k < w.length; k++) if ((w[k - 1].lat - lat) * (w[k].lat - lat) < 0) { const f = (lat - w[k - 1].lat) / (w[k].lat - w[k - 1].lat); return w[k - 1].lon + f * (w[k].lon - w[k - 1].lon); } return null; };
+  const LESCHI = { lat: 47.6010, lon: -122.2830 }, KIRKLAND = { lat: 47.6760, lon: -122.2130 }, RENTON = { lat: 47.5050, lon: -122.2100 };
+
+  test("bundled in the catalog, all on the lake datum", async () => {
+    const cat = JSON.parse(fs.readFileSync(__dirname + "/charts/catalog.json", "utf8"));
+    for (const n of LAKE) expect(cat.cells.some(c => c.name === n)).toBe(true);
+    const d = await load();
+    for (const p of [LESCHI, RENTON, { lat: 47.7530, lon: -122.2600 }]) expect(S57.depthAt(d, p.lat, p.lon).datum.lake).toBe(true);
+  });
+
+  test("CATBRG decodes codes and ENC Direct text", () => {
+    const info = p => Router.overheadInfo({ kind: "bridge", properties: p });
+    expect(info({ CATBRG: "bascule bridge", VERCCL: 9.7 })).toMatchObject({ opening: true, category: "bascule" });
+    expect(info({ CATBRG: 5 })).toMatchObject({ opening: true });
+    expect(info({ CATBRG: "pontoon bridge" })).toMatchObject({ floating: true, clearance: 0 });
+    expect(info({ CATBRG: "fixed bridge", VERCLR: 12 })).toMatchObject({ opening: false, floating: false, clearance: 12 });
+  });
+
+  test("SR 520 floating bridge: blocks even with no mast set, passable only under the high-rise spans", async () => {
+    const d = await load();
+    for (const mast of [null, 6]) {
+      const r = Router.route(sub(d, LESCHI, KIRKLAND), LESCHI, KIRKLAND, { requiredDepth: 2.8, marginM: 80, cellM: 40, airDraft: mast });
+      expect(r.error).toBeUndefined();
+      const lon = crossLon(r, 47.6405);
+      // west high-rise (12.4 m) is at the Seattle end; the pontoons run -122.274 .. -122.244
+      expect(lon < -122.2735 || lon > -122.2440).toBe(true);
+    }
+    const r15 = Router.route(sub(d, LESCHI, KIRKLAND), LESCHI, KIRKLAND, { requiredDepth: 2.8, marginM: 80, cellM: 40, airDraft: 15 });
+    expect(r15.stats.overheads.some(o => o.name === "Evergreen Point Bridge - East Span" && o.clearance === 20.4)).toBe(true);
+    const r22 = Router.route(sub(d, LESCHI, KIRKLAND), LESCHI, KIRKLAND, { requiredDepth: 2.8, marginM: 80, cellM: 40, airDraft: 22 });
+    expect(r22.error).toMatch(/East Span \(20\.4 m\).*highest span/);
+  });
+
+  test("I-90: the 2.4 km bridge charted at 8.8 m is only passable near its piers; 15 m mast goes east of Mercer Island", async () => {
+    const d = await load();
+    const r = Router.route(sub(d, LESCHI, RENTON), LESCHI, RENTON, { requiredDepth: 2.8, marginM: 80, cellM: 40, airDraft: 6 });
+    expect(r.error).toBeUndefined();
+    const lon = crossLon(r, 47.5897);
+    expect(Math.min(Math.abs(lon + 122.2825), Math.abs(lon + 122.2576))).toBeLessThan(0.0035);   // within ~260 m of a pier pair
+    const r15 = Router.route(sub(d, LESCHI, RENTON), LESCHI, RENTON, { requiredDepth: 2.8, marginM: 80, cellM: 40, airDraft: 15 });
+    expect(r15.error).toBeUndefined();
+    expect(crossLon(r15, 47.5897)).toBeGreaterThan(-122.23);                                      // East Channel, 21.6 m
+    expect(r15.stats.overheads.some(o => o.clearance === 21.6)).toBe(true);
+  });
+
+  test("Lake Union to Union Bay through the Montlake Cut", async () => {
+    const d = await load();
+    const a = { lat: 47.6370, lon: -122.3370 }, b = { lat: 47.6520, lon: -122.2800 };
+    const r = Router.route(sub(d, a, b, 2500), a, b, { requiredDepth: 2.8, marginM: 80, cellM: 40, airDraft: 15 });
+    expect(r.error).toBeUndefined();
+    for (const n of ["University Bridge", "Montlake Bridge"]) expect(r.warnings.some(w => w.startsWith(n) && /opening required/.test(w))).toBe(true);
+  });
+});
