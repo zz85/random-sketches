@@ -294,7 +294,7 @@ function drawRhythm(g, model, sc, r, selM) {
       if (e.kind === 'rest' && on.values) { const b = e.rest.box; g.strokeStyle = 'rgba(120,60,200,.85)'; g.lineWidth = 1.5; g.strokeRect(b[0] - 1, b[1] - 1, b[2] - b[0] + 2, b[3] - b[1] + 2); }
       const y = e.kind === 'rest' ? e.rest.box[3] + 10 : Math.max(...e.notes.map((n) => n.y)) + (e.notes[0].stem && e.notes[0].stem.dir > 0 ? Math.max(0, e.notes[0].stem.tip - Math.max(...e.notes.map((n) => n.y))) + 10 : 20);
       const parts = [];
-      if (on.values) parts.push(`${e.kind === 'rest' ? 'r' : ''}${e.full ? 'bar' : e.dur}${'.'.repeat(e.dots || 0)}${e.tuplet ? '³' : ''}`);
+      if (on.values) parts.push(`${e.kind === 'rest' ? 'r' : ''}${e.full ? 'bar' : e.dur}${'.'.repeat(e.dots || 0)}${e.tuplet ? '³' : ''}${e.grace ? ((e.notes[0].fix?.graceKind ?? e.notes[0].graceKind) === 'app' ? ' appogg.' : ' acciacc.') : ''}`);
       if (on.voices && m.voices > 1) parts.push(`v${(e.voice ?? 0) + 1}`);
       if (on.artic) parts.push(...(e.notes?.[0].artic || []).map((a) => ({ stacc: 'stacc', ten: 'ten', acc: 'acc', upbow: 'up-bow V', dnbow: 'down-bow ⊓' })[a]));
       if (parts.length) pill(g, parts.join(' '), e.x, y, e.repaired ? '#c2410c' : e.fixed ? '#0a7d32' : '#4b2a8a');
@@ -484,12 +484,12 @@ function rhythmRow(ev) {
   if (!ev) return '';
   const m = measureOf(ev);
   return `<div class="row" role="group" aria-label="Note value">${DURS.map((d) => `<button data-dur="${d}" aria-pressed="${ev.dur === d}" aria-label="${['whole', 'half', 'quarter', 'eighth', 'sixteenth', 'thirty-second'][DURS.indexOf(d)]}">${DUR_GLYPH[d]}</button>`).join('')}</div>
-    <div class="row"><button data-r="dot" aria-pressed="${!!ev.dots}">dot</button><button data-r="tuplet" aria-pressed="${!!ev.tuplet}">triplet</button>${ev.kind === 'note' ? `<button data-r="tie" aria-pressed="${!!ev.tie}">tie →</button><button data-r="grace" aria-pressed="${!!ev.grace}">grace</button>` : ''}</div>
+    <div class="row"><button data-r="dot" aria-pressed="${!!ev.dots}">dot</button><button data-r="tuplet" aria-pressed="${!!ev.tuplet}">triplet</button>${ev.kind === 'note' ? `<button data-r="tie" aria-pressed="${!!ev.tie}">tie →</button><button data-r="grace" aria-pressed="${!!ev.grace}">grace</button>${ev.grace ? `<button data-r="gkind" aria-pressed="${(ev.notes[0].fix?.graceKind ?? ev.notes[0].graceKind) !== 'app'}" title="slashed: crushed in before the beat; unslashed: half the next note, on the beat">slashed (acciaccatura)</button>` : ''}` : ''}</div>
     ${ev.kind === 'note' ? `<div class="row" role="group" aria-label="Articulation">${[['stacc', 'staccato ·'], ['ten', 'tenuto –'], ['acc', 'accent >'], ['dnbow', 'down-bow ⊓'], ['upbow', 'up-bow V']].map(([k, l]) => `<button data-art="${k}" aria-pressed="${(ev.notes[0].artic || []).includes(k)}">${l}</button>`).join('')}</div>` : ''}
     <p class="hint">Bar ${m.number}: ${m.ticks / 96} of ${m.cap / 96} beats${m.repairs.length ? ` · auto-fixed: ${m.repairs.join(', ')}` : ''}${ev.repaired ? ` (this ${ev.kind}: ${ev.repaired})` : ''}</p>`;
 }
 function setFix(ev, patch) {
-  const cur = { dur: ev.dur, dots: ev.dots, tuplet: ev.tuplet, tie: ev.tie, grace: ev.grace };
+  const cur = { dur: ev.dur, dots: ev.dots, tuplet: ev.tuplet, tie: ev.tie, grace: ev.grace, graceKind: ev.notes?.[0].fix?.graceKind };
   const f = { ...cur, ...patch };
   if (ev.kind === 'rest') { ev.rest.fix = f; delete ev.rest.fix.tie; delete ev.rest.fix.grace; }
   else for (const n of ev.notes) n.fix = f;
@@ -519,6 +519,7 @@ function bindRhythm(ev, reopen) {
     }
     if (k === 'tie') redo({ tie: !ev.tie });
     if (k === 'grace') redo({ grace: !ev.grace });
+    if (k === 'gkind') { const cur = ev.notes[0].fix?.graceKind ?? ev.notes[0].graceKind; redo({ graceKind: cur === 'app' ? 'acc' : 'app' }); }
   }));
 }
 function restPop(ev, e) {

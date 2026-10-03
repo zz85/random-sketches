@@ -179,16 +179,37 @@ export class Renderer {
       }
     }
   }
+  // Staff removal also removes a symbol's own ink where it lies on a staff line (a stem crossing
+  // a line, the top or bottom of a head ring touching one), so a moved symbol comes out broken.
+  // Put those pixels back: in the symbol's columns, a staff-line band whose ink run is thicker
+  // than a bare line is line plus symbol; take the run (minus columns where another symbol
+  // passes straight through the line).
+  fillBands(mask, ids, st) {
+    const { w, h, comps, thick, bin, labels } = this.m, S = spaceAt(st, (st.x0 + st.x1) / 2), lim = Math.round(0.45 * S);
+    const own = new Set(ids);
+    for (const id of ids) {
+      const c = comps[id]; if (!c) continue;
+      for (let k = 0; k < 5; k++) for (let x = c.x0; x <= c.x1; x++) {
+        const yl = Math.round(lineY(st, k, x));
+        if (yl < c.y0 - thick - 2 || yl > c.y1 + thick + 2 || yl < 0 || yl >= h || !bin[yl * w + x]) continue;
+        let a = yl, b = yl; while (a > 0 && bin[(a - 1) * w + x] && yl - a < lim) a--; while (b < h - 1 && bin[(b + 1) * w + x] && b - yl < lim) b++;
+        if (b - a + 1 <= Math.round(thick) + 1) continue;
+        const la = a > 0 ? labels[(a - 1) * w + x] : 0, lb = b < h - 1 ? labels[(b + 1) * w + x] : 0;
+        if ((la && !own.has(la)) || (lb && !own.has(lb))) continue;
+        for (let y = a; y <= b; y++) mask[y * w + x] = 1;
+      }
+    }
+  }
   // Same mask as maskOf, but only for the crop (x0, y0, cw, ch): per-symbol work stays
   // proportional to the symbol, not the page (a full-page mask per pasted note made a
   // 350-note score page take ~9 s).
   maskCrop(ids, grow, paperOnly, st, x0, y0, cw, ch) {
     const { w, h, labels, comps, bin } = this.m, sc = (this.scratch ||= new Uint8Array(w * h));
     for (const id of ids) { const c = comps[id]; if (!c) continue; for (let y = c.y0; y <= c.y1; y++) for (let x = c.x0; x <= c.x1; x++) if (labels[y * w + x] === id) sc[y * w + x] = 1; }
-    if (st) this.stripLineStubs(sc, ids, st);
+    if (st) { this.stripLineStubs(sc, ids, st); this.fillBands(sc, ids, st); }
     let m = new Uint8Array(cw * ch);
     for (let y = 0; y < ch; y++) { const yy = y + y0; if (yy < 0 || yy >= h) continue; for (let x = 0; x < cw; x++) { const xx = x + x0; if (xx >= 0 && xx < w) m[y * cw + x] = sc[yy * w + xx]; } }
-    for (const id of ids) { const c = comps[id]; if (!c) continue; for (let y = c.y0; y <= c.y1; y++) sc.fill(0, y * w + c.x0, y * w + c.x1 + 1); }
+    for (let y = Math.max(0, y0 - 12); y < Math.min(h, y0 + ch + 12); y++) sc.fill(0, y * w + Math.max(0, x0 - 2), y * w + Math.min(w, x0 + cw + 2));
     for (let g = 0; g < grow; g++) {
       const o = new Uint8Array(m);
       for (let y = 1; y < ch - 1; y++) for (let x = 1; x < cw - 1; x++) {
@@ -270,7 +291,7 @@ export class Renderer {
     ctx.canvas.width = this.W; ctx.canvas.height = this.H;
     ctx.drawImage(this.src, 0, 0);
     // ---- what moves and what goes ----
-    const erase = [], moves = [];
+    const erase = [], moves = []; this.arcStats = { moved: 0, kept: 0 };
     for (const sp of pl.staves) {
       const st = sp.st, byComp = new Map();
       for (const nn of sp.notes) {
@@ -286,7 +307,9 @@ export class Renderer {
         const n0 = nns[0], dp = n0.p - n0.n.p;
         const dy = yOfP(st, n0.p, n0.n.x) - yOfP(st, n0.n.p, n0.n.x);
         if (dp === 0 && !sp.clefChanged) continue;
-        const ids = [comp, ...(this.m.attach?.[comp] || [])];
+        // (staccatos, tenutos, accents and bowing marks are part of the note: they move with it,
+        // or a stacked accent would run into a bowing mark left behind)
+        const ids = [comp, ...(this.m.attach?.[comp] || []), ...new Set(nns.flatMap((q) => [...(q.n.articIds || []), ...(q.n.bowIds || [])]))];
         erase.push(...ids);
         const dots = [];
         for (const nn of nns) for (const d of nn.n.dots || []) {
@@ -295,12 +318,47 @@ export class Renderer {
           const pOld = d.p, pNew = nn.p % 2 === 0 ? nn.p + (pOld >= nn.n.p ? 1 : -1) : nn.p;
           dots.push({ ids: d.ids, dy: yOfP(st, pNew, nn.n.x) - (d.box[1] + d.box[3]) / 2 + 0 });
         }
-        moves.push({ st, ids, dy, dots, stems: nns.filter((q) => q.n.stem).map((q) => q.n.stem.x) });
+        moves.push({ st, ids, dy, dots, stems: nns.filter((q) => q.n.stem).map((q) => q.n.stem.x), heads: nns.map((q) => q.n.box) });
+      }
+      // ties and slurs move with their notes: every note of a staff moves by the same number of
+      // steps, so an arc moves by that too (an arc fused with a note already travels with it)
+      const ref = sp.notes.find((nn) => nn.n.comp), dp = ref ? ref.p - ref.n.p : 0;
+      if (ref && (dp !== 0 || sp.clefChanged)) {
+        const moving = new Set(moves.flatMap((q) => q.ids)), arcs = [];
+        for (const n of st.notes) if (n.tie && n.tieIds) arcs.push({ ids: n.tieIds, x: n.x, p: n.p });
+        for (const sl of st.slurs || []) { const e = sl.from || sl.to; if (e) arcs.push({ ids: sl.ids, x: (sl.box[0] + sl.box[2]) / 2, p: e.p }); }
+        const heads = new Set(m.notes.map((n) => n.comp)), S = spaceAt(st, (st.x0 + st.x1) / 2), pad = m.thick + 3;
+        for (const a of arcs) {
+          // the pieces staff lines cut the arc into: small components inside its box
+          const own = a.ids.map((i) => m.comps[i]).filter(Boolean); if (!own.length) continue;
+          const bx = [Math.min(...own.map((c) => c.x0)) - pad, Math.min(...own.map((c) => c.y0)) - pad, Math.max(...own.map((c) => c.x1)) + pad, Math.max(...own.map((c) => c.y1)) + pad];
+          const all = new Set(a.ids);
+          const inHead = (c) => st.notes.some((n) => c.cx >= n.box[0] - 2 && c.cx <= n.box[2] + 2 && c.cy >= n.box[1] - 2 && c.cy <= n.box[3] + 2);
+          for (const c of m.comps) if (c && !heads.has(c.id) && !inHead(c) && c.x0 >= bx[0] && c.x1 <= bx[2] && c.y0 >= bx[1] && c.y1 <= bx[3] && c.x1 - c.x0 < 1.6 * S && c.y1 - c.y0 < 0.9 * S) all.add(c.id);
+          // only an arc that is all there: its pieces cover the ink in its box off the staff lines
+          // (an arc partly fused with something else would be torn apart)
+          let ink = 0, got = 0;
+          for (let y = Math.max(0, bx[1] + pad); y <= Math.min(m.h - 1, bx[3] - pad); y++) for (let x = Math.max(0, bx[0] + pad); x <= Math.min(m.w - 1, bx[2] - pad); x++) {
+            const i = y * m.w + x; if (!m.bin[i]) continue;
+            if ([0, 1, 2, 3, 4].some((k) => Math.abs(lineY(st, k, x) - y) <= m.thick / 2 + 1.5)) continue;
+            const l = m.labels[i]; if (l && !all.has(l)) continue;
+            ink++; if (l) got++;
+          }
+          if (ink && got < 0.93 * ink) { this.arcStats.kept++; continue; }
+          const ids = [...all].filter((i) => !moving.has(i)); if (!ids.length) continue;
+          ids.forEach((i) => moving.add(i)); erase.push(...ids);
+          moves.push({ st, ids, dy: yOfP(st, a.p + dp, a.x) - yOfP(st, a.p, a.x), dots: [], stems: [] }); this.arcStats.moved++;
+        }
       }
     }
     // old ledger lines of moved notes
     const ledger = this.m.ledgerPx;
-    const eraseMask = this.maskOf(erase, 1, ledger);
+    // (the ink a moved symbol had on staff lines goes too; the lines are restored below)
+    const byStaff = new Map();
+    for (const id of erase) { const c = m.comps[id]; if (!c) continue; const st = m.staves.find((q) => c.cy >= q.band[0] && c.cy < q.band[1]); if (st) { if (!byStaff.has(st)) byStaff.set(st, []); byStaff.get(st).push(id); } }
+    const eraseMask = this.maskOf(erase, 0, ledger);
+    for (const [st, ids] of byStaff) this.fillBands(eraseMask, ids, st);
+    { const { w: W0, h: H0, bin } = m, o = new Uint8Array(eraseMask); for (let y = 1; y < H0 - 1; y++) for (let x = 1; x < W0 - 1; x++) { const i = y * W0 + x; if (!eraseMask[i] && (eraseMask[i - 1] || eraseMask[i + 1] || eraseMask[i - W0] || eraseMask[i + W0])) o[i] = 1; } eraseMask.set(o); }
     const eraseCanvas = this.maskCanvas(eraseMask);
     // ---- erase: refill with local paper colour, then restore staff lines under the cuts ----
     const lay = canvas(this.W, this.H), lc = lay.getContext('2d');
@@ -407,7 +465,7 @@ export class Renderer {
     // ---- paste moved notes (after the ledger lines, so heads sit on top) ----
     for (const mv of moves) {
       const wp = warps.get(mv.st);
-      this.paste(ctx, mv.ids, mv.dy, wp, mv.st, mv.stems);
+      this.paste(ctx, mv.ids, mv.dy, wp, mv.st, mv.stems, mv.heads);
       for (const d of mv.dots) this.paste(ctx, d.ids, d.dy, wp, mv.st);
     }
   }
@@ -451,7 +509,7 @@ export class Renderer {
     for (const p of next) { this.glyph(ctx, name, x, yOfP(st, p, x), S, font, null); x += step; }
   }
 
-  paste(ctx, ids, dy, wp, st, stems = []) {
+  paste(ctx, ids, dy, wp, st, stems = [], heads = []) {
     const { comps } = this.m, r = this.r;
     let x0 = Infinity, y0 = Infinity, x1 = -1, y1 = -1;
     for (const id of ids) { const c = comps[id]; if (!c) continue; x0 = Math.min(x0, c.x0); y0 = Math.min(y0, c.y0); x1 = Math.max(x1, c.x1); y1 = Math.max(y1, c.y1); }
@@ -469,6 +527,8 @@ export class Renderer {
       const half = this.m.thick / 2 + 1, snap = canvas(tmp.width, tmp.height); snap.getContext('2d').drawImage(tmp, 0, 0);
       for (let k = 0; k < 5; k++) {
         const yl = lineY(st, k, (x0 + x1) / 2); if (yl - half < y0 + 2 || yl + half > y1 - 2) continue;
+        // (not where the line runs through a head: the rows above are the head's edge or paper)
+        if (heads.some((b) => yl + half > b[1] - 1 && yl - half < b[3] + 1)) continue;
         const a = (yl - half - y0) * r, bandH = 2 * half * r;
         t.save(); t.beginPath(); for (const sx of stems) t.rect((sx - 2 - x0) * r, a, 5 * r, bandH); t.clip(); t.globalCompositeOperation = 'copy';
         t.drawImage(snap, 0, a - bandH, tmp.width, bandH, 0, a, tmp.width, bandH); t.restore();

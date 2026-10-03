@@ -126,8 +126,21 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
     if (ch.every((n) => n.small) && (!grace || (!flags && !beamed) || onStem)) { for (const n of ch) n.dropSmall = true; continue; }
     // a small head in a chord with full-size ones is a fragment beside the chord, never a note
     if (ch.some((n) => n.small) && ch.some((n) => !n.small)) for (const n of ch) if (n.small) n.dropSmall = true;
+    // acciaccatura (slashed) or appoggiatura: a slash crosses the grace stem, so there is ink on
+    // the side of the stem away from the flag, between the head and the stem end
+    let slash = null;
+    if (grace) {
+      const n = withStem[0], sm = n.stem, side = sm.dir < 0 ? -1 : 1; // flags hang right of an up-stem
+      const ya = Math.min(n.y + sm.dir * 0.55 * S, sm.tip), yb = Math.max(n.y + sm.dir * 0.55 * S, sm.tip);
+      let ink = 0;
+      for (let y = Math.round(ya); y <= Math.round(yb); y++) {
+        if ([0, 1, 2, 3, 4].some((k) => Math.abs(lineY(st, k, sm.x) - y) <= t / 2 + 1.5)) continue; // (staff lines, ledgers aside)
+        for (let x = Math.round(sm.x + side * 0.7 * S); side < 0 ? x <= sm.x - 2 : x >= sm.x + 2; x -= side) { const l = L[y * w + x]; if (l || (bin && bin.data[y * w + x])) ink++; }
+      }
+      slash = ink >= Math.max(2, 0.007 * S * S); // (a slash is thin: a few pixels clear of the stem)
+    }
     const nd = Math.min(2, Math.max(0, ...ch.map((n) => (n.dots || []).length)));
-    for (const n of ch) Object.assign(n, { dur, dots: n.dots, ndots: nd, beams, flags, beamed, grace });
+    for (const n of ch) Object.assign(n, { dur, dots: n.dots, ndots: nd, beams, flags, beamed, grace, graceKind: grace ? (slash ? 'acc' : 'app') : undefined });
   }
 
   for (let k = notes.length - 1; k >= 0; k--) if (notes[k].dropSmall) { const n = notes[k], i = n.st.notes.indexOf(n); if (i >= 0) n.st.notes.splice(i, 1); headComps.delete(n.comp); notes.splice(k, 1); }
@@ -260,7 +273,7 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
   // outermost head on the side away from the stem (or past a whole note, either side), within
   // 2.6 spaces (accents 3.4, they go above the staff); an accent may also sit beyond the stem end. Read before the other free
   // symbols so the dots and dashes are not taken for anything else.
-  for (const n of notes) n.artic = [];
+  for (const n of notes) { n.artic = []; n.articIds = []; n.bowIds = []; }
   const marked = new Set(); // components taken as articulations (never words or dynamics)
   const chordsOf = new Map(); for (const n of notes) { const k = n.st.index + ':' + n.chord; if (!chordsOf.has(k)) chordsOf.set(k, []); chordsOf.get(k).push(n); }
   const markKind = (c, S) => {
@@ -322,7 +335,7 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
       if (!best || d < best.d) best = { d, ns };
     }
     if (!best) continue;
-    for (const n of best.ns) { if (!n.artic.includes(kind)) n.artic.push(kind); if (BOW.has(kind)) n.bowBox = [c.x0, c.y0, c.x1, c.y1]; }
+    for (const n of best.ns) { if (!n.artic.includes(kind)) n.artic.push(kind); if (BOW.has(kind)) { n.bowBox = [c.x0, c.y0, c.x1, c.y1]; (n.bowIds ||= []).push(...(c.ids || [c.id])); } else (n.articIds ||= []).push(...(c.ids || [c.id])); }
     used.add(c.id); (c.ids || [c.id]).forEach((i) => { used.add(i); marked.add(i); });
   }
   // ---------------------------------------------------------------- dynamics and words
@@ -405,7 +418,9 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
     const inside = c.cy > yt - 0.5 * S && c.cy < yb + 0.5 * S;
     // arcs (ties and slurs): wide, flat, thin
     // (a short flat tie fills most of its box; what makes an arc is that it is thin)
-    if (W >= 0.9 && H <= Math.max(1.4, 0.35 * W) && (fill < 0.5 || (H <= 0.75 && fill < 0.9)) && c.n / cw < 0.45 * S && !hairpinForm(c, S)) { arcs.push({ st, c }); continue; }
+    // (a grace note's slur into its note is short)
+    const nearGrace = W >= 0.6 && notes.some((n) => n.grace && n.st === st && Math.abs(n.x - c.x0) < 1.3 * S && Math.abs(n.y - c.cy) < 1.6 * S);
+    if ((W >= 0.9 || nearGrace) && H <= Math.max(1.4, 0.35 * W) && (fill < 0.5 || (H <= 0.75 && fill < 0.9)) && c.n / cw < 0.45 * S && !hairpinForm(c, S)) { arcs.push({ st, c }); continue; }
     // whole / half rests: a solid slab hanging from a line (whole) or sitting on one (half); the
     // 4th and middle lines normally, any line or ledger position when a second voice moves it
     const near = c.cy > yt - 2.2 * S && c.cy < yb + 2.2 * S;
@@ -522,7 +537,7 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
     const S = spaceAt(st, c.cx), col = (x) => { for (let y = c.y0; y <= c.y1; y++) if (L[y * w + x] === c.id) return y; return c.cy; };
     // a slur cut into pieces by staff lines and barlines: follow small fragments along its
     // direction from the right end
-    let ex = c.x1, ey = col(c.x1);
+    let ex = c.x1, ey = col(c.x1); const frags = [];
     const slope = (ey - col(Math.max(c.x0, Math.round(c.x1 - 0.2 * (c.x1 - c.x0))))) / Math.max(1, 0.2 * (c.x1 - c.x0));
     for (let grew = true; grew;) {
       grew = false;
@@ -530,14 +545,14 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
         if (!q || q.id === c.id || used.has(q.id) || headComps.has(q.id) || q.n > 120 || q.x0 <= ex - 1 || q.x0 - ex > 1.6 * S || q.y1 - q.y0 > 0.8 * S) continue;
         const py = ey + slope * ((q.x0 + q.x1) / 2 - ex);
         if (Math.abs((q.y0 + q.y1) / 2 - py) > 0.6 * S) continue;
-        ex = q.x1; ey = (q.y0 + q.y1) / 2; grew = true; used.add(q.id); break;
+        ex = q.x1; ey = (q.y0 + q.y1) / 2; grew = true; used.add(q.id); frags.push(q.id); break;
       }
     }
     const a = ends(st, c.x0, col(c.x0), S), b = ends(st, ex, ey, S);
     const fromEdge = c.x0 < (st.key?.x1 ?? st.x0) + 1.5 * S, toEdge = ex > st.x1 - 1.8 * S;
     if ((!a && !fromEdge) || (!b && !toEdge) || (a && b && a.chord === b.chord)) continue;
     const yl = col(c.x0), yr = ey, above = c.y0 < Math.min(yl, yr) - 2;
-    st.slurs.push({ from: a, to: b, open: !b, cont: !a, box: [c.x0, c.y0, ex, Math.max(c.y1, ey)], yl, yr, peak: above ? c.y0 : c.y1, above, ids: c.ids || [c.id] });
+    st.slurs.push({ from: a, to: b, open: !b, cont: !a, box: [c.x0, c.y0, ex, Math.max(c.y1, ey)], yl, yr, peak: above ? c.y0 : c.y1, above, ids: [...(c.ids || [c.id]), ...frags] });
     used.add(c.id);
   }
 

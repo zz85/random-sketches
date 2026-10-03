@@ -254,6 +254,17 @@ the music from it on the main thread (a few ms, so it is rebuilt after every cor
 On the `expr` fixture (7 dynamics, 5 slurs, 2 hairpins, clean): 6 dynamics on the right note
 (none invented), 4 slurs, both hairpins.
 
+### Redrawing the transposed page
+
+Staff removal also takes a symbol's own ink where it lies on a staff line: a stem crossing a
+line, the top or bottom of a head ring touching one, an arc crossing it. A moved symbol then came
+out with gaps. In the symbol's columns, a staff-line run thicker than a bare line is line plus
+symbol, and is now pasted with the symbol and erased with it (the line is restored under it).
+Where a staff line runs through a moved head, the band is no longer replaced by the rows above it
+(that left white squares in heads). Ties and slurs move by the staff's step shift, together with
+the pieces staff lines cut them into, but only when those pieces account for the arc's ink; on
+the CODA sheet 26 of 27 arcs move. Articulations and bowing marks travel with their notes.
+
 ### Bowing marks
 
 Down-bows (⊓) and up-bows (V) are read above the chord's highest point and the staff, centred on
@@ -273,8 +284,11 @@ head width, followed closely by a full-size note. Such a head is kept only if it
 a grace note: its own short stem (under 2.75 spaces) with a flag, beam or slash, not against
 another note's stem (beam stubs) and not in a chord with full-size heads. A grace note takes no
 time in the bar, sounds just before the beat of its note (about a 32nd early, very short) and is
-exported as `<grace slash="yes"/>`. Appoggiaturas (unslashed, taking half the note's value) are
-not told apart yet; they play as acciaccaturas. On the `grace` fixture 6 of 8 grace notes are
+exported as `<grace slash="yes"/>`. Unslashed grace notes (appoggiaturas) are told apart by the
+missing slash, a thin stroke crossing the stem on the side away from the flag: they play on the
+beat for half their main note's value (the main note starts late) and export as `<grace/>`. The
+kind can be switched in the note popup. Fixtures: right on 6/6 clean, 6/7 on phone photos; both
+CODA graces read as slashed. On the `grace` fixture 6 of 8 grace notes are
 found; on the Telemann the additions are real grace notes (that file's answer key leaves them
 out) and the extra detections stay near where they were (22 → 26 typeset).
 
@@ -477,8 +491,11 @@ grace notes. The transposed page is readable but shows its seams at that resolut
 ### Limitations
 
 - Printed music only; no handwriting, tablature, percussion or early notation.
-- Grace notes move with the transposition (head, stem, flag and slash; the slur into the main
-  note stays put, like every slur); appoggiaturas play as acciaccaturas.
+- Ties and slurs move with their notes when the whole arc is found as pieces of its own; an arc
+  fused with something else (the CODA phrase slur and the tie touching it) stays where printed.
+  Staccatos, tenutos, accents and bowing marks move with their note. A hollow head touching staff
+  lines can still come out with a broken edge after a move, and notes moved far up can run into
+  text above the staff.
 - Rhythm: at most two voices per staff; no tremolos, repeats, voltas, multi-bar rests or tempo
   marks (set the tempo by hand); marcato and fermata are not read. A note missed by the head detector cannot be added by hand yet; its bar shows red.
 - Ties and slurs stay put: fine for steps, visibly off for big moves such as clef changes.

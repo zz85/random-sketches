@@ -241,6 +241,14 @@ describe('grace notes', () => {
     const p = performance(r.res, sc), g = p.notes.find((n) => n.dur === 12 && n.tick > 0), next = p.notes.find((n) => n.tick > g.tick);
     expect(next.tick - g.tick).toBe(14);
     expect(toMusicXML(r.res, sc, {})).toContain('<grace slash="yes"/>');
+    // slashed (acciaccatura) or not (appoggiatura), from the slash through the stem
+    const kinds = r.pairs.filter(([t, q]) => t.grace && q.grace);
+    expect(kinds.every(([t, q]) => (t.grace === 'unacc') === (q.graceKind === 'acc'))).toBe(true);
+    expect(kinds.some(([, q]) => q.graceKind === 'app')).toBe(true);
+    expect(toMusicXML(r.res, sc, {})).toContain('<grace/>');
+    // an appoggiatura takes half its note, on the beat; the note starts late
+    const g6 = p.notes.find((n) => n.midi === 73 && n.dur === 144), b6 = g6 && p.notes.find((n) => n.midi === 71 && n.tick === g6.tick + 144);
+    expect(g6 && b6 && b6.dur).toBe(144); // bar 6: C♯ appoggiatura takes half of the dotted half B
   });
 });
 
@@ -331,7 +339,7 @@ describe.skipIf(!fs.existsSync(CODA))('real page: CODA viola audition sheet', ()
     expect(bar(11)[0].notes[0].artic).toContain('dnbow'); expect(bar(11)[1].notes[0].artic).toContain('upbow');
     expect(bar(12)[1].notes[0].artic).toContain('dnbow'); expect(bar(1)[0].notes[0].artic).toContain('upbow');
     // the waltz's acciaccaturas (bars 56 and 58): a G♯4 grace before the F♯4
-    for (const k of [56, 58]) { expect(bar(k)[0].grace).toBe(true); expect(bar(k)[0].notes[0].name).toBe('G♯4'); expect(bar(k)[1].notes[0].name).toBe('F♯4'); }
+    for (const k of [56, 58]) { expect(bar(k)[0].grace).toBe(true); expect(bar(k)[0].notes[0].graceKind).toBe('acc'); expect(bar(k)[0].notes[0].name).toBe('G♯4'); expect(bar(k)[1].notes[0].name).toBe('F♯4'); }
     const dyn = r.staves.flatMap((s) => s.dynamics.map((d) => d.text));
     expect(dyn.filter((d) => d === 'f').length).toBeGreaterThanOrEqual(7); expect(dyn).toContain('pp'); expect(dyn).toContain('mp');
   });

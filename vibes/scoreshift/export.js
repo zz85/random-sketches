@@ -109,7 +109,7 @@ export function toMusicXML(model, score, { plan = null, instrument = null, title
           const slurs = k === 0 ? (m.st.slurs || []).flatMap((sl, si) => [sl.from && e.notes.includes(sl.from) ? `<slur type="start" number="${(si % 6) + 1}"/>` : '', sl.to && e.notes.includes(sl.to) ? `<slur type="stop" number="${(si % 6) + 1}"/>` : '']).join('') : '';
           const TECH = { upbow: '<up-bow/>', dnbow: '<down-bow/>' }, tech = k === 0 ? (e.notes[0].artic || []).map((a) => TECH[a] || '').join('') : '';
           const nota = tied + slurs + (k === 0 ? tup : '') + (art ? `<articulations>${art}</articulations>` : '') + (tech ? `<technical>${tech}</technical>` : '');
-          out.push(`<note>${e.grace ? '<grace slash="yes"/>' : ''}${k ? '<chord/>' : ''}<pitch><step>${step}</step>${p.alter ? `<alter>${p.alter}</alter>` : ''}<octave>${oct}</octave></pitch>` +
+          out.push(`<note>${e.grace ? `<grace${(e.notes[0].fix?.graceKind ?? e.notes[0].graceKind) === 'app' ? '' : ' slash="yes"'}/>` : ''}${k ? '<chord/>' : ''}<pitch><step>${step}</step>${p.alter ? `<alter>${p.alter}</alter>` : ''}<octave>${oct}</octave></pitch>` +
             `${e.grace ? '' : `<duration>${dur}</duration>`}${ties}${VO}<type>${TYPE[e.dur] || 'quarter'}</type>${dots}` +
             `${w.acc != null ? `<accidental>${ACC[w.acc]}</accidental>` : ''}${tm}${STEM}${nota ? `<notations>${nota}</notations>` : ''}</note>`);
         });
@@ -182,9 +182,16 @@ export function performance(model, score, { plan = null, from = null } = {}) {
     const links = tieLinks(part, W), sounding = new Map(); // note -> sounding entry it extends
     const tl = timeline(part);
     const ex = expression(part, tl);
-    for (const { e, m, tick, ticks } of tl) {
+    // an appoggiatura takes half its main note's value on the beat (the main note starts late);
+    // an acciaccatura is crushed in just before the beat
+    let delay = 0;
+    for (const [k, { e, m, tick: tk, ticks: tks }] of tl.entries()) {
+      let tick = tk, ticks = tks;
       events.push({ tick, dur: ticks, e, m, part: part.index });
-      if (e.kind !== 'note') continue;
+      if (e.kind !== 'note') { delay = 0; continue; }
+      const app = e.grace && (e.notes[0].fix?.graceKind ?? e.notes[0].graceKind) === 'app';
+      const main = app ? tl.slice(k + 1).find((q) => !q.e.grace && (q.e.voice ?? 0) === (e.voice ?? 0)) : null;
+      if (!e.grace && delay) { tick += delay; ticks = Math.max(6, ticks - delay); delay = 0; }
       const lv = ex.level.get(e) ?? 0.68;
       for (const n of e.notes) {
         const midi = midiOf(W.notes.get(n).pitch) + shift;
@@ -192,13 +199,15 @@ export function performance(model, score, { plan = null, from = null } = {}) {
         let s = prev;
         const art = e.notes[0].artic || [];
         // a grace note (acciaccatura) sounds just before the beat of its note, very short
-        if (!s) { s = { tick: e.grace ? Math.max(0, tick - 14) : tick, dur: e.grace ? 12 : ticks, midi, part: part.index, vel: Math.min(1, lv + (art.includes('acc') ? 0.2 : 0)) }; notes.push(s); }
+        const gDur = app && main ? Math.round(main.ticks / 2) : 12;
+        if (!s) { s = { tick: e.grace && !app ? Math.max(0, tick - 14) : tick, dur: e.grace ? gDur : ticks, midi, part: part.index, vel: Math.min(1, lv + (art.includes('acc') ? 0.2 : 0)) }; notes.push(s); }
         else s.dur += ticks;
         // how much of its length sounds: staccato about half, tenuto and under a slur all of it
         // (joined to the next), otherwise a small gap
         s.rel = art.includes('stacc') ? 0.45 : art.includes('ten') || ex.legato.has(e) ? 1 : 0.92;
         if (links.has(n)) sounding.set(links.get(n), s);
       }
+      if (app && main) delay = Math.round(main.ticks / 2);
     }
     const end = tl.length ? tl[tl.length - 1].tick + tl[tl.length - 1].ticks : 0;
     total = Math.max(total, end);
