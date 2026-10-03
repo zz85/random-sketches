@@ -224,6 +224,32 @@ the music from it on the main thread (a few ms, so it is rebuilt after every cor
 - **Double accidentals.** A double flat engraved as two flat glyphs, or cut in pieces by a staff
   line, is reassembled (glyphnet reads the joined box); double sharps split by a line likewise.
 
+### Dynamics, hairpins, slurs; debug labels
+
+- **Dynamics** are read from words outside the staff: components grouped by height band and
+  small gaps, each word matched against shape templates of every dynamic (`pp`, `mf`, `sfz`, `fp`…)
+  in the 5 SMuFL fonts and in italic serif text fonts, and of common expression words (`dolce`,
+  `cresc.`, `marcato`, `espr.`…). A dynamic is kept only when it beats every word and is not a
+  lone digit; it attaches to the chord it starts under. A dynamic touching a stem below the staff
+  is cut free of the stem (and of beams). Templates: `dynamics.js`, built by
+  `tools/make_dynamics.mjs`. On the CODA sheet every dynamic is read and attached to the right
+  note (`p`, `f`, `sf`, `mp`, `fz`, `pp`), and the words are kept as text.
+- **Hairpins**: two thin strokes, one end closed and one open, outside the staff.
+- **Slurs**: every arc that is not a tie, from the chord nearest its left end to the one nearest
+  its right; arcs running off the staff continue on the next system.
+- **Ties** merged with a slur or hairpin, so not a component of their own, are found by following a
+  thin curve from one head to the next head at the same pitch.
+- **Playback and export**: dynamics set loudness (holding until the next one; `sf`, `fz`, `sfz`
+  accent one note; `fp` drops back), hairpins ramp it to the next dynamic, notes under a slur are
+  joined. MusicXML gets `<dynamics>`, `<wedge>` and `<slur>`; MIDI gets the velocities.
+- **Debug labels**: Interpreted view's **Show** menu toggles bar numbers and checks, note values,
+  articulations, ties (green arcs), slurs (dashed magenta), dynamics and hairpins (orange boxes
+  with what was read), voices, and text (dashed grey boxes with the nearest word). The choice is
+  remembered.
+
+On the `expr` fixture (7 dynamics, 5 slurs, 2 hairpins, clean): 6 dynamics on the right note
+(none invented), 4 slurs, both hairpins.
+
 ### Competing readings and the glyph classifier
 
 Doubtful symbols keep more than one reading, and the reading that best fits the rest of the
@@ -367,22 +393,22 @@ few readings where the 1955 edition and the MusicXML simply differ.
 
 ### Accuracy
 
-Twelve test tunes engraved by Verovio in five different music fonts (Leipzig, Bravura, Leland,
+Thirteen test tunes engraved by Verovio in five different music fonts (Leipzig, Bravura, Leland,
 Gootville, Petaluma) at 14–26 px per space: treble, bass and alto clefs, keys from 4♯ to 3♭,
 chords, beams, 16ths and 32nds, ledger lines up to five, all accidentals including double sharps,
 and for rhythm: rests of every value, dotted values, flags and beams, eighth and quarter
 triplets, ties across barlines, 4/4, 3/4, 2/4, cut time and 6/8 with a pickup, two voices on one
-staff, staccato / tenuto / accent marks and double flats (ground truth is
+staff, staccato / tenuto / accent marks, double flats, dynamics, slurs and hairpins (ground truth is
 every event of every bar from Verovio's own encoding). Each is then run through a deterministic
 photo simulator (`degrade.js`: rotation, keystone, page curl, scale, uneven lighting, blur,
-sensor noise). 570 notes and 140 bars per condition:
+sensor noise). 599 notes and 152 bars per condition:
 
 | condition | heads found | pitch correct | note values correct | bars exactly right |
 |---|---|---|---|---|
-| clean engraving | 99.3% | 98.8% | 99.3% | 137/140 |
-| scan (1.2°, blur, light noise) | 96.0% | 95.6% | 95.1% | 119/140 |
-| photo (−2.5°, keystone, curl, 1.25×, shadow) | 97.5% | 96.1% | 95.4% | 124/140 |
-| phone (4°, strong keystone and curl, 0.85×, heavy noise, ~13 px/space) | 93.5% | 91.2% | 89.2% | 106/140 |
+| clean engraving | 99.3% | 98.8% | 99.3% | 149/152 |
+| scan (1.2°, blur, light noise) | 96.0% | 95.7% | 95.0% | 129/152 |
+| photo (−2.5°, keystone, curl, 1.25×, shadow) | 97.7% | 96.8% | 95.5% | 135/152 |
+| phone (4°, strong keystone and curl, 0.85×, heavy noise, ~13 px/space) | 93.8% | 91.7% | 90.7% | 118/152 |
 
 A bar is "exactly right" when every note and rest starts at the right time with the right length,
 in whichever voice. The two new tunes cost a little on the totals: two voices in one column hide
@@ -426,8 +452,7 @@ grace notes. The transposed page is readable but shows its seams at that resolut
 - Grace and cue notes are smaller than the head detector's opening and are not moved; when one is
   found it plays as a short grace note.
 - Rhythm: at most two voices per staff; no tremolos, repeats, voltas, multi-bar rests or tempo
-  marks (set the tempo by hand); dynamics, slurs and other articulations (marcato, fermata) are
-  not read. A note missed by the head detector cannot be added by hand yet; its bar shows red.
+  marks (set the tempo by hand); marcato, fermata and bowing marks are not read. A note missed by the head detector cannot be added by hand yet; its bar shows red.
 - Ties and slurs stay put: fine for steps, visibly off for big moves such as clef changes.
 - Moving a note does not re-flip stems or re-slope beams; with a clef change notes can collide.
 - One staff size per page; cross-staff beams move with one staff.
@@ -500,6 +525,7 @@ segmentation net would be the natural upgrade for heads and accidentals in poor 
 | `imgproc.js` | Sauvola / Wolf binarisation, run-length metrics, skew, resampling, morphology, components |
 | `theory.js` | pitch spelling, clefs, key signatures, 18 instruments, intervals, bar-scoped accidentals |
 | `render.js` | transposition plan, in-place page rewrite, interpretation overlay |
+| `dynamics.js` | shape templates of dynamics and expression words |
 | `glyphnet.js`, `glyphnet-weights.js` | learned glyph classifier (98k-parameter MLP, int8) |
 | `rhythm.js` | beams and flags per stem, dots, grace notes, rests / time signatures / tuplet numbers by template, ties |
 | `raster.js` | SVG path rasterizer and shape descriptor for the glyph templates |

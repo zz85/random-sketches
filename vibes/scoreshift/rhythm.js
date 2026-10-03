@@ -9,6 +9,8 @@ import { GLYPHS } from './glyphs.js';
 import { rasterGlyph, descriptor, shapeDistance } from './raster.js';
 import { lineY, yOfP, pOfY, spaceAt, TARGET } from './omr.js';
 import { classify } from './glyphnet.js';
+import { DYN_TEMPLATES } from './dynamics.js';
+import { shapeDistance as shapeDist } from './raster.js';
 
 const CLASSES = {
   rest: ['restWhole', 'restQuarter', 'rest8th', 'rest16th', 'rest32nd'],
@@ -61,6 +63,7 @@ function readMeter(top, bot) {
   return best && best.dist < 0.5 ? { beats: best.beats, unit: best.unit, dist: best.dist } : null;
 }
 
+const RARE_DYN = new Set(['rf', 'rfz', 'sffz', 'sfp']); // read only when clearly better
 const REST_DUR = { restWhole: 1, restQuarter: 4, rest8th: 8, rest16th: 16, rest32nd: 32 };
 const DIGIT = (name) => +name.slice(-1);
 
@@ -139,6 +142,17 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
     }
     return { m, cw, ch };
   };
+  // a hairpin: two thin strokes meeting at one end; the open end has two ink runs a good half
+  // space apart, the closed end one, the middle two
+  const hairpinForm = (c, S) => {
+    const cw = c.x1 - c.x0 + 1, ch = c.y1 - c.y0 + 1;
+    if (cw < 2.5 * S || ch > 1.8 * S || ch < 0.35 * S || c.n / (cw * ch) > 0.3) return null;
+    const M = maskOf(c).m, runsAt = (fx) => { const x = Math.min(cw - 1, Math.max(0, Math.round(fx * (cw - 1)))); let n = 0, inside = false; const ys = []; for (let y = 0; y < ch; y++) { const v = M[y * cw + x]; if (v && !inside) { n++; ys.push(y); } inside = !!v; } return { n, ys }; };
+    const L0 = runsAt(0.04), R0 = runsAt(0.96), mid = runsAt(0.5);
+    if (mid.n !== 2) return null;
+    const open = (r) => r.n === 2 && r.ys[1] - r.ys[0] > 0.45 * S, closed = (r) => r.n === 1;
+    return closed(L0) && open(R0) ? 'cresc' : open(L0) && closed(R0) ? 'dim' : null;
+  };
   for (const st of staves) { st.rests = []; st.times = []; st.tuplets = []; }
   readTimes();
   const arcs = [];
@@ -211,7 +225,7 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
   }
   // pieces of one symbol split by staff-line removal: overlapping columns, a line-thick gap
   // between them at a staff line
-  const free = comps.filter((c) => c && !used.has(c.id) && c.n >= 3).sort((a, b) => a.y0 - b.y0);
+  const free = comps.filter((c) => c && (!used.has(c.id) || textIds.has(c.id)) && c.n >= 3).sort((a, b) => a.y0 - b.y0);
   const parent = new Map(free.map((c) => [c.id, c]));
   const root = (c) => { while (parent.get(c.id) !== c) c = parent.get(c.id); return c; };
   for (let i = 0; i < free.length; i++) for (let j = i + 1; j < free.length; j++) {
@@ -267,6 +281,77 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
     for (const n of best.ns) if (!n.artic.includes(kind)) n.artic.push(kind);
     used.add(c.id); (c.ids || [c.id]).forEach((i) => used.add(i));
   }
+  // ---------------------------------------------------------------- dynamics and words
+  // Expression text outside the staff: components grouped into words (similar height band,
+  // gaps under half a space), each word matched against the dynamics and expression-word templates.
+  // A dynamic that matches clearly better than any word attaches to the chord it starts under.
+  for (const st of staves) { st.dynamics = []; st.words = []; }
+  const isText = (c) => (c.ids || [c.id]).some((i) => textIds.has(i));
+  const cand = syms.filter((c) => c && (!used.has(c.id) || isText(c)) && !headComps.has(c.id)).filter((c) => {
+    const st = staffOf(c); if (!st) return false;
+    const S = spaceAt(st, c.cx), H = (c.y1 - c.y0 + 1) / S, W = (c.x1 - c.x0 + 1) / S;
+    if (H < 0.35 || H > 3.2 || W > 3.8) return false;
+    // (ties, slurs and hairpins are not text: thin, wide, mostly empty boxes)
+    const fill = c.n / ((c.x1 - c.x0 + 1) * (c.y1 - c.y0 + 1));
+    if (!isText(c) && W >= 0.9 && H <= Math.max(1.4, 0.35 * W) && fill < 0.5 && c.n / (c.x1 - c.x0 + 1) < 0.45 * S) return false;
+    return (c.y0 > lineY(st, 4, c.cx) - 0.1 * S && c.cy > lineY(st, 4, c.cx) + 0.6 * S) || (c.y1 < lineY(st, 0, c.cx) + 0.1 * S && c.cy < lineY(st, 0, c.cx) - 0.6 * S);
+  }).sort((a, b) => a.x0 - b.x0);
+  // A dynamic touching a stem that runs below (or above) the staff is part of that note's
+  // component: cut the stem's columns out and take what is left beyond the staff as candidates.
+  for (const n of notes) {
+    const sm = n.stem; if (!sm || n.chord == null) continue;
+    const st = n.st, S = spaceAt(st, n.x), yb = lineY(st, 4, sm.x), yt = lineY(st, 0, sm.x);
+    const lo = sm.dir > 0 ? Math.max(yb + 0.5 * S, n.y + 0.8 * S) : sm.tip - 2.5 * S, hi = sm.dir > 0 ? sm.tip + 2.5 * S : Math.min(yt - 0.5 * S, n.y - 0.8 * S);
+    if (hi - lo < 0.8 * S) continue;
+    const x0 = Math.round(sm.x - 2.2 * S), x1 = Math.round(sm.x + 2.2 * S), px = [];
+    for (let y = Math.round(lo); y <= Math.round(hi); y++) for (let x = x0; x <= x1; x++) {
+      if (x < 0 || x >= w || y < 0 || y >= h || L[y * w + x] !== n.comp || Math.abs(x - sm.x) <= Math.ceil(t) + 1) continue;
+      // (not a beam: long horizontal runs)
+      let a = x, b = x; while (a > 0 && L[y * w + a - 1] === n.comp && x - a < 2 * S) a--; while (b < w - 1 && L[y * w + b + 1] === n.comp && b - x < 2 * S) b++;
+      if (b - a > 1.3 * S) continue;
+      px.push([x, y]);
+    }
+    if (px.length < 0.25 * S * S) continue;
+    const xs = px.map((p) => p[0]), ys = px.map((p) => p[1]);
+    const q = { id: -n.comp, px, x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys), n: px.length };
+    q.cx = (q.x0 + q.x1) / 2; q.cy = (q.y0 + q.y1) / 2;
+    if ((q.y1 - q.y0) / S < 0.8 || (q.x1 - q.x0) / S < 0.5 || cand.some((c) => c.id === q.id)) continue;
+    cand.push(q);
+  }
+  cand.sort((a, b) => a.x0 - b.x0);
+  const taken = new Set();
+  for (const c0 of cand) {
+    if (taken.has(c0)) continue;
+    const st = staffOf(c0), S = spaceAt(st, c0.cx), word = [c0];
+    let box = [c0.x0, c0.y0, c0.x1, c0.y1];
+    for (const q of cand) {
+      if (taken.has(q) || word.includes(q) || staffOf(q) !== st || q.x0 < box[0]) continue;
+      if (q.x0 - box[2] > 0.5 * S) continue;
+      const ov = Math.min(box[3], q.y1) - Math.max(box[1], q.y0);
+      if (ov < 0.3 * Math.min(box[3] - box[1], q.y1 - q.y0)) continue;
+      word.push(q); box = [Math.min(box[0], q.x0), Math.min(box[1], q.y0), Math.max(box[2], q.x1), Math.max(box[3], q.y1)];
+    }
+    word.forEach((q) => taken.add(q));
+    const cw = box[2] - box[0] + 1, ch = box[3] - box[1] + 1, m = new Uint8Array(cw * ch), ids = new Set(word.filter((q) => !q.px).flatMap((q) => q.ids || [q.id]));
+    for (let y = box[1]; y <= box[3]; y++) for (let x = box[0]; x <= box[2]; x++) if (ids.has(L[y * w + x])) m[(y - box[1]) * cw + x - box[0]] = 1;
+    for (const q of word) if (q.px) for (const [x, y] of q.px) m[(y - box[1]) * cw + x - box[0]] = 1;
+    const d = descriptor(m, cw, ch); if (!d) continue;
+    let bestD = null, bestW = null;
+    for (const T of DYN_TEMPLATES) {
+      const dist = shapeDist(d, { g: T.g, bw: T.ar, bh: 1 }) + (T.hS ? 0.2 * Math.abs(Math.log(d.bh / S / T.hS)) : 0);
+      if (T.dyn) { const dd = dist + (RARE_DYN.has(T.text) ? 0.05 : 0); if (!bestD || dd < bestD.dist) bestD = { text: T.text, dist: dd }; } else if (!bestW || dist < bestW.dist) bestW = { text: T.text, dist };
+    }
+    // a lone digit (a tuplet number, a fingering) is not a word
+    if (word.length === 1) { const gd = match(m, cw, ch, ['tuplet', 'digit'], S); if (gd && (!bestD || gd.dist < bestD.dist + 0.03)) { word.forEach((q) => taken.delete(q)); continue; } }
+    const below = box[1] > lineY(st, 4, (box[0] + box[2]) / 2) - 0.2 * S;
+    if (globalThis.DYN) globalThis.DYN.push({ st: st.index, box, d: bestD, w: bestW });
+    if (bestD && bestD.dist < 0.3 && (!bestW || bestD.dist < bestW.dist - 0.02) && (box[3] - box[1]) / S < 3.3) {
+      // the chord at (or the first after) the dynamic's left part
+      let n = null; for (const q of st.notes) if (q.x > box[0] - 1.0 * S && (!n || q.x < n.x)) n = q;
+      st.dynamics.push({ text: bestD.text, dist: bestD.dist, box, note: n, below, ids: [...ids] });
+    } else if (word.length >= 2 || (bestW && bestW.dist < 0.3)) st.words.push({ box, guess: bestW?.text, ids: [...ids] });
+    ids.forEach((i) => used.add(i));
+  }
   for (const c of syms) {
     if (!c || used.has(c.id)) continue;
     const st = staffOf(c); if (!st) continue;
@@ -276,7 +361,7 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
     const inside = c.cy > yt - 0.5 * S && c.cy < yb + 0.5 * S;
     // arcs (ties and slurs): wide, flat, thin
     // (a short flat tie fills most of its box; what makes an arc is that it is thin)
-    if (W >= 0.9 && H <= Math.max(1.4, 0.3 * W) && (fill < 0.5 || (H <= 0.75 && fill < 0.9)) && c.n / cw < 0.45 * S) { arcs.push({ st, c }); continue; }
+    if (W >= 0.9 && H <= Math.max(1.4, 0.35 * W) && (fill < 0.5 || (H <= 0.75 && fill < 0.9)) && c.n / cw < 0.45 * S && !hairpinForm(c, S)) { arcs.push({ st, c }); continue; }
     // whole / half rests: a solid slab hanging from a line (whole) or sitting on one (half); the
     // 4th and middle lines normally, any line or ledger position when a second voice moves it
     const near = c.cy > yt - 2.2 * S && c.cy < yb + 2.2 * S;
@@ -321,10 +406,44 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
       // (not the staccato of the next note: just above or below its head)
       !st.notes.some((n) => Math.abs(n.x - d.c.cx) < 0.8 * S && Math.abs(n.y - d.c.cy) < 1.6 * S)).length > 0 ? 1 : 0;
   }
+  // Ties merged with something else (a phrase slur, a hairpin) are not components of their own:
+  // between two neighbouring chords sharing a pitch, look for a thin curve of ink starting next
+  // to the first head and ending next to the second, bowing away from the heads on one side.
+  const tieBetween = (a, b, S) => {
+    const xa = Math.round(a.box[2] + 0.1 * S), xb = Math.round(b.box[0] - 0.1 * S);
+    if (xb - xa < 0.6 * S || xb - xa > 12 * S) return false;
+    for (const side of [-1, 1]) {
+      let hit = 0, last = null, ok = true, ys = [];
+      for (let x = xa; x <= xb; x++) {
+        // nearest ink beyond the head on this side, within 1.8 spaces
+        let found = null;
+        for (let d = Math.round(0.25 * S); d <= Math.round(1.8 * S); d++) { const y = Math.round(a.y + side * d); if (y >= 0 && y < h && L[y * w + x] && !headComps.has(L[y * w + x])) { found = y; break; } }
+        if (found == null) continue;
+        let run = 0; while (run < S && L[(found + side * run) * w + x]) run++;
+        if (run > 0.45 * S) continue; // a stem, a thick symbol
+        if (last != null && Math.abs(found - last) > 0.35 * S) { ok = false; break; }
+        last = found; hit++; ys.push(Math.abs(found - a.y));
+      }
+      // (the curve's ends merge into the heads, which are skipped)
+      if (!ok || hit < 0.6 * (xb - xa + 1) || ys.length < 3) continue;
+      // a curve: nearer the heads at both ends than in the middle
+      const n3 = Math.max(1, Math.floor(ys.length / 4)), ends = (ys.slice(0, n3).reduce((q, v) => q + v, 0) + ys.slice(-n3).reduce((q, v) => q + v, 0)) / (2 * n3), midv = Math.max(...ys);
+      if (ys[0] < 1.3 * S && ys[ys.length - 1] < 1.3 * S && midv - ends > 0.08 * S) return true;
+    }
+    return false;
+  };
   // ties: an arc from just right of one head to just left of the next head at the same position
   // (on the next chord of the staff). An arc running off the end of the staff ties over the
   // system break to the same note at the start of the next one.
   for (const n of notes) n.tie = false;
+  for (const st of staves) {
+    const S = spaceAt(st, (st.x0 + st.x1) / 2);
+    for (const a of st.notes) {
+      if (a.tie) continue;
+      const b = st.notes.find((q) => q.chord === a.chord + 1 && q.p === a.p);
+      if (b && tieBetween(a, b, S)) a.tie = true;
+    }
+  }
   for (const { st, c } of arcs) {
     const S = spaceAt(st, c.cx);
     const col = (x) => { for (let y = c.y0; y <= c.y1; y++) if (L[y * w + x] === c.id) return y; return c.cy; };
@@ -335,10 +454,50 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
       if (Math.abs(yl - a.y) > 2.0 * S) continue;
       const next = ns.filter((b) => b.chord === a.chord + 1);
       const b = next.find((q) => q.p === a.p && Math.abs(c.x1 - q.box[0]) < 1.4 * S && Math.abs(yr - q.y) < 2.0 * S);
-      // an arc into a note with a staccato or accent is a slur (portato), never a tie
-      if (b && b.artic?.some((k) => k === 'stacc' || k === 'acc')) break;
-      if (b) { a.tie = true; a.tieIds = [c.id]; break; }
-      if (!next.length && c.x1 > st.x1 - 1.8 * S) { a.tie = true; a.tieIds = [c.id]; break; }
+      if (b) { a.tie = true; a.tieIds = [c.id]; c.isTie = true; break; }
+      if (!next.length && c.x1 > st.x1 - 1.8 * S) { a.tie = true; a.tieIds = [c.id]; c.isTie = true; break; }
     }
   }
+
+  // ---------------------------------------------------------------- slurs
+  // Every other arc is a slur, from the chord nearest its left end to the one nearest its right
+  // end (heads or stem ends within reach). An arc running off the end of the staff continues on
+  // the next system; one starting at the left edge comes from the previous one.
+  for (const st of staves) st.slurs = [];
+  const ends = (st, x, y, S) => {
+    let best = null;
+    for (const n of st.notes) {
+      const ys = [n.y, n.stem ? n.stem.tip : n.y], dx = Math.abs(n.x - x), dy = Math.min(...ys.map((v) => Math.abs(v - y)));
+      if (dx > 2.2 * S || dy > 3.2 * S) continue;
+      const d = dx + 0.5 * dy; if (!best || d < best.d) best = { d, n };
+    }
+    return best?.n || null;
+  };
+  for (const { st, c } of arcs) {
+    if (c.isTie) continue;
+    const S = spaceAt(st, c.cx), col = (x) => { for (let y = c.y0; y <= c.y1; y++) if (L[y * w + x] === c.id) return y; return c.cy; };
+    const a = ends(st, c.x0, col(c.x0), S), b = ends(st, c.x1, col(c.x1), S);
+    const fromEdge = c.x0 < (st.key?.x1 ?? st.x0) + 1.5 * S, toEdge = c.x1 > st.x1 - 1.8 * S;
+    if ((!a && !fromEdge) || (!b && !toEdge) || (a && b && a.chord === b.chord)) continue;
+    const yl = col(c.x0), yr = col(c.x1), above = c.y0 < Math.min(yl, yr) - 2;
+    st.slurs.push({ from: a, to: b, open: !b, cont: !a, box: [c.x0, c.y0, c.x1, c.y1], yl, yr, peak: above ? c.y0 : c.y1, above, ids: c.ids || [c.id] });
+    used.add(c.id);
+  }
+
+  // ---------------------------------------------------------------- hairpins
+  // Two thin strokes meeting at one end: wide, short, outside the staff. The open end has two ink
+  // runs a good half space apart, the closed end one.
+  for (const st of staves) st.hairpins = [];
+  for (const c of syms) {
+    if (!c || used.has(c.id)) continue;
+    const st = staffOf(c); if (!st) continue;
+    const S = spaceAt(st, c.cx);
+    const yt = lineY(st, 0, c.cx), yb = lineY(st, 4, c.cx); if (c.y1 > yt - 0.3 * S && c.y0 < yb + 0.3 * S) continue;
+    const form = hairpinForm(c, S);
+    if (!form) continue;
+    const near = (x) => { let best = null; for (const n of st.notes) { const d = Math.abs(n.x - x); if (!best || d < best.d) best = { d, n }; } return best && best.d < 3 * S ? best.n : null; };
+    st.hairpins.push({ form, from: near(c.x0), to: near(c.x1), box: [c.x0, c.y0, c.x1, c.y1], ids: c.ids || [c.id] });
+    used.add(c.id);
+  }
+
 }

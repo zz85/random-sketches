@@ -38,6 +38,9 @@
   .chip { position:absolute; transform:translate(-2px,-120%); background:#1d2b3aee; color:#fff; font-size:12px; padding:2px 7px; border-radius:10px; border:0; min-height:0; white-space:nowrap; }
   #pop { position:fixed; z-index:10; background:var(--card); border:1px solid var(--line); border-radius:12px; box-shadow:0 8px 30px #0003; padding:.6rem; display:none; max-width:min(22rem,94vw); }
   #pop h3 { margin:.1rem 0 .5rem; font-size:.95rem; }
+  .showmenu { position:relative; } .showmenu summary { cursor:pointer; border:1px solid var(--line); border-radius:8px; padding:.4rem .7rem; background:var(--card); list-style:none; min-height:36px; box-sizing:border-box; }
+  .showmenu .panel { position:absolute; z-index:20; top:110%; left:0; background:var(--card); border:1px solid var(--line); border-radius:10px; box-shadow:0 8px 24px #0002; padding:.4rem .6rem; }
+  .showmenu .panel label { display:block; white-space:nowrap; padding:.15rem 0; }
   #pop .hint { margin:.3rem 0 0; color:#5d6b78; font-size:.82rem; }
   #status .bad { color:#b4141e; }
   #pop .row { display:flex; gap:.35rem; flex-wrap:wrap; margin:.3rem 0; align-items:center; }
@@ -75,6 +78,7 @@
     <button data-view="original">Original</button><button data-view="interpreted">Interpreted</button><button data-view="transposed" aria-pressed="true">Transposed</button>
   </span>
   <label><input type="checkbox" id="labels"> note names</label>
+  <details id="show" class="showmenu"></details>
   <label>Tempo <input type="number" id="tempo" min="20" max="320" value="100" style="width:4.2rem" aria-label="Tempo in quarter notes per minute"> ♩/min</label>
   <label>Zoom <input type="range" id="zoom" min="0.25" max="2" step="0.05" value="1" aria-label="Zoom"></label>
 </div>

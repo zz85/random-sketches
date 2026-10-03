@@ -3,9 +3,9 @@
  * install, serve stale-while-revalidate so it starts offline and updates quietly.
  * Bump VERSION when the file list changes.
  */
-const VERSION = 'scoreshift-v4';
+const VERSION = 'scoreshift-v5';
 const SHELL = ['./', './index.html', './app.js', './worker.js', './omr.js', './imgproc.js', './theory.js', './render.js', './glyphs.js', './sample.jpg', './manifest.webmanifest', './icon.svg',
-  './pdfsource.js', './rhythm.js', './raster.js', './score.js', './export.js', './player.js', './glyphnet.js', './glyphnet-weights.js', './vendor/pdfjs/pdf.min.mjs', './vendor/pdfjs/pdf.worker.min.mjs',
+  './pdfsource.js', './rhythm.js', './raster.js', './score.js', './export.js', './player.js', './glyphnet.js', './glyphnet-weights.js', './dynamics.js', './vendor/pdfjs/pdf.min.mjs', './vendor/pdfjs/pdf.worker.min.mjs',
   './vendor/pdfjs/wasm/jbig2.wasm', './vendor/pdfjs/wasm/openjpeg.wasm', './vendor/pdfjs/wasm/qcms_bg.wasm'];
 
 self.addEventListener('install', (e) => {

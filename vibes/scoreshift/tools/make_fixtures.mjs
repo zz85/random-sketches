@@ -55,7 +55,7 @@ console.log('glyphs.js written');
 
 // ---- fixtures ----
 fs.mkdirSync(path.join(ROOT, 'fixtures'), { recursive: true });
-const SIZES = [16, 20, 24, 18, 22, 14, 26, 18, 20, 17, 19, 21];
+const SIZES = [16, 20, 24, 18, 22, 14, 26, 18, 20, 17, 19, 21, 18];
 for (let i = 0; i < TUNES.length; i++) {
   const t = TUNES[i], font = FONTS[i % FONTS.length], S = SIZES[i];
   tk = new VerovioToolkit(VM); // fresh: the ABC importer leaks key state between loads
@@ -84,7 +84,10 @@ for (let i = 0; i < TUNES.length; i++) {
         id:e.id, kind:e.classList[0], notes:e.matches('g.chord')?[...e.querySelectorAll('g.note')].map(q=>q.id):e.matches('g.note')?[e.id]:[],
         tuplet:e.closest('g.tuplet')?.id||null, layer:[...m.querySelectorAll('g.layer')].indexOf(e.closest('g.layer')), beam:e.closest('g.beam')?.id||null, box:e.matches('g.rest, g.mRest')?R(e):null}))}));
     const ties=[...document.querySelectorAll('g.tie')].map(t=>t.id);
-    return {staves,notes,measures,ties};})()`);
+    const dynams=[...document.querySelectorAll('g.dynam')].map(d=>({id:d.id,box:R(d)}));
+    const slurs=[...document.querySelectorAll('g.slur')].map(d=>({id:d.id,box:R(d)}));
+    const hairpins=[...document.querySelectorAll('g.hairpin')].map(d=>({id:d.id,box:R(d)}));
+    return {staves,notes,measures,ties,dynams,slurs,hairpins};})()`);
   const shot = await b.send('Page.captureScreenshot', { format: 'png', clip: { x: 0, y: 0, width: size[0], height: size[1], scale: 1 } });
   const img = decodeGray(Buffer.from(shot.result.data, 'base64'));
   // crop to content + margin to keep the files small
@@ -110,6 +113,8 @@ for (let i = 0; i < TUNES.length; i++) {
   truth.meter = t.meter || (meter === 'C' ? [4, 4] : meter === 'C|' ? [2, 2] : meter.split('/').map(Number));
   const tieStarts = new Set(geo.ties.map((id) => tk.getElementAttr(id).startid?.replace('#', '')));
   const noteIdx = new Map(geo.notes.map((n, i) => [n.id, i]));
+  const evIds = new Map(geo.measures.flatMap((m) => m.events.map((e) => [e.id, e.notes.map((id) => noteIdx.get(id))[0]])));
+  const idxOf = (id) => noteIdx.get(id) ?? evIds.get(id) ?? null;
   truth.measures = geo.measures.map((m) => ({ sys: m.sys, events: m.events.map((e) => {
     const a = tk.getElementAttr(e.id), dur = e.kind === 'mRest' ? 1 : +a.dur, dots = +(a.dots || 0);
     const tup = e.tuplet ? tk.getElementAttr(e.tuplet) : null, ratio = tup ? [+tup.num, +tup.numbase] : null;
@@ -121,6 +126,13 @@ for (let i = 0; i < TUNES.length; i++) {
   const cap = (truth.meter[0] * 4 / truth.meter[1]) * 96;
   truth.measures.forEach((m, mi) => { if (mi === 0 && m.events.filter((e) => !e.voice).reduce((s, e) => s + (e.ticks ?? cap), 0) < cap) m.pickup = true; });
   truth.measures.forEach((m, mi) => m.events.forEach((e, ei) => e.notes.forEach((k) => Object.assign(notes[k], { ev: [mi, ei], dur: e.dur, dots: e.dots, tuplet: e.tuplet }))));
+  // expression: dynamics (text, box, the note it is attached to), slurs and hairpins (first and
+  // last note); notes referred to by index
+  const startOf = (id) => { const a = tk.getElementAttr(id); return { from: (a.startid || '').replace('#', ''), to: (a.endid || '').replace('#', '') }; };
+  const dynText = t.src ? [...toMEI(t).matchAll(/<dynam[^>]*>([a-z]+)<\/dynam>/g)].map((m) => m[1]) : [];
+  truth.dynamics = geo.dynams.map((d, k) => { const r = startOf(d.id); return { text: dynText[k], box: d.box, note: idxOf(r.from) }; });
+  truth.slurs = geo.slurs.map((d) => { const r = startOf(d.id); return { box: d.box, from: idxOf(r.from), to: idxOf(r.to) }; });
+  truth.hairpins = geo.hairpins.map((d) => { const r = startOf(d.id), a = tk.getElementAttr(d.id); return { box: d.box, form: a.form, from: idxOf(r.from), to: idxOf(r.to) }; });
   fs.writeFileSync(path.join(ROOT, 'fixtures', t.name + '.png'), encodeGray(out));
   fs.writeFileSync(path.join(ROOT, 'fixtures', t.name + '.json'), JSON.stringify(truth));
   console.log(t.name, font, `S=${S}`, `${out.w}x${out.h}`, geo.staves.length, 'staves', notes.length, 'notes');

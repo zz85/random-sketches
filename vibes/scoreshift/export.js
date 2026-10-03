@@ -44,7 +44,9 @@ function tieLinks(part, W) {
   return links;
 }
 
+const DYN_TAG = Object.fromEntries(['ppp', 'pp', 'p', 'mp', 'mf', 'f', 'ff', 'fff', 'sf', 'sfz', 'sfp', 'fz', 'fp', 'rf', 'rfz', 'sffz'].map((d) => [d, d]));
 export function toMusicXML(model, score, { plan = null, instrument = null, title = 'Score' } = {}) {
+  const emitted = new Set();
   const W = writing(model, plan);
   const out = ['<?xml version="1.0" encoding="UTF-8" standalone="no"?>',
     '<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 4.0 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">',
@@ -81,6 +83,15 @@ export function toMusicXML(model, score, { plan = null, instrument = null, title
       const VO = `<voice>${v + 1}</voice>`, STEM = nv > 1 ? `<stem>${v ? 'down' : 'up'}</stem>` : '';
       for (const e of evs) {
         const dur = Math.round(evTicks(e) * 5);
+        // dynamics and hairpins starting / ending here (voice 1 only, below the staff)
+        for (const n of e.notes || []) {
+          const d = (m.st.dynamics || []).find((q) => q.note === n);
+          if (d && !emitted.has(d)) { emitted.add(d); out.push(`<direction placement="${d.below ? 'below' : 'above'}"><direction-type><dynamics><${DYN_TAG[d.text] || 'other-dynamics'}${DYN_TAG[d.text] ? '/>' : `>${esc(d.text)}</other-dynamics>`}</dynamics></direction-type><voice>${v + 1}</voice></direction>`); }
+          for (const hp of m.st.hairpins || []) {
+            if (hp.from === n && !emitted.has(hp)) { emitted.add(hp); out.push(`<direction placement="below"><direction-type><wedge type="${hp.form === 'cresc' ? 'crescendo' : 'diminuendo'}"/></direction-type><voice>${v + 1}</voice></direction>`); if (!hp.to || hp.to === n) out.push('<direction><direction-type><wedge type="stop"/></direction-type></direction>'); }
+            else if (hp.to === n && hp.from !== n && !emitted.has(hp.to)) { emitted.add(hp.to); out.push('<direction><direction-type><wedge type="stop"/></direction-type></direction>'); }
+          }
+        }
         const tm = e.tuplet ? `<time-modification><actual-notes>${e.tuplet[0]}</actual-notes><normal-notes>${e.tuplet[1]}</normal-notes></time-modification>` : '';
         const dots = '<dot/>'.repeat(e.dots || 0);
         const tup = tupletEdge(m, e);
@@ -95,7 +106,8 @@ export function toMusicXML(model, score, { plan = null, instrument = null, title
           const ties = (tieStop ? '<tie type="stop"/>' : '') + (tieStart ? '<tie type="start"/>' : '');
           const tied = (tieStop ? '<tied type="stop"/>' : '') + (tieStart ? '<tied type="start"/>' : '');
           const ART = { stacc: '<staccato/>', ten: '<tenuto/>', acc: '<accent/>' }, art = k === 0 ? (e.notes[0].artic || []).map((a) => ART[a]).join('') : '';
-          const nota = tied + (k === 0 ? tup : '') + (art ? `<articulations>${art}</articulations>` : '');
+          const slurs = k === 0 ? (m.st.slurs || []).flatMap((sl, si) => [sl.from && e.notes.includes(sl.from) ? `<slur type="start" number="${(si % 6) + 1}"/>` : '', sl.to && e.notes.includes(sl.to) ? `<slur type="stop" number="${(si % 6) + 1}"/>` : '']).join('') : '';
+          const nota = tied + slurs + (k === 0 ? tup : '') + (art ? `<articulations>${art}</articulations>` : '');
           out.push(`<note>${e.grace ? '<grace/>' : ''}${k ? '<chord/>' : ''}<pitch><step>${step}</step>${p.alter ? `<alter>${p.alter}</alter>` : ''}<octave>${oct}</octave></pitch>` +
             `${e.grace ? '' : `<duration>${dur}</duration>`}${ties}${VO}<type>${TYPE[e.dur] || 'quarter'}</type>${dots}` +
             `${w.acc != null ? `<accidental>${ACC[w.acc]}</accidental>` : ''}${tm}${STEM}${nota ? `<notations>${nota}</notations>` : ''}</note>`);
@@ -118,6 +130,47 @@ function tupletEdge(m, e) {
   return (g[0] === e ? '<tuplet type="start"/>' : '') + (g[g.length - 1] === e ? '<tuplet type="stop"/>' : '');
 }
 
+// Loudness per event (0..1) from written dynamics (holding until the next, sf/fz/sfz/rf
+// accenting one note) and hairpins (ramping from where they start to the next written dynamic,
+// or two steps when none follows); default mf. Legato: events under a slur except its last.
+export const DYN_LEVEL = { ppp: 0.2, pp: 0.3, p: 0.42, mp: 0.55, mf: 0.68, f: 0.8, ff: 0.9, fff: 1 };
+const ACCENT_DYN = { sf: 0.25, sfz: 0.3, fz: 0.25, sffz: 0.35, rf: 0.2, rfz: 0.25 };
+export function expression(part, tl = timeline(part)) {
+  const level = new Map(), legato = new Set(), idx = new Map();
+  const notesOf = tl.map((q) => q.e.notes || []);
+  tl.forEach((q, k) => (q.e.notes || []).forEach((n) => idx.set(n, k)));
+  const dyn = new Map(); // event index -> dynamic text
+  const hps = [];
+  for (const st of part.staves) {
+    for (const d of st.dynamics || []) if (d.note && idx.has(d.note)) dyn.set(idx.get(d.note), d.text);
+    for (const h of st.hairpins || []) if (h.from && idx.has(h.from)) hps.push({ a: idx.get(h.from), b: h.to && idx.has(h.to) ? idx.get(h.to) : idx.get(h.from), form: h.form });
+    for (const sl of st.slurs || []) {
+      const a = sl.from && idx.has(sl.from) ? idx.get(sl.from) : null, b = sl.to && idx.has(sl.to) ? idx.get(sl.to) : null;
+      const lo = a ?? (b != null ? tl.findIndex((q) => q.m.st === st) : null), hi = b ?? (a != null ? tl.map((q) => q.m.st).lastIndexOf(st) + (sl.open ? 1 : 0) : null);
+      if (lo != null && hi != null) for (let k = lo; k < hi; k++) legato.add(tl[k].e);
+    }
+  }
+  const base = []; let cur = DYN_LEVEL.mf;
+  tl.forEach((q, k) => {
+    const t = dyn.get(k); let v;
+    if (t && DYN_LEVEL[t] != null) { cur = DYN_LEVEL[t]; v = cur; }
+    else if (t === 'fp' || t === 'sfp') { v = DYN_LEVEL.f; cur = DYN_LEVEL.p; }
+    else if (t && ACCENT_DYN[t] != null) v = Math.min(1, cur + ACCENT_DYN[t]);
+    else v = cur;
+    base.push(v);
+  });
+  for (const h of hps) {
+    const nk = [...dyn.keys()].filter((k) => k >= h.b && k <= h.b + 2 && DYN_LEVEL[dyn.get(k)] != null).sort((x, y) => x - y)[0];
+    const v0 = base[h.a], v1 = nk != null ? DYN_LEVEL[dyn.get(nk)] : Math.max(0.15, Math.min(1, v0 + (h.form === 'cresc' ? 0.22 : -0.22)));
+    const end = nk != null ? nk : h.b, t0 = tl[h.a].tick, t1 = Math.max(t0 + 1, tl[end].tick);
+    for (let k = h.a; k <= end; k++) base[k] = v0 + ((v1 - v0) * (tl[k].tick - t0)) / (t1 - t0);
+    if (nk == null) for (let k = end + 1; k < tl.length && !dyn.has(k); k++) base[k] = v1;
+  }
+  tl.forEach((q, k) => level.set(q.e, base[k]));
+  void notesOf;
+  return { level, legato, dyn, hps };
+}
+
 /** Sounding notes for playback and MIDI: [{ tick, dur, midi, part, ev, notes }], ties merged. */
 export function performance(model, score, { plan = null, from = null } = {}) {
   const W = writing(model, plan);
@@ -127,18 +180,21 @@ export function performance(model, score, { plan = null, from = null } = {}) {
   for (const part of score.parts) {
     const links = tieLinks(part, W), sounding = new Map(); // note -> sounding entry it extends
     const tl = timeline(part);
+    const ex = expression(part, tl);
     for (const { e, m, tick, ticks } of tl) {
       events.push({ tick, dur: ticks, e, m, part: part.index });
       if (e.kind !== 'note') continue;
+      const lv = ex.level.get(e) ?? 0.68;
       for (const n of e.notes) {
         const midi = midiOf(W.notes.get(n).pitch) + shift;
         const prev = sounding.get(n);
         let s = prev;
         const art = e.notes[0].artic || [];
-        if (!s) { s = { tick, dur: e.grace ? 12 : ticks, midi, part: part.index, vel: art.includes('acc') ? 0.95 : 0.72 }; notes.push(s); }
+        if (!s) { s = { tick, dur: e.grace ? 12 : ticks, midi, part: part.index, vel: Math.min(1, lv + (art.includes('acc') ? 0.2 : 0)) }; notes.push(s); }
         else s.dur += ticks;
-        // how much of its length sounds: staccato about half, tenuto all, otherwise a small gap
-        s.rel = art.includes('stacc') ? 0.45 : art.includes('ten') ? 1 : 0.92;
+        // how much of its length sounds: staccato about half, tenuto and under a slur all of it
+        // (joined to the next), otherwise a small gap
+        s.rel = art.includes('stacc') ? 0.45 : art.includes('ten') || ex.legato.has(e) ? 1 : 0.92;
         if (links.has(n)) sounding.set(links.get(n), s);
       }
     }

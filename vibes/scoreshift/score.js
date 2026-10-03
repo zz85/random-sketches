@@ -281,7 +281,8 @@ function candidates(evs) {
     if (e.kind === 'note' && !e.notes.some((n) => n.fix)) {
       // a false head (a fragment, a letter): cheap when an unbeamed note sits inside a beam group
       const prev = evs[k - 1], next = evs[k + 1];
-      const inside = !e.beamComp && prev?.beamComp != null && prev.beamComp === next?.beamComp;
+      // (or one that breaks the value of the beamed group it sits in)
+      const inside = prev?.beamComp != null && prev.beamComp === next?.beamComp && (!e.beamComp || (e.dur !== prev.dur && prev.dur === next.dur));
       out.push({ k, cost: inside ? 1.1 : 3.4, delta: -t0(e), text: 'not a note', apply: () => { e.removed = true; e.repaired = 'not a note'; } });
     }
     if (e.kind === 'rest') {

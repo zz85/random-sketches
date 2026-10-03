@@ -11,7 +11,7 @@ const $ = (id) => document.getElementById(id);
 const cv = $('cv'), ov = $('ov'), ctx = cv.getContext('2d'), octx = ov.getContext('2d');
 const store = JSON.parse(localStorage.getItem('scoreshift') || '{}');
 const S = { from: store.from || 'C', to: store.to || 'Bb-clarinet', octave: 'auto', clef: store.clef || 'auto', view: 'transposed', labels: !!store.labels, zoom: 1, model: null, rend: null, name: 'score', sel: null, tempo: store.tempo || 100, score: null, sounding: null };
-const save = () => localStorage.setItem('scoreshift', JSON.stringify({ from: S.from, to: S.to, clef: S.clef, labels: S.labels, tempo: S.tempo }));
+const save = () => localStorage.setItem('scoreshift', JSON.stringify({ from: S.from, to: S.to, clef: S.clef, labels: S.labels, tempo: S.tempo, show: S.show }));
 
 for (const sel of [$('from'), $('to')]) for (const i of INSTRUMENTS) sel.add(new Option(i.name, i.id));
 $('from').value = S.from; $('to').value = S.to; $('clef').value = S.clef; $('labels').checked = S.labels;
@@ -255,7 +255,19 @@ function barSummary(sc) {
 // ---------- rhythm overlay (interpreted view) ----------
 const DUR_GLYPH = { 1: '𝅝', 2: '𝅗𝅥', 4: '♩', 8: '♪', 16: '𝅘𝅥𝅯', 32: '𝅘𝅥𝅰' };
 const evLabel = (e) => `${e.kind === 'rest' ? 'r' : ''}${e.full ? 'bar' : e.dur}${'.'.repeat(e.dots || 0)}${e.tuplet ? '³' : ''}${e.tie ? '⁀' : ''}${e.voice ? ' v2' : ''}${(e.notes?.[0].artic || []).map((a) => ({ stacc: '·', ten: '–', acc: '>' })[a]).join('')}`;
+// What Interpreted view shows (each can be switched off in the Show menu).
+const SHOW_KEYS = [['bars', 'bar numbers + checks'], ['values', 'note values'], ['artic', 'articulations'], ['ties', 'ties'], ['slurs', 'slurs'], ['dyn', 'dynamics + hairpins'], ['voices', 'voices'], ['text', 'text']];
+S.show = Object.assign(Object.fromEntries(SHOW_KEYS.map(([k]) => [k, true])), store.show || {});
+const pill = (g, text, x, y, fg, bg = 'rgba(255,255,255,.92)', align = 'center') => {
+  const w = g.measureText(text).width + 6, x0 = align === 'left' ? x - 3 : x - w / 2;
+  g.fillStyle = bg; g.fillRect(x0, y - 11, w, 14); g.fillStyle = fg; g.textAlign = align; g.fillText(text, align === 'left' ? x : x, y);
+};
+function arc(g, x0, y0, x1, y1, up, dash) {
+  const mx = (x0 + x1) / 2, h = Math.min(28, 6 + 0.12 * Math.abs(x1 - x0));
+  g.setLineDash(dash ? [5, 4] : []); g.beginPath(); g.moveTo(x0, y0); g.quadraticCurveTo(mx, (y0 + y1) / 2 + (up ? -h : h), x1, y1); g.stroke(); g.setLineDash([]);
+}
 function drawRhythm(g, model, sc, r, selM) {
+  const on = S.show;
   g.save(); g.scale(r, r);
   for (const m of sc.measures) {
     const st = m.st, ya = lineY(st, 0, m.x0) - 2, yb = lineY(st, 4, m.x0) + 2;
@@ -265,23 +277,46 @@ function drawRhythm(g, model, sc, r, selM) {
       g.fillRect(m.x0 + 2, ya, m.x1 - m.x0 - 4, yb - ya);
       if (m === selM) { g.strokeStyle = '#0a58ca'; g.lineWidth = 2; g.strokeRect(m.x0 + 2, ya, m.x1 - m.x0 - 4, yb - ya); }
     }
-    // bar check under the staff: ticks used / bar length
-    g.font = '700 14px system-ui, sans-serif'; g.textAlign = 'center';
-    const tx = (m.x0 + m.x1) / 2, ty = lineY(st, 4, tx) + 36;
-    const label = bad ? `${m.ticks / 96}/${m.cap / 96} beats` : fixed ? `fixed: ${m.repairs.join(', ')}` : m.timeShown ? `${m.time.beats}/${m.time.unit}${m.time.inferred ? '?' : ''}` : '';
-    if (label) { g.lineWidth = 3; g.strokeStyle = 'rgba(255,255,255,.9)'; g.strokeText(label, tx, ty); g.fillStyle = bad ? '#b4141e' : '#8a5a00'; g.fillText(label, tx, ty); }
+    if (on.bars) {
+      // bar number above the staff at the bar's start; under it the count when it does not add up
+      g.font = '700 12px system-ui, sans-serif';
+      pill(g, `${m.number}${m.voices > 1 && on.voices ? ' ‖2' : ''}`, m.x0 + 4, ya - 6, '#0b5394', 'rgba(219,234,254,.95)', 'left');
+      g.font = '700 14px system-ui, sans-serif';
+      const tx = (m.x0 + m.x1) / 2, ty = lineY(st, 4, tx) + 36;
+      const label = bad ? `${m.ticks / 96}/${m.cap / 96} beats` : fixed ? `fixed: ${m.repairs.join(', ')}` : m.timeShown ? `${m.time.beats}/${m.time.unit}${m.time.inferred ? '?' : ''}` : '';
+      if (label) pill(g, label, tx, ty, bad ? '#b4141e' : '#8a5a00');
+    }
     g.font = '700 12px system-ui, sans-serif';
     for (const e of m.events) {
       if (e.removed) continue;
-      if (e.kind === 'rest') { const b = e.rest.box; g.strokeStyle = 'rgba(120,60,200,.85)'; g.lineWidth = 1.5; g.strokeRect(b[0] - 1, b[1] - 1, b[2] - b[0] + 2, b[3] - b[1] + 2); }
+      if (e.kind === 'rest' && on.values) { const b = e.rest.box; g.strokeStyle = 'rgba(120,60,200,.85)'; g.lineWidth = 1.5; g.strokeRect(b[0] - 1, b[1] - 1, b[2] - b[0] + 2, b[3] - b[1] + 2); }
       const y = e.kind === 'rest' ? e.rest.box[3] + 10 : Math.max(...e.notes.map((n) => n.y)) + (e.notes[0].stem && e.notes[0].stem.dir > 0 ? Math.max(0, e.notes[0].stem.tip - Math.max(...e.notes.map((n) => n.y))) + 10 : 20);
-      const t = evLabel(e);
-      g.lineWidth = 3; g.strokeStyle = 'rgba(255,255,255,.9)'; g.strokeText(t, e.x, y);
-      g.fillStyle = e.repaired ? '#c2410c' : e.fixed ? '#0a7d32' : '#4b2a8a'; g.fillText(t, e.x, y);
+      const parts = [];
+      if (on.values) parts.push(`${e.kind === 'rest' ? 'r' : ''}${e.full ? 'bar' : e.dur}${'.'.repeat(e.dots || 0)}${e.tuplet ? '³' : ''}`);
+      if (on.voices && m.voices > 1) parts.push(`v${(e.voice ?? 0) + 1}`);
+      if (on.artic) parts.push(...(e.notes?.[0].artic || []).map((a) => ({ stacc: 'stacc', ten: 'ten', acc: 'acc' })[a]));
+      if (parts.length) pill(g, parts.join(' '), e.x, y, e.repaired ? '#c2410c' : e.fixed ? '#0a7d32' : '#4b2a8a');
     }
+  }
+  for (const st of model.staves) {
+    g.lineWidth = 2.2;
+    if (on.ties) { g.strokeStyle = 'rgba(0,140,70,.9)'; for (const a of st.notes) if (a.tie) { const b = st.notes.find((q) => q.chord === a.chord + 1 && q.p === a.p); const up = a.stem ? a.stem.dir > 0 : true; if (b) arc(g, a.box[2], a.y + (up ? -7 : 7), b.box[0], b.y + (up ? -7 : 7), up); else arc(g, a.box[2], a.y - 7, a.box[2] + 30, a.y - 7, true); } }
+    if (on.slurs) { g.strokeStyle = 'rgba(200,0,120,.85)'; for (const sl of st.slurs || []) { const b = sl.box; g.setLineDash([6, 4]); g.beginPath(); g.moveTo(b[0], sl.yl); g.quadraticCurveTo((b[0] + b[2]) / 2, 2 * sl.peak - (sl.yl + sl.yr) / 2, b[2], sl.yr); g.stroke(); g.setLineDash([]); g.font = '700 11px system-ui, sans-serif'; pill(g, `slur${sl.open ? '→' : ''}${sl.cont ? '←' : ''}`, (b[0] + b[2]) / 2, sl.above ? b[1] - 3 : b[3] + 14, '#a3006b'); } }
+    if (on.dyn) {
+      g.font = '800 13px system-ui, sans-serif';
+      for (const d of st.dynamics || []) { const b = d.box; g.strokeStyle = 'rgba(200,90,0,.9)'; g.lineWidth = 1.5; g.strokeRect(b[0] - 2, b[1] - 2, b[2] - b[0] + 4, b[3] - b[1] + 4); pill(g, d.text, (b[0] + b[2]) / 2, b[3] + 16, '#b45309', 'rgba(255,237,213,.95)'); }
+      for (const h of st.hairpins || []) { const b = h.box; g.strokeStyle = 'rgba(200,90,0,.9)'; g.lineWidth = 1.5; g.strokeRect(b[0] - 2, b[1] - 2, b[2] - b[0] + 4, b[3] - b[1] + 4); pill(g, h.form === 'cresc' ? 'cresc <' : 'dim >', (b[0] + b[2]) / 2, b[3] + 16, '#b45309', 'rgba(255,237,213,.95)'); }
+    }
+    if (on.text) { g.font = '600 11px system-ui, sans-serif'; for (const t of st.words || []) { const b = t.box; g.strokeStyle = 'rgba(100,110,120,.7)'; g.lineWidth = 1; g.setLineDash([3, 3]); g.strokeRect(b[0] - 2, b[1] - 2, b[2] - b[0] + 4, b[3] - b[1] + 4); g.setLineDash([]); pill(g, `text${t.guess ? ' ~' + t.guess : ''}`, b[0], b[1] - 4, '#475569', 'rgba(241,245,249,.95)', 'left'); } }
   }
   g.restore();
 }
+// Show menu: one checkbox per kind of label
+(() => {
+  const box = $('show'); if (!box) return;
+  box.innerHTML = '<summary>Show ▾</summary><div class="panel">' + SHOW_KEYS.map(([k, l]) => `<label><input type="checkbox" data-show="${k}" ${S.show[k] ? 'checked' : ''}> ${l}</label>`).join('') + '</div>';
+  box.querySelectorAll('[data-show]').forEach((c) => (c.onchange = () => { S.show[c.dataset.show] = c.checked; save(); update(); }));
+})();
 function drawPlayhead() {
   if (!S.sounding || !S.sounding.length) return;
   const r = S.rend.r; octx.save(); octx.scale(r, r); octx.fillStyle = 'rgba(255,90,0,.45)';

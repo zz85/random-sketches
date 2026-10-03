@@ -204,6 +204,23 @@ describe('ties, text, voices, articulations', () => {
   });
 });
 
+describe('expression: dynamics, hairpins, slurs', () => {
+  test('read on the expr fixture and played', () => {
+    const r = evaluate('expr', 'clean'), T = r.truth, g = new Map(r.pairs.map(([t, q]) => [r.tn.indexOf(t), q]));
+    const D = r.res.staves.flatMap((s) => s.dynamics), H = r.res.staves.flatMap((s) => s.hairpins), Sl = r.res.staves.flatMap((s) => s.slurs);
+    expect(T.dynamics.filter((d) => D.some((x) => x.text === d.text && x.note === g.get(d.note))).length).toBeGreaterThanOrEqual(6);
+    expect(D.every((x) => T.dynamics.some((d) => d.text === x.text))).toBe(true); // no invented dynamics
+    expect(H.map((h) => h.form).sort()).toEqual(['cresc', 'dim']);
+    expect(T.slurs.filter((t) => Sl.some((x) => x.from === g.get(t.from) && x.to === g.get(t.to))).length).toBeGreaterThanOrEqual(4);
+    const sc = buildScore(r.res), p = performance(r.res, sc);
+    const first = p.notes[0], loud = p.notes.find((n) => n.vel >= 0.79);
+    expect(first.vel).toBeCloseTo(0.42, 2); expect(loud).toBeTruthy(); // p ... f
+    expect(first.sound).toBe(first.dur); // under a slur: legato
+    const xml = toMusicXML(r.res, sc, {});
+    expect(xml).toContain('<dynamics><p/></dynamics>'); expect(xml).toContain('<wedge type="crescendo"/>'); expect(xml).toContain('<slur type="start"');
+  });
+});
+
 describe('score assembly and bar repair', () => {
   const st = (events) => ({ index: 0, system: 1, x0: 0, x1: 1000, key: { x1: 0, fifths: 0 }, clef: { type: 'treble' }, bars: [{ x: 500, ids: [] }], times: [{ x: 1, x1: 2, beats: 3, unit: 4 }], tuplets: [],
     notes: events.filter((e) => e.k !== 'r').map((e, i) => ({ x: e.x, y: 50, p: 4, chord: i + 1, dur: e.d, ndots: e.dots || 0, beamed: !!e.b, comp: e.b ? 7 : 100 + i, flags: e.d >= 8 && !e.b ? 1 : 0, pitch: { d: 32, alter: 0 }, box: [e.x - 6, 44, e.x + 6, 56] })),
@@ -265,6 +282,12 @@ describe.skipIf(!fs.existsSync(CODA))('real page: CODA viola audition sheet', ()
     expect(r.staves[6].times[0].sym).toBe('cut');
     expect(sc.stats.under + sc.stats.over).toBe(0);
     expect(sc.measures.length).toBeGreaterThanOrEqual(66);
+    // ties the page has: the opening E4 over bars 1-2-3, E5 bar 3 into 4, G♯4 bar 15 into 16
+    const bar = (k) => sc.measures[k - 1].events.filter((e) => e.notes);
+    expect(bar(1).at(-1).tie && bar(2).at(-1).tie && bar(3).at(-1).tie).toBe(true);
+    expect(bar(16)[0].notes[0].name).toBe('G♯4'); // tied from bar 15: keeps its sharp
+    const dyn = r.staves.flatMap((s) => s.dynamics.map((d) => d.text));
+    expect(dyn.filter((d) => d === 'f').length).toBeGreaterThanOrEqual(7); expect(dyn).toContain('pp'); expect(dyn).toContain('mp');
   });
 });
 

@@ -72,6 +72,10 @@ c5:2 b4:4 a4:4 & e4:2 g4:2 | b4:1 & g4:1 |` },
   { name: 'marks', clef: 'G', fifths: 0, meter: [4, 4], src: `
 xf4:4! xg4:4! bbb4:4_ bbe5:4_ | [c5:8! d5:8! e5:8! f5:8!] xc5:2> | [g4:8_ a4:8_] b4:4> xd5:4! r:4 | bba4:2_ xf5:2! |
 e5:4> d5:4> [c5:8! b4:8!] a4:4_ | xg5:4! bbd5:4 xa4:4 bbg4:4 | [f5:8! e5:8! d5:8! c5:8!] b4:4_ g4:4> | c5:1 |` },
+  // dynamics, slurs (within a bar, across a barline and over a system break) and hairpins
+  { name: 'expr', clef: 'G', fifths: -1, meter: [3, 4], src: `
+f4:4@p^ g4:4 a4:4$ | b4:2^@mf c5:4$ | d5:4+< e5:4 f5:4+. | g5:2.@f | a5:4^ g5:4 f5:4 | e5:4 d5:4 c5:4$ |
+d5:4@mp+> c5:4 b4:4 | a4:2.+.@pp | g4:4^ a4:4 b4:4$ | c5:4@sf d5:4 c5:4 | b4:4^ a4:4 g4:4$ | f4:2.@ff |` },
 ];
 
 export const FONTS = ['Leipzig', 'Bravura', 'Leland', 'Gootville', 'Petaluma'];
@@ -124,21 +128,35 @@ export function toMEI(t) {
       if (tk === '[') { x += '<beam>'; continue; } if (tk === ']') { x += '</beam>'; continue; }
       if (/^\d\{$/.test(tk)) { x += `<tuplet num="${tk[0]}" numbase="2" num.visible="true" bracket.visible="false">`; tup = 2 / +tk[0]; continue; }
       if (tk === '}') { x += '</tuplet>'; tup = 1; continue; }
-      const m = tk.match(/^([^:]+):(\d+)(\.*)(~?)([!_>]*)$/); if (!m) throw new Error('bad token ' + tk);
+      const m = tk.match(/^([^:]+):(\d+)(\.*)(~?)(.*)$/); if (!m) throw new Error('bad token ' + tk);
       const dur = +m[2], dots = m[3].length, tie = !!m[4];
-      const ar = [...m[5]].map((c) => ({ '!': 'stacc', _: 'ten', '>': 'acc' })[c]).join(' ');
+      // suffixes: ! staccato, _ tenuto, > accent, @pp dynamic, ^ $ slur start / end,
+      // +< +> hairpin start (cresc / dim), +. hairpin end
+      const suf = m[5], ar = [...suf.replace(/@[a-z]+|\+[<>.]|[\^$]/g, '')].map((c) => ({ '!': 'stacc', _: 'ten', '>': 'acc' })[c]).filter(Boolean).join(' ');
+      const id = 'n' + ++nid;
+      const dyn = suf.match(/@([a-z]+)/); if (dyn) ctl.push({ bar: cur, kind: 'dynam', id, text: dyn[1] });
+      if (suf.includes('^')) open.slur = { bar: cur, id };
+      if (suf.includes('$') && open.slur) { ctl.push({ bar: open.slur.bar, kind: 'slur', start: open.slur.id, end: id }); open.slur = null; }
+      const hp = suf.match(/\+([<>.])/);
+      if (hp && hp[1] !== '.') open.hp = { bar: cur, id, form: hp[1] === '<' ? 'cres' : 'dim' };
+      if (hp && hp[1] === '.' && open.hp) { ctl.push({ bar: open.hp.bar, kind: 'hairpin', start: open.hp.id, end: id, form: open.hp.form }); open.hp = null; }
       const d = ` dur="${dur}"${dots ? ` dots="${dots}"` : ''}${ar ? ` artic="${ar}"` : ''}`;
       q += len(dur, dots) * tup;
-      if (m[1] === 'r') x += `<rest${d}/>`;
-      else if (m[1].includes(',')) x += `<chord${d}>${m[1].split(',').map((p) => note(p, dur, dots, tie, true)).join('')}</chord>`;
-      else x += note(m[1], dur, dots, tie, false).replace('<note ', ar ? `<note artic="${ar}" ` : '<note ');
+      if (m[1] === 'r') x += `<rest xml:id="${id}"${d}/>`;
+      else if (m[1].includes(',')) x += `<chord xml:id="${id}"${d}>${m[1].split(',').map((p) => note(p, dur, dots, tie, true)).join('')}</chord>`;
+      else x += note(m[1], dur, dots, tie, false).replace('<note ', `<note xml:id="${id}" ${ar ? `artic="${ar}" ` : ''}`);
     }
     return { x, q };
   };
-  const out = bars.map((bar, bi) => {
+  let nid = 0, cur = 0; const ctl = [], open = {};
+  const ctlXml = (bi) => ctl.filter((c) => c.bar === bi).map((c) => c.kind === 'dynam' ? `<dynam staff="1" startid="#${c.id}">${c.text}</dynam>`
+    : c.kind === 'slur' ? `<slur staff="1" startid="#${c.start}" endid="#${c.end}"/>` : `<hairpin form="${c.form}" staff="1" startid="#${c.start}" endid="#${c.end}"/>`).join('');
+  const built = bars.map((bar, bi) => {
+    cur = bi;
     const ls = bar.split('&').map((v) => layer(v.trim()));
     const pickup = bi === 0 && Math.abs(ls[0].q - cap) > 1e-6;
-    return `<measure n="${bi + 1}"${pickup ? ' metcon="false"' : ''}${bi === bars.length - 1 ? ' right="end"' : ''}><staff n="1">${ls.map((l, k) => `<layer n="${k + 1}">${l.x}</layer>`).join('')}</staff></measure>`;
+    return [bi, `<measure n="${bi + 1}"${pickup ? ' metcon="false"' : ''}${bi === bars.length - 1 ? ' right="end"' : ''}><staff n="1">${ls.map((l, k) => `<layer n="${k + 1}">${l.x}</layer>`).join('')}</staff>`];
   });
+  const out = built.map(([bi, x]) => x + ctlXml(bi) + '</measure>');
   return `<?xml version="1.0" encoding="UTF-8"?><mei xmlns="http://www.music-encoding.org/ns/mei" meiversion="5.0"><music><body><mdiv><score><scoreDef><staffGrp><staffDef n="1" lines="5"><clef shape="${clef[0]}" line="${clef[1]}"/><keySig sig="${ks}"/>${meter}</staffDef></staffGrp></scoreDef><section>${out.join('')}</section></score></mdiv></body></music></mei>`;
 }
