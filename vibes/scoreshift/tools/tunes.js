@@ -63,6 +63,11 @@ f5:2. r:4 | f4:1 |` },
   { name: 'sixeight', clef: 'F', fifths: -3, meter: [6, 8], src: `
 b2:8 | e3:4 g3:8 b3:4 g3:8 | e4:4. d4:4. | [c4:16. b3:32 a3:8] g3:4 r:4 | f3:4. r:4. |
 [e3:16 f3:16 g3:16 a3:16 b3:16 c4:16] d4:4 f3:8 | [b3:8 a3:8 g3:8] e3:4. | (g3 b3 e4):4. g4:4 r:8 | e4:2. |` },
+  // two voices on one staff (stems up / down), against each other in rhythm, rests in one voice
+  { name: 'twovoice', clef: 'G', fifths: 1, meter: [4, 4], src: `
+d5:4 e5:4 f5:4 g5:4 & b4:2 a4:2 | [a5:8 g5:8 f5:8 e5:8] d5:2 & c5:4 b4:4 a4:2 | g5:2. f5:4 & r:4 b4:4 c5:4 d5:4 |
+e5:4 d5:4 c5:2 & g4:1 | b4:2 d5:2 & g4:4 g4:4 f4:2 | e5:4. d5:8 c5:4 b4:4 & r:2 a4:2 |
+c5:2 b4:4 a4:4 & e4:2 g4:2 | b4:1 & g4:1 |` },
 ];
 
 export const FONTS = ['Leipzig', 'Bravura', 'Leland', 'Gootville', 'Petaluma'];
@@ -88,7 +93,7 @@ export const GLYPH_TUNES = [
   G([4, 4], `5{[c5:16 c5:16 c5:16 c5:16 c5:16]} 6{[c5:16 c5:16 c5:16 c5:16 c5:16 c5:16]} r:2 |`),
 ];
 
-// Compact notation -> MEI for Verovio. Tokens: pitch [accidental # b n x bb] letter octave,
+// Compact notation -> MEI for Verovio. A bar may hold two voices: 'voice 1 tokens & voice 2 tokens'. Tokens: pitch [accidental # b n x bb] letter octave,
 // ':' duration (1 2 4 8 16 32) and dots, '~' tie to the next note, r = rest, (a b c):d chord,
 // [ ... ] beam group, 3{ ... } triplet, | barline. A first measure shorter than the meter is a pickup.
 const ACC = { '#': 's', b: 'f', n: 'n', x: 'x', bb: 'ff' };
@@ -106,9 +111,10 @@ export function toMEI(t) {
   };
   const len = (dur, dots) => { let q = 4 / dur, a = q; for (let i = 0; i < dots; i++) { a /= 2; q += a; } return q; };
   const bars = t.src.trim().split('|').map((b) => b.trim()).filter(Boolean);
-  const out = bars.map((bar, bi) => {
+  // voices: a bar may hold layers separated by '&' (layer 1 stems up, layer 2 stems down)
+  const layer = (src) => {
     let x = '', q = 0, tup = 1;
-    const toks = bar.replace(/\(([^)]*)\)/g, (_, c) => c.trim().split(/\s+/).join(',')).replace(/(\d)\{/g, ' $1{ ').replace(/([[\]}])/g, ' $1 ').split(/\s+/).filter(Boolean);
+    const toks = src.replace(/\(([^)]*)\)/g, (_, c) => c.trim().split(/\s+/).join(',')).replace(/(\d)\{/g, ' $1{ ').replace(/([[\]}])/g, ' $1 ').split(/\s+/).filter(Boolean);
     for (const tk of toks) {
       if (tk === '[') { x += '<beam>'; continue; } if (tk === ']') { x += '</beam>'; continue; }
       if (/^\d\{$/.test(tk)) { x += `<tuplet num="${tk[0]}" numbase="2" num.visible="true" bracket.visible="false">`; tup = 2 / +tk[0]; continue; }
@@ -121,8 +127,12 @@ export function toMEI(t) {
       else if (m[1].includes(',')) x += `<chord${d}>${m[1].split(',').map((p) => note(p, dur, dots, tie, true)).join('')}</chord>`;
       else x += note(m[1], dur, dots, tie, false);
     }
-    const pickup = bi === 0 && Math.abs(q - cap) > 1e-6;
-    return `<measure n="${bi + 1}"${pickup ? ' metcon="false"' : ''}${bi === bars.length - 1 ? ' right="end"' : ''}><staff n="1"><layer n="1">${x}</layer></staff></measure>`;
+    return { x, q };
+  };
+  const out = bars.map((bar, bi) => {
+    const ls = bar.split('&').map((v) => layer(v.trim()));
+    const pickup = bi === 0 && Math.abs(ls[0].q - cap) > 1e-6;
+    return `<measure n="${bi + 1}"${pickup ? ' metcon="false"' : ''}${bi === bars.length - 1 ? ' right="end"' : ''}><staff n="1">${ls.map((l, k) => `<layer n="${k + 1}">${l.x}</layer>`).join('')}</staff></measure>`;
   });
   return `<?xml version="1.0" encoding="UTF-8"?><mei xmlns="http://www.music-encoding.org/ns/mei" meiversion="5.0"><music><body><mdiv><score><scoreDef><staffGrp><staffDef n="1" lines="5"><clef shape="${clef[0]}" line="${clef[1]}"/><keySig sig="${ks}"/>${meter}</staffDef></staffGrp></scoreDef><section>${out.join('')}</section></score></mdiv></body></music></mei>`;
 }

@@ -39,6 +39,7 @@ node tools/make_sample.mjs          # rebuild sample.jpg
 node tools/make_pdf_fixture.mjs     # rebuild fixtures/parts.pdf (title page + 2 music pages)
 node tools/compare.mjs truth fixtures/<tune>.json a.musicxml [b.mxl ...]   # score MusicXML (ours, Audiveris) against ground truth
 node tools/compare.mjs pair a.musicxml b.mxl                               # or two outputs against each other
+bun tools/oemer_heads.mjs <dir>     # score oemer notehead masks (json + mask png per fixture image) against the truth
 node tools/make_glyphset.mjs 120 /tmp/glyphset && bun tools/glyphnet.mjs /tmp/glyphset 25 && node tools/glyphnet_export.mjs   # retrain the classifier
 ```
 
@@ -250,6 +251,24 @@ hundreds of MB downloaded, and seconds per page on a phone. homr's licence would
 AGPL. oemer's segmentation would be the plausible next step if notehead *detection* on photos
 becomes the bottleneck (it is the biggest remaining loss on phone photos). That needs ONNX
 Runtime Web with WebGPU or wasm, and a check of its weights' size and licence.
+
+### oemer's notehead segmentation, tried
+
+oemer's second U-Net (`seg_net`, 38 MB ONNX, MIT) labels stems/rests, noteheads and clefs/keys
+per pixel. Run on the fixture images (Python, onnxruntime on CPU), its notehead layer was scored
+by `tools/oemer_heads.mjs`: a true head counts as found when its centre falls in the predicted
+mask.
+
+| | heads | ScoreShift | oemer | either | found only by oemer | oemer blobs on no head | oemer time |
+|---|---|---|---|---|---|---|---|
+| clean | 499 | 99.6% | 92.4% | 99.6% | 0 | 1029 / 1972 | ~100 s a page |
+| phone | 499 | 93.6% | 97.4% | 99.2% | 28 | 172 / 627 | ~90 s a page |
+
+On phone photos it finds heads ScoreShift misses: their union would recover 28 of the 32 misses,
+the largest loss left there. On clean pages it adds nothing. Half of its blobs cover no head at
+all, so it could only confirm heads the rules are unsure of, never add heads on its own. At
+38 MB, and minutes a page on a CPU here, it does not fit an offline phone app as is; a smaller
+distilled head detector trained on the same synthetic pages as `glyphnet` would be the next step.
 
 ### Against Audiveris
 

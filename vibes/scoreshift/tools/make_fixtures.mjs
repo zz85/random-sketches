@@ -54,7 +54,7 @@ console.log('glyphs.js written');
 
 // ---- fixtures ----
 fs.mkdirSync(path.join(ROOT, 'fixtures'), { recursive: true });
-const SIZES = [16, 20, 24, 18, 22, 14, 26, 18, 20, 17];
+const SIZES = [16, 20, 24, 18, 22, 14, 26, 18, 20, 17, 19];
 for (let i = 0; i < TUNES.length; i++) {
   const t = TUNES[i], font = FONTS[i % FONTS.length], S = SIZES[i];
   tk = new VerovioToolkit(VM); // fresh: the ABC importer leaks key state between loads
@@ -79,7 +79,7 @@ for (let i = 0; i < TUNES.length; i++) {
     const measures=[...document.querySelectorAll('g.measure')].map(m=>({sys:systems.indexOf(m.closest('g.system')),
       events:[...m.querySelectorAll('g.note, g.chord, g.rest, g.mRest')].filter(e=>!(e.matches('g.note')&&e.parentElement.closest('g.chord'))).map(e=>({
         id:e.id, kind:e.classList[0], notes:e.matches('g.chord')?[...e.querySelectorAll('g.note')].map(q=>q.id):e.matches('g.note')?[e.id]:[],
-        tuplet:e.closest('g.tuplet')?.id||null, beam:e.closest('g.beam')?.id||null, box:e.matches('g.rest, g.mRest')?R(e):null}))}));
+        tuplet:e.closest('g.tuplet')?.id||null, layer:[...m.querySelectorAll('g.layer')].indexOf(e.closest('g.layer')), beam:e.closest('g.beam')?.id||null, box:e.matches('g.rest, g.mRest')?R(e):null}))}));
     const ties=[...document.querySelectorAll('g.tie')].map(t=>t.id);
     return {staves,notes,measures,ties};})()`);
   const shot = await b.send('Page.captureScreenshot', { format: 'png', clip: { x: 0, y: 0, width: size[0], height: size[1], scale: 1 } });
@@ -112,10 +112,10 @@ for (let i = 0; i < TUNES.length; i++) {
     let tk0 = (4 / dur) * 96, add = tk0; for (let k = 0; k < dots; k++) { add /= 2; tk0 += add; }
     if (ratio) tk0 = (tk0 * ratio[1]) / ratio[0];
     return { kind: e.kind === 'chord' ? 'note' : e.kind, dur, dots, tuplet: ratio, ticks: e.kind === 'mRest' ? null : tk0, notes: e.notes.map((id) => noteIdx.get(id)),
-      tie: e.notes.some((id) => tieStarts.has(id)), beam: !!e.beam, box: e.box };
+      tie: e.notes.some((id) => tieStarts.has(id)), beam: !!e.beam, box: e.box, voice: Math.max(0, e.layer) };
   }) }));
   const cap = (truth.meter[0] * 4 / truth.meter[1]) * 96;
-  truth.measures.forEach((m, mi) => { if (mi === 0 && m.events.reduce((s, e) => s + (e.ticks ?? cap), 0) < cap) m.pickup = true; });
+  truth.measures.forEach((m, mi) => { if (mi === 0 && m.events.filter((e) => !e.voice).reduce((s, e) => s + (e.ticks ?? cap), 0) < cap) m.pickup = true; });
   truth.measures.forEach((m, mi) => m.events.forEach((e, ei) => e.notes.forEach((k) => Object.assign(notes[k], { ev: [mi, ei], dur: e.dur, dots: e.dots, tuplet: e.tuplet }))));
   fs.writeFileSync(path.join(ROOT, 'fixtures', t.name + '.png'), encodeGray(out));
   fs.writeFileSync(path.join(ROOT, 'fixtures', t.name + '.json'), JSON.stringify(truth));
