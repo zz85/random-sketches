@@ -68,6 +68,10 @@ b2:8 | e3:4 g3:8 b3:4 g3:8 | e4:4. d4:4. | [c4:16. b3:32 a3:8] g3:4 r:4 | f3:4. 
 d5:4 e5:4 f5:4 g5:4 & b4:2 a4:2 | [a5:8 g5:8 f5:8 e5:8] d5:2 & c5:4 b4:4 a4:2 | g5:2. f5:4 & r:4 b4:4 c5:4 d5:4 |
 e5:4 d5:4 c5:2 & g4:1 | b4:2 d5:2 & g4:4 g4:4 f4:2 | e5:4. d5:8 c5:4 b4:4 & r:2 a4:2 |
 c5:2 b4:4 a4:4 & e4:2 g4:2 | b4:1 & g4:1 |` },
+  // double sharps and flats, staccato, tenuto, accents on both stem directions and in beams
+  { name: 'marks', clef: 'G', fifths: 0, meter: [4, 4], src: `
+xf4:4! xg4:4! bbb4:4_ bbe5:4_ | [c5:8! d5:8! e5:8! f5:8!] xc5:2> | [g4:8_ a4:8_] b4:4> xd5:4! r:4 | bba4:2_ xf5:2! |
+e5:4> d5:4> [c5:8! b4:8!] a4:4_ | xg5:4! bbd5:4 xa4:4 bbg4:4 | [f5:8! e5:8! d5:8! c5:8!] b4:4_ g4:4> | c5:1 |` },
 ];
 
 export const FONTS = ['Leipzig', 'Bravura', 'Leland', 'Gootville', 'Petaluma'];
@@ -93,7 +97,8 @@ export const GLYPH_TUNES = [
   G([4, 4], `5{[c5:16 c5:16 c5:16 c5:16 c5:16]} 6{[c5:16 c5:16 c5:16 c5:16 c5:16 c5:16]} r:2 |`),
 ];
 
-// Compact notation -> MEI for Verovio. A bar may hold two voices: 'voice 1 tokens & voice 2 tokens'. Tokens: pitch [accidental # b n x bb] letter octave,
+// Compact notation -> MEI for Verovio. A bar may hold two voices: 'voice 1 tokens & voice 2 tokens'.
+// After a value: ! staccato, _ tenuto, > accent (c5:4! [d5:8_ e5:8>]). Tokens: pitch [accidental # b n x bb] letter octave,
 // ':' duration (1 2 4 8 16 32) and dots, '~' tie to the next note, r = rest, (a b c):d chord,
 // [ ... ] beam group, 3{ ... } triplet, | barline. A first measure shorter than the meter is a pickup.
 const ACC = { '#': 's', b: 'f', n: 'n', x: 'x', bb: 'ff' };
@@ -119,13 +124,14 @@ export function toMEI(t) {
       if (tk === '[') { x += '<beam>'; continue; } if (tk === ']') { x += '</beam>'; continue; }
       if (/^\d\{$/.test(tk)) { x += `<tuplet num="${tk[0]}" numbase="2" num.visible="true" bracket.visible="false">`; tup = 2 / +tk[0]; continue; }
       if (tk === '}') { x += '</tuplet>'; tup = 1; continue; }
-      const m = tk.match(/^([^:]+):(\d+)(\.*)(~?)$/); if (!m) throw new Error('bad token ' + tk);
+      const m = tk.match(/^([^:]+):(\d+)(\.*)(~?)([!_>]*)$/); if (!m) throw new Error('bad token ' + tk);
       const dur = +m[2], dots = m[3].length, tie = !!m[4];
-      const d = ` dur="${dur}"${dots ? ` dots="${dots}"` : ''}`;
+      const ar = [...m[5]].map((c) => ({ '!': 'stacc', _: 'ten', '>': 'acc' })[c]).join(' ');
+      const d = ` dur="${dur}"${dots ? ` dots="${dots}"` : ''}${ar ? ` artic="${ar}"` : ''}`;
       q += len(dur, dots) * tup;
       if (m[1] === 'r') x += `<rest${d}/>`;
       else if (m[1].includes(',')) x += `<chord${d}>${m[1].split(',').map((p) => note(p, dur, dots, tie, true)).join('')}</chord>`;
-      else x += note(m[1], dur, dots, tie, false);
+      else x += note(m[1], dur, dots, tie, false).replace('<note ', ar ? `<note artic="${ar}" ` : '<note ');
     }
     return { x, q };
   };

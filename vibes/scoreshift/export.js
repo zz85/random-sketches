@@ -71,15 +71,21 @@ export function toMusicXML(model, score, { plan = null, instrument = null, title
       if (mi === 0 && instrument && (instrument.dd || instrument.ds)) attrs.push(`<transpose><diatonic>${instrument.dd}</diatonic><chromatic>${instrument.ds}</chromatic></transpose>`);
       if (attrs.length) out.push(`<attributes>${attrs.join('')}</attributes>`);
       cur = { clef: sw.clef, fifths: sw.fifths, time: tk ?? cur.time };
-      for (const e of m.events) {
-        if (e.removed) continue;
+      // voices: voice 1, then back to the start of the bar for voice 2 (<backup>), each note
+      // tagged with its voice and, with two voices, its stem direction
+      const nv = Math.max(1, ...m.events.map((e) => (e.voice ?? 0) + 1));
+      const vEvents = Array.from({ length: nv }, (_, v) => m.events.filter((e) => (e.voice ?? 0) === v && !e.removed));
+      for (const [v, evs] of vEvents.entries()) {
+      if (v > 0) { const back = vEvents[v - 1].reduce((q, e) => q + Math.round(evTicks(e) * 5), 0); if (back) out.push(`<backup><duration>${back}</duration></backup>`); }
+      const VO = `<voice>${v + 1}</voice>`, STEM = nv > 1 ? `<stem>${v ? 'down' : 'up'}</stem>` : '';
+      for (const e of evs) {
         const dur = Math.round(evTicks(e) * 5);
         const tm = e.tuplet ? `<time-modification><actual-notes>${e.tuplet[0]}</actual-notes><normal-notes>${e.tuplet[1]}</normal-notes></time-modification>` : '';
         const dots = '<dot/>'.repeat(e.dots || 0);
         const tup = tupletEdge(m, e);
         if (e.kind === 'rest') {
-          out.push(e.full ? `<note><rest measure="yes"/><duration>${Math.round(m.cap * 5)}</duration></note>`
-            : `<note><rest/><duration>${dur}</duration><type>${TYPE[e.dur]}</type>${dots}${tm}${tup ? `<notations>${tup}</notations>` : ''}</note>`);
+          out.push(e.full ? `<note><rest measure="yes"/><duration>${Math.round(m.cap * 5)}</duration>${VO}</note>`
+            : `<note><rest/><duration>${dur}</duration>${VO}<type>${TYPE[e.dur]}</type>${dots}${tm}${tup ? `<notations>${tup}</notations>` : ''}</note>`);
           continue;
         }
         e.notes.forEach((n, k) => {
@@ -87,11 +93,13 @@ export function toMusicXML(model, score, { plan = null, instrument = null, title
           const tieStart = links.has(n), tieStop = tiedFrom.has(n);
           const ties = (tieStop ? '<tie type="stop"/>' : '') + (tieStart ? '<tie type="start"/>' : '');
           const tied = (tieStop ? '<tied type="stop"/>' : '') + (tieStart ? '<tied type="start"/>' : '');
-          const nota = tied + (k === 0 ? tup : '');
+          const ART = { stacc: '<staccato/>', ten: '<tenuto/>', acc: '<accent/>' }, art = k === 0 ? (e.notes[0].artic || []).map((a) => ART[a]).join('') : '';
+          const nota = tied + (k === 0 ? tup : '') + (art ? `<articulations>${art}</articulations>` : '');
           out.push(`<note>${e.grace ? '<grace/>' : ''}${k ? '<chord/>' : ''}<pitch><step>${step}</step>${p.alter ? `<alter>${p.alter}</alter>` : ''}<octave>${oct}</octave></pitch>` +
-            `${e.grace ? '' : `<duration>${dur}</duration>`}${ties}<type>${TYPE[e.dur] || 'quarter'}</type>${dots}` +
-            `${w.acc != null ? `<accidental>${ACC[w.acc]}</accidental>` : ''}${tm}${nota ? `<notations>${nota}</notations>` : ''}</note>`);
+            `${e.grace ? '' : `<duration>${dur}</duration>`}${ties}${VO}<type>${TYPE[e.dur] || 'quarter'}</type>${dots}` +
+            `${w.acc != null ? `<accidental>${ACC[w.acc]}</accidental>` : ''}${tm}${STEM}${nota ? `<notations>${nota}</notations>` : ''}</note>`);
         });
+      }
       }
       const last = mi === part.measures.length - 1;
       if (last || m.double) out.push(`<barline location="right"><bar-style>${last ? 'light-heavy' : 'light-light'}</bar-style></barline>`);
@@ -125,14 +133,18 @@ export function performance(model, score, { plan = null, from = null } = {}) {
         const midi = midiOf(W.notes.get(n).pitch) + shift;
         const prev = sounding.get(n);
         let s = prev;
-        if (!s) { s = { tick, dur: e.grace ? 12 : ticks, midi, part: part.index }; notes.push(s); }
+        const art = e.notes[0].artic || [];
+        if (!s) { s = { tick, dur: e.grace ? 12 : ticks, midi, part: part.index, vel: art.includes('acc') ? 0.95 : 0.72 }; notes.push(s); }
         else s.dur += ticks;
+        // how much of its length sounds: staccato about half, tenuto all, otherwise a small gap
+        s.rel = art.includes('stacc') ? 0.45 : art.includes('ten') ? 1 : 0.92;
         if (links.has(n)) sounding.set(links.get(n), s);
       }
     }
     const end = tl.length ? tl[tl.length - 1].tick + tl[tl.length - 1].ticks : 0;
     total = Math.max(total, end);
   }
+  for (const n of notes) { n.sound = Math.max(6, Math.round(n.dur * (n.rel ?? 0.92))); delete n.rel; }
   notes.sort((a, b) => a.tick - b.tick || a.midi - b.midi);
   events.sort((a, b) => a.tick - b.tick);
   return { notes, events, total };
@@ -153,8 +165,8 @@ export function toMidi(model, score, { plan = null, from = null, tempo = 100, ti
   for (const p of score.parts) ev.push({ t: 0, o: 0, b: [0xc0 | (p.index % 16), program] });
   for (const n of notes) {
     const ch = n.part % 16;
-    ev.push({ t: T(n.tick), o: 2, b: [0x90 | ch, n.midi, 84] });
-    ev.push({ t: T(n.tick + n.dur) - 1, o: 1, b: [0x80 | ch, n.midi, 0] });
+    ev.push({ t: T(n.tick), o: 2, b: [0x90 | ch, n.midi, Math.round(n.vel * 120)] });
+    ev.push({ t: T(n.tick + n.sound) - 1, o: 1, b: [0x80 | ch, n.midi, 0] });
   }
   ev.sort((a, b) => a.t - b.t || a.o - b.o);
   const trk = []; let last = 0;

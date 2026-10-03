@@ -43,7 +43,17 @@ export function readXml(file) {
 // fixture truth in the same shape (written pitch)
 export function readTruth(file) {
   const T = JSON.parse(fs.readFileSync(file, 'utf8')), cap = (T.meter[0] * 384) / T.meter[1];
-  return [T.measures.map((m) => { let on = 0; return m.events.map((e) => { const len = e.kind === 'mRest' ? cap : e.ticks; const r = { on, len, rest: e.kind !== 'note', midi: e.notes.map((k) => T.notes[k].midi).sort((a, b) => a - b) }; on += len; return r; }); })];
+  // (onsets per voice; events of all voices at one onset and length merge, as readXml does)
+  return [T.measures.map((m) => {
+    const at = new Map(), evs = new Map();
+    for (const e of m.events) {
+      const v = e.voice || 0, on = at.get(v) ?? 0, len = e.kind === 'mRest' ? cap : e.ticks; at.set(v, on + len);
+      const key = on + ':' + len + ':' + (e.kind !== 'note');
+      if (!evs.has(key)) evs.set(key, { on, len, rest: e.kind !== 'note', midi: [] });
+      evs.get(key).midi.push(...e.notes.map((k) => T.notes[k].midi));
+    }
+    return [...evs.values()].sort((a, b) => a.on - b.on || b.len - a.len).map((e) => ({ ...e, midi: e.midi.sort((a, b) => a - b) }));
+  })];
 }
 const flat = (parts) => parts.flatMap((p, pi) => p.flatMap((m, mi) => m.filter((e) => !e.rest).flatMap((e) => e.midi.map((midi) => ({ midi, len: e.len, mi, pi })))));
 

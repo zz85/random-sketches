@@ -57,12 +57,19 @@ export function evaluateRhythm(r) {
     if (evTicks(w.e) === tt) val++; else { const k = `${tn.dur}${'.'.repeat(tn.dots)}${tn.tuplet ? 't' : ''}->${w.e.dur}${'.'.repeat(w.e.dots)}${w.e.tuplet ? 't' : ''}`; confusions[k] = (confusions[k] || 0) + 1; }
   }
   const cap = (T.meter[0] * 384) / T.meter[1];
-  const seq = (evs) => evs.filter((e) => !e.removed && !e.grace).map((e) => (e.kind === 'note' ? 'n' : 'r') + (e.full ? cap : evTicks(e))).join(' ');
+  // a bar as what starts when: onset, note or rest, length, per head; voices merged, so the same
+  // music split into voices differently compares equal (the order of voices does not matter)
+  const seq = (evs) => {
+    const at = new Map(), out = [];
+    for (const e of evs) { if (e.removed || e.grace) continue; const v = e.voice ?? 0, on = at.get(v) ?? 0, len = e.full ? cap : evTicks(e);
+      for (let k = 0; k < (e.kind === 'note' ? e.notes.length : 1); k++) out.push(`${on}${e.kind === 'note' ? 'n' : 'r'}${len}`); at.set(v, on + len); }
+    return out.sort((a, b) => parseFloat(a) - parseFloat(b) || (a < b ? -1 : 1)).join(' ');
+  };
   let bars = 0; const badBars = [];
   const tnotes = r.pairs.map(([tn, got]) => [tn, got]), byTruth = new Map(); for (const [tn, got] of tnotes) byTruth.set(tn, got);
   const truthNotes = r.tn || [];
   T.measures.forEach((tm, mi) => {
-    const tseq = tm.events.map((e) => (e.kind === 'note' ? 'n' : 'r') + (e.kind === 'mRest' ? cap : e.ticks)).join(' ');
+    const tseq = seq(tm.events.map((e) => ({ kind: e.kind === 'note' ? 'note' : 'rest', notes: e.notes, voice: e.voice, full: e.kind === 'mRest', dur: e.dur, dots: e.dots, tuplet: e.tuplet })));
     // the detected measure holding this bar's first matched note (bars of only rests: skipped)
     const firstNote = tm.events.flatMap((e) => e.notes).map((k) => truthNotes[k]).find((q) => q && byTruth.has(q));
     if (!firstNote) { if (tm.events.every((e) => e.kind !== 'note')) { const ok = sc.measures.some((m) => m.events.every((e) => e.kind === 'rest') && seq(m.events) === tseq); if (ok) bars++; else badBars.push([mi, tseq, '?']); } else badBars.push([mi, tseq, 'notes missing']); return; }

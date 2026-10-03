@@ -195,6 +195,35 @@ the music from it on the main thread (a few ms, so it is rebuilt after every cor
    breaks; MIDI format 0, one channel per part; Web Audio playback with ties merged into one
    sounding note.
 
+### Voices, articulations, ties, text
+
+- **Two voices.** A bar is read as two voices only when it shows them: a stem-up and a stem-down
+  chord, or a stemmed and a stemless note, in the same column, or a rest displaced off the middle
+  line. Voice 1 is the stems up, voice 2 the stems down; a stemless chord there is split, upper
+  heads to voice 1; rests above the middle line go to voice 1, below to voice 2, centred ones to
+  the voice with nothing sounding there. Each voice is checked and repaired against the time
+  signature on its own, and the two-voice reading is kept only if it explains the bar better than
+  one voice (one voice wins a tie), so melodies with mixed stems are never split. Two fixes made
+  this work: a head under another voice's head takes its own stem, not the one running up through
+  the other head; and a hollow head touching a filled one (a third apart in one column) is still a
+  ring. The meter check counts a bar as fitting if each voice does. Exported as MusicXML voices
+  with `<backup>` and stem directions.
+- **Articulations.** Staccato dots, tenuto dashes and accent wedges, centred on a chord beyond its
+  outer head on the head side (accents may also sit past the stem end and further away). They
+  shorten (staccato ~45%, tenuto full length) or strengthen (accent) playback and MIDI, are
+  exported as MusicXML `<articulations>`, show in Interpreted view (`·`, `–`, `>`), and can be
+  toggled on a note.
+- **Ties keep their accidental.** A note tied from an F♯ stays F♯ in the next bar, or at the
+  start of the next system, without a new sharp (it played as F♮ before). The next untied F is
+  natural again.
+- **Text is not notes.** Letters stand in rows of similar-sized components with tight gaps,
+  outside the staff lines. A note whose component is in such a row ("o", "p" and "d" of a tempo
+  mark, an expression or a dynamic, read as whole or half notes) is dropped. Rows that are mostly
+  notes, and anything inside the staff, are left alone. On the CODA and Telemann pages it removes
+  the "pp" and the "o"s of "Allegro" and nothing else; the fixtures are unchanged.
+- **Double accidentals.** A double flat engraved as two flat glyphs, or cut in pieces by a staff
+  line, is reassembled (glyphnet reads the joined box); double sharps split by a line likewise.
+
 ### Competing readings and the glyph classifier
 
 Doubtful symbols keep more than one reading, and the reading that best fits the rest of the
@@ -324,21 +353,35 @@ misassigned accidentals.
 
 ### Accuracy
 
-Ten test tunes engraved by Verovio in five different music fonts (Leipzig, Bravura, Leland,
+Twelve test tunes engraved by Verovio in five different music fonts (Leipzig, Bravura, Leland,
 Gootville, Petaluma) at 14–26 px per space: treble, bass and alto clefs, keys from 4♯ to 3♭,
 chords, beams, 16ths and 32nds, ledger lines up to five, all accidentals including double sharps,
 and for rhythm: rests of every value, dotted values, flags and beams, eighth and quarter
-triplets, ties across barlines, 4/4, 3/4, 2/4, cut time and 6/8 with a pickup (ground truth is
+triplets, ties across barlines, 4/4, 3/4, 2/4, cut time and 6/8 with a pickup, two voices on one
+staff, staccato / tenuto / accent marks and double flats (ground truth is
 every event of every bar from Verovio's own encoding). Each is then run through a deterministic
 photo simulator (`degrade.js`: rotation, keystone, page curl, scale, uneven lighting, blur,
-sensor noise). 499 notes and 124 bars per condition:
+sensor noise). 570 notes and 140 bars per condition:
 
 | condition | heads found | pitch correct | note values correct | bars exactly right |
 |---|---|---|---|---|
-| clean engraving | 99.6% | 99.0% | 99.6% | 123/124 |
-| scan (1.2°, blur, light noise) | 96.0% | 96.0% | 95.0% | 105/124 |
-| photo (−2.5°, keystone, curl, 1.25×, shadow) | 98.0% | 97.2% | 96.2% | 112/124 |
-| phone (4°, strong keystone and curl, 0.85×, heavy noise, ~13 px/space) | 93.6% | 91.6% | 89.2% | 97/124 |
+| clean engraving | 99.3% | 98.8% | 99.3% | 137/140 |
+| scan (1.2°, blur, light noise) | 96.0% | 95.6% | 95.1% | 119/140 |
+| photo (−2.5°, keystone, curl, 1.25×, shadow) | 97.5% | 96.1% | 95.4% | 124/140 |
+| phone (4°, strong keystone and curl, 0.85×, heavy noise, ~13 px/space) | 93.5% | 91.2% | 89.2% | 106/140 |
+
+A bar is "exactly right" when every note and rest starts at the right time with the right length,
+in whichever voice. The two new tunes cost a little on the totals: two voices in one column hide
+heads (a whole-note chord in a fused stack is still missed).
+
+| articulations (clean / scan / photo / phone) | found | false |
+|---|---|---|
+| staccato (15) | 15 / 15 / 15 / 15 | |
+| tenuto (7) | 7 / 6 / 7 / 7 | |
+| accent (5) | 5 / 5 / 5 / 5 | |
+| any, on other notes | | 0 / 0 / 0 / 1 |
+
+Double sharps 8/8 clean (7/8 on photos), double flats 5/5 clean (2–3/5 degraded).
 
 "Note values" counts every note of the truth, so a missed head counts as wrong; most wrong bars
 under degradation are bars with a missed note, which the bar check marks red. All staves and
@@ -368,10 +411,9 @@ grace notes. The transposed page is readable but shows its seams at that resolut
 - Printed music only; no handwriting, tablature, percussion or early notation.
 - Grace and cue notes are smaller than the head detector's opening and are not moved; when one is
   found it plays as a short grace note.
-- Rhythm: one voice per staff (notes of two voices at one x become one chord, with the longer
-  value); no tremolos, repeats, voltas, multi-bar rests or tempo marks (set the tempo by hand);
-  dynamics and articulations are not read, so playback is flat. A note missed by the head
-  detector cannot be added by hand yet; its bar shows red.
+- Rhythm: at most two voices per staff; no tremolos, repeats, voltas, multi-bar rests or tempo
+  marks (set the tempo by hand); dynamics, slurs and other articulations (marcato, fermata) are
+  not read. A note missed by the head detector cannot be added by hand yet; its bar shows red.
 - Ties and slurs stay put: fine for steps, visibly off for big moves such as clef changes.
 - Moving a note does not re-flip stems or re-slope beams; with a clef change notes can collide.
 - One staff size per page; cross-staff beams move with one staff.

@@ -22,6 +22,7 @@ let tk = new VerovioToolkit(VM);
 
 const b = await launch({ port: 9343 });
 const ACC = { E262: 1, E260: -1, E261: 0, E263: 2, E264: -2 };
+const ARTIC = { E4A0: 'acc', E4A1: 'acc', E4A2: 'stacc', E4A3: 'stacc', E4A4: 'ten', E4A5: 'ten' };
 
 async function render(svg) {
   await b.evaluate(`document.body.style.margin='0';document.body.style.background='#fff';document.body.innerHTML=${JSON.stringify(svg)};1`);
@@ -54,7 +55,7 @@ console.log('glyphs.js written');
 
 // ---- fixtures ----
 fs.mkdirSync(path.join(ROOT, 'fixtures'), { recursive: true });
-const SIZES = [16, 20, 24, 18, 22, 14, 26, 18, 20, 17, 19];
+const SIZES = [16, 20, 24, 18, 22, 14, 26, 18, 20, 17, 19, 21];
 for (let i = 0; i < TUNES.length; i++) {
   const t = TUNES[i], font = FONTS[i % FONTS.length], S = SIZES[i];
   tk = new VerovioToolkit(VM); // fresh: the ABC importer leaks key state between loads
@@ -74,7 +75,9 @@ for (let i = 0; i < TUNES.length; i++) {
     const notes=[...document.querySelectorAll('g.note')].map(n=>{const a=n.querySelector('g.accid use');
       return {id:n.id,sys:systems.indexOf(n.closest('g.system')),bar:[...document.querySelectorAll('g.measure')].indexOf(n.closest('g.measure')),head:R(n.querySelector('.notehead')),
         accid:a?a.getAttribute('xlink:href').slice(1,5):null,accidBox:a?R(a):null,
-        glyph:n.querySelector('.notehead use').getAttribute('xlink:href').slice(1,5)}});
+        glyph:n.querySelector('.notehead use').getAttribute('xlink:href').slice(1,5),
+        artic:[...(n.closest('g.chord')||n).querySelectorAll('g.artic use')].map(u=>u.getAttribute('xlink:href').slice(1,5)),
+        articBox:[...(n.closest('g.chord')||n).querySelectorAll('g.artic use')].map(R)}});
     // rhythm: every event (note, chord, rest, measure rest) of every measure in reading order
     const measures=[...document.querySelectorAll('g.measure')].map(m=>({sys:systems.indexOf(m.closest('g.system')),
       events:[...m.querySelectorAll('g.note, g.chord, g.rest, g.mRest')].filter(e=>!(e.matches('g.note')&&e.parentElement.closest('g.chord'))).map(e=>({
@@ -96,7 +99,8 @@ for (let i = 0; i < TUNES.length; i++) {
     let alter = n.accid ? ACC[n.accid] : carry.has(d) ? carry.get(d) : keyAlter(t.fifths, d % 7);
     if (n.accid) carry.set(d, alter);
     const midi = natMidi(d) + alter;
-    return { x: +((n.head[0] + n.head[2]) / 2).toFixed(2), y: +((n.head[1] + n.head[3]) / 2).toFixed(2), w: +(n.head[2] - n.head[0]).toFixed(2), sys: n.sys, bar: n.bar,
+    const art = [...new Set(n.artic.map((g) => ARTIC[g]).filter(Boolean))];
+    return { artic: art, articBox: n.articBox, x: +((n.head[0] + n.head[2]) / 2).toFixed(2), y: +((n.head[1] + n.head[3]) / 2).toFixed(2), w: +(n.head[2] - n.head[0]).toFixed(2), sys: n.sys, bar: n.bar,
       pname: a.pname, oct: +a.oct, midi, accid: n.accid ? ACC[n.accid] : null, accidBox: n.accidBox, type: { E0A2: 'whole', E0A3: 'half', E0A4: 'black' }[n.glyph] };
   });
   const truth = { tune: t.name, font, space: S, clef: t.clef, fifths: t.fifths, w: out.w, h: out.h, staves: geo.staves, notes };

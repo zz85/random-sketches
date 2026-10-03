@@ -1,3 +1,4 @@
+import { lineY, spaceAt } from './omr.js';
 // From recognised symbols to music: parts -> measures -> events with exact durations, then a
 // bar-fill check that repairs the likeliest misreadings. Pure (no DOM, no pixels): runs in the
 // main thread after every correction, and under bun for the evaluation.
@@ -50,24 +51,64 @@ function regionEvents(st, xa, xb, S) {
     evs.push({ kind: 'rest', x: r.x, rest: r, dur: f.dur ?? r.dur, dots: f.dots ?? r.dots ?? 0, tuplet: f.tuplet !== undefined ? f.tuplet : null, fixed: !!r.fix, tupletFixed: f.tuplet !== undefined });
   }
   evs.sort((a, b) => a.x - b.x || (a.kind === 'rest') - (b.kind === 'rest'));
-  // merge notes on different stems at the same x into one chord (two voices sharing a beat)
+  return evs;
+}
+const clone = (evs) => evs.map((e) => ({ ...e, notes: e.notes && [...e.notes] }));
+
+// One voice: notes on different stems at the same x are one chord (two voices sharing a beat),
+// with the longer value.
+function oneVoice(raw, S) {
+  const evs = clone(raw);
   for (let i = 1; i < evs.length; i++) {
     const a = evs[i - 1], b = evs[i];
     if (a.kind === 'note' && b.kind === 'note' && Math.abs(a.x - b.x) < 0.6 * S && !a.grace && !b.grace) {
-      a.notes = [...a.notes, ...b.notes].sort((p, q) => p.p - q.p); a.dur = Math.max(a.dur, b.dur); a.tie = a.tie || b.tie;
+      a.notes = [...a.notes, ...b.notes].sort((p, q) => p.p - q.p); a.dur = Math.min(a.dur, b.dur); a.tie = a.tie || b.tie;
       evs.splice(i--, 1);
     }
   }
+  evs.forEach((e) => (e.voice = 0));
   return evs;
+}
+// Two voices, when the bar shows them: somewhere a stem-up and a stem-down chord sound at the
+// same x. Voice 1 (index 0) is stems up, voice 2 stems down; a stemless chord at such a place
+// is split, upper heads to voice 1; other stemless notes go with the voice whose stems are on
+// their side of the staff; rests above the middle line to voice 1, below to voice 2, centred
+// ones to whichever voice has a gap there.
+function twoVoices(raw, st, S) {
+  const dir = (e) => e.notes?.find((n) => n.stem)?.stem.dir;
+  const notes = raw.filter((e) => e.kind === 'note' && !e.grace);
+  // (or a stemless note under or over a stemmed one: a whole note against moving notes, a displaced rest)
+  const both = notes.some((a) => dir(a) && notes.some((b) => b !== a && (dir(b) === -dir(a) || !dir(b)) && Math.abs(a.x - b.x) < 0.8 * S)) ||
+    raw.some((r) => r.kind === 'rest' && r.rest.displaced && notes.some((b) => dir(b) && Math.abs(r.x - b.x) < 1.2 * S));
+  if (!both) return null;
+  const evs = clone(raw), mid = (x) => (st.pts ? lineY(st, 2, x) : 0), out = [];
+  for (const e of evs) {
+    if (e.kind === 'rest') { const c = (e.rest.box[1] + e.rest.box[3]) / 2, m = mid(e.x); e.voice = c < m - 0.6 * S ? 0 : c > m + 0.6 * S ? 1 : -1; out.push(e); continue; }
+    const d = dir(e);
+    if (d) { e.voice = d < 0 ? 0 : 1; out.push(e); continue; }
+    const other = evs.find((q) => q !== e && q.kind === 'note' && dir(q) && Math.abs(q.x - e.x) < 0.8 * S);
+    if (!other && e.notes.length >= 2 && evs.some((q) => q.kind === 'note' && dir(q) > 0) && evs.some((q) => q.kind === 'note' && dir(q) < 0)) {
+      const hi = e.notes.slice(Math.ceil(e.notes.length / 2)), lo = e.notes.slice(0, Math.ceil(e.notes.length / 2));
+      out.push({ ...e, notes: hi, voice: 0 }, { ...e, notes: lo, voice: 1 }); continue;
+    }
+    e.voice = other ? (dir(other) < 0 ? 1 : 0) : e.notes[0].y < mid(e.x) ? 0 : 1; out.push(e);
+  }
+  // centred rests: into the voice that has nothing sounding at that x
+  for (const e of out) if (e.voice === -1) {
+    const busy = (v) => out.some((q) => q.voice === v && q.kind === 'note' && Math.abs(q.x - e.x) < 1.2 * S);
+    e.voice = busy(0) && !busy(1) ? 1 : 0;
+  }
+  return out;
 }
 
 // tuplet numbers: the n events nearest the number (a beamed group under it first)
-function applyTuplets(st, measures, S) {
+function applyTuplets(st, m, events, S) {
   for (const t of st.tuplets || []) {
     const ratio = TUPLET_OF[t.n]; if (!ratio) continue;
-    const m = measures.find((q) => t.x >= q.x0 - 0.5 * S && t.x < q.x1); if (!m) continue;
-    const evs = m.events.filter((e) => !e.grace);
+    if (!(t.x >= m.x0 - 0.5 * S && t.x < m.x1)) continue;
     let best = null;
+    for (const v of [...new Set(events.map((e) => e.voice))]) {
+    const evs = events.filter((e) => !e.grace && e.voice === v);
     for (let i = 0; i + t.n <= evs.length; i++) {
       const win = evs.slice(i, i + t.n);
       if (win.some((e) => e.tuplet || e.tupletFixed)) continue;
@@ -82,6 +123,7 @@ function applyTuplets(st, measures, S) {
       const beamed = win[0].beamComp != null && win.every((e) => e.beamComp === win[0].beamComp);
       const d = Math.abs(cx - t.x) - (beamed ? 2 * S : 0);
       if (!best || d < best.d) best = { d, win };
+    }
     }
     if (best) for (const e of best.win) { e.tuplet = ratio; e.tupletMark = t; e.tg = best.win; }
   }
@@ -106,15 +148,15 @@ export function buildScore(model) {
       const ms = [];
       for (let i = 0; i + 1 < edges.length; i++) {
         const x0 = edges[i].x, x1 = edges[i + 1].x;
-        const events = regionEvents(st, x0, x1, S);
+        const raw = regionEvents(st, x0, x1, S), events = oneVoice(raw, S);
         if (!events.length && (edges[i + 1].end || x1 - x0 < 6 * S)) continue;
         // a time signature at the start of this measure (or just before its first event)
         const ts = (st.timeFix && st.timeFix[ms.length]) || (st.times || []).find((t) => t.x >= (i === 0 ? st.key?.x1 ?? st.x0 : x0) - 0.5 * S && t.x < Math.min(x1, events[0]?.x ?? x1));
         const shown = !!ts;
-        if (ts) time = { beats: ts.beats, unit: ts.unit, sym: ts.sym, fixed: !!st.timeFix?.[ms.length] };
-        ms.push({ part: part.index, st, x0, x1, events, time, timeShown: shown, double: !!edges[i + 1].double, endBar: !!edges[i + 1].end, fifths: st.key.fifths, clef: st.clef.type });
+        if (ts) time = { beats: ts.beats, unit: ts.unit, sym: ts.sym, dist: ts.dist, fixed: !!st.timeFix?.[ms.length] };
+        ms.push({ part: part.index, st, x0, x1, raw, events, time, timeShown: shown, double: !!edges[i + 1].double, endBar: !!edges[i + 1].end, fifths: st.key.fifths, clef: st.clef.type });
       }
-      applyTuplets(st, ms, S);
+      for (const m of ms) applyTuplets(st, m, m.events, S);
       part.measures.push(...ms);
     }
     // measures before any time signature take the first one, or one inferred from the bars
@@ -122,7 +164,7 @@ export function buildScore(model) {
     for (const m of part.measures) { if (m.time) break; m.time = firstT; }
     inferMeter(part);
     part.measures.forEach((m, i) => { m.index = i; m.number = i + 1; });
-    for (const m of part.measures) checkMeasure(m, part);
+    for (const m of part.measures) checkMeasure(m, part, S);
     all.push(...part.measures);
   }
   const counts = { ok: 0, pickup: 0, end: 0, rest: 0, under: 0, over: 0, repaired: 0 };
@@ -135,17 +177,23 @@ export function buildScore(model) {
 function inferMeter(part) {
   const ms = part.measures; if (!ms.length) return;
   const raw = (m) => m.events.reduce((s, e) => s + evTicks(e), 0);
+  // a bar fits a length in one voice, or in each of two voices
+  const S = part.staves[0]?.pts ? spaceAt(part.staves[0], part.staves[0].x0) : 16;
+  const two = new Map(part.measures.map((m) => [m, m.raw && twoVoices(m.raw, m.st, S)]));
+  const fits = (m, cap) => raw(m) === cap || (two.get(m) && [0, 1].every((v) => two.get(m).filter((e) => e.voice === v && !e.grace).reduce((q, e) => q + evTicks(e), 0) === cap));
   // segments between time signature changes
   let a = 0;
   while (a < ms.length) {
     let b = a + 1; while (b < ms.length && !ms[b].timeShown) b++;
     const seg = ms.slice(a, b), t = seg[0].time;
     if (!t || !t.fixed) {
-      const cnt = (cap) => seg.filter((m, i) => (a > 0 || i > 0) && raw(m) === cap).length;
+      const cnt = (cap) => seg.filter((m, i) => (a > 0 || i > 0) && fits(m, cap)).length;
       const cur = t ? cnt(capOf(t)) : -1;
       let best = null;
       for (const [beats, unit] of METERS) { const c = cnt(capOf({ beats, unit })); if (!best || c > best.c) best = { beats, unit, c }; }
-      if (best && best.c >= 2 && best.c > Math.max(1, 2 * cur) && !(t && capOf(t) === capOf(best))) {
+      // a clearly read time signature needs much stronger evidence to be overruled
+      const k = t && !t.inferred && (t.dist ?? 1) < 0.25 ? 3 : 2;
+      if (best && best.c >= 2 && best.c > Math.max(1, k * cur + (k - 2) * 2) && !(t && capOf(t) === capOf(best))) {
         const nt = { beats: best.beats, unit: best.unit, inferred: true };
         for (const m of seg) m.time = nt;
       }
@@ -156,19 +204,38 @@ function inferMeter(part) {
 
 // ---------------------------------------------------------------- bar-fill check and repair
 
-function checkMeasure(m, part) {
+// Each reading of the bar (one voice; two voices when it shows them) is checked voice by voice
+// and the best kept: every voice adding up first, then the cheapest repairs, one voice on a tie.
+function checkMeasure(m, part, S = 16) {
   m.cap = m.time ? capOf(m.time) : null;
-  m.repairs = [];
-  const evs = m.events.filter((e) => !e.grace);
-  // a lone whole rest is a whole-bar rest in any meter
-  if (evs.length === 1 && evs[0].kind === 'rest' && evs[0].dur === 1 && !evs[0].dots) { evs[0].full = true; evs[0].cap = m.cap; m.ticks = m.cap; m.status = 'rest'; return; }
-  const sum = () => evs.reduce((s, e) => s + evTicks(e), 0);
-  m.ticks = sum();
-  if (m.cap == null) { m.status = 'ok'; return; }
-  if (m.ticks === m.cap) { m.status = 'ok'; return; }
   const i = part.measures.indexOf(m), prev = part.measures[i - 1];
   const first = i === 0 || prev.double || m.timeShown;
   const last = m.double || i === part.measures.length - 1;
+  const readings = [m.events];
+  const two = m.raw && twoVoices(m.raw, m.st, S);
+  if (two) { applyTuplets(m.st, m, two, S); readings.push(two); }
+  const RANK = { ok: 0, rest: 0, pickup: 1, end: 1, under: 3, over: 3 };
+  let best = null;
+  for (const [ri, evs] of readings.entries()) {
+    const voices = evs.length ? [...new Set(evs.map((e) => e.voice ?? 0))].sort() : [0];
+    const res = voices.map((v) => checkVoice(evs.filter((e) => (e.voice ?? 0) === v), m.cap, first, last));
+    const score = Math.max(...res.map((r) => RANK[r.status])) * 10 + res.reduce((q, r) => q + r.cost, 0) + ri * 0.2;
+    if (!best || score < best.score) best = { score, evs, res };
+  }
+  m.events = best.evs; m.voices = best.res.length;
+  const worst = best.res.reduce((a, r) => (RANK[r.status] > RANK[a.status] ? r : a), best.res[0]);
+  m.status = worst.status; m.ticks = Math.max(...best.res.map((r) => r.ticks)); m.repairs = best.res.flatMap((r) => r.repairs);
+  m.voiceTicks = best.res.map((r) => r.ticks);
+}
+// One voice of one bar. Applies the repair it chooses to the events. Returns status, ticks used,
+// repairs, cost of the repairs.
+function checkVoice(all, cap, first, last) {
+  const out = { repairs: [], cost: 0 };
+  const evs = all.filter((e) => !e.grace);
+  // a lone whole rest is a whole-bar rest in any meter
+  if (evs.length === 1 && evs[0].kind === 'rest' && evs[0].dur === 1 && !evs[0].dots) { evs[0].full = true; evs[0].cap = cap; return { ...out, ticks: cap, status: 'rest' }; }
+  const sum = () => evs.reduce((s, e) => s + evTicks(e), 0);
+  if (cap == null || sum() === cap) return { ...out, ticks: sum(), status: 'ok' };
   // Readings to choose from: the bar as read, and (if tuplet numbers were applied) without
   // them - a "3" can be a fingering or a letter. Each may also need a repair to add up.
   const marked = evs.filter((e) => e.tupletMark && !e.tupletFixed);
@@ -177,17 +244,18 @@ function checkMeasure(m, part) {
   let best = null;
   for (const o of opts) {
     o.set();
-    const fix = sum() === m.cap ? { cost: 0, edits: [] } : repair(evs, m.cap);
+    const fix = sum() === cap ? { cost: 0, edits: [] } : repair(evs, cap);
     if (fix && (!best || o.base + fix.cost < best.cost)) best = { cost: o.base + fix.cost, o, fix };
   }
   if (best) {
-    best.o.set(); if (best.o.text) { m.repairs.push(best.o.text); marked.forEach((e) => delete e.tupletMark); }
-    for (const r of best.fix.edits) { r.apply(); m.repairs.push(r.text); }
-    m.ticks = sum(); m.status = 'ok'; return;
+    best.o.set(); if (best.o.text) { out.repairs.push(best.o.text); marked.forEach((e) => delete e.tupletMark); }
+    for (const r of best.fix.edits) { r.apply(); out.repairs.push(r.text); }
+    return { ...out, cost: best.cost, ticks: sum(), status: 'ok' };
   }
-  opts[0].set(); m.ticks = sum();
-  if (m.ticks < m.cap && (first || last)) { m.status = first ? 'pickup' : 'end'; return; }
-  m.status = m.ticks < m.cap ? 'under' : 'over';
+  opts[0].set();
+  const t = sum();
+  if (t < cap && (first || last)) return { ...out, ticks: t, status: first ? 'pickup' : 'end' };
+  return { ...out, ticks: t, status: t < cap ? 'under' : 'over' };
 }
 
 // Edits that explain a bar that does not add up, each with a cost (how likely that misreading
@@ -261,10 +329,9 @@ function repair(evs, cap) {
 export function timeline(part) {
   const out = []; let t0 = 0;
   for (const m of part.measures) {
-    let t = t0;
-    for (const e of m.events) { if (e.removed) continue; out.push({ e, m, tick: t, ticks: evTicks(e) }); t += evTicks(e); }
-    // short bars (pickups) last as long as their contents
+    const at = new Map();
+    for (const e of m.events) { if (e.removed) continue; const v = e.voice ?? 0, t = at.get(v) ?? t0; out.push({ e, m, tick: t, ticks: evTicks(e), voice: v }); at.set(v, t + evTicks(e)); }
     t0 += m.status === 'rest' ? m.cap : m.ticks;
   }
-  return out;
+  return out.sort((a, b) => a.tick - b.tick || a.voice - b.voice);
 }

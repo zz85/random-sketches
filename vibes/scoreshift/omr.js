@@ -416,7 +416,11 @@ export function analyze(norm, opts = {}) {
     let lx = cx; while (lx > hl.x0 && !black(lx - 1, ry)) lx--;
     let rx = cx; while (rx < hl.x1 && !black(rx + 1, ry)) rx++;
     const tl = runFrom(lx, ry, -1, 0, S), tr = runFrom(rx, ry, 1, 0, S);
-    const tu = runFrom(cx, hl.y0, 0, -1, S), td = runFrom(cx, hl.y1, 0, 1, S);
+    let tu = runFrom(cx, hl.y0, 0, -1, S), td = runFrom(cx, hl.y1, 0, 1, S);
+    // a filled head of the other voice touching the ring above or below (two voices a third apart
+    // in one column): take the ring's thickness from the free side
+    const headAt = (y) => heads.some((o) => o.kind === 'black' && o.st === st && Math.abs(o.x - cx) < 0.8 * S && Math.abs(o.y - y) < 0.45 * S);
+    if (tu > 0.55 * S && td <= 0.55 * S && headAt(hl.y0 - 0.6 * S)) tu = td; else if (td > 0.55 * S && tu <= 0.55 * S && headAt(hl.y1 + 0.6 * S)) td = tu;
     const ow = (rx - lx + 1) + tl + tr, oh = hh + tu + td;
     if (tl < 0.08 * S || tr < 0.08 * S || tl > 0.7 * S || tr > 0.7 * S) continue;
     if (ow < 0.95 * S || ow > 2.3 * S || oh < 0.65 * S || oh > 1.45 * S) continue;
@@ -451,10 +455,18 @@ export function analyze(norm, opts = {}) {
       }
       if (y < 0) return;
       const tip = y + dir * vrun(x, y, dir), len = (tip - hd.y) * dir;
-      if (!best || len > best.len) best = { x, len, dir, tip };
+      if (!bestOf[dir] || len > bestOf[dir].len) bestOf[dir] = { x, len, dir, tip };
     };
+    const bestOf = {};
     for (let x = Math.round(hd.box[2] - 0.35 * S); x <= Math.round(hd.box[2] + 0.2 * S); x++) tryCol(x, -1);
     for (let x = Math.round(hd.box[0] - 0.2 * S); x <= Math.round(hd.box[0] + 0.35 * S); x++) tryCol(x, 1);
+    // A stem up from the right and one down from the left: two voices meet at this head's column.
+    // The stem that passes through another head on its way belongs to that head (a chord's stem
+    // runs through all its heads, but then there is no second stem the other way).
+    const through = (sm) => uniq.some((o) => o !== hd && o.st === hd.st && Math.abs(o.x - hd.x) < 0.9 * S && (o.y - hd.y) * sm.dir > 0.6 * S && (o.y - hd.y) * sm.dir < sm.len - 0.5 * S);
+    const up = bestOf[-1], dn = bestOf[1];
+    best = up && (!dn || up.len >= dn.len) ? up : dn;
+    if (up && dn && up.len >= 2.5 * S && dn.len >= 2.5 * S && through(best) && !through(best === up ? dn : up)) best = best === up ? dn : up;
     hd.stem = best && best.len >= 2.0 * S ? best : null;
     if (hd.stem) { // stem is thin: neighbours 0.4S away must not run as long
       const off = Math.round(0.45 * S) * (hd.stem.dir < 0 ? -1 : 1), x2 = hd.stem.x + off;
@@ -512,6 +524,15 @@ export function analyze(norm, opts = {}) {
     return 0;
   };
   for (const n of notes) n.comp = labelNear(n.x, n.y, Math.round(0.4 * S0)) || labelNear(n.box[2], n.y, 2);
+  // Text: letters stand in rows of similar-sized components with tight gaps (words of a tempo
+  // mark, an expression, lyrics, a dynamic like "pp"). Notes are rarely like that: a stemmed
+  // note is a tall component, beamed notes are one component, whole notes stand far apart. A
+  // note whose component is in such a row ("o", "p", "d" read as whole or half notes) is text.
+  // (pieces of a head split by staff removal count as the note)
+  const noteParts = new Set(notes.map((n) => n.comp));
+  for (const q of cc.comps) if (q && notes.some((n) => q.cx >= n.box[0] - 2 && q.cx <= n.box[2] + 2 && q.cy >= n.box[1] - 2 && q.cy <= n.box[3] + 2)) noteParts.add(q.id);
+  const textIds = findText(cc.comps, S0, noteParts, staves);
+  notes = notes.filter((n) => !textIds.has(n.comp));
   // whole notes / time-signature digits: a stemless ring must be its own small component
   notes = notes.filter((n) => {
     if (n.kind !== 'whole') return true;
@@ -693,6 +714,25 @@ export function analyze(norm, opts = {}) {
       ids: key.flatMap((a) => a.c.ids), idsPer: key.map((a) => a.c.ids), glyphs: key.map((a) => ({ p: a.p, box: [a.c.x0, a.c.y0, a.c.x1, a.c.y1] })), x0: st.clef.box ? st.clef.box[2] + 1 : st.x0 + 2 * S, x1: key.length ? key[key.length - 1].c.x1 : (st.clef.box ? st.clef.box[2] + 1 : st.x0 + 2 * S) };
   }
 
+  // a double flat engraved as two flat glyphs side by side: two separate components
+  for (const a of accs) {
+    if (a.type !== -1 || a.isKey || a.merged) continue;
+    const S = spaceAt(a.st, a.c.cx);
+    const b = accs.find((q) => q !== a && q.st === a.st && q.type === -1 && !q.isKey && !q.merged && q.p === a.p && q.c.x0 > a.c.x0 && q.c.x0 - a.c.x1 < 0.35 * S && Math.abs(q.c.y1 - a.c.y1) < 0.3 * S);
+    if (!b) continue;
+    a.type = -2; a.c = { ...a.c, ids: [...a.c.ids, ...b.c.ids], x1: b.c.x1, y0: Math.min(a.c.y0, b.c.y0) }; b.merged = true;
+  }
+  for (let k = accs.length - 1; k >= 0; k--) if (accs[k].merged) accs.splice(k, 1);
+  // ... or a flat plus a leftover piece of the second one (staff removal cut it): the classifier
+  // reads the extended box
+  if (opts.glyphnet !== false) for (const a of accs) {
+    if (a.type !== -1 || a.isKey || a.merged) continue;
+    const S = spaceAt(a.st, a.c.cx);
+    const extra = cc.comps.filter((q) => q && !headComps.has(q.id) && !a.c.ids.includes(q.id) && q.x0 > a.c.x0 && q.x0 - a.c.x1 < 0.3 * S && q.x1 - a.c.x0 < 2.1 * S && q.y0 >= a.c.y0 - 0.3 * S && q.y1 <= a.c.y1 + 0.3 * S && !accs.some((o) => o !== a && o.c.ids.includes(q.id)));
+    if (!extra.length) continue;
+    const box = [a.c.x0, Math.min(a.c.y0, ...extra.map((q) => q.y0)), Math.max(a.c.x1, ...extra.map((q) => q.x1)), Math.max(a.c.y1, ...extra.map((q) => q.y1))];
+    if (classify(bin, box).dflat >= 0.9) { a.type = -2; a.c = { ...a.c, ids: [...a.c.ids, ...extra.map((q) => q.id)], x1: box[2] }; }
+  }
   // local accidentals: nearest head to the right at the same position
   for (const a of accs) {
     if (a.isKey) continue;
@@ -820,12 +860,68 @@ export function analyze(norm, opts = {}) {
       c.x1 - c.x0 <= b[2] - b[0] + 4 && c.y1 - c.y0 <= b[3] - b[1] + 4 && !headComps.has(c.id)).map((c) => c.id) : [];
   }
   readRhythm({ w, h, S0, t, staves, notes, L, comps: cc.comps, accs, dots, headComps, bin, useNet: opts.glyphnet !== false });
+  // the same part on the previous system (ties over the system break), then pitches again with ties
+  for (const st of staves) {
+    const row = staves.filter((o) => o.system === st.system).indexOf(st);
+    st.prevStaff = staves.filter((o) => o.system === st.system - 1)[row] || null;
+  }
+  for (const st of staves) interpret(st);
   return { w, h, space: S0, thick: t, staves, labels: L, comps: cc.comps, ledgerPx: Int32Array.from(ledgerPx), notes, attach, bin: bin.data, A: norm.A, scale: norm.scale, angle: norm.angle };
 }
 
+// Rows of letter-like components (see analyze). Returns a Set of component ids.
+export function findText(comps, S, noteComps = new Set(), staves = []) {
+  // text sits outside the five lines (tempo, expressions, lyrics); inside are digits and music
+  const inStaff = (q) => staves.some((st) => q.cx >= st.x0 && q.cx <= st.x1 && q.cy > lineY(st, 0, q.cx) - 0.2 * S && q.cy < lineY(st, 4, q.cx) + 0.2 * S);
+  const c = comps.filter((q) => q && q.y1 - q.y0 + 1 >= 0.45 * S && q.y1 - q.y0 + 1 <= 2.3 * S && q.x1 - q.x0 + 1 >= 0.15 * S && q.x1 - q.x0 + 1 <= 2.4 * S && q.n >= 6)
+    .sort((a, b) => a.x0 - b.x0);
+  const next = new Map();
+  // link each to the nearest component on its right that overlaps it vertically and looks alike
+  for (let i = 0; i < c.length; i++) {
+    const a = c[i], ha = a.y1 - a.y0 + 1; let best = null;
+    for (let j = i + 1; j < c.length && c[j].x0 - a.x1 <= 0.9 * S; j++) {
+      const b = c[j], hb = b.y1 - b.y0 + 1, gap = b.x0 - a.x1;
+      if (gap < -0.15 * S) continue;
+      const ov = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0);
+      // letters share an x-height band: most of the smaller one overlaps the other
+      if (ov < 0.55 * Math.min(ha, hb) || Math.max(ha, hb) > 2.6 * Math.min(ha, hb)) continue;
+      if (!best || gap < best.gap) best = { b, gap };
+    }
+    if (best) next.set(a, best);
+  }
+  const prevOf = new Map(); for (const [a, { b }] of next) if (!prevOf.has(b) || prevOf.get(b).gap > next.get(a).gap) prevOf.set(b, { a, gap: next.get(a).gap });
+  const out = new Set();
+  for (const a of c) {
+    if (prevOf.has(a) && prevOf.get(a).a && next.get(prevOf.get(a).a)?.b === a) continue; // not a chain start
+    const chain = [a]; let gaps = [];
+    for (let q = a; next.has(q) && prevOf.get(next.get(q).b)?.a === q; ) { gaps.push(next.get(q).gap); q = next.get(q).b; chain.push(q); }
+    // three or more letters; or two tightly set (a dynamic "pp", "mf")
+    // (and most of the row is not read as notes: a row of letters around the "o" that passed)
+    const others = chain.filter((q) => !noteComps.has(q.id)).length;
+    if (chain.filter(inStaff).length * 2 > chain.length) continue;
+    if ((chain.length >= 3 && others >= 2) || (chain.length === 2 && others >= 1 && Math.max(...gaps) <= 0.35 * S)) for (const q of chain) out.add(q.id);
+  }
+  return out;
+}
+
 // Pitches from clef + key + accidentals (re-run after a manual correction).
+// A tied note keeps the pitch it is tied from, also across a barline or a system break where the
+// bar's accidentals no longer apply (F♯ tied into the next bar stays F♯ without a new sharp).
 export function interpret(st) {
   const clef = CLEFS[st.clef.type];
   const ps = readStaff(st.notes.map((n) => ({ p: n.p, acc: n.accid ? n.accid.type : null, bar: n.bar })), clef, st.key.fifths);
   st.notes.forEach((n, i) => { n.pitch = ps[i]; n.name = nameOf(ps[i]); });
+  const tied = (n) => (n.fix && n.fix.tie !== undefined ? n.fix.tie : n.tie);
+  // ties into the first chord of this staff from the end of the previous one (same part)
+  let from = st.prevStaff ? st.prevStaff.notes.filter((n) => n.chord === Math.max(...st.prevStaff.notes.map((q) => q.chord)) && tied(n)) : [];
+  const chords = [...new Set(st.notes.map((n) => n.chord))].sort((a, b) => a - b);
+  for (const c of chords) {
+    const ns = st.notes.filter((n) => n.chord === c);
+    for (const n of ns) {
+      if (n.accid) continue;
+      const src = from.find((q) => (q.st === st ? q.p === n.p : q.pitch.d === n.pitch.d));
+      if (src && src.pitch.alter !== n.pitch.alter) { n.pitch = { d: n.pitch.d, alter: src.pitch.alter }; n.name = nameOf(n.pitch); }
+    }
+    from = ns.filter(tied);
+  }
 }

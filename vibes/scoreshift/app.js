@@ -254,7 +254,7 @@ function barSummary(sc) {
 
 // ---------- rhythm overlay (interpreted view) ----------
 const DUR_GLYPH = { 1: '𝅝', 2: '𝅗𝅥', 4: '♩', 8: '♪', 16: '𝅘𝅥𝅯', 32: '𝅘𝅥𝅰' };
-const evLabel = (e) => `${e.kind === 'rest' ? 'r' : ''}${e.full ? 'bar' : e.dur}${'.'.repeat(e.dots || 0)}${e.tuplet ? '³' : ''}${e.tie ? '⁀' : ''}`;
+const evLabel = (e) => `${e.kind === 'rest' ? 'r' : ''}${e.full ? 'bar' : e.dur}${'.'.repeat(e.dots || 0)}${e.tuplet ? '³' : ''}${e.tie ? '⁀' : ''}${e.voice ? ' v2' : ''}${(e.notes?.[0].artic || []).map((a) => ({ stacc: '·', ten: '–', acc: '>' })[a]).join('')}`;
 function drawRhythm(g, model, sc, r, selM) {
   g.save(); g.scale(r, r);
   for (const m of sc.measures) {
@@ -389,6 +389,7 @@ function rhythmRow(ev) {
   const m = measureOf(ev);
   return `<div class="row" role="group" aria-label="Note value">${DURS.map((d) => `<button data-dur="${d}" aria-pressed="${ev.dur === d}" aria-label="${['whole', 'half', 'quarter', 'eighth', 'sixteenth', 'thirty-second'][DURS.indexOf(d)]}">${DUR_GLYPH[d]}</button>`).join('')}</div>
     <div class="row"><button data-r="dot" aria-pressed="${!!ev.dots}">dot</button><button data-r="tuplet" aria-pressed="${!!ev.tuplet}">triplet</button>${ev.kind === 'note' ? `<button data-r="tie" aria-pressed="${!!ev.tie}">tie →</button><button data-r="grace" aria-pressed="${!!ev.grace}">grace</button>` : ''}</div>
+    ${ev.kind === 'note' ? `<div class="row" role="group" aria-label="Articulation">${[['stacc', 'staccato ·'], ['ten', 'tenuto –'], ['acc', 'accent >']].map(([k, l]) => `<button data-art="${k}" aria-pressed="${(ev.notes[0].artic || []).includes(k)}">${l}</button>`).join('')}</div>` : ''}
     <p class="hint">Bar ${m.number}: ${m.ticks / 96} of ${m.cap / 96} beats${m.repairs.length ? ` · auto-fixed: ${m.repairs.join(', ')}` : ''}${ev.repaired ? ` (this ${ev.kind}: ${ev.repaired})` : ''}</p>`;
 }
 function setFix(ev, patch) {
@@ -402,6 +403,11 @@ function bindRhythm(ev, reopen) {
   if (!ev) return;
   const redo = (patch) => { setFix(ev, patch); update(); reopen(); };
   pop.querySelectorAll('[data-dur]').forEach((b) => (b.onclick = () => redo({ dur: +b.dataset.dur })));
+  pop.querySelectorAll('[data-art]').forEach((b) => (b.onclick = () => {
+    const k = b.dataset.art, on = !(ev.notes[0].artic || []).includes(k);
+    for (const n of ev.notes) n.artic = on ? [...new Set([...(n.artic || []), k])] : (n.artic || []).filter((a) => a !== k);
+    markEdited(); update(); reopen();
+  }));
   pop.querySelectorAll('[data-r]').forEach((b) => (b.onclick = () => {
     const k = b.dataset.r;
     if (k === 'dot') redo({ dots: ev.dots ? 0 : 1 });

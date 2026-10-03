@@ -43,7 +43,7 @@ export class Player {
     this.stop(); this.ensure();
     const { notes, events, total } = perf(model, score, opts);
     const spt = 60 / (opts.tempo || 100) / DIV, t0 = this.ctx.currentTime + 0.08 - fromTick * spt;
-    for (const n of notes) if (n.tick >= fromTick) this.voice(n.midi, t0 + n.tick * spt, n.dur * spt * 0.92);
+    for (const n of notes) if (n.tick >= fromTick) this.voice(n.midi, t0 + n.tick * spt, n.sound * spt, n.vel);
     this.playing = true;
     const tick = () => {
       if (!this.playing) return;

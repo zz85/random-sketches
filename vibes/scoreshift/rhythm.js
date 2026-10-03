@@ -228,6 +228,45 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
   const syms = [...groups.values()].map((cs) => cs.length === 1 ? cs[0] : {
     id: cs[0].id, ids: cs.map((c) => c.id), x0: Math.min(...cs.map((c) => c.x0)), y0: Math.min(...cs.map((c) => c.y0)), x1: Math.max(...cs.map((c) => c.x1)), y1: Math.max(...cs.map((c) => c.y1)),
     n: cs.reduce((s, c) => s + c.n, 0), cx: cs.reduce((s, c) => s + c.cx * c.n, 0) / cs.reduce((s, c) => s + c.n, 0), cy: cs.reduce((s, c) => s + c.cy * c.n, 0) / cs.reduce((s, c) => s + c.n, 0) });
+  // Articulations: staccato dot, tenuto dash, accent wedge, centred on a chord, beyond its
+  // outermost head on the side away from the stem (or past a whole note, either side), within
+  // 2.6 spaces (accents 3.4, they go above the staff); an accent may also sit beyond the stem end. Read before the other free
+  // symbols so the dots and dashes are not taken for anything else.
+  for (const n of notes) n.artic = [];
+  const chordsOf = new Map(); for (const n of notes) { const k = n.st.index + ':' + n.chord; if (!chordsOf.has(k)) chordsOf.set(k, []); chordsOf.get(k).push(n); }
+  const markKind = (c, S) => {
+    const cw = c.x1 - c.x0 + 1, ch = c.y1 - c.y0 + 1, W = cw / S, H = ch / S, fill = c.n / (cw * ch);
+    if (W >= 0.2 && W <= 0.6 && H >= 0.2 && H <= 0.6 && fill > 0.5 && W / H > 0.6 && W / H < 1.7) return 'stacc';
+    if (W >= 0.65 && W <= 1.7 && ch <= Math.max(0.36 * S, 2.2 * t + 2) && H >= 0.08 && fill > 0.7) return 'ten';
+    if (W >= 0.75 && W <= 1.9 && H >= 0.4 && H <= 1.15 && fill > 0.12 && fill < 0.6) {
+      // a wedge opening left: the right end's ink sits at mid height, the left end's at top and bottom
+      const M = maskOf(c).m, col = (fx) => { const x = Math.min(cw - 1, Math.round(fx * (cw - 1))), ys = []; for (let y = 0; y < ch; y++) if (M[y * cw + x]) ys.push(y / (ch - 1)); return ys; };
+      const r = col(0.95), l = col(0.05), mid = (ys) => ys.length && ys.every((y) => y > 0.25 && y < 0.75), ends = (ys) => ys.some((y) => y < 0.3) && ys.some((y) => y > 0.7) && !ys.some((y) => y > 0.4 && y < 0.6);
+      if (mid(r) && ends(l)) return 'acc';
+    }
+    return null;
+  };
+  for (const c of syms) {
+    if (!c || used.has(c.id)) continue;
+    const st = staffOf(c); if (!st) continue;
+    const S = spaceAt(st, c.cx), kind = markKind(c, S); if (!kind) continue;
+    let best = null;
+    for (const ns of chordsOf.values()) {
+      if (ns[0].st !== st) continue;
+      const x = ns.reduce((q, n) => q + n.x, 0) / ns.length;
+      if (Math.abs(c.cx - x) > (kind === 'stacc' ? 0.5 : 0.7) * S) continue;
+      const stem = ns.find((n) => n.stem)?.stem, top = Math.min(...ns.map((n) => n.y)), bot = Math.max(...ns.map((n) => n.y));
+      // head side: below when the stem goes up, above when it goes down; past the stem end otherwise
+      const sides = stem ? (stem.dir < 0 ? [c.cy - bot, top - c.cy - (top - stem.tip)] : [top - c.cy, c.cy - bot - (stem.tip - bot)]) : [c.cy - bot, top - c.cy];
+      // (dots and dashes beyond the stem end are mostly pieces of tuplet numbers and fingerings)
+      const d = kind === 'acc' || !stem ? Math.max(...sides) : sides[0];
+      if (d < 0.45 * S || d > (kind === "acc" ? 3.4 : 2.6) * S) continue;
+      if (!best || d < best.d) best = { d, ns };
+    }
+    if (!best) continue;
+    for (const n of best.ns) if (!n.artic.includes(kind)) n.artic.push(kind);
+    used.add(c.id); (c.ids || [c.id]).forEach((i) => used.add(i));
+  }
   for (const c of syms) {
     if (!c || used.has(c.id)) continue;
     const st = staffOf(c); if (!st) continue;
@@ -237,11 +276,16 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
     const inside = c.cy > yt - 0.5 * S && c.cy < yb + 0.5 * S;
     // arcs (ties and slurs): wide, flat, thin
     if (W >= 0.9 && H <= Math.max(1.4, 0.3 * W) && fill < 0.5 && c.n / cw < 0.45 * S) { arcs.push({ st, c }); continue; }
-    // whole / half rests: a solid slab hanging from the 4th line or sitting on the middle one
-    if (inside && W >= 0.8 && W <= 1.9 && H >= 0.3 && H <= 0.8 && fill > 0.88 && W / H >= 1.6) {
-      const y1l = lineY(st, 1, c.cx), y2l = lineY(st, 2, c.cx);
-      const whole = Math.abs(c.y0 - y1l) < 0.3 * S, half = Math.abs(c.y1 - y2l) < 0.3 * S;
-      if (whole !== half) st.rests.push({ x: c.cx, y: c.cy, dur: whole ? 1 : 2, box: [c.x0, c.y0, c.x1, c.y1], ids: c.ids || [c.id] });
+    // whole / half rests: a solid slab hanging from a line (whole) or sitting on one (half); the
+    // 4th and middle lines normally, any line or ledger position when a second voice moves it
+    const near = c.cy > yt - 2.2 * S && c.cy < yb + 2.2 * S;
+    if (near && W >= 0.8 && W <= 1.9 && H >= 0.3 && H <= 0.8 && fill > 0.88 && W / H >= 1.6) {
+      const on = (y) => { for (let k = -2; k <= 6; k++) if (Math.abs(y - (yt + ((yb - yt) / 4) * k)) < 0.3 * S) return k; return null; };
+      const top = on(c.y0), bot = on(c.y1);
+      const whole = top != null && bot == null, half = bot != null && top == null;
+      // usual places first: whole from the 2nd line, half on the 3rd
+      const usual = (whole && top === 1) || (half && bot === 2);
+      if ((whole || half) && (usual || !inside || Math.abs(c.cy - lineY(st, 2, c.cx)) > 0.8 * S)) st.rests.push({ x: c.cx, y: c.cy, dur: whole ? 1 : 2, box: [c.x0, c.y0, c.x1, c.y1], ids: c.ids || [c.id], displaced: !usual });
       continue;
     }
     if (W < 0.35 || W > 2.4 || H < 0.7 || H > 4.8) continue;

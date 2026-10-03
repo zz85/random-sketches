@@ -11,7 +11,7 @@ import { rasterGlyph } from './raster.js';
 import { GLYPHS } from './glyphs.js';
 import { plan } from './render.js';
 import { CONDITIONS } from './degrade.js';
-import { normalize, analyze } from './omr.js';
+import { normalize, analyze, interpret, findText } from './omr.js';
 import fs from 'fs';
 
 describe('theory', () => {
@@ -168,6 +168,39 @@ describe('recognition (Verovio fixtures, 5 engraving fonts)', () => {
     expect(p.notes.find((n) => n.midi === 79 && n.dur === 576)).toBeTruthy(); // g5 whole tied to a half: one sounding note
     const mid = toMidi(r.res, sc, { tempo: 90 });
     expect(String.fromCharCode(...mid.slice(0, 4))).toBe('MThd');
+  });
+});
+
+describe('ties, text, voices, articulations', () => {
+  test('a tied note keeps its accidental across the barline and the system break', () => {
+    const st = { clef: { type: 'treble' }, key: { fifths: 0 }, notes: [] };
+    st.notes = [{ p: 1, bar: 0, chord: 1, accid: { type: 1 }, tie: true }, { p: 1, bar: 1, chord: 2 }, { p: 1, bar: 1, chord: 3 }].map((n) => ({ st, ...n }));
+    interpret(st);
+    expect(st.notes.map((n) => n.name)).toEqual(['F♯4', 'F♯4', 'F4']); // the tie carries; the next F is natural again
+    const st2 = { clef: { type: 'treble' }, key: { fifths: 0 }, prevStaff: st, notes: [] };
+    st.notes[2].tie = true; st.notes[2].accid = { type: -1 }; interpret(st);
+    st2.notes = [{ st: st2, p: 1, bar: 0, chord: 1 }]; interpret(st2);
+    expect(st2.notes[0].name).toBe('F♭4');
+  });
+  test('rows of letters are text, a lone ring is not', () => {
+    const box = (x, y, w, h, id) => ({ id, x0: x, y0: y, x1: x + w, y1: y + h, cx: x + w / 2, cy: y + h / 2, n: w * h / 2 });
+    const word = [box(0, 0, 10, 12, 1), box(14, 2, 10, 10, 2), box(28, 0, 6, 16, 3), box(38, 2, 10, 10, 4)]; // "dolce"-like
+    expect([...findText(word, 16)].sort()).toEqual([1, 2, 3, 4]);
+    expect(findText([box(0, 0, 18, 13, 1), box(60, 0, 18, 13, 2)], 16).size).toBe(0); // two whole notes
+  });
+  test('two voices on one staff, articulations, double flats', () => {
+    const tv = evaluate('twovoice', 'clean'), R = evaluateRhythm(tv);
+    expect(R.bars).toBeGreaterThanOrEqual(7);
+    expect(R.score.measures.filter((m) => m.voices === 2).length).toBeGreaterThanOrEqual(6);
+    const xml = toMusicXML(tv.res, R.score, {});
+    expect(xml).toContain('<backup>'); expect(xml).toContain('<voice>2</voice>');
+    const mk = evaluate('marks', 'clean');
+    let ok = 0, n = 0, fp = 0;
+    for (const [t, g] of mk.pairs) { for (const a of t.artic) { n++; if (g.artic.includes(a)) ok++; } fp += g.artic.filter((a) => !t.artic.includes(a)).length; }
+    expect(ok).toBe(n); expect(fp).toBe(0);
+    expect(mk.pitch).toBe(mk.n); // double sharps and double flats
+    const p = performance(mk.res, buildScore(mk.res));
+    expect(p.notes[0].sound).toBeLessThan(0.6 * p.notes[0].dur); // staccato sounds short
   });
 });
 
