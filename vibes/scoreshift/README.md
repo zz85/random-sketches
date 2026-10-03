@@ -439,6 +439,7 @@ differences).
 
 ```
 node tools/imslp_fetch.mjs /tmp/imslp 236786 236783 96616      # resolve via headless Chromium, download
+node tools/imslp_fetch.mjs /tmp/imslp/vln 183793 127482 984191 32136   # violin set (+ the other per-piece PDFs)
 node tools/imslp_fetch.mjs --render /tmp/imslp/<file>.pdf /tmp/imslp/haus 2400 2-25
 bun tools/imslp_eval.js /tmp/imslp/haus /tmp/imslp/xml/*.xml   # after unzipping the MusicXML
 ```
@@ -474,6 +475,35 @@ accidentals touching their notehead or stem are merged into the note's component
 (a classifier pass on the ink left of the head either fired on beams or, constrained, found
 nothing, so it was not kept); naturals occasionally read as flats or sharps on the scan; and a
 few readings where the 1955 edition and the MusicXML simply differ.
+
+### A second IMSLP work: Telemann's 12 Fantasias for solo violin
+
+TWV 40:14-25 has a MusicXML transcription on IMSLP (#183793, Martin Packham, via Capella; 11,534
+notes) with the PDFs typeset from it (#127482-171074), and two independent scanned editions:
+Bärenreiter 1955 (#984191, ed. Haußwald) and Kallmeyer c.1927 in the Muzgiz reprint (#32136,
+ed. Küster). Violin brings what the flute does not: double and triple stops, two voices on one
+staff, key changes between movements on one page, and tighter engraving.
+
+| edition | heads found | pitch right | extra | clefs | keys |
+|---|---|---|---|---|---|
+| typeset from the MusicXML (31 pp.) | 99.5% | 98.0% → 98.3% | 16 → 12 | 287/289 | 285 → 289/289 |
+| Bärenreiter 1955 scan (24 pp.) | 97.8% | 95.4% → 95.8% | 113 → 110 | 259/259 | 253 → 257/259 |
+| Kallmeyer c.1927 scan (50 pp.) | 91.3% | 86.0% → 85.9% | 211 → 209 | 298/301 | 265 → 266/301 |
+
+Fixes from it: a ring closed by a sharp's stroke, a staff line and the next symbol is not a half
+note (it was hiding the second sharp of D major in tight engraving); a flat's bowl is not a
+hollow head; a stemless "whole note" right after a key glyph is a time-signature digit's loop;
+two staves in a row with no key in a part are a C / a-minor movement, not a missed key.
+
+The evaluator changed too, and the Telemann flute numbers above are unchanged by it: notes are
+compared column by column, low to high (two voices on one staff put their heads a few pixels
+apart; the first version counted those as wrong pitches, ~0.8% on the violin), and a staff's
+key and clef are checked against the true key of its own notes before any key change, so MusicXML
+files without system breaks score correctly.
+
+What is left on the violin: missed accidentals in double stops (an accidental between two heads
+of a chord, or touching one), and on the 1927 scan, hollow heads (half and whole notes in the
+two-voice Grave movements): about 9% of all its notes are not found, most on four pages.
 
 ### Accuracy
 

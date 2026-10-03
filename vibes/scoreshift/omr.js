@@ -582,6 +582,18 @@ export function analyze(norm, opts = {}) {
     // (a grace note's stem, flag and slash can pass for an accidental; accidentals are taller)
     if (a && !(n.small && c.y1 - c.y0 + 1 < 2.4 * S)) return false;
     if (n.kind === 'black') return true;
+    // A hole's nearest ink can be another component: an accidental-shaped component around the
+    // hole, or one that is the head's "stem" (a ring closed by a sharp's stroke, a staff line
+    // and the next symbol), makes it part of that accidental, not a note.
+    for (const q of cc.comps) {
+      if (!q || q === c || q.y0 > n.y || q.y1 < n.y) continue;
+      const inHole = q.x0 <= n.x && q.x1 >= n.x, stemOf = n.stem && n.stem.x >= q.x0 && n.stem.x <= q.x1;
+      if (!inHole && !stemOf) continue;
+      // (a flat too: its bowl is a ring with a stem rising from its left; a real half note's
+      // stem rises from the right, or falls from the left with the head on top)
+      const qa = classifyAccidental(L, w, q, S, t);
+      if (qa) return false;
+    }
     // time-signature digits: two spaces tall, hanging from the top line or standing on the bottom one
     const ch = c.y1 - c.y0 + 1, ya = lineY(n.st, 0, n.x), yb = lineY(n.st, 4, n.x);
     if (ch > 1.6 * S && ch < 2.4 * S && (Math.abs(c.y0 - ya) < 0.35 * S || Math.abs(c.y1 - yb) < 0.35 * S) && c.x1 - c.x0 > 1.0 * S) return false;
@@ -728,7 +740,9 @@ export function analyze(norm, opts = {}) {
       if (a.c.x0 - x > 2.0 * S || key.length >= 7) break;
       // a local accidental hugs its note (~0.2-0.3 spaces); a key signature keeps a full space
       // or more before the music, so an accidental with a head at its pitch right after it ends the key
-      if (notes.some((n) => n.st === st && Math.abs(n.p - a.p) <= 0 && n.box[0] - a.c.x1 > -0.3 * S && n.box[0] - a.c.x1 < 0.55 * S)) break;
+      // (a stemless "whole note" there, once the key has begun, is the loop of a time-signature
+      // digit touching the key: tight engravings)
+      if (notes.some((n) => n.st === st && Math.abs(n.p - a.p) <= 0 && n.box[0] - a.c.x1 > -0.3 * S && n.box[0] - a.c.x1 < 0.55 * S && !(key.length && n.kind === 'whole'))) break;
       if (key.length && a.type !== key[0].type) break;
       // glyphs of one signature are one size (a C or cut-C time signature can read as a sharp)
       if (key.length && (a.c.x1 - a.c.x0) > 1.35 * (key[0].c.x1 - key[0].c.x0) + 1) break;
@@ -875,6 +889,9 @@ export function analyze(norm, opts = {}) {
     if (!k && endK != null && st.key.detected !== endK && (!st.key.detected || (Math.sign(st.key.detected) === Math.sign(endK) && Math.abs(st.key.detected) < Math.abs(endK)))) k = endK;
     const fromPrev = k === endK && k != null;
     if (!k && st.key.detected && confirmed.includes(st.key.detected)) continue;
+    // in a part, two staves in a row with no key signature are a section in C / a minor (a page
+    // can end one movement and start another): no key is inferred for them
+    if (!k && sys.length < 2 && !st.key.detected && [staves[st.index - 1], staves[st.index + 1]].some((o) => o && sysOf(o).length < 2 && !o.key.detected && !o.keyChanges?.length)) continue;
     if (!k && st.key.detected) {
       const same = confirmed.filter((c) => Math.sign(c) === Math.sign(st.key.detected));
       const best = Math.min(...same.map((c) => Math.abs(Math.abs(c) - Math.abs(st.key.detected))));

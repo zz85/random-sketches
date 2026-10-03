@@ -10,7 +10,7 @@
 import fs from 'fs';
 import path from 'path';
 import { decodeGray } from '../png.js';
-import { normalize, analyze } from '../omr.js';
+import { normalize, analyze, keyAt } from '../omr.js';
 import { midiOf } from '../theory.js';
 import { readMusicXML } from './groundtruth.js';
 
@@ -25,7 +25,7 @@ const pages = opt.pages ? sel(opt.pages) : pngs.map((f) => +f.slice(1, -4));
 const T = [], tSys = [];
 for (const x of xmls) for (const part of readMusicXML(fs.readFileSync(x, 'utf8')).parts) for (const s of part.systems) {
   const si = tSys.length; tSys.push({ file: path.basename(x), staves: s.staves.map((st) => ({ clef: st.clef, fifths: st.fifths })) });
-  s.staves.forEach((st, k) => { for (const n of st.notes) if (!n.grace) T.push({ midi: n.midi, sys: si, staff: k }); });
+  s.staves.forEach((st, k) => { for (const n of st.notes) if (!n.grace) T.push({ midi: n.midi, sys: si, staff: k, fifths: n.fifths, clef: n.clef }); });
 }
 const graces = xmls.reduce((a, x) => a + readMusicXML(fs.readFileSync(x, 'utf8')).parts.flatMap((p) => p.systems.flatMap((s) => s.staves.flatMap((st) => st.notes))).filter((n) => n.grace).length, 0);
 
@@ -37,7 +37,11 @@ for (const k of pages) {
   try { res = analyze(normalize(decodeGray(fs.readFileSync(f)))); } catch (e) { failed++; continue; }
   for (const st of res.staves) {
     const gi = gStaff.length; gStaff.push({ page: k, clef: st.clef.detected, type: st.clef.type, fifths: st.key.fifths, detected: st.key.detected, inferred: !!st.key.inferred, n: st.notes.length });
-    for (const n of st.notes) G.push({ midi: midiOf(n.pitch), staff: gi });
+    // columns low to high, as the truth lists notes at one onset: a chord, or two voices' heads at
+    // one beat (opposite stems, a few pixels apart in x); a column is heads within 0.9 space of its first
+    const byX = st.notes.slice().sort((a, b) => a.x - b.x), ns = [];
+    for (let i = 0; i < byX.length;) { let j = i + 1; while (j < byX.length && byX[j].x - byX[0 + i].x < 0.9 * res.space) j++; ns.push(...byX.slice(i, j).sort((a, b) => midiOf(a.pitch) - midiOf(b.pitch))); i = j; }
+    for (const n of ns) G.push({ midi: midiOf(n.pitch), staff: gi, head: keyAt(st, n.x) === st.key.fifths }); // head: before any key change
   }
 }
 const ms = performance.now() - t0;
@@ -66,7 +70,9 @@ for (const [ti, gi] of pairs) {
   if (ti >= 0 && gi >= 0) {
     const t = T[ti], g = G[gi], d = g.midi - t.midi;
     if (!d) match++; else { sub++; if (Math.abs(d) === 12) oct++; if (Math.abs(d) === 1) semi++; }
-    const key = t.sys + ':' + t.staff, v = votes[g.staff]; v.set(key, (v.get(key) || 0) + 1);
+    // the true clef and key of the notes a staff's heads align with (keys and clefs can change
+    // inside a printed system, and many MusicXML files carry no system breaks at all)
+    const key = t.clef + ':' + t.fifths, v = votes[g.staff]; if (g.head) v.set(key, (v.get(key) || 0) + 1);
     stScore[g.staff][d ? 'sub' : 'match']++;
   } else if (ti >= 0) del++; else { ins++; stScore[G[gi].staff].ins++; }
 }
@@ -75,9 +81,9 @@ const CLEF_OK = (a, b) => a === b || (a === 'treble' && b === 'treble8vb');
 let clefOk = 0, keyOk = 0, keyRaw = 0, mapped = 0; const badKeys = [], badClefs = [];
 gStaff.forEach((s, i) => {
   const best = [...votes[i]].sort((a, b) => b[1] - a[1])[0]; if (!best || best[1] < 3) return;
-  const [si, k] = best[0].split(':').map(Number), tr = tSys[si].staves[k]; mapped++;
+  const [clef, f] = best[0].split(':'), tr = { clef, fifths: +f }; mapped++;
   if (CLEF_OK(s.clef, tr.clef)) clefOk++; else badClefs.push(`p${s.page} ${s.clef}≠${tr.clef}`);
-  if (s.fifths === tr.fifths) keyOk++; else badKeys.push(`p${s.page} ${s.fifths}${s.inferred ? '*' : ''}≠${tr.fifths}`);
+  if (s.fifths === tr.fifths) keyOk++; else badKeys.push(`p${s.page} st${i - gStaff.findIndex((q) => q.page === s.page)} ${s.fifths}${s.inferred ? '*' : ''}≠${tr.fifths}`);
   if (s.detected === tr.fifths) keyRaw++;
 });
 const N = T.length, pct = (x, d = N) => ((100 * x) / d).toFixed(1) + '%';

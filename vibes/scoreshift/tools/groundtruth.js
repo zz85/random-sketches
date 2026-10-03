@@ -49,7 +49,7 @@ export function readMusicXML(xml) {
         if (/<rest\b/.test(e) || !/<pitch>/.test(e)) continue;
         const p = tag(e, 'pitch'), step = STEP[tag(p, 'step')], alter = Math.round(num(p, 'alter')), oct = num(p, 'octave');
         const staff = num(e, 'staff', 1), d = oct * 7 + step;
-        sys.staves[staff - 1]?.notes.push({ midi: 12 * (oct + 1) + NAT[step] + alter, d, alter, grace, onset: (t0 + onset) / divisions });
+        sys.staves[staff - 1]?.notes.push({ midi: 12 * (oct + 1) + NAT[step] + alter, d, alter, grace, onset: (t0 + onset) / divisions, fifths, clef: clefs[staff] || 'treble' });
       }
       // measure length = furthest point reached
       let mx = 0, tt = 0;
