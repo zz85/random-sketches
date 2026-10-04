@@ -36,6 +36,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
 .hud{position:fixed;z-index:4;pointer-events:none}
 #top{top:env(safe-area-inset-top,0px);left:0;right:0;padding:10px 12px;display:none;justify-content:space-between;align-items:flex-start;gap:8px}
 #top.vis{display:flex}
+#chipHdg{pointer-events:auto;cursor:pointer}
 .card{background:rgba(6,14,24,.62);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);
   border:1px solid rgba(255,255,255,.14);border-radius:12px;padding:8px 11px;pointer-events:auto}
 #place{font-size:13px;font-weight:600}
@@ -225,7 +226,11 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       window.addEventListener("resize", () => this.resize());
       window.addEventListener("orientationchange", () => setTimeout(() => this.resize(), 250));
       this.wireUI();
-      $("startBtn").onclick = () => this.start();
+      // iOS Safari only grants motion access when requestPermission() is called synchronously
+      // inside the tap. start() awaits the camera first, by which time the tap has expired and
+      // Safari refuses, so ask here, before anything else, and let start() await the answer.
+      $("startBtn").onclick = () => { this.orientPerm = this.requestOrientation(); this.start(); };
+      $("chipHdg").onclick = () => this.retryCompass();
       // URL params: ?lat=47.66&lon=-122.44&eye=18&hdg=340&provider=demo&auto=1&nocam=1&night=1
       const q = new URLSearchParams(location.search);
       if (q.has("lat") && q.has("lon")) { this.useGps = false; this.lat = +q.get("lat"); this.lon = +q.get("lon"); [...$("presets").children].forEach((x) => x.classList.remove("on")); }
@@ -347,13 +352,18 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
         } catch (e) { console.warn("camera", e); this.camOn = false; this.vid.classList.add("off"); st.textContent = "No camera — synthetic horizon"; await sleep(600); }
         st.textContent = "Requesting compass…";
         try {
-          if (typeof DeviceOrientationEvent !== "undefined" && typeof DeviceOrientationEvent.requestPermission === "function") {
-            const p = await DeviceOrientationEvent.requestPermission(); if (p !== "granted") throw new Error("denied");
-          }
+          // already asked inside the tap (Start button); ?auto=1 has no tap, so ask now
+          const p = await (this.orientPerm || this.requestOrientation()); this.orientPerm = null;
+          if (p !== "granted") throw new Error(p);
           this.bindOrientation();
           await sleep(700);
           if (!this.hasOri) throw new Error("no events");
-        } catch (e) { console.warn("orientation", e); this.manual = true; this.manualAuto = e.message === "no events"; st.textContent = "No compass — drag to look around"; await sleep(600); }
+        } catch (e) {
+          console.warn("orientation", e.message);
+          this.manual = true; this.manualAuto = e.message === "no events";
+          this.compassBlocked = e.message !== "no events" && this.needsMotionPermission();
+          st.textContent = this.compassBlocked ? "Compass not allowed — tap HDG to retry" : "No compass — drag to look around"; await sleep(600);
+        }
         st.textContent = "Getting position…";
         if (this.useGps) await this.locate(); else { this.hasGps = false; }
         $("splash").classList.add("hidden");
@@ -368,7 +378,28 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
     },
 
     // ---- sensors --------------------------------------------------------------
+    needsMotionPermission() { return typeof DeviceOrientationEvent !== "undefined" && typeof DeviceOrientationEvent.requestPermission === "function"; },
+    /** Call synchronously from a tap handler. Resolves to "granted", "denied" or an error name; never rejects. */
+    requestOrientation() {
+      if (!this.needsMotionPermission()) return Promise.resolve("granted");
+      try { return DeviceOrientationEvent.requestPermission().then((r) => r, (e) => (e && e.name) || "error"); }
+      catch (e) { return Promise.resolve((e && e.name) || "error"); }
+    },
+    /** Tap on the HDG chip: ask again (this is a fresh tap, so Safari will show its prompt). */
+    retryCompass() {
+      if (!this.manual) return;
+      if (!this.needsMotionPermission()) { this.toast("This browser reports no compass; drag to look around"); return; }
+      this.requestOrientation().then((r) => {
+        if (r !== "granted") {
+          this.toast(r === "denied" ? "Motion access denied. Quit Safari fully, reopen, and tap Allow." : "Could not enable compass (" + r + ")", 4500);
+          return;
+        }
+        this.compassBlocked = false; this.manualAuto = true;          // first event switches out of drag mode
+        this.bindOrientation(); this.toast("Compass allowed — move the phone");
+      });
+    },
     bindOrientation() {
+      if (this._oriBound) return; this._oriBound = true;
       const onEvent = (e, absolute) => {
         if (e.alpha == null && e.webkitCompassHeading == null) return;
         this.hasOri = true;
@@ -922,7 +953,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       else if (this.hasGps) { g.textContent = `GPS ±${Math.round(this.gpsAcc || 0)} m`; g.className = "chip " + (this.gpsAcc < 30 ? "ok" : "warn"); }
       else { g.textContent = "GPS no fix"; g.className = "chip bad"; }
       const h = $("chipHdg");
-      if (this.manual) { h.textContent = "HDG manual"; h.className = "chip warn"; }
+      if (this.manual) { h.textContent = this.compassBlocked ? "HDG off · tap to allow" : "HDG manual"; h.className = "chip " + (this.compassBlocked ? "bad" : "warn"); }
       else { h.textContent = `HDG ${this.headingSource || "…"}` + (this.applyDecl && this.headingSource !== "iOS compass" ? ` +${this.declination.toFixed(0)}°` : ""); h.className = "chip " + (this.headingSource === "relative" ? "warn" : "ok"); }
       const a = $("chipAis");
       const age = this.lastAis ? (now - this.lastAis) / 1000 : null;
