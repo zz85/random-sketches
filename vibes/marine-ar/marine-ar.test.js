@@ -79,6 +79,43 @@ describe("Camera", () => {
   });
 });
 
+describe("Screen clipping (2 fps regression)", () => {
+  const rect = [-640, -330, 1920, 990];
+  test("polygon fully inside is returned unchanged", () => {
+    const poly = [{ x: 10, y: 10 }, { x: 100, y: 10 }, { x: 100, y: 100 }];
+    expect(Geo.clipPolygonToRect(poly, rect)).toBe(poly);
+  });
+  test("near-plane vertex millions of px away is clipped into the padded rect, area inside kept", () => {
+    const poly = [{ x: 600, y: 400, depth: 900 }, { x: 700, y: 400, depth: 900 }, { x: 10780067, y: 5e6, depth: 0.5 }, { x: 650, y: 9e6, depth: 0.5 }];
+    const c = Geo.clipPolygonToRect(poly, rect);
+    expect(c.length).toBeGreaterThanOrEqual(3);
+    for (const p of c) { expect(p.x).toBeGreaterThanOrEqual(-640 - 1e-6); expect(p.x).toBeLessThanOrEqual(1920 + 1e-6); expect(p.y).toBeLessThanOrEqual(990 + 1e-6); }
+    expect(c.some((p) => p.x === 600 && p.y === 400)).toBe(true);            // original on-screen vertices survive
+    let per = 0; for (let i = 0; i < c.length; i++) { const a = c[i], b = c[(i + 1) % c.length]; per += Math.hypot(b.x - a.x, b.y - a.y); }
+    expect(per).toBeLessThan(10000);                                           // was ~46 million px of dashes
+    expect(c.every((p) => typeof p.depth === "number")).toBe(true);            // depth interpolated for arrow culling
+  });
+  test("polygon entirely off-screen disappears", () => {
+    expect(Geo.clipPolygonToRect([{ x: 5000, y: 5000 }, { x: 6000, y: 5000 }, { x: 6000, y: 6000 }], rect)).toEqual([]);
+  });
+  test("polyline split into visible runs", () => {
+    const line = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 1e7, y: 0 }, { x: 1e7, y: 100 }, { x: 200, y: 100 }, { x: 300, y: 100 }];
+    const pieces = Geo.clipPolylineToRect(line, rect);
+    expect(pieces.length).toBe(2);
+    expect(pieces[0][pieces[0].length - 1].x).toBeCloseTo(1920);
+    expect(pieces[1][0].x).toBeCloseTo(1920); expect(pieces[1][pieces[1].length - 1].x).toBe(300);
+  });
+  test("Camera.projectSeaRing never returns far-off coordinates for a lane that passes beside the viewer", () => {
+    const cam = new Geo.Camera({ width: 1280, height: 660, hfov: 60, eyeHeight: 18 });
+    cam.setOrientation(300, -6, 0);
+    const lat0 = 47.6603, lon0 = -122.4412;
+    // a 6 km x 1 km lane that runs right past the viewer and behind them
+    const ring = [[-122.452, 47.63], [-122.437, 47.63], [-122.437, 47.69], [-122.452, 47.69], [-122.452, 47.63]];
+    const poly = cam.projectSeaRing(ring, lat0, lon0);
+    for (const p of poly) { expect(Math.abs(p.x)).toBeLessThan(2000); expect(Math.abs(p.y)).toBeLessThan(1000); }
+  });
+});
+
 describe("AIS geometry", () => {
   test("hull footprint has the right length and beam", () => {
     const ring = Geo.hullFootprint(WEST_POINT.lat, WEST_POINT.lon, 90, { a: 200, b: 100, c: 20, d: 20 });

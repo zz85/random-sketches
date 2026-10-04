@@ -353,7 +353,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
           this.bindOrientation();
           await sleep(700);
           if (!this.hasOri) throw new Error("no events");
-        } catch (e) { console.warn("orientation", e); this.manual = true; st.textContent = "No compass — drag to look around"; await sleep(600); }
+        } catch (e) { console.warn("orientation", e); this.manual = true; this.manualAuto = e.message === "no events"; st.textContent = "No compass — drag to look around"; await sleep(600); }
         st.textContent = "Getting position…";
         if (this.useGps) await this.locate(); else { this.hasGps = false; }
         $("splash").classList.add("hidden");
@@ -378,8 +378,12 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
           // iOS: compass heading of the device, already screen-orientation aware in portrait; it is the direction the back camera faces when the phone is upright.
           this.rawHeading = Geo.wrap360(e.webkitCompassHeading + (this.pitchUprightCorrection(o)));
           this.headingSource = "iOS compass";
-        } else if (absolute || e.absolute) { this.rawHeading = o.heading; this.headingSource = "absolute"; }
-        else if (this.rawHeading == null) { this.rawHeading = o.heading; this.headingSource = "relative"; }
+        } else if (absolute || e.absolute) { this.rawHeading = o.heading; this.headingSource = "absolute"; this._absAt = Date.now(); }
+        // relative-only browsers (Firefox Android, some WebViews): not north-referenced, but it must
+        // still track rotation. Previously this only took the first event, freezing the view.
+        else if (!this._absAt || Date.now() - this._absAt > 2000) { this.rawHeading = o.heading; this.headingSource = "relative"; }
+        // sensors that wake up after the start-up probe gave up: leave the drag fallback
+        if (this.manual && this.manualAuto) { this.manual = false; this.manualAuto = false; this.toast("Compass found — following the phone"); }
       };
       if ("ondeviceorientationabsolute" in window) window.addEventListener("deviceorientationabsolute", (e) => onEvent(e, true), true);
       window.addEventListener("deviceorientation", (e) => onEvent(e, false), true);
@@ -504,9 +508,13 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
         let h = this.rawHeading == null ? this.heading : this.rawHeading;
         if (this.applyDecl && this.headingSource !== "iOS compass") h += this.declination;   // Android absolute alpha is magnetic
         h += this.offset;
-        this.heading = Geo.smoothHeading(this.heading, h, 0.25);
-        this.pitch += (this.rawPitch - this.pitch) * 0.3;
-        this.roll += (this.rawRoll - this.roll) * 0.3;
+        // time-constant smoothing (~60 ms): the same feel at 60 fps as before, and a slow frame
+        // catches up instead of crawling 25% of the way per frame
+        const now = performance.now(), dt = Math.min(0.5, ((now - (this._poseAt || now)) / 1000) || 1 / 60); this._poseAt = now;
+        const k = 1 - Math.exp(-dt / 0.06);
+        this.heading = Geo.smoothHeading(this.heading, h, k);
+        this.pitch += (this.rawPitch - this.pitch) * k;
+        this.roll += (this.rawRoll - this.roll) * k;
       }
       const eye = this.eye;
       this.cam.eyeHeight = eye;
@@ -530,8 +538,13 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       if (refresh) this.occlusionAt = now;
       // elevation-aware: eye height vs land height vs the target's height above water
       const opts = (targetM) => this.elevAware ? { eyeM: this.eye, targetM, unknownElevM: this.unknownElevM > 0 ? this.unknownElevM : null, spots: this.landSpots } : undefined;
+      // Moored boats (most of a real feed: ~700 of ~850 around Seattle) do not move, so their
+      // sight line only needs redoing when the viewer moves; 10 s is plenty. Halves the cost.
+      const slow = now - (this.occlusionSlowAt || 0) > 10e3;
+      if (refresh && slow) this.occlusionSlowAt = now;
       for (const v of this.vessels) {
-        if (refresh || !this.occlusion.has(v.mmsi)) this.occlusion.set(v.mmsi, Geo.landOcclusion(this.lat, this.lon, v.drLat, v.drLon, this.land, opts(Geo.estimateAirDraught(v.length, v.category))));
+        const stale = refresh && (slow || !this.isMoored(v));
+        if (stale || !this.occlusion.has(v.mmsi)) this.occlusion.set(v.mmsi, Geo.landOcclusion(this.lat, this.lon, v.drLat, v.drLon, this.land, opts(Geo.estimateAirDraught(v.length, v.category))));
         v.occluded = this.occlusion.get(v.mmsi);
       }
       for (const a of this.aton) {

@@ -245,6 +245,16 @@
       if (cur.length > 1) pieces.push(cur);
       return pieces;
     }
+    /**
+     * Screen rectangle that projected geometry is clipped to: the viewport padded by half its
+     * size each side. Points just past the near plane project millions of pixels away; drawn
+     * unclipped, a dashed lane edge became ~46 million px of dashes and the canvas fell to
+     * 2 fps. Padding keeps stroke joins and dash phase off-screen.
+     */
+    clipRect() {
+      const px = this.width * 0.5, py = this.height * 0.5;
+      return [-px, -py, this.width + px, this.height + py];
+    }
     /** Ring of [lon,lat] on the sea -> screen polygon [{x,y}] (clipped), given viewer lat/lon. */
     projectSeaRing(ring, lat0, lon0) {
       const cam = ring.map(([lon, lat]) => {
@@ -252,7 +262,7 @@
         const d = Math.hypot(e, n);
         return this.toCam(e, n, -this.eyeHeight - d * d / (2 * R) * 0.86);
       });
-      return this.clipRing(cam).map((c) => this.toScreen(c));
+      return clipPolygonToRect(this.clipRing(cam).map((c) => this.toScreen(c)), this.clipRect());
     }
     projectSeaLine(line, lat0, lon0) {
       const cam = line.map(([lon, lat]) => {
@@ -260,8 +270,66 @@
         const d = Math.hypot(e, n);
         return this.toCam(e, n, -this.eyeHeight - d * d / (2 * R) * 0.86);
       });
-      return this.clipPolyline(cam).map((piece) => piece.map((c) => this.toScreen(c)));
+      const rect = this.clipRect(), out = [];
+      for (const piece of this.clipPolyline(cam)) for (const p of clipPolylineToRect(piece.map((c) => this.toScreen(c)), rect)) out.push(p);
+      return out;
     }
+  }
+
+  // ---- 2D clipping (screen space) ----------------------------------------------
+
+  /**
+   * Sutherland-Hodgman against an axis-aligned rect [x0, y0, x1, y1]. The result is the
+   * same filled region inside the rect; edges added along the rect lie off-screen when
+   * the rect is padded. Extra properties of input points (e.g. depth) are interpolated.
+   */
+  function clipPolygonToRect(poly, rect) {
+    if (poly.length < 3) return poly;
+    const [x0, y0, x1, y1] = rect;
+    let inside = true;
+    for (const p of poly) if (p.x < x0 || p.x > x1 || p.y < y0 || p.y > y1) { inside = false; break; }
+    if (inside) return poly;
+    const lerp = (a, b, t) => { const o = {}; for (const k in a) o[k] = typeof a[k] === "number" && typeof b[k] === "number" ? a[k] + t * (b[k] - a[k]) : a[k]; return o; };
+    const edges = [
+      (p) => p.x >= x0, (a, b) => lerp(a, b, (x0 - a.x) / (b.x - a.x)),
+      (p) => p.x <= x1, (a, b) => lerp(a, b, (x1 - a.x) / (b.x - a.x)),
+      (p) => p.y >= y0, (a, b) => lerp(a, b, (y0 - a.y) / (b.y - a.y)),
+      (p) => p.y <= y1, (a, b) => lerp(a, b, (y1 - a.y) / (b.y - a.y)),
+    ];
+    let out = poly;
+    for (let k = 0; k < 8 && out.length; k += 2) {
+      const ins = edges[k], cut = edges[k + 1], src = out; out = [];
+      for (let i = 0; i < src.length; i++) {
+        const a = src[i], b = src[(i + 1) % src.length], ai = ins(a), bi = ins(b);
+        if (ai) out.push(a);
+        if (ai !== bi) out.push(cut(a, b));
+      }
+    }
+    return out.length >= 3 ? out : [];
+  }
+
+  /** Liang-Barsky per segment; returns the visible runs of an open polyline as separate pieces. */
+  function clipPolylineToRect(line, rect) {
+    const [x0, y0, x1, y1] = rect, pieces = [];
+    const lerp = (a, b, t) => { const o = {}; for (const k in a) o[k] = typeof a[k] === "number" && typeof b[k] === "number" ? a[k] + t * (b[k] - a[k]) : a[k]; return o; };
+    let cur = null;
+    for (let i = 0; i + 1 < line.length; i++) {
+      const a = line[i], b = line[i + 1], dx = b.x - a.x, dy = b.y - a.y;
+      let t0 = 0, t1 = 1, ok = true;
+      for (const [pp, q] of [[-dx, a.x - x0], [dx, x1 - a.x], [-dy, a.y - y0], [dy, y1 - a.y]]) {
+        if (pp === 0) { if (q < 0) { ok = false; break; } continue; }
+        const r = q / pp;
+        if (pp < 0) { if (r > t1) { ok = false; break; } if (r > t0) t0 = r; }
+        else { if (r < t0) { ok = false; break; } if (r < t1) t1 = r; }
+      }
+      if (!ok) { if (cur) { pieces.push(cur); cur = null; } continue; }
+      const pa = t0 > 0 ? lerp(a, b, t0) : a, pb = t1 < 1 ? lerp(a, b, t1) : b;
+      if (!cur) cur = [pa];
+      cur.push(pb);
+      if (t1 < 1) { pieces.push(cur); cur = null; }                 // left the rect mid-segment
+    }
+    if (cur && cur.length > 1) pieces.push(cur);
+    return pieces;
   }
 
   // ---- AIS helpers -----------------------------------------------------------
@@ -577,7 +645,7 @@
     ringBBox, ringCentroid, outerRing, pointInRing, distanceToRing,
     horizonDip, horizonDistance, seaPitch, Camera,
     hullFootprint, deadReckon, cpa, velocity, laneArrows,
-    segmentsCross, ringCrossings, landOcclusion, estimateAirDraught,
+    segmentsCross, ringCrossings, landOcclusion, estimateAirDraught, clipPolygonToRect, clipPolylineToRect,
     lightSchedule, lightState, sunAltitude,
     smoothHeading, cardinal, fmtDistance, fmtSpeed, fmtBearing, fmtDuration,
   };
