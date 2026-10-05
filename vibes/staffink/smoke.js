@@ -235,7 +235,7 @@ const server = http.createServer((req, res) => {
 
     // ---------------------------------------------------------- scene 2d: offline
     await ev('navigator.serviceWorker.ready.then(() => new Promise((r) => { if (navigator.serviceWorker.controller) r(true); else navigator.serviceWorker.addEventListener("controllerchange", () => r(true)); setTimeout(() => r(!!navigator.serviceWorker.controller), 5000); }))');
-    const cached = await ev('caches.open("staffink-v2").then((c) => c.keys()).then((k) => k.length)');
+    const cached = await ev('caches.open("staffink-v3").then((c) => c.keys()).then((k) => k.length)');
     await c.send('Network.enable');
     await c.send('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
     await c.send('Page.navigate', { url: `http://localhost:${PORT}/?nohelp&delay=250` });

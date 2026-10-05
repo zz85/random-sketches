@@ -11,7 +11,11 @@ import { toMusicXML, toMidi } from './export.js';
 const $ = (id) => document.getElementById(id);
 const stage = $('stage'), cScore = $('score'), cInk = $('ink');
 const gS = cScore.getContext('2d');
-const gI = cInk.getContext('2d', { desynchronized: true }) || cInk.getContext('2d');
+// Low-latency ink on desktop only. On Android Chrome a desynchronized canvas is put on
+// its own overlay plane where transparent pixels composite as black, which hides the
+// score underneath. ?lowlatency=1 forces it on for testing.
+const lowLatency = new URLSearchParams(location.search).get('lowlatency') === '1' || !/Android/i.test(navigator.userAgent);
+const gI = (lowLatency && cInk.getContext('2d', { desynchronized: true })) || cInk.getContext('2d');
 const params = new URLSearchParams(location.search);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const load = (k) => { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } };
