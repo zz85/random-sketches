@@ -62,6 +62,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
 #radar{position:fixed;left:12px;bottom:calc(12px + env(safe-area-inset-bottom,0px));z-index:4;width:150px;height:150px;border-radius:50%;
   background:rgba(6,14,24,.6);border:1px solid rgba(255,255,255,.18);display:none}
 #radar.vis{display:block}
+#radar{cursor:pointer;-webkit-tap-highlight-color:transparent}
 
 /* settings */
 #settings{position:fixed;left:0;right:0;bottom:0;z-index:6;padding:16px 16px calc(16px + env(safe-area-inset-bottom,0px));
@@ -149,6 +150,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
   <div class="sr"><span>Range</span><span><input type="range" id="rRange" min="2" max="40" value="15"><span class="v" id="vRange">15 km</span></span></div>
   <div class="sr"><span>Eye height</span><span><input type="range" id="rEye" min="1" max="60" step="0.5" value="2"><span class="v" id="vEye">2.0 m</span></span></div>
   <div class="sr"><span>Field of view</span><span><input type="range" id="rFov" min="35" max="90" value="60"><span class="v" id="vFov">60°</span></span></div>
+  <div class="sr"><span>Detail</span><span><input type="range" id="rLod" min="1" max="5" step="1" value="3"><span class="v" id="vLod" style="min-width:74px">Medium</span></span></div>
   <div class="sr"><span>Label size</span><span><input type="range" id="rLabel" min="9" max="18" value="12"><span class="v" id="vLabel">12 px</span></span></div>
   <div class="sr"><span>Lane layers</span><span class="group" id="laneKinds">
     <label><input type="checkbox" value="lane" checked>lanes</label><label><input type="checkbox" value="zone" checked>zones</label>
@@ -194,7 +196,19 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
   const IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
   const D2R = Math.PI / 180, R2D = 180 / Math.PI;
 
-  const MAX_OCCLUDED_LABELS = 6;
+  // Detail levels (settings slider). Each caps how much text goes on screen; geometry the
+  // user asked for (lanes, hulls of visible ships) stays, labels and secondary marks go first.
+  //  vessels   : vessel labels           lines : 1 name+distance, 2 +speed/course, 3 +type/size
+  //  occluded  : ships behind land kept   lanes : lane labels          arrows: lane direction arrows
+  //  aton      : AtoN labels (count)      atonFrac: labels within this fraction of AtoN range
+  //  atonGlyphM: AtoN glyphs beyond this distance are skipped
+  const LOD = [null,
+    { name: "Minimal", vessels: 5, lines: 1, occluded: 0, lanes: 0, arrows: false, aton: 0, atonFrac: 0, atonGlyphM: 2000, hull: false, vector: false },
+    { name: "Low", vessels: 8, lines: 2, occluded: 0, lanes: 3, arrows: true, aton: 0, atonFrac: 0, atonGlyphM: Infinity, hull: true, vector: true },
+    { name: "Medium", vessels: 14, lines: 2, occluded: 3, lanes: 6, arrows: true, aton: 6, atonFrac: 0.4, atonGlyphM: Infinity, hull: true, vector: true },
+    { name: "High", vessels: 25, lines: 3, occluded: 6, lanes: 10, arrows: true, aton: 14, atonFrac: 0.7, atonGlyphM: Infinity, hull: true, vector: true },
+    { name: "Everything", vessels: 40, lines: 3, occluded: 12, lanes: 12, arrows: true, aton: 99, atonFrac: 0.7, atonGlyphM: Infinity, hull: true, vector: true },
+  ];
   const A = {
     // viewer
     lat: 47.6603, lon: -122.4412, alt: null, gpsAcc: null, gpsSpeed: null, gpsCourse: null, hasGps: false, useGps: true,
@@ -209,6 +223,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
     aton: [], atonStore: null, showAton: true, atonRangeM: 6000, atonLoading: false, atonError: null,
     table: null, provider: null, providerHandle: null, providerChoice: "auto", proxyBase: "", vessels: [], aisError: null, lastAis: 0,
     rangeM: 15000, labelPx: 12, showHull: true, showVector: true, showMoored: false, nautical: true, demoSpeed: 6,
+    lod: 3, view: "ar", mapRangeM: null, mapPan: { e: 0, n: 0 }, mapNorthUp: false, mapHeading: 0, rawTopHeading: null, flat: false,
     nightMode: "auto", night: false, sunAlt: null, lookupStatic: true, staticCache: null,
     selected: null, hits: [], settingsOpen: false, place: null,
 
@@ -240,6 +255,8 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       if (q.has("provider")) { this.providerChoice = q.get("provider"); $("selProvider").value = this.providerChoice; }
       if (q.has("proxy")) { this.proxyBase = q.get("proxy"); $("inProxy").value = this.proxyBase; }
       this.noCam = q.has("nocam");
+      if (q.has("view")) this.view = q.get("view") === "map" ? "map" : "ar";
+      if (q.has("lod")) { this.lod = Math.max(1, Math.min(5, +q.get("lod") || 3)); $("rLod").value = this.lod; $("vLod").textContent = LOD[this.lod].name; }
       if (q.has("night")) { this.nightMode = q.get("night") === "0" ? "off" : "on"; $("selNight").value = this.nightMode; }
       if (q.has("auto")) this.start();
     },
@@ -247,12 +264,12 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
     loadPrefs() {
       try {
         const p = JSON.parse(localStorage.getItem("marine-ar:prefs") || "{}");
-        for (const k of ["providerChoice", "proxyBase", "rangeM", "eye", "hfov", "labelPx", "showHull", "showVector", "showMoored", "occlude", "hideOccluded", "elevAware", "unknownElevM", "showAton", "atonRangeM", "nightMode", "lookupStatic", "nautical", "applyDecl", "offset", "demoSpeed"]) if (p[k] != null) this[k] = p[k];
+        for (const k of ["providerChoice", "proxyBase", "rangeM", "eye", "hfov", "labelPx", "showHull", "showVector", "showMoored", "occlude", "hideOccluded", "elevAware", "unknownElevM", "showAton", "atonRangeM", "nightMode", "lod", "view", "mapNorthUp", "lookupStatic", "nautical", "applyDecl", "offset", "demoSpeed"]) if (p[k] != null) this[k] = p[k];
         if (p.laneKinds) this.laneKinds = new Set(p.laneKinds);
       } catch (e) { /* */ }
     },
     savePrefs() {
-      const p = {}; for (const k of ["providerChoice", "proxyBase", "rangeM", "eye", "hfov", "labelPx", "showHull", "showVector", "showMoored", "occlude", "hideOccluded", "elevAware", "unknownElevM", "showAton", "atonRangeM", "nightMode", "lookupStatic", "nautical", "applyDecl", "offset", "demoSpeed"]) p[k] = this[k];
+      const p = {}; for (const k of ["providerChoice", "proxyBase", "rangeM", "eye", "hfov", "labelPx", "showHull", "showVector", "showMoored", "occlude", "hideOccluded", "elevAware", "unknownElevM", "showAton", "atonRangeM", "nightMode", "lod", "view", "mapNorthUp", "lookupStatic", "nautical", "applyDecl", "offset", "demoSpeed"]) p[k] = this[k];
       p.laneKinds = [...this.laneKinds];
       try { localStorage.setItem("marine-ar:prefs", JSON.stringify(p)); } catch (e) { /* */ }
     },
@@ -293,6 +310,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       bind("rEye", "vEye", "eye", (v) => (+v).toFixed(1) + " m", () => this.resize());
       bind("rFov", "vFov", "hfov", (v) => v + "°", () => this.resize());
       bind("rLabel", "vLabel", "labelPx", (v) => v + " px");
+      bind("rLod", "vLod", "lod", (v) => LOD[v].name);
       bind("rOff", "vOff", "offset", (v) => (v > 0 ? "+" : "") + v + "°");
       bind("rDemo", "vDemo", "demoSpeed", (v) => v + "×");
       const ck = (id, prop, cb) => { const c = $(id); c.checked = !!this[prop]; c.onchange = () => { this[prop] = c.checked; this.savePrefs(); if (cb) cb(); }; };
@@ -314,28 +332,212 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
     },
 
     wireTouch() {
-      let sx = 0, sy = 0, sh = 0, sp = 0, dragging = false, moved = false;
-      const start = (x, y) => { sx = x; sy = y; sh = this.mH; sp = this.mP; dragging = true; moved = false; };
+      let sx = 0, sy = 0, lx = 0, ly = 0, sh = 0, sp = 0, dragging = false, moved = false, pinch = null;
+      const start = (x, y) => { sx = lx = x; sy = ly = y; sh = this.mH; sp = this.mP; dragging = true; moved = false; };
       const move = (x, y) => {
         if (!dragging) return;
         if (Math.hypot(x - sx, y - sy) > 6) moved = true;
-        if (this.manual && moved) { this.mH = Geo.wrap360(sh - (x - sx) * (this.hfov / this.W)); this.mP = Math.max(-80, Math.min(60, sp + (y - sy) * (this.hfov / this.W))); }
+        if (this.view === "map") { if (moved) this.panMap(x - lx, y - ly); }
+        else if (this.manual && moved) { this.mH = Geo.wrap360(sh - (x - sx) * (this.hfov / this.W)); this.mP = Math.max(-80, Math.min(60, sp + (y - sy) * (this.hfov / this.W))); }
+        lx = x; ly = y;
       };
       const end = (x, y) => { if (dragging && !moved) this.tap(x, y); dragging = false; };
-      this.cv.addEventListener("touchstart", (e) => { if (e.touches.length === 1) start(e.touches[0].clientX, e.touches[0].clientY); }, { passive: true });
-      this.cv.addEventListener("touchmove", (e) => { if (e.touches.length === 1) { e.preventDefault(); move(e.touches[0].clientX, e.touches[0].clientY); } }, { passive: false });
-      this.cv.addEventListener("touchend", (e) => { const t = e.changedTouches[0]; end(t.clientX, t.clientY); });
+      const span = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+      this.cv.addEventListener("touchstart", (e) => {
+        if (e.touches.length === 1) start(e.touches[0].clientX, e.touches[0].clientY);
+        else if (e.touches.length === 2 && this.view === "map") { pinch = { d0: span(e.touches), r0: this.mapRangeM }; dragging = false; }
+      }, { passive: true });
+      this.cv.addEventListener("touchmove", (e) => {
+        e.preventDefault();
+        if (e.touches.length === 2 && pinch) this.zoomMap(pinch.r0 * pinch.d0 / Math.max(10, span(e.touches)), true);
+        else if (e.touches.length === 1) move(e.touches[0].clientX, e.touches[0].clientY);
+      }, { passive: false });
+      this.cv.addEventListener("touchend", (e) => { if (pinch) { if (e.touches.length < 2) pinch = null; return; } const t = e.changedTouches[0]; end(t.clientX, t.clientY); });
       this.cv.addEventListener("mousedown", (e) => start(e.clientX, e.clientY));
       window.addEventListener("mousemove", (e) => move(e.clientX, e.clientY));
       window.addEventListener("mouseup", (e) => end(e.clientX, e.clientY));
-      window.addEventListener("wheel", (e) => { if (this.manual) this.mP = Math.max(-80, Math.min(60, this.mP - e.deltaY * 0.02)); }, { passive: true });
+      window.addEventListener("wheel", (e) => {
+        if (this.view === "map") this.zoomMap(this.mapRangeM * Math.exp(e.deltaY * 0.0015), true);
+        else if (this.manual) this.mP = Math.max(-80, Math.min(60, this.mP - e.deltaY * 0.02));
+      }, { passive: true });
+      $("radar").addEventListener("click", () => this.toggleView());
+    },
+
+    // ---- 2D chart view --------------------------------------------------------
+    toggleView(to) {
+      this.view = to || (this.view === "ar" ? "map" : "ar");
+      this.applyView(); this.savePrefs();
+      this.toast(this.view === "map" ? "2D chart · pinch to zoom, drag to pan · tap radar for AR" : "AR view");
+    },
+    applyView() {
+      this.vid.classList.toggle("off", this.view === "map" || !this.camOn);
+      if (this.view === "map") { this.mapPan = { e: 0, n: 0 }; if (!this.mapRangeM) this.mapRangeM = Math.min(this.rangeM, 6000); }
+    },
+    zoomMap(r) { this.mapRangeM = Math.max(150, Math.min(60000, r)); },
+    /** Screen drag (px) -> pan in metres, inverse of the chart rotation, so the chart follows the finger. */
+    panMap(dx, dy) {
+      const k = this.mapScale(), a = this.mapNorthUp ? 0 : this.mapHeading * D2R;
+      const xr = dx / k, yr = -dy / k;
+      this.mapPan.e -= xr * Math.cos(a) + yr * Math.sin(a);
+      this.mapPan.n -= -xr * Math.sin(a) + yr * Math.cos(a);
+    },
+    mapScale() { return (Math.min(this.W, this.H) / 2 - 24) / (this.mapRangeM || this.rangeM); },
+    /** ENU of chart rings around the viewer, recomputed only when the viewer moves (~10 m) or data changes. */
+    mapGeometry() {
+      const key = `${this.lat.toFixed(4)},${this.lon.toFixed(4)},${this.land.length},${this.lanes.length}`;
+      if (this._mapGeo && this._mapGeo.key === key) return this._mapGeo;
+      const enu = (pts) => { const a = new Float64Array(pts.length * 2); pts.forEach(([lo, la], i) => { const p = Geo.toENU(this.lat, this.lon, la, lo); a[2 * i] = p.e; a[2 * i + 1] = p.n; }); return a; };
+      this._mapGeo = {
+        key,
+        land: this.land.map((l) => enu(l.ring)),
+        lanes: this.lanes.map((l) => ({ l, pts: enu(l.ring || l.line || []), closed: !!l.ring, arrows: (l.arrows || []).map(enu) })),
+      };
+      return this._mapGeo;
+    },
+    drawMap() {
+      const cx = this.cx, W = this.W, H = this.H, lod = LOD[this.lod], fs = this.labelPx;
+      if (!this.mapRangeM) this.mapRangeM = Math.min(this.rangeM, 6000);
+      const k = this.mapScale(), rotDeg = this.mapNorthUp ? 0 : this.mapHeading, a = rotDeg * D2R, ca = Math.cos(a), sa = Math.sin(a);
+      const ox = W / 2, oy = H / 2, pe = this.mapPan.e, pn = this.mapPan.n;
+      // world ENU (m, from the viewer) -> screen; rotating by +heading puts the heading at the top
+      const X = (e, n) => ox + ((e - pe) * ca - (n - pn) * sa) * k;
+      const Y = (e, n) => oy - ((e - pe) * sa + (n - pn) * ca) * k;
+      const ll = (la, lo) => { const p = Geo.toENU(this.lat, this.lon, la, lo); return [X(p.e, p.n), Y(p.e, p.n)]; };
+      const path = (arr, closed) => { cx.beginPath(); for (let i = 0; i < arr.length; i += 2) { const x = X(arr[i], arr[i + 1]), y = Y(arr[i], arr[i + 1]); i ? cx.lineTo(x, y) : cx.moveTo(x, y); } if (closed) cx.closePath(); };
+      const g = this.mapGeometry();
+      cx.fillStyle = "#0a2133"; cx.fillRect(0, 0, W, H);
+      // land: one path, nonzero fill. ArcGIS outer rings and holes wind in opposite directions,
+      // so bays/lakes cut out of a land polygon stay water; overlapping cells still fill.
+      // No stroke: polygons are clipped at chart-cell edges and would draw seams across land.
+      cx.beginPath();
+      for (const ring of g.land) for (let i = 0; i < ring.length; i += 2) { const x = X(ring[i], ring[i + 1]), y = Y(ring[i], ring[i + 1]); i ? cx.lineTo(x, y) : cx.moveTo(x, y); }
+      cx.fillStyle = "#3a3627"; cx.fill("nonzero");
+      // lanes (solid strokes: no dash expansion at deep zoom)
+      if (this.showLanes) {
+        for (const { l, pts, closed, arrows } of g.lanes) {
+          if (!this.laneKinds.has(l.kind) || pts.length < 4) continue;
+          const st = l.style || Providers.LANE_STYLE[l.kind];
+          path(pts, closed);
+          if (closed && st.fill) { cx.fillStyle = st.fill; cx.fill(); }
+          cx.strokeStyle = hexA(st.stroke, 0.85); cx.lineWidth = l.kind === "zone" ? 1 : 1.5; cx.stroke();
+          if (lod.arrows) { cx.strokeStyle = "rgba(255,120,220,.85)"; cx.lineWidth = 1.5; for (const ar of arrows) { path(ar, false); cx.stroke(); } }
+        }
+      }
+      // range rings around the viewer
+      const ringStep = (() => { const unit = this.nautical ? 1852 : 1000; const steps = [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10]; const want = this.mapRangeM / 3; let best = steps[0]; for (const st of steps) if (st * unit <= want) best = st; return best * unit; })();
+      const vx = X(0, 0), vy = Y(0, 0);
+      cx.strokeStyle = "rgba(255,255,255,.14)"; cx.fillStyle = "rgba(255,255,255,.45)"; cx.font = `${fs - 3}px -apple-system,Segoe UI,Roboto,sans-serif`; cx.textAlign = "left"; cx.textBaseline = "bottom";
+      for (let i = 1; i <= 4; i++) { cx.beginPath(); cx.arc(vx, vy, ringStep * i * k, 0, Math.PI * 2); cx.stroke(); cx.fillText(this.fmtD(ringStep * i), vx + ringStep * i * k * 0.707 + 3, vy - ringStep * i * k * 0.707 - 2); }
+      const inView = (x, y, m) => x > -m && x < W + m && y > -m && y < H + m;
+      // screen space already taken by HUD: chips, radar, buttons, compass rose
+      const placed = [{ x: W - 170, y: 0, w: 170, h: 170 }, { x: 0, y: H - 170, w: 170, h: 170 }, { x: W - 66, y: H - 230, w: 66, h: 230 }, { x: W / 2 - 50, y: H - 120, w: 100, h: 120 }, { x: 0, y: 0, w: 150, h: 64 }, { x: vx - 14, y: vy - 14, w: 28, h: 28 }];
+      const free = (x, y, w, h) => !placed.some((p) => x < p.x + p.w && x + w > p.x && y < p.y + p.h && y + h > p.y) && y > 4 && y + h < H && x > 0 && x + w < W;
+      // aids to navigation
+      if (this.showAton) {
+        const marks = [];
+        for (const m of this.aton) {
+          const [x, y] = ll(m.lat, m.lon); if (!inView(x, y, 10)) continue;
+          const isBuoy = m.kind.startsWith("BOY") || m.kind === "LITFLT";
+          cx.fillStyle = m.color; cx.strokeStyle = "rgba(0,0,0,.6)"; cx.lineWidth = 1;
+          cx.beginPath();
+          if (isBuoy) { cx.moveTo(x, y - 5); cx.lineTo(x + 3.5, y + 3); cx.lineTo(x - 3.5, y + 3); cx.closePath(); }
+          else if (m.kind === "LIGHTS") { for (let i = 0; i < 10; i++) { const r = i % 2 ? 2 : 5, an = -Math.PI / 2 + i * Math.PI / 5; cx.lineTo(x + Math.cos(an) * r, y + Math.sin(an) * r); } cx.closePath(); }
+          else cx.rect(x - 2.5, y - 5, 5, 8);
+          cx.fill(); cx.stroke();
+          if (m.light && this.night && m.light.chr != null) {
+            if (!m.light.sched) { m.light.sched = Geo.lightSchedule(m.light.chr, m.light.periodS, m.light.group); m.light.phase = (hashId(m.id) % 1000) / 1000 * m.light.sched.period; }
+            const slot = Geo.lightState(m.light.sched, Date.now() / 1000, m.light.phase);
+            if (slot >= 0) { const col = m.light.colours[Math.min(slot, m.light.colours.length - 1)]; const gr = cx.createRadialGradient(x, y - 3, 0, x, y - 3, 10); gr.addColorStop(0, col); gr.addColorStop(1, hexA(col, 0)); cx.fillStyle = gr; cx.beginPath(); cx.arc(x, y - 3, 10, 0, Math.PI * 2); cx.fill(); }
+          }
+          this.hits.push({ x, y, r: 10, a: m });
+          marks.push({ m, x, y, d: Math.hypot(x - vx, y - vy) });
+        }
+        cx.font = `500 ${fs - 3}px -apple-system,Segoe UI,Roboto,sans-serif`; cx.textBaseline = "middle"; cx.textAlign = "left";
+        for (const it of marks.sort((p, q) => p.d - q.d).slice(0, lod.aton)) {
+          const m = it.m, name = m.name ? m.name.replace(/\s*(Lighted\s+)?(Buoy|Light|Daybeacon|Beacon)\s*/i, " ").replace(/\s+/g, " ").trim() : m.kindName;
+          const text = m.light && lod.lines >= 2 ? `${name} · ${m.light.character}` : name, w = cx.measureText(text).width, h = fs;
+          if (!free(it.x + 7, it.y - h / 2, w, h)) continue;
+          placed.push({ x: it.x + 7, y: it.y - h / 2, w, h });
+          cx.fillStyle = "rgba(10,33,51,.7)"; cx.fillRect(it.x + 6, it.y - h / 2, w + 2, h);
+          cx.fillStyle = hexA(m.color, 0.95); cx.fillText(text, it.x + 7, it.y);
+        }
+      }
+      // vessels
+      const sel = this.selected && this.selected.mmsi;
+      const cands = [];
+      for (const v of this.vessels) {
+        if (v.drLat == null) continue;
+        const [x, y] = ll(v.drLat, v.drLon); if (!inView(x, y, 30)) continue;
+        const moored = this.isMoored(v), isSel = v.mmsi === sel, hdg = v.heading != null && v.heading !== 511 ? v.heading : v.cog;
+        cx.globalAlpha = moored && !this.showMoored && !isSel ? 0.35 : 1;
+        // hull to scale when it is big enough to see, else a marker
+        let drawn = false;
+        if (lod.hull && v.dims && v.length && v.length * k > 8) {
+          const ring = Geo.hullFootprint(v.drLat, v.drLon, hdg == null ? 0 : hdg, v.dims);
+          if (ring) { cx.beginPath(); ring.forEach(([lo, la], i) => { const [px, py] = ll(la, lo); i ? cx.lineTo(px, py) : cx.moveTo(px, py); }); cx.closePath(); cx.fillStyle = hexA(v.color, 0.55); cx.fill(); cx.strokeStyle = v.color; cx.lineWidth = 1.2; cx.stroke(); drawn = true; }
+        }
+        if (!drawn) {
+          if (!moored && hdg != null) { cx.save(); cx.translate(x, y); cx.rotate((hdg - rotDeg) * D2R); cx.beginPath(); cx.moveTo(0, -7); cx.lineTo(4.5, 5); cx.lineTo(-4.5, 5); cx.closePath(); cx.fillStyle = v.color; cx.fill(); cx.strokeStyle = "rgba(0,0,0,.6)"; cx.lineWidth = 1; cx.stroke(); cx.restore(); }
+          else { cx.beginPath(); cx.arc(x, y, moored ? 2.5 : 3.5, 0, Math.PI * 2); cx.fillStyle = v.color; cx.fill(); }
+        }
+        if (lod.vector && this.showVector && !moored && v.sog > 0.5 && v.cog != null) {
+          const tip = Geo.destination(v.drLat, v.drLon, v.cog, v.sog * Geo.KN * 360); const [tx, ty] = ll(tip.lat, tip.lon);
+          cx.strokeStyle = hexA(v.color, 0.85); cx.lineWidth = 1.3; cx.beginPath(); cx.moveTo(x, y); cx.lineTo(tx, ty); cx.stroke();
+        }
+        if (isSel) { cx.beginPath(); cx.arc(x, y, 11, 0, Math.PI * 2); cx.strokeStyle = "#fff"; cx.lineWidth = 1.5; cx.stroke(); }
+        cx.globalAlpha = 1;
+        this.hits.push({ x, y, r: 14, v });
+        if (isSel || !moored || this.showMoored) cands.push({ v, x, y, isSel, d: Math.hypot(x - vx, y - vy) / k });
+      }
+      const weight = (c) => c.d / ((c.v.sog >= 2 ? 2 : 1) * (1 + Math.min(3, (c.v.length || 0) / 100)));
+      cands.sort((p, q) => (q.isSel - p.isSel) || (weight(p) - weight(q)));
+      cx.textAlign = "left"; cx.textBaseline = "top";
+      for (const c of cands.slice(0, lod.vessels)) {
+        const v = c.v, l1 = this.displayName(v);
+        const l2 = lod.lines >= 2 ? [v.sog != null ? Geo.fmtSpeed(v.sog) : null, v.cog != null ? String(Math.round(v.cog)).padStart(3, "0") + "°" : null].filter(Boolean).join("  ") : "";
+        const l3 = lod.lines >= 3 && v.shipTypeName && v.shipTypeName !== "Unknown" ? v.shipTypeName + (v.length ? ` · ${v.length} m` : "") : "";
+        cx.font = `600 ${fs - 1}px -apple-system,Segoe UI,Roboto,sans-serif`; let w = cx.measureText(l1).width;
+        cx.font = `${fs - 3}px -apple-system,Segoe UI,Roboto,sans-serif`; w = Math.max(w, l2 ? cx.measureText(l2).width : 0, l3 ? cx.measureText(l3).width : 0) + 10;
+        const h = (fs + 1) + (l2 ? fs - 1 : 0) + (l3 ? fs - 1 : 0) + 4;
+        let bx = c.x + 9, by = c.y - h / 2;
+        if (!free(bx, by, w, h)) { bx = c.x - 9 - w; if (!free(bx, by, w, h)) { if (!c.isSel) continue; bx = c.x + 9; } }
+        placed.push({ x: bx, y: by, w, h });
+        cx.fillStyle = c.isSel ? "rgba(10,30,50,.92)" : "rgba(6,14,24,.72)"; roundRect(cx, bx, by, w, h, 5); cx.fill();
+        cx.strokeStyle = c.isSel ? "#fff" : hexA(v.color, 0.8); cx.lineWidth = 1; cx.stroke();
+        cx.fillStyle = "#fff"; cx.font = `600 ${fs - 1}px -apple-system,Segoe UI,Roboto,sans-serif`; cx.fillText(l1, bx + 5, by + 2);
+        cx.font = `${fs - 3}px -apple-system,Segoe UI,Roboto,sans-serif`;
+        if (l2) { cx.fillStyle = "rgba(255,255,255,.8)"; cx.fillText(l2, bx + 5, by + 3 + fs); }
+        if (l3) { cx.fillStyle = "rgba(255,255,255,.55)"; cx.fillText(l3, bx + 5, by + 3 + fs + (l2 ? fs - 1 : 0)); }
+        this.hits.push({ x: bx + w / 2, y: by + h / 2, r: Math.max(w, h) / 2, v });
+      }
+      // own position: heading arrow + AR field of view
+      const fov = this.hfov / 2, lookA = (this.heading - rotDeg - 90) * D2R;
+      cx.fillStyle = "rgba(63,208,255,.13)"; cx.beginPath(); cx.moveTo(vx, vy); cx.arc(vx, vy, Math.min(W, H) * 0.3, lookA - fov * D2R, lookA + fov * D2R); cx.closePath(); cx.fill();
+      cx.save(); cx.translate(vx, vy); cx.rotate((this.mapHeading - rotDeg) * D2R);
+      cx.beginPath(); cx.moveTo(0, -10); cx.lineTo(7, 8); cx.lineTo(0, 4); cx.lineTo(-7, 8); cx.closePath(); cx.fillStyle = "#fff"; cx.fill(); cx.strokeStyle = "#3fd0ff"; cx.lineWidth = 1.5; cx.stroke(); cx.restore();
+      // compass rose (tap: north-up / heading-up) and recenter
+      const rx0 = W / 2, ry0 = H - 34 - (parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--sab")) || 0);
+      cx.save(); cx.translate(rx0, ry0);
+      cx.fillStyle = "rgba(6,14,24,.7)"; cx.beginPath(); cx.arc(0, 0, 17, 0, Math.PI * 2); cx.fill(); cx.strokeStyle = "rgba(255,255,255,.25)"; cx.stroke();
+      cx.rotate(-rotDeg * D2R); cx.fillStyle = "#ff5a5a"; cx.beginPath(); cx.moveTo(0, -13); cx.lineTo(4, 0); cx.lineTo(-4, 0); cx.closePath(); cx.fill();
+      cx.fillStyle = "rgba(255,255,255,.7)"; cx.beginPath(); cx.moveTo(0, 13); cx.lineTo(4, 0); cx.lineTo(-4, 0); cx.closePath(); cx.fill();
+      cx.restore();
+      cx.fillStyle = "rgba(255,255,255,.7)"; cx.font = `600 ${fs - 3}px -apple-system,Segoe UI,Roboto,sans-serif`; cx.textAlign = "center"; cx.textBaseline = "bottom";
+      cx.fillText(this.mapNorthUp ? "NORTH UP" : "HEADING UP", rx0, ry0 - 20);
+      this.hits.push({ x: rx0, y: ry0, r: 22, action: () => { this.mapNorthUp = !this.mapNorthUp; this.savePrefs(); this.toast(this.mapNorthUp ? "North up" : "Heading up"); } });
+      if (Math.hypot(pe, pn) > 20) {
+        const t = "⌖ Recenter", w = cx.measureText(t).width + 20, bx = rx0 - w / 2, by = ry0 - 64;
+        cx.fillStyle = "rgba(63,208,255,.9)"; roundRect(cx, bx, by, w, 24, 12); cx.fill();
+        cx.fillStyle = "#06121e"; cx.textBaseline = "middle"; cx.fillText(t, rx0, by + 12);
+        this.hits.push({ x: rx0, y: by + 12, r: w / 2, action: () => { this.mapPan = { e: 0, n: 0 }; } });
+      }
     },
 
     tap(x, y) {
       if (this.settingsOpen) { this.settingsOpen = false; $("settings").classList.remove("vis"); $("btnSettings").classList.remove("on"); return; }
       let best = null, bd = 28;
       for (const h of this.hits) { const d = Math.hypot(x - h.x, y - h.y); if (d < bd + h.r) { bd = d; best = h; } }
-      if (best) { if (best.a) this.showAtonInfo(best.a); else this.showInfo(best.v); }
+      if (best) { if (best.action) best.action(); else if (best.a) this.showAtonInfo(best.a); else this.showInfo(best.v); }
     },
 
     toast(msg, ms) { const t = $("toast"); t.textContent = msg; t.classList.add("vis"); clearTimeout(this._toastT); this._toastT = setTimeout(() => t.classList.remove("vis"), ms || 2600); },
@@ -368,13 +570,14 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
         if (this.useGps) await this.locate(); else { this.hasGps = false; }
         $("splash").classList.add("hidden");
         $("top").classList.add("vis"); $("controls").classList.add("vis"); $("radar").classList.add("vis");
+        this.applyView();
         this.refreshData(true);
         this.loop();
       } catch (e) { st.textContent = "Error: " + e.message; }
     },
 
     toggleCamera() {
-      this.camOn = !this.camOn; this.vid.classList.toggle("off", !this.camOn); $("btnCam").classList.toggle("on", !this.camOn);
+      this.camOn = !this.camOn; this.vid.classList.toggle("off", !this.camOn || this.view === "map"); $("btnCam").classList.toggle("on", !this.camOn);
     },
 
     // ---- sensors --------------------------------------------------------------
@@ -404,7 +607,8 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
         if (e.alpha == null && e.webkitCompassHeading == null) return;
         this.hasOri = true;
         const o = orientationFromEvent(e, screenAngle());
-        this.rawPitch = o.pitch; this.rawRoll = o.roll;
+        this.rawPitch = o.pitch; this.rawRoll = o.roll; this.flat = o.flat;
+        this.rawTopHeading = e.webkitCompassHeading != null && isFinite(e.webkitCompassHeading) ? e.webkitCompassHeading : o.topHeading;
         if (e.webkitCompassHeading != null && isFinite(e.webkitCompassHeading)) {
           // iOS: compass heading of the device, already screen-orientation aware in portrait; it is the direction the back camera faces when the phone is upright.
           this.rawHeading = Geo.wrap360(e.webkitCompassHeading + (this.pitchUprightCorrection(o)));
@@ -534,7 +738,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
     },
 
     updatePose() {
-      if (this.manual) { this.heading = this.mH; this.pitch = this.mP; this.roll = 0; }
+      if (this.manual) { this.heading = this.mH; this.pitch = this.mP; this.roll = 0; this.mapHeading = this.mH; }
       else {
         let h = this.rawHeading == null ? this.heading : this.rawHeading;
         if (this.applyDecl && this.headingSource !== "iOS compass") h += this.declination;   // Android absolute alpha is magnetic
@@ -544,6 +748,10 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
         const now = performance.now(), dt = Math.min(0.5, ((now - (this._poseAt || now)) / 1000) || 1 / 60); this._poseAt = now;
         const k = 1 - Math.exp(-dt / 0.06);
         this.heading = Geo.smoothHeading(this.heading, h, k);
+        // 2D chart heading-up: iOS compass is already top-edge based; elsewhere use the top edge when flat
+        let mh = h;
+        if (this.flat && this.headingSource !== "iOS compass" && this.rawTopHeading != null) mh = this.rawTopHeading + (this.applyDecl ? this.declination : 0) + this.offset;
+        this.mapHeading = Geo.smoothHeading(this.mapHeading, mh, k);
         this.pitch += (this.rawPitch - this.pitch) * k;
         this.roll += (this.rawRoll - this.roll) * k;
       }
@@ -594,6 +802,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       const cx = this.cx, W = this.W, H = this.H, cam = this.cam;
       cx.clearRect(0, 0, W, H);
       this.hits = [];
+      if (this.view === "map") { this.drawMap(); return; }
       this.drawHorizon();
       if (this.showLanes) this.drawLanes();
       if (this.showAton) this.drawAton();
@@ -647,7 +856,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
           if (st.fill) { cx.fillStyle = st.fill; cx.fill(); }
           cx.strokeStyle = st.stroke; cx.lineWidth = l.kind === "zone" ? 1 : 1.5; cx.setLineDash(l.kind === "lane" ? [10, 6] : []); cx.stroke(); cx.setLineDash([]);
           // direction arrows
-          if (l.arrows && l.kind === "lane") {
+          if (l.arrows && l.kind === "lane" && LOD[this.lod].arrows) {
             cx.strokeStyle = "rgba(255,120,220,.9)"; cx.lineWidth = 1.5; cx.lineJoin = "round";
             for (const ar of l.arrows) {
               const pieces = cam.projectSeaLine(ar, lat, lon);
@@ -674,7 +883,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       labels.sort((a, b) => a.d - b.d);
       const placed = [];
       cx.font = `500 ${this.labelPx - 2}px -apple-system,Segoe UI,Roboto,sans-serif`; cx.textAlign = "center"; cx.textBaseline = "middle";
-      for (const L of labels.slice(0, 12)) {
+      for (const L of labels.slice(0, LOD[this.lod].lanes)) {
         const w = Math.max(cx.measureText(L.text).width, cx.measureText(L.sub).width) + 14, h = (this.labelPx - 2) * 2 + 10;
         let y = L.y, tries = 0;
         while (tries++ < 8 && placed.some((p) => Math.abs(p.x - L.x) < (p.w + w) / 2 && Math.abs(p.y - y) < (p.h + h) / 2)) y -= h + 2;
@@ -696,13 +905,15 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       const items = [];
       for (const a of this.aton) {
         const { e, n } = Geo.toENU(lat, lon, a.lat, a.lon); const d = Math.hypot(e, n);
-        if (d > this.atonRangeM || (a.occluded && this.hideOccluded)) continue;
+        if (d > Math.min(this.atonRangeM, LOD[this.lod].atonGlyphM) || (a.occluded && this.hideOccluded)) continue;
         const sp = cam.projectSea(e, n); if (!sp || sp.x < -40 || sp.x > W + 40) continue;
         items.push({ a, d, sp });
       }
       items.sort((p, q) => q.d - p.d);
       cx.textAlign = "center"; cx.textBaseline = "bottom"; cx.font = `500 ${fs}px -apple-system,Segoe UI,Roboto,sans-serif`;
-      const placed = [], nowS = Date.now() / 1000;
+      const placed = [], nowS = Date.now() / 1000, lod = LOD[this.lod];
+      // label budget goes to the nearest marks, not the farthest-first paint order
+      const labelled = new Set(items.filter((it) => it.d < this.atonRangeM * lod.atonFrac).sort((p, q) => p.d - q.d).slice(0, lod.aton).map((it) => it.a.id));
       for (const it of items) {
         const { a, d, sp } = it, occ = !!a.occluded;
         cx.globalAlpha = occ ? 0.4 : (this.night && a.light ? 0.55 : 1);   // at night the structure is barely visible, the light is what you see
@@ -736,7 +947,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
         }
         this.hits.push({ x: sp.x, y: sp.y - s, r: s + 10, a });
         // label: short name (drop the "Lighted Buoy" boilerplate) + light character, only when close enough
-        if (d < this.atonRangeM * 0.7) {
+        if (labelled.has(a.id)) {
           const name = a.name ? a.name.replace(/\s*(Lighted\s+)?(Buoy|Light|Daybeacon|Beacon)\s*/i, " ").replace(/\s+/g, " ").trim() : a.kindName;
           const text = a.light ? `${name} · ${a.light.character}` : name;
           const w = cx.measureText(text).width + 10, h = fs + 8;
@@ -808,9 +1019,10 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       // 0.5-2 kn. Behind land only the nearest few underway ships earn a label; the rest still
       // count in the chip and radar.
       const occluded = items.filter((it) => it.v.occluded && !(this.selected && this.selected.mmsi === it.v.mmsi));
-      if (occluded.length > MAX_OCCLUDED_LABELS) {
+      const lod = LOD[this.lod];
+      if (occluded.length > lod.occluded) {
         occluded.sort((a, b) => ((b.v.sog >= 2) - (a.v.sog >= 2)) || a.d - b.d);
-        const drop = new Set(occluded.slice(MAX_OCCLUDED_LABELS).map((it) => it.v.mmsi));
+        const drop = new Set(occluded.slice(lod.occluded).map((it) => it.v.mmsi));
         for (let i = items.length - 1; i >= 0; i--) if (drop.has(items[i].v.mmsi)) items.splice(i, 1);
       }
       items.sort((a, b) => b.d - a.d);   // far first so near hulls paint on top
@@ -821,7 +1033,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
         const color = v.color, occ = !!v.occluded;
         // hull footprint on the water (not for ships behind land: the outline would float on the hillside)
         let hullDrawn = false;
-        if (this.showHull && !occ && v.dims && v.length > 0 && d < 8000) {
+        if (this.showHull && lod.hull && !occ && v.dims && v.length > 0 && d < 8000) {
           const hdg = v.heading != null ? v.heading : v.cog;
           const ring = Geo.hullFootprint(v.drLat, v.drLon, hdg == null ? 0 : hdg, v.dims);
           if (ring) {
@@ -838,7 +1050,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
           continue;
         }
         // 6-minute course vector on the water
-        if (this.showVector && !occ && v.sog > 0.5 && v.cog != null) {
+        if (this.showVector && lod.vector && !occ && v.sog > 0.5 && v.cog != null) {
           const tip = Geo.destination(v.drLat, v.drLon, v.cog, v.sog * Geo.KN * 360);
           const line = [[v.drLon, v.drLat], [tip.lon, tip.lat]];
           const pieces = cam.projectSeaLine(line, lat, lon);
@@ -858,19 +1070,22 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       }
       // label cards, nearest first, pushed up when they collide
       // visible ships claim label space first; ships behind land take what is left
-      labels.sort((a, b) => (a.occ - b.occ) || (a.d - b.d));
+      // selected first, then visible before occluded, then importance: big and moving ships
+      // count as nearer than they are, so at low detail the ferry beats the dinghy
+      const weight = (L) => L.d / ((L.v.sog >= 2 ? 2 : 1) * (1 + Math.min(3, (L.v.length || 0) / 100)));
+      labels.sort((a, b) => (b.sel - a.sel) || (a.occ - b.occ) || (weight(a) - weight(b)));
       const placed = [];
       const fs = this.labelPx;
       cx.textAlign = "left"; cx.textBaseline = "middle";
-      for (const L of labels.slice(0, 40)) {
+      for (const L of labels.slice(0, lod.vessels)) {
         const v = L.v;
-        const name = this.displayName(v);
-        const l2 = [v.sog != null ? Geo.fmtSpeed(v.sog) : null, v.cog != null ? String(Math.round(v.cog)).padStart(3, "0") + "°" : null, this.fmtD(L.d)].filter(Boolean).join("  ");
-        const l3 = L.occ ? `behind land · ${this.fmtD(v.occluded.distanceM)} to shore` : v.shipTypeName && v.shipTypeName !== "Unknown" ? v.shipTypeName + (v.length ? ` · ${v.length} m` : "") : (v.length ? `${v.length} m` : "");
+        const name = lod.lines === 1 ? `${this.displayName(v)}  ·  ${this.fmtD(L.d)}` : this.displayName(v);
+        const l2 = lod.lines === 1 ? "" : [v.sog != null ? Geo.fmtSpeed(v.sog) : null, v.cog != null ? String(Math.round(v.cog)).padStart(3, "0") + "°" : null, this.fmtD(L.d)].filter(Boolean).join("  ");
+        const l3 = lod.lines < 3 ? (L.occ && lod.lines === 2 ? "behind land" : "") : L.occ ? `behind land · ${this.fmtD(v.occluded.distanceM)} to shore` : v.shipTypeName && v.shipTypeName !== "Unknown" ? v.shipTypeName + (v.length ? ` · ${v.length} m` : "") : (v.length ? `${v.length} m` : "");
         cx.globalAlpha = L.occ && !L.sel ? 0.42 : 1;
         cx.font = `600 ${fs}px -apple-system,Segoe UI,Roboto,sans-serif`; const w1 = cx.measureText(name).width;
         cx.font = `${fs - 2}px -apple-system,Segoe UI,Roboto,sans-serif`; const w2 = Math.max(cx.measureText(l2).width, cx.measureText(l3).width);
-        const w = Math.max(w1, w2) + 16, lines = l3 ? 3 : 2, h = fs * 1.15 + (lines - 1) * (fs - 2) * 1.25 + 10;
+        const w = Math.max(w1, w2) + 16, lines = 1 + (l2 ? 1 : 0) + (l3 ? 1 : 0), h = fs * 1.15 + (lines - 1) * (fs - 2) * 1.25 + 10;
         let y = L.y - L.stalk - h / 2, tries = 0;
         while (tries++ < 10 && placed.some((p) => Math.abs(p.x - L.x) < (p.w + w) / 2 + 2 && Math.abs(p.y - y) < (p.h + h) / 2 + 2)) y -= h + 3;
         if (y - h / 2 < 60) { y = 60 + h / 2; }
@@ -882,10 +1097,12 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
         cx.fillStyle = L.sel ? "rgba(10,30,50,.92)" : "rgba(6,14,24,.72)"; roundRect(cx, x0, y0, w, h, 7); cx.fill();
         cx.strokeStyle = L.sel ? "#fff" : hexA(L.color, 0.8); cx.lineWidth = L.sel ? 1.5 : 1; if (L.occ) cx.setLineDash([3, 3]); cx.stroke(); cx.setLineDash([]);
         cx.fillStyle = "#fff"; cx.font = `600 ${fs}px -apple-system,Segoe UI,Roboto,sans-serif`; cx.fillText(name, x0 + 8, y0 + 5 + fs * 0.6);
-        cx.fillStyle = L.color; cx.fillRect(x0 + 8, y0 + 5 + fs * 1.25, Math.min(w - 16, 22), 1.5);
-        cx.fillStyle = "rgba(255,255,255,.85)"; cx.font = `${fs - 2}px -apple-system,Segoe UI,Roboto,sans-serif`;
-        cx.fillText(l2, x0 + 8, y0 + 5 + fs * 1.25 + (fs - 2) * 0.9 + 1);
-        if (l3) { cx.fillStyle = L.occ ? "rgba(255,200,120,.9)" : "rgba(255,255,255,.55)"; cx.fillText(l3, x0 + 8, y0 + 5 + fs * 1.25 + (fs - 2) * 2.15 + 1); }
+        if (l2) {
+          cx.fillStyle = L.color; cx.fillRect(x0 + 8, y0 + 5 + fs * 1.25, Math.min(w - 16, 22), 1.5);
+          cx.fillStyle = "rgba(255,255,255,.85)"; cx.font = `${fs - 2}px -apple-system,Segoe UI,Roboto,sans-serif`;
+          cx.fillText(l2, x0 + 8, y0 + 5 + fs * 1.25 + (fs - 2) * 0.9 + 1);
+        }
+        if (l3) { cx.fillStyle = L.occ ? "rgba(255,200,120,.9)" : "rgba(255,255,255,.55)"; cx.font = `${fs - 2}px -apple-system,Segoe UI,Roboto,sans-serif`; cx.fillText(l3, x0 + 8, y0 + 5 + fs * 1.25 + (fs - 2) * (l2 ? 2.15 : 0.9) + 1); }
         cx.globalAlpha = 1;
         this.hits.push({ x: x0 + w / 2, y, r: Math.max(w, h) / 2, v });
       }
@@ -944,6 +1161,12 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
       // own ship
       rx.fillStyle = "#fff"; rx.beginPath(); rx.moveTo(c, c - 6); rx.lineTo(c + 4, c + 4); rx.lineTo(c - 4, c + 4); rx.closePath(); rx.fill();
       rx.fillStyle = "rgba(255,255,255,.6)"; rx.font = "10px sans-serif"; rx.textAlign = "right"; rx.textBaseline = "bottom"; rx.fillText(this.fmtD(this.rangeM), S - 10, S - 8);
+      // tap target hint: what tapping the radar switches to
+      const badge = this.view === "map" ? "AR" : "2D";
+      rx.font = "700 22px sans-serif"; rx.textAlign = "center"; rx.textBaseline = "middle";
+      const bw = rx.measureText(badge).width + 22;
+      rx.fillStyle = "rgba(63,208,255,.92)"; roundRect(rx, c - bw / 2, S - 58, bw, 32, 16); rx.fill();
+      rx.fillStyle = "#06121e"; rx.fillText(badge, c, S - 42);
     },
 
     updateChips() {
@@ -1041,10 +1264,13 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;
     const s = screenAng * D2R;
     const look = mul([0, 0, -1]);                                   // back camera
     const right = mul([Math.cos(s), Math.sin(s), 0]);               // screen right, in device frame rotated by screen angle
+    const up = mul([-Math.sin(s), Math.cos(s), 0]);                  // screen top edge
     const heading = Geo.wrap360(Math.atan2(look[0], look[1]) * R2D);
     const pitch = Math.asin(Math.max(-1, Math.min(1, look[2]))) * R2D;
     const roll = -Math.asin(Math.max(-1, Math.min(1, right[2]))) * R2D;
-    return { heading, pitch, roll };
+    // held flat (camera at the ground) the look vector has no useful bearing; the screen's top edge does
+    const topHeading = Geo.wrap360(Math.atan2(up[0], up[1]) * R2D), flat = Math.abs(look[2]) > 0.7;
+    return { heading, pitch, roll, topHeading, flat };
   }
 
   A.init();

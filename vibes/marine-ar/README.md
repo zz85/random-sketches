@@ -16,7 +16,7 @@ who prefer aisstream.io's denser feed, which needs a key that must not live in a
 open index.html                       # any static server, or
 node proxy.js                         # http://localhost:8788  (also serves the files)
 bun test                              # geometry, providers, proxy, occlusion, AtoN, AIS sockets, light rhythms: 61 tests, fixtures included
-node smoke.js                         # headless Chromium over CDP: 5 scenes against live NOAA / OpenSeaFeed / Digitraffic, page state + console
+node smoke.js                         # headless Chromium over CDP: 7 scenes (AR, 2D chart, minimal detail) against live NOAA / OpenSeaFeed / Digitraffic, page state + console
 ```
 
 ## Data sources (all CORS, verified Sep 2026)
@@ -38,6 +38,19 @@ US public AIS is the gap: NOAA/MarineCadastre publish AIS only as historical dai
 files, USCG NAIS is not public, and the ArcGIS service that once mirrored it now needs
 a token. If you find a CORS-open live US feed, it is one `restPoller(...)` entry in
 `AIS_PROVIDERS` away.
+
+
+## Detail and 2D chart
+
+- **Detail slider** (settings, 1–5, default Medium) caps what goes on screen: Minimal = five
+  one-line vessel labels (name · distance), no lane labels, arrows, vectors or hulls, aids only
+  within 2 km and unlabelled, ships behind land dropped; Everything = the old unlimited view.
+  Label slots go to big and moving ships first, so at low detail a ferry beats a dinghy.
+- **Tap the radar** to switch between AR and a full-screen 2D chart (the badge on the radar
+  says which you will get). The chart draws charted land, lanes with direction arrows, aids
+  (flashing at night), vessels as headings or hulls to scale with 6-min vectors, range rings
+  and the AR field of view. Pinch or scroll to zoom, drag to pan, ⌖ Recenter, tap the rose for
+  north-up / heading-up. Flat on a table, heading-up follows the phone's top edge.
 
 ## How it draws
 
@@ -61,7 +74,7 @@ compass heading that `alpha` alone gives.
 
 ## Files
 
-- `index.html` — the app. URL params for testing: `?lat=&lon=&eye=&hdg=&pitch=&provider=demo|openseafeed|digitraffic|proxy&proxy=http://…&auto=1&nocam=1&night=1`
+- `index.html` — the app. URL params for testing: `?lat=&lon=&eye=&hdg=&pitch=&provider=demo|openseafeed|digitraffic|proxy&proxy=http://…&auto=1&nocam=1&night=1&view=map&lod=1-5`
 - `geo.js` — spherical + ENU geometry, `Camera`, horizon, hull footprint, dead reckoning, CPA/TCPA, lane arrows, land line-of-sight (`landOcclusion`, elevation-aware), `estimateAirDraught`, light rhythms (`lightSchedule`, `lightState`), `sunAltitude`
 - `providers.js` — ENC Direct lane / land / LNDELV / AtoN queries, S-57 colour and light-character tables, AIS provider registry, `VesselTable`, ITU ship-type / nav-status tables, `LaneStore` / `LandStore` / `BoxStore` / `StaticCache`, OpenSeaFeed socket + name lookup
 - `proxy.js` — static server + aisstream.io → Digitraffic-shaped `/ais/*`

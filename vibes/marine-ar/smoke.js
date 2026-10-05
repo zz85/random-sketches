@@ -16,6 +16,8 @@ const CASES = [
   { name: 'seattle-occlusion', url: `http://localhost:${PORT}/?lat=47.6603&lon=-122.4412&eye=18&hdg=135&pitch=-4&provider=demo&auto=1&nocam=1` },
   { name: 'seattle-aton', url: `http://localhost:${PORT}/?lat=47.6603&lon=-122.4412&eye=4&hdg=20&pitch=-3&provider=demo&auto=1&nocam=1` },
   { name: 'seattle-live', url: `http://localhost:${PORT}/?lat=47.6603&lon=-122.4412&eye=18&hdg=300&pitch=-6&auto=1&nocam=1` },   // Auto → OpenSeaFeed, no key
+  { name: 'seattle-map', url: `http://localhost:${PORT}/?lat=47.6603&lon=-122.4412&eye=18&hdg=300&pitch=-6&auto=1&nocam=1&view=map&lod=3` },
+  { name: 'seattle-minimal', url: `http://localhost:${PORT}/?lat=47.6603&lon=-122.4412&eye=18&hdg=300&pitch=-6&auto=1&nocam=1&lod=1` },
   { name: 'helsinki-live', url: `http://localhost:${PORT}/?lat=60.153&lon=24.95&eye=12&hdg=200&pitch=-5&provider=digitraffic&auto=1&nocam=1` },
 ];
 
