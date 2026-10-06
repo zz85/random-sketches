@@ -486,14 +486,13 @@ signature, both time signatures (3/4, cut time, and 3/4 again at the waltz) and 
 Getting there fixed things the generated fixtures never showed: half notes whose tilted hole is
 wider than a space, a tempo-mark letter read as a flat ahead of the key signature, a cut C read as
 a fourth sharp, a barline fused with the slur that crosses it, tie fragments taken for dots, a
-double sharp taken for a whole note. That page is not committed; with its render at
-`fixtures/local/coda_p1.png` (and the PDF at `fixtures/local/coda.pdf`) `bun test` and
-`node smoke.js` check it too.
+double sharp taken for a whole note. Its page render is committed as `fixtures/coda_p1.png`, so `bun test` always checks it; with the PDF at
+`fixtures/local/coda.pdf` (not committed), `node smoke.js` checks it through the app too.
 
 **Snapshot.** `snapshots/coda.json` is the whole CODA reading as checked by eye: per bar every
 pitch name and value, ties, graces, articulations and bowing, rests; staff clefs and keys;
-dynamics, hairpins and slurs with the note they start on. With the page image at
-`fixtures/local/coda_p1.png`, `bun test` fails on any change and lists the bars that differ
+dynamics, hairpins and slurs with the note they start on. The page image is committed
+(`fixtures/coda_p1.png`), so `bun test` always checks it: it fails on any change and lists the bars that differ
 (`bar 3 events: E4:2 E5:4~ -> E4:2 E5:4`). After checking that a change is an improvement, accept
 it with `UPDATE_SNAPSHOTS=1 bun test` and commit the new snapshot with the change.
 

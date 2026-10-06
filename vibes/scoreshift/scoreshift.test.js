@@ -338,11 +338,10 @@ describe('score assembly and bar repair', () => {
   });
 });
 
-// The CODA audition sheet (Brahms 2 + Fledermaus, viola, alto clef) is not committed; put its
-// page render at fixtures/local/coda_p1.png (rendered at 3000 px and scaled to 2400, as the app
-// does) to run this.
-const CODA = new URL('./fixtures/local/coda_p1.png', import.meta.url);
-describe.skipIf(!fs.existsSync(CODA))('real page: CODA viola audition sheet', () => {
+// The CODA audition sheet (Brahms 2 + Fledermaus, viola, alto clef), page 1 rendered at 3000 px
+// and scaled to 2400 as the app does (fixtures/coda_p1.png).
+const CODA = new URL('./fixtures/coda_p1.png', import.meta.url);
+describe('real page: CODA viola audition sheet', () => {
   // Snapshot of the whole reading (snapshots/coda.json, checked in): pitch names and
   // values of every bar, keys, clefs, ties, articulations, bowing, graces, dynamics, slurs.
   // A change fails with the bars that differ. If the change is an improvement, accept it with
