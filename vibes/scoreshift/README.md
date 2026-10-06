@@ -30,7 +30,8 @@ no dependencies, nothing uploaded. Installable PWA that works offline.
 
 ```
 python3 -m http.server              # any static server, then open /vibes/scoreshift/
-bun test                            # theory, recognition + rhythm accuracy, bar repair, export, real scans: 30 tests
+bun test                            # theory, recognition + rhythm accuracy, bar repair, export, saving, real scans, CODA snapshot
+UPDATE_SNAPSHOTS=1 bun test         # accept a changed reading of a snapshot page (snapshots/coda.json) after checking the diff
 node smoke.js                       # headless Chromium over CDP: UI, corrections, PDF, playback, exports, offline: 32 checks
 bun eval.js [tune|all] [condition]  # accuracy table (pitch and rhythm); condition = clean | scan | photo | phone
 bun debug.js <tune> [cond] [x0 y0 x1 y1]   # colour overlay of what was recognised
@@ -64,6 +65,14 @@ amber with what was changed (`dot added`, `one beam fewer`, `triplet`, `rest val
 ignored`). Tap a note or a rest to set its value, dot, triplet, tie or grace note (or mark a rest
 as not a rest); tap inside a bar to see its count, set the time signature from that bar on, or
 play from there. Corrections are kept and win over the automatic repair.
+
+**Saving your work.** Every correction is saved in the browser as you make it, per file and per
+page: open the same photo or PDF again (even after closing the tab) and the corrections come
+back ("N saved corrections restored"). **💾 Save project** writes a `.scoreshift` file: the file
+you opened, the corrections of every page, and the instrument / clef / tempo settings. Open it
+with **Open** (or drop it on the page) on any device to carry on where you left off. Corrections
+are stored as small edits anchored where each symbol was recognised (`edits.js`), so a project
+is the source file plus a few KB.
 
 **▶ Play** plays the page at the **Tempo** set (quarter notes per minute), at concert pitch,
 highlighting the sounding notes on whichever view is showing. The playback bar under the
@@ -481,6 +490,13 @@ double sharp taken for a whole note. That page is not committed; with its render
 `fixtures/local/coda_p1.png` (and the PDF at `fixtures/local/coda.pdf`) `bun test` and
 `node smoke.js` check it too.
 
+**Snapshot.** `snapshots/coda.json` is the whole CODA reading as checked by eye: per bar every
+pitch name and value, ties, graces, articulations and bowing, rests; staff clefs and keys;
+dynamics, hairpins and slurs with the note they start on. With the page image at
+`fixtures/local/coda_p1.png`, `bun test` fails on any change and lists the bars that differ
+(`bar 3 events: E4:2 E5:4~ -> E4:2 E5:4`). After checking that a change is an improvement, accept
+it with `UPDATE_SNAPSHOTS=1 bun test` and commit the new snapshot with the change.
+
 About 250–400 ms per page on a desktop core. The misses that remain are mostly Petaluma's
 handwritten-style key signatures under degradation and a few hollow heads in noise.
 On a real 1920s Philharmonia study-score page (Haydn op. 17 no. 5, scanned, 1920 px wide, so
@@ -575,6 +591,8 @@ segmentation net would be the natural upgrade for heads and accidentals in poor 
 | `rhythm.js` | beams and flags per stem, dots, grace notes, rests / time signatures / tuplet numbers by template, ties |
 | `raster.js` | SVG path rasterizer and shape descriptor for the glyph templates |
 | `score.js` | parts, measures, events, tuplet assignment, bar check and repair, timeline |
+| `edits.js` | corrections as anchored edits, autosave keys, `.scoreshift` project files |
+| `snapshot.js`, `snapshots/` | readable per-bar snapshots of a page's reading, and their diff, for regression tests |
 | `export.js`, `player.js` | MusicXML 4.0, MIDI, the note list for playback; Web Audio player |
 | `app.js`, `index.html`, `worker.js` | UI, corrections, export, PDF paging; recognition (and the page probe) in a worker |
 | `pdfsource.js` | pdf.js loading and page rendering; a ~40-line PDF writer for the transposed export |

@@ -1,0 +1,562 @@
+{
+ "notes": 318,
+ "staves": [
+  {
+   "clef": "alto",
+   "key": 2
+  },
+  {
+   "clef": "alto",
+   "key": 2
+  },
+  {
+   "clef": "alto",
+   "key": 2
+  },
+  {
+   "clef": "alto",
+   "key": 2
+  },
+  {
+   "clef": "alto",
+   "key": 2
+  },
+  {
+   "clef": "alto",
+   "key": 2
+  },
+  {
+   "clef": "alto",
+   "key": 3
+  },
+  {
+   "clef": "alto",
+   "key": 3
+  },
+  {
+   "clef": "alto",
+   "key": 3
+  },
+  {
+   "clef": "alto",
+   "key": 3
+  },
+  {
+   "clef": "alto",
+   "key": 3
+  }
+ ],
+ "bars": [
+  {
+   "bar": 1,
+   "staff": 0,
+   "time": "3/4",
+   "status": "pickup",
+   "events": "E4:4~[upbow]"
+  },
+  {
+   "bar": 2,
+   "staff": 0,
+   "time": "3/4",
+   "status": "ok",
+   "events": "E4:2.~"
+  },
+  {
+   "bar": 3,
+   "staff": 0,
+   "time": "3/4",
+   "status": "ok",
+   "events": "E4:2 E5:4~"
+  },
+  {
+   "bar": 4,
+   "staff": 0,
+   "time": "3/4",
+   "status": "ok",
+   "events": "E5:2 D♯5:4"
+  },
+  {
+   "bar": 5,
+   "staff": 0,
+   "time": "3/4",
+   "status": "ok",
+   "events": "E5:4[dnbow] D5:4 E5:4"
+  },
+  {
+   "bar": 6,
+   "staff": 0,
+   "time": "3/4",
+   "status": "ok",
+   "events": "B4:4 E5:4 G♯4:4"
+  },
+  {
+   "bar": 7,
+   "staff": 0,
+   "time": "3/4",
+   "status": "ok",
+   "events": "E5:4[upbow] E4:4 C♯5:4"
+  },
+  {
+   "bar": 8,
+   "staff": 0,
+   "time": "3/4",
+   "status": "ok",
+   "events": "C♯4:4 A4:4 A3:4[dnbow]"
+  },
+  {
+   "bar": 9,
+   "staff": 0,
+   "time": "3/4",
+   "status": "ok",
+   "events": "E4:4 E3:4 C♯4:4"
+  },
+  {
+   "bar": 10,
+   "staff": 0,
+   "time": "3/4",
+   "status": "end",
+   "events": "C♯3:4"
+  },
+  {
+   "bar": 11,
+   "staff": 1,
+   "time": "3/4",
+   "status": "ok",
+   "events": "E3:8[dnbow,stacc] r16 E3:16[stacc,upbow] E4:4.[acc] E4:8~[dnbow]"
+  },
+  {
+   "bar": 12,
+   "staff": 1,
+   "time": "3/4",
+   "status": "ok",
+   "events": "E4:8[stacc] r16 D4:16[dnbow,stacc] E4:4[stacc,upbow] E3:8[dnbow,stacc] r16 E3:16[stacc,upbow]"
+  },
+  {
+   "bar": 13,
+   "staff": 1,
+   "time": "3/4",
+   "status": "ok",
+   "events": "E4:4.[acc,dnbow] E4:8[upbow] E4:8[stacc] r16 D4:16[stacc]"
+  },
+  {
+   "bar": 14,
+   "staff": 1,
+   "time": "3/4",
+   "status": "ok",
+   "events": "F♯4:8[dnbow,stacc] r16 E4:16[stacc,upbow] A3:4[stacc] B3:4[stacc]"
+  },
+  {
+   "bar": 15,
+   "staff": 1,
+   "time": "3/4",
+   "status": "ok",
+   "events": "A3:8[stacc] r16 A3:16[stacc,upbow] A4:4.[dnbow] G♯4:8~[dnbow]"
+  },
+  {
+   "bar": 16,
+   "staff": 1,
+   "time": "3/4",
+   "status": "ok",
+   "events": "G♯4:8[stacc] r16 A4:16~[stacc,upbow] A4:8 r16 E4:16[stacc,upbow] E4:8[dnbow,stacc] r16 A3:16[stacc,upbow]"
+  },
+  {
+   "bar": 17,
+   "staff": 1,
+   "time": "3/4",
+   "status": "ok",
+   "events": "A3:8[dnbow,stacc] r16 A3:16[stacc,upbow] A4:4.[acc,dnbow] D4+D5:8~[upbow]"
+  },
+  {
+   "bar": 18,
+   "staff": 2,
+   "time": "3/4",
+   "status": "ok",
+   "events": "D4+D5:8[stacc] r16 D4+D5:16~[dnbow] D4+D5:8[stacc] r16 D♯4:16~ D♯4:8[stacc] r16 E4:16~[dnbow]"
+  },
+  {
+   "bar": 19,
+   "staff": 2,
+   "time": "3/4",
+   "status": "ok",
+   "events": "E4:2 E3:4[stacc,upbow]"
+  },
+  {
+   "bar": 20,
+   "staff": 2,
+   "time": "3/4",
+   "status": "ok",
+   "events": "A3:8[dnbow,stacc] G♯3:16[dnbow,stacc] A3:16[stacc,upbow] C♯4:8[dnbow,stacc] B♯3:16[dnbow,stacc] C♯4:16[stacc,upbow] D3:8[dnbow,stacc] C♯3:16[dnbow,stacc] D3:16[stacc,upbow]"
+  },
+  {
+   "bar": 21,
+   "staff": 3,
+   "time": "3/4",
+   "status": "ok",
+   "events": "F♯4:8[dnbow,stacc] E♯4:16[dnbow,stacc] F♯4:16[stacc,upbow] G♯3:8[dnbow,stacc] F♯♯3:16[dnbow,stacc] G♯3:16[stacc,upbow] D4+B4:8[dnbow] D4+B4:16[upbow] D4+B4:16~[dnbow]"
+  },
+  {
+   "bar": 22,
+   "staff": 3,
+   "time": "3/4",
+   "status": "ok",
+   "events": "D4+B4:8 D4+B4:16 D4+B4:16 D5:8 D5:16 D5:16~ D5:8 C♯5:16 C♯5:16~"
+  },
+  {
+   "bar": 23,
+   "staff": 3,
+   "time": "3/4",
+   "status": "ok",
+   "events": "C♯5:8 B4:16[upbow] B4:16[dnbow] E4:4[upbow] E3:4"
+  },
+  {
+   "bar": 24,
+   "staff": 4,
+   "time": "3/4",
+   "status": "ok",
+   "events": "A4:4.[dnbow] G♯4:8 A4:8 F♯4:8"
+  },
+  {
+   "bar": 25,
+   "staff": 4,
+   "time": "3/4",
+   "status": "ok",
+   "events": "E4:8 D4:8 A3:8 D4:8 F♯4:8 A4:8"
+  },
+  {
+   "bar": 26,
+   "staff": 4,
+   "time": "3/4",
+   "status": "ok",
+   "events": "G4:2."
+  },
+  {
+   "bar": 27,
+   "staff": 4,
+   "time": "3/4",
+   "status": "ok",
+   "events": "D5:8 A4:8 F♯4:8 D4:8 A3:8 F♯3:8"
+  },
+  {
+   "bar": 28,
+   "staff": 4,
+   "time": "3/4",
+   "status": "ok",
+   "events": "F♯3:4 G3:4 E3:4"
+  },
+  {
+   "bar": 29,
+   "staff": 4,
+   "time": "3/4",
+   "status": "ok",
+   "events": "F♯3:2 A3:4"
+  },
+  {
+   "bar": 30,
+   "staff": 4,
+   "time": "3/4",
+   "status": "ok",
+   "events": "G3:2."
+  },
+  {
+   "bar": 31,
+   "staff": 4,
+   "time": "3/4",
+   "status": "ok",
+   "events": "F♯3:2."
+  },
+  {
+   "bar": 32,
+   "staff": 4,
+   "time": "3/4",
+   "status": "ok",
+   "events": "B4:4.[upbow] A♯4:8 B4:8 G4:8"
+  },
+  {
+   "bar": 33,
+   "staff": 5,
+   "time": "3/4",
+   "status": "ok",
+   "events": "F♯4:8 E4:8 B3:8 E4:8 G4:8 B4:8"
+  },
+  {
+   "bar": 34,
+   "staff": 5,
+   "time": "3/4",
+   "status": "ok",
+   "events": "A4:2.[dnbow,ten]"
+  },
+  {
+   "bar": 35,
+   "staff": 5,
+   "time": "3/4",
+   "status": "ok",
+   "events": "G4:2.[ten]"
+  },
+  {
+   "bar": 36,
+   "staff": 5,
+   "time": "3/4",
+   "status": "ok",
+   "events": "D♯4:8[upbow] E4:8 C♯4:8 D4:8 B♯3:8 C♯4:8"
+  },
+  {
+   "bar": 37,
+   "staff": 5,
+   "time": "3/4",
+   "status": "ok",
+   "events": "E4:8 D4:8 C♯4:8 D4:8 B♯3:8 C♯4:8"
+  },
+  {
+   "bar": 38,
+   "staff": 5,
+   "time": "3/4",
+   "status": "ok",
+   "events": "A♯3:8 B3:8 A3:8 G♯3:8 F♯3:8 E3:8"
+  },
+  {
+   "bar": 39,
+   "staff": 5,
+   "time": "3/4",
+   "status": "ok",
+   "events": "D♯3:8 E3:8 A3:8 C♯4:8 E4:4"
+  },
+  {
+   "bar": 40,
+   "staff": 6,
+   "time": "2/2",
+   "status": "ok",
+   "events": "C♯4+A4:4 C♯4+A4:4 C♯4+A4:4. A3:8"
+  },
+  {
+   "bar": 41,
+   "staff": 6,
+   "time": "2/2",
+   "status": "ok",
+   "events": "A3:8 G♯3:8 F♯3:8 G♯3:8 A3:8 B3:8 C♯4:8 D4:8"
+  },
+  {
+   "bar": 42,
+   "staff": 6,
+   "time": "2/2",
+   "status": "ok",
+   "events": "C♯4+A4:4 C♯4+A4:4 C♯4+A4:4. A3:8[upbow]"
+  },
+  {
+   "bar": 43,
+   "staff": 6,
+   "time": "2/2",
+   "status": "ok",
+   "events": "A3:8 G♯3:8 F♯3:8 G♯3:8 A3:8 B3:8 C♯4:8 D♯4:8"
+  },
+  {
+   "bar": 44,
+   "staff": 7,
+   "time": "2/2",
+   "status": "ok",
+   "events": "E4:4 G3+D4:4 G3+G4:4 r4"
+  },
+  {
+   "bar": 45,
+   "staff": 7,
+   "time": "2/2",
+   "status": "rest",
+   "events": "rbar"
+  },
+  {
+   "bar": 46,
+   "staff": 7,
+   "time": "2/2",
+   "status": "ok",
+   "events": "r4 G3+D4:4 G3+E4:4 B3+E4:8t B3+E4:8t B3+E4:8t"
+  },
+  {
+   "bar": 47,
+   "staff": 7,
+   "time": "2/2",
+   "status": "ok",
+   "events": "C4+E4:4 B3+E4:8t B3+E4:8t B3+E4:8t C4+E4:4 r4"
+  },
+  {
+   "bar": 48,
+   "staff": 8,
+   "time": "3/4",
+   "status": "ok",
+   "events": "E4:8[stacc] D♯4:8[stacc] E4:8[stacc] F♯4:8[stacc] E4:8[stacc] D♯4:8[stacc]"
+  },
+  {
+   "bar": 49,
+   "staff": 8,
+   "time": "3/4",
+   "status": "ok",
+   "events": "E4:8 F♯4:8 E4:8 D♯4:8 E4:8 F♯4:8"
+  },
+  {
+   "bar": 50,
+   "staff": 8,
+   "time": "3/4",
+   "status": "ok",
+   "events": "E4:8 D♯4:8 E4:8 F♯4:8 E4:8 D♯4:8"
+  },
+  {
+   "bar": 51,
+   "staff": 8,
+   "time": "3/4",
+   "status": "ok",
+   "events": "E4:8 F♯4:8 E4:8 D♯4:8 E4:8 F♯4:8"
+  },
+  {
+   "bar": 52,
+   "staff": 8,
+   "time": "3/4",
+   "status": "ok",
+   "events": "E4:8 D♯4:8 E4:8 F♯4:8 E4:8 D4:8"
+  },
+  {
+   "bar": 53,
+   "staff": 8,
+   "time": "3/4",
+   "status": "ok",
+   "events": "C♯4:8 B♯3:8 C♯4:8 D4:8 C♯4:8 B3:8"
+  },
+  {
+   "bar": 54,
+   "staff": 8,
+   "time": "3/4",
+   "status": "ok",
+   "events": "A3:8 C♯4:8 E4:4 F♯4:4[acc]"
+  },
+  {
+   "bar": 55,
+   "staff": 9,
+   "time": "3/4",
+   "status": "ok",
+   "events": "F♯4:2.[acc]"
+  },
+  {
+   "bar": 56,
+   "staff": 9,
+   "time": "3/4",
+   "status": "ok",
+   "events": "g:G♯4:grace F♯4:8[dnbow] E♯4:8[upbow] F♯4:8 A4:8 G♯4:8 F♯4:8"
+  },
+  {
+   "bar": 57,
+   "staff": 9,
+   "time": "3/4",
+   "status": "ok",
+   "events": "G♯3+D4:8 G♯3+D4:8 G♯3+D4:4 G♯3+D4:4"
+  },
+  {
+   "bar": 58,
+   "staff": 9,
+   "time": "3/4",
+   "status": "ok",
+   "events": "g:G♯4:grace F♯4:8 E♯4:8 F♯4:8 A4:8 G♯4:8 F♯4:8"
+  },
+  {
+   "bar": 59,
+   "staff": 9,
+   "time": "3/4",
+   "status": "ok",
+   "events": "C♯4:8 C♯4:8 C♯4:4 C♯4:4"
+  },
+  {
+   "bar": 60,
+   "staff": 9,
+   "time": "3/4",
+   "status": "ok",
+   "events": "E4:8 D♯4:8 E4:8 F♯4:8 E4:8 D4:8"
+  },
+  {
+   "bar": 61,
+   "staff": 10,
+   "time": "3/4",
+   "status": "ok",
+   "events": "C♯4:8 B♯3:8 C♯4:8 D4:8 C♯4:8 B3:8"
+  },
+  {
+   "bar": 62,
+   "staff": 10,
+   "time": "3/4",
+   "status": "ok",
+   "events": "A3:8 C♯4:8 E4:4 F♯4:4[acc]"
+  },
+  {
+   "bar": 63,
+   "staff": 10,
+   "time": "3/4",
+   "status": "ok",
+   "events": "G♯4:2.[acc]"
+  },
+  {
+   "bar": 64,
+   "staff": 10,
+   "time": "3/4",
+   "status": "ok",
+   "events": "G♯4:8[dnbow] F♯♯4:8[upbow] G♯4:8 C♯5:8 B♯4:8 A♯4:8"
+  },
+  {
+   "bar": 65,
+   "staff": 10,
+   "time": "3/4",
+   "status": "ok",
+   "events": "F♯4:8 F♯4:8 F♯4:4 F♯4:4"
+  },
+  {
+   "bar": 66,
+   "staff": 10,
+   "time": "3/4",
+   "status": "ok",
+   "events": "F♯4:8 E♯4:8 F♯4:8 A♯4:8 G♯4:8 B♯3:8"
+  },
+  {
+   "bar": 67,
+   "staff": 10,
+   "time": "3/4",
+   "status": "end",
+   "events": "C♯4:4"
+  }
+ ],
+ "expression": [
+  "p@1:E4",
+  "slur@1:E4-10:C♯3",
+  "f@11:E3",
+  "sf@11:E4",
+  "f@15:A3",
+  "sf@15:G♯4",
+  "slur@13:E4-13:D4",
+  "f@20:A3",
+  "slur@23:E4-23:E3",
+  "p@24:A4",
+  "p@32:B4",
+  "slur@32:B4-32:G4",
+  "slur@24:A4-25:A4",
+  "slur@29:F♯3-29:A3",
+  "slur@28:F♯3-28:E3",
+  "mp@36:D♯4",
+  "cresc@38:A♯3",
+  "dim@39:D♯3",
+  "cresc@36:E4",
+  "dim@37:E4",
+  "slur@--33:B4",
+  "slur@34:A4-35:G4",
+  "slur@38:A♯3-38:E3",
+  "slur@39:D♯3-39:E4",
+  "slur@37:E4-37:C♯4",
+  "slur@36:E4-36:C♯4",
+  "f@40:C♯4",
+  "fz@44:G3",
+  "pp@48:E4",
+  "f@52:E4",
+  "p@56:G♯4",
+  "f@57:G♯3",
+  "p@58:G♯4",
+  "f@59:C♯4",
+  "p@60:E4",
+  "cresc@60:E4",
+  "slur@56:G♯4-56:F♯4",
+  "p@64:G♯4",
+  "f@65:F♯4",
+  "p@66:F♯4"
+ ]
+}

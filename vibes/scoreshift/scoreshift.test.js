@@ -252,6 +252,31 @@ describe('grace notes', () => {
   });
 });
 
+describe('saving corrections', () => {
+  test('edits survive re-reading the page, and a project file round-trips', async () => {
+    const { markOriginal, collectEdits, applyEdits, makeProject, readProject } = await import('./edits.js');
+    const { yOfP } = await import('./omr.js');
+    const read = () => markOriginal(analyze(normalize(loadFixture('minuet').img)));
+    const a = read(), st = a.staves[0], n = st.notes[3], gone = st.notes[5];
+    // a pitch moved a step, an accidental, a value fix, an articulation, a deleted note, a key
+    n.p += 1; n.y = yOfP(st, n.p, n.x); n.accid = { ids: [], box: n.box, type: 1 }; n.fix = { dur: 2, dots: 0, tuplet: null };
+    st.notes[4].artic = ['stacc']; st.notes.splice(st.notes.indexOf(gone), 1); a.staves[1].key.fifths = 0;
+    for (const q of a.staves) interpret(q);
+    const ed = collectEdits(a);
+    expect(ed.notes.length).toBe(3); expect(ed.staves).toEqual([{ si: 1, fifths: 0 }]);
+    const pr = readProject(makeProject({ bytes: new Uint8Array([1, 2, 3]), name: 'm.png', mime: 'image/png', pages: { 1: ed }, settings: { to: 'alto-sax' } }));
+    expect([...pr.bytes]).toEqual([1, 2, 3]); expect(pr.settings.to).toBe('alto-sax');
+    const b = read(), r = applyEdits(b, pr.pages[1], { interpret, yOfP });
+    expect(r).toEqual({ applied: 4, missed: 0 });
+    const sb = b.staves[0];
+    expect(sb.notes.length).toBe(st.notes.length);
+    expect(sb.notes.map((q) => q.name)).toEqual(st.notes.map((q) => q.name));
+    expect(sb.notes[3].fix.dur).toBe(2); expect(sb.notes[4].artic).toEqual(['stacc']);
+    expect(b.staves[1].notes.map((q) => q.name)).toEqual(a.staves[1].notes.map((q) => q.name));
+    expect(collectEdits(b)).toEqual(ed); // and saving it again gives the same edits
+  });
+});
+
 describe('metronome', () => {
   test('beats follow the meter; a pickup counts back from its bar line', async () => {
     const { beats } = await import('./player.js');
@@ -318,6 +343,18 @@ describe('score assembly and bar repair', () => {
 // does) to run this.
 const CODA = new URL('./fixtures/local/coda_p1.png', import.meta.url);
 describe.skipIf(!fs.existsSync(CODA))('real page: CODA viola audition sheet', () => {
+  // Snapshot of the whole reading (snapshots/coda.json, checked in): pitch names and
+  // values of every bar, keys, clefs, ties, articulations, bowing, graces, dynamics, slurs.
+  // A change fails with the bars that differ. If the change is an improvement, accept it with
+  //   UPDATE_SNAPSHOTS=1 bun test
+  test('reads exactly as the snapshot', async () => {
+    const { snapshot, diffSnapshots } = await import('./snapshot.js');
+    const file = new URL('./snapshots/coda.json', import.meta.url);
+    const got = snapshot(analyze(normalize(decodeGray(fs.readFileSync(CODA)))));
+    if (process.env.UPDATE_SNAPSHOTS || !fs.existsSync(file)) fs.writeFileSync(file, JSON.stringify(got, null, 1) + '\n');
+    const want = JSON.parse(fs.readFileSync(file, 'utf8'));
+    expect(diffSnapshots(want, got)).toEqual([]);
+  });
   test('every bar adds up', () => {
     const r = analyze(normalize(decodeGray(fs.readFileSync(CODA)))), sc = buildScore(r);
     expect(r.staves.map((s) => s.key.fifths)).toEqual([2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3]);

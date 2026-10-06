@@ -4,13 +4,14 @@ import { INSTRUMENTS, keyName, CLEFS, instrument, midiOf } from './theory.js';
 import { buildScore, evTicks } from './score.js';
 import { toMusicXML, toMidi } from './export.js';
 import { Player } from './player.js';
+import { markOriginal, collectEdits, applyEdits, makeProject, readProject, fileKey } from './edits.js';
 import { interpret, yOfP, lineY, spaceAt } from './omr.js';
 import { Renderer, plan, describe, drawOverlay } from './render.js';
 
 const $ = (id) => document.getElementById(id);
 const cv = $('cv'), ov = $('ov'), ctx = cv.getContext('2d'), octx = ov.getContext('2d');
 const store = JSON.parse(localStorage.getItem('scoreshift') || '{}');
-const S = { speed: store.speed || 1, metro: !!store.metro, startTick: 0, from: store.from || 'C', to: store.to || 'Bb-clarinet', octave: 'auto', clef: store.clef || 'auto', view: 'transposed', labels: !!store.labels, zoom: 1, model: null, rend: null, name: 'score', sel: null, tempo: store.tempo || 100, score: null, sounding: null };
+const S = { edits: new Map(), source: null, speed: store.speed || 1, metro: !!store.metro, startTick: 0, from: store.from || 'C', to: store.to || 'Bb-clarinet', octave: 'auto', clef: store.clef || 'auto', view: 'transposed', labels: !!store.labels, zoom: 1, model: null, rend: null, name: 'score', sel: null, tempo: store.tempo || 100, score: null, sounding: null };
 const save = () => localStorage.setItem('scoreshift', JSON.stringify({ from: S.from, to: S.to, clef: S.clef, labels: S.labels, tempo: S.tempo, show: S.show, speed: S.speed, metro: S.metro }));
 
 for (const sel of [$('from'), $('to')]) for (const i of INSTRUMENTS) sel.add(new Option(i.name, i.id));
@@ -81,15 +82,42 @@ function show(model, img, name) {
   player.stop(); S.selM = null; S.startTick = 0;
   fitZoom(); update();
 }
+function noteRestored(n) { setStatus($('status').innerHTML + ` · <b>${n}</b> saved correction${n > 1 ? 's' : ''} restored`); }
+// ⬇ Project: the source file with the corrections of every page, and the settings
+async function saveProject() {
+  if (!S.source) return;
+  markEdited();
+  const pages = {};
+  const n = S.pdf ? S.pdf.n : 1;
+  for (let k = 1; k <= n; k++) { const e = S.edits.get(k) ?? (await idb.get(editKey(k)))?.edits; if (e) pages[k] = e; }
+  const settings = { from: S.from, to: S.to, clef: S.clef, octave: S.octave, tempo: S.tempo, speed: S.speed };
+  const text = makeProject({ bytes: S.source.bytes, name: S.source.name, mime: S.source.mime, pages, settings });
+  download(text, 'application/json', `${S.source.name.replace(/\.[^.]+$/, '')}.scoreshift`);
+  return { pages: Object.keys(pages).length, size: text.length };
+}
 async function busy(fn, label = 'Reading the music…') {
   hidePop(); $('busy').firstElementChild.textContent = label; $('busy').style.display = 'grid';
   try { return await fn(); } finally { $('busy').style.display = 'none'; }
 }
-async function load(blob, name) {
+async function load(blob, name, fromProject = null) {
+  // a ScoreShift project: its source file, with the corrections of every page
+  if (!fromProject && (/\.scoreshift(\.json)?$/i.test(name || blob.name || '') || (blob.type === 'application/json' && blob.size > 100))) {
+    let pr = null; try { pr = readProject(await blob.text()); } catch (e) { setStatus(`<b>Could not open this project:</b> ${e.message}`); return; }
+    if (pr) {
+      Object.assign(S, pr.settings);
+      for (const [id, k] of [['from', 'from'], ['to', 'to'], ['clef', 'clef'], ['tempo', 'tempo']]) if (pr.settings[k] != null) $(id).value = pr.settings[k];
+      return load(new File([pr.bytes], pr.name, { type: pr.mime }), pr.name, pr);
+    }
+  }
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  S.source = { bytes, name: name || blob.name || 'score', mime: blob.type || (await isPdf(blob) ? 'application/pdf' : 'image/png'), key: await fileKey(bytes) };
+  S.edits = new Map(fromProject ? Object.entries(fromProject.pages).map(([k, v]) => [+k, v]) : []);
+  if (fromProject) for (const [k, v] of S.edits) idb.put(editKey(k), v ? { edits: v, name: S.source.name, saved: Date.now() } : null);
+  $('saveProject').disabled = false;
   if (await isPdf(blob)) return loadPdf(blob, name);
   closePdf();
   await busy(async () => {
-    try { const { model, img } = await recognise(blob); S.octave = 'auto'; show(model, img, (name || 'score').replace(/\.[^.]+$/, '')); }
+    try { const { model, img } = await recognise(blob); S.octave = 'auto'; const n = await restoreEdits(model, 1); show(model, img, (name || 'score').replace(/\.[^.]+$/, '')); if (n) noteRestored(n); }
     catch (e) { setStatus(`<b>Could not read this image:</b> ${e.message}. Try a flatter, sharper photo with the full staff width in frame.`); }
   });
 }
@@ -135,7 +163,10 @@ async function openPage(k, quiet = false) {
   try {
     const { model, img } = await recognise(canvas);
     if (P !== S.pdf) return false;
+    const nr = await restoreEdits(model, k);
+    if (nr) P.edited.set(k, { model, img });
     show(model, img, `${P.name}-p${k}`);
+    if (nr) noteRestored(nr);
     return true;
   } catch (e) {
     if (quiet) return false;
@@ -149,7 +180,28 @@ async function openPage(k, quiet = false) {
     return false;
   }
 }
-const markEdited = () => { if (S.pdf && S.model) S.pdf.edited.set(S.pdf.page, { model: S.model, img: S.rend.img }); };
+// ---------- saving: autosave of corrections (IndexedDB, per file and page), project files ----------
+const idb = (() => {
+  let db = null;
+  const open = () => db || (db = new Promise((res, rej) => { if (!self.indexedDB) return rej(new Error('no IndexedDB')); const q = indexedDB.open('scoreshift', 1); q.onupgradeneeded = () => q.result.createObjectStore('edits'); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }));
+  const tx = async (mode, fn) => { const d = await open(); return new Promise((res, rej) => { const t = d.transaction('edits', mode), r = fn(t.objectStore('edits')); t.oncomplete = () => res(r?.result); t.onerror = () => rej(t.error); }); };
+  return { get: (k) => tx('readonly', (s) => s.get(k)).catch(() => null), put: (k, v) => tx('readwrite', (s) => (v ? s.put(v, k) : s.delete(k))).catch(() => null) };
+})();
+const pageNo = () => (S.pdf ? S.pdf.page : 1);
+const editKey = (k = pageNo()) => S.source && `${S.source.key}:${k}`;
+const markEdited = () => {
+  if (S.pdf && S.model) S.pdf.edited.set(S.pdf.page, { model: S.model, img: S.rend.img });
+  if (S.model && S.source) { const e = collectEdits(S.model); idb.put(editKey(), e ? { edits: e, name: S.source.name, saved: Date.now() } : null); S.edits.set(pageNo(), e); }
+};
+// a freshly read page: remember what was read, then put back any corrections saved for it
+async function restoreEdits(model, k = pageNo()) {
+  markOriginal(model);
+  const saved = S.edits.get(k) ?? (S.source ? (await idb.get(editKey(k)))?.edits : null);
+  if (!saved) return 0;
+  const r = applyEdits(model, saved, { interpret, yOfP });
+  S.edits.set(k, saved);
+  return r.applied;
+}
 function pageUi() {
   const P = S.pdf; if (!P) return;
   $('pageNo').textContent = `${P.page} / ${P.n}`;
@@ -392,6 +444,7 @@ player.onStop = onPlayStop;
 const download = (data, type, name) => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([data], { type })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 10000); };
 const exportName = (ext) => `${S.name}${S.pdf ? `-p${S.pdf.page}` : ''}-${S.view === 'transposed' ? S.to : 'as-written'}.${ext}`;
 $('xml').onclick = () => { if (!S.model) return; const o = musicOpts(); download(toMusicXML(S.model, S.score, { ...o, title: S.name }), 'application/vnd.recordare.musicxml+xml', exportName('musicxml')); };
+$('saveProject').onclick = () => saveProject();
 $('midi').onclick = () => { if (!S.model) return; download(toMidi(S.model, S.score, { ...musicOpts(), title: S.name }), 'audio/midi', exportName('mid')); };
 function fitZoom() {
   const w = $('wrap').clientWidth - 4;
@@ -599,4 +652,4 @@ $('export').onclick = () => {
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
 // test hook
-window.__ss = { S, load, update, plan, openPage, exportPdf, player, setFix, eventOf, toMusicXML, toMidi, musicOpts }; window.__yOfP = yOfP;
+window.__ss = { S, load, saveProject, idb, update, plan, openPage, exportPdf, player, setFix, eventOf, toMusicXML, toMidi, musicOpts }; window.__yOfP = yOfP;

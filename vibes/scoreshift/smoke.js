@@ -176,6 +176,32 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
     check('grace notes move with the transposition', gm.n >= 5 && gm.ink >= gm.n - 1 && gm.moved === gm.n, JSON.stringify(gm));
     await shot('grace');
 
+    // saving: a correction is autosaved and comes back when the same file is opened again; a
+    // project file carries it to a fresh browser
+    await b.evaluate(`document.getElementById('sample').click();1`);
+    await waitFor(() => b.evaluate(`!__ss.S.pdf && __ss.S.model && __ss.S.model.notes.length > 90 && __ss.S.source`), 20000);
+    const before = await b.evaluate(`(()=>{const st=__ss.S.model.staves[0],n=st.notes[2];return n.name})()`);
+    await b.evaluate(`(()=>{const st=__ss.S.model.staves[0],n=st.notes[2];n.p+=1;n.y=__yOfP(st,n.p,n.x);__ss.S.model.staves[1].notes.splice(0,1);
+      import('./omr.js').then(m=>{for(const q of __ss.S.model.staves)m.interpret(q)});return 1})()`); await sleep(100);
+    await b.evaluate(`(async()=>{const m=await import('./omr.js');for(const q of __ss.S.model.staves)m.interpret(q);document.querySelector('[data-view=interpreted]').click();return 1})()`);
+    // (any correction goes through markEdited: trigger it the way the popups do)
+    await b.evaluate(`(()=>{const n=__ss.S.model.staves[0].notes[2];const r=document.getElementById('cv').getBoundingClientRect(),R=__ss.S.rend,k=R.r/devicePixelRatio*__ss.S.zoom;
+      document.getElementById('stage').dispatchEvent(new MouseEvent('click',{bubbles:true,clientX:r.left+n.x*k,clientY:r.top+n.y*k}));return 1})()`); await sleep(150);
+    await b.evaluate(`document.getElementById('nUp').click();document.getElementById('nDn').click();1`); await sleep(300);
+    const edited = await b.evaluate(`({name:__ss.S.model.staves[0].notes[2].name,n1:__ss.S.model.staves[1].notes.length})`);
+    const proj = await b.evaluate(`new Promise((res)=>{const a=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){HTMLAnchorElement.prototype.click=a;const name=this.download;fetch(this.href).then(r=>r.text()).then(t=>{window.__proj=t;res({name,size:t.length})})};__ss.saveProject();})`);
+    await b.evaluate(`document.getElementById('sample').click();1`); await sleep(300);
+    await waitFor(() => b.evaluate(`!!(__ss.S.model && __ss.S.model.staves[0].notes[2])`), 20000);
+    await sleep(500);
+    const again = await b.evaluate(`({name:__ss.S.model.staves[0].notes[2].name,n1:__ss.S.model.staves[1].notes.length,status:document.getElementById('status').textContent})`);
+    check('corrections autosaved and restored on reopening the file', again.name === edited.name && again.n1 === edited.n1 && edited.name !== before && /restored/.test(again.status), JSON.stringify({ before, edited, again: { ...again, status: again.status.slice(-40) } }));
+    // project into a browser that has never seen it: clear the autosave, then open the project
+    await b.evaluate(`new Promise(r=>{const q=indexedDB.deleteDatabase('scoreshift');q.onsuccess=q.onerror=q.onblocked=()=>r(1)})`);
+    await b.evaluate(`__ss.load(new File([window.__proj],'sample.scoreshift',{type:'application/json'}),'sample.scoreshift').then(()=>1)`);
+    await waitFor(() => b.evaluate(`!!(__ss.S.model && __ss.S.model.staves[0].notes[2])`), 20000);
+    const fromProj = await b.evaluate(`({name:__ss.S.model.staves[0].notes[2].name,n1:__ss.S.model.staves[1].notes.length})`);
+    check('project file reopens with its corrections', /\.scoreshift$/.test(proj.name) && fromProj.name === edited.name && fromProj.n1 === edited.n1, JSON.stringify({ proj, fromProj }));
+
     // the CODA audition sheet, if present locally (not committed): every bar adds up
     if (fs.existsSync(path.join(DIR, 'fixtures/local/coda.pdf'))) {
       await b.evaluate(`fetch('fixtures/local/coda.pdf').then(r=>r.blob()).then(bl=>__ss.load(new File([bl],'coda.pdf',{type:'application/pdf'}),'coda.pdf')).then(()=>1)`);

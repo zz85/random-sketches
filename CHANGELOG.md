@@ -1,5 +1,8 @@
 # Logs
 
+6 Oct 2026
+- ScoreShift saving and a CODA snapshot test. Corrections autosave in IndexedDB per file (content hash) and page and come back when the same file is opened again; 💾 Save project writes a `.scoreshift` file (source file + edits of every page + settings) that Open restores anywhere. Edits are anchored where symbols were recognised (`edits.js`): pitch steps, accidentals, values / dots / triplets / ties / graces, articulations, deleted notes and rests, clefs, keys, key changes, time signatures. `snapshots/coda.json` snapshots the whole CODA reading bar by bar; `bun test` lists the bars that change, `UPDATE_SNAPSHOTS=1` accepts. 43 tests, 36 smoke checks.
+
 3 Oct 2026
 - ScoreShift: appoggiaturas told from acciaccaturas by the slash (fixtures 6/6, CODA graces slashed), played on the beat for half the main note and exported as `<grace/>`, switchable in the popup. Transposed page: ties and slurs move with their notes when found whole (CODA 26 of 27), articulations and bowing marks move with their note, symbol ink lost under staff lines is put back when pasting (stems no longer break, hollow heads keep their edges more often), and no more white squares where a line runs through a moved head. 41 tests, 34 smoke checks.
 - ScoreShift bowing marks and grace notes on the transposed page. Up-bows and down-bows read by template + shape above the chord (read first so stacked staccatos/accents beyond them are kept, and taken back from text rows); shown, editable, exported as `<technical>`; `bowing` fixture 22/22, CODA bowings match the page. Grace notes move with the transposition (smoke check: all 7 grace heads ink at their new place). 41 tests, 34 smoke checks.

@@ -64,12 +64,13 @@
 <header>
   <h1>Score<span>Shift</span></h1>
   <label class="btn" id="camBtn">📷 Photo<input id="cam" type="file" accept="image/*" capture="environment"></label>
-  <label class="btn">🖼 Open image / PDF<input id="file" type="file" accept="image/*,application/pdf,.pdf"></label>
+  <label class="btn">🖼 Open image / PDF / project<input id="file" type="file" accept="image/*,application/pdf,.pdf,.scoreshift,application/json"></label>
   <button id="sample">Sample</button>
   <button id="export" disabled>⬇ PNG</button>
   <button id="exportPdf" hidden>⬇ Transposed PDF</button>
   <button id="xml" disabled title="MusicXML of the current view: transposed, or as written">⬇ MusicXML</button>
   <button id="midi" disabled>⬇ MIDI</button>
+  <button id="saveProject" disabled title="The file you opened with all your corrections and settings; open it again to carry on">💾 Save project</button>
 </header>
 <div id="bar">
   <label>Written for <select id="from"></select></label>
