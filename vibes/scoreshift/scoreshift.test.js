@@ -454,3 +454,20 @@ test('bold scanned sharp in a key signature (IMSLP #96616)', () => {
   expect(r.staves.length).toBe(1);
   expect(r.staves[0].key.detected).toBe(1);
 });
+
+// Leopold Auer's edition of Bach's Partita No. 1, BWV 1002 (Carl Fischer, 1917; IMSLP #921334,
+// public domain), the Allemande's first three systems at 2400 px. Tight engraving: most slurs
+// touch a stem, a head or a staccato dot on a staff line, sit between two staves, or are cut
+// apart by the stems they cross; the bowing marks sit above the beams. 36 slurs by eye and 4
+// bowing marks (down, up, up, down); before arcs merged into note ink were recovered 19 slurs
+// were read
+test('slurs and bowings in a tightly engraved violin edition (Auer, IMSLP #921334)', () => {
+  const r = analyze(normalize(decodeGray(fs.readFileSync(new URL('./fixtures/auer_bwv1002_allemanda.png', import.meta.url)))));
+  expect(r.staves.length).toBe(3);
+  const slurs = r.staves.reduce((a, s) => a + s.slurs.length, 0);
+  expect(slurs).toBeGreaterThanOrEqual(25);
+  expect(slurs).toBeLessThanOrEqual(38);
+  const bows = r.notes.filter((n) => n.artic.some((a) => /bow/.test(a))).map((n) => n.artic.find((a) => /bow/.test(a)));
+  expect(bows.filter((b) => b === 'upbow').length).toBe(2);
+  expect(bows.filter((b) => b === 'dnbow').length).toBe(2);
+});

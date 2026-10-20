@@ -180,6 +180,16 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
     if (hi - lo < 0.45 * S || lo > 0.45 * S) return null;
     return inc && sp[4] > sp[0] ? 'cresc' : dec && sp[0] > sp[4] ? 'dim' : null;
   };
+  // an accent wedge (or a small hairpin): two strokes meeting at a point, so one end of the box
+  // has two separate runs of ink a column, the other one; an arc has one run in every column
+  const wedgeForm = (c, S) => {
+    const cw = c.x1 - c.x0 + 1, ch = c.y1 - c.y0 + 1;
+    if (cw > 2.5 * S || ch < 0.3 * S) return false;
+    const M = maskOf(c).m, runs = (x) => { let n = 0, inside = false; for (let y = 0; y < ch; y++) { const v = M[y * cw + x]; if (v && !inside) n++; inside = !!v; } return n; };
+    const two = (a, b) => { let k = 0, t = 0; for (let x = Math.round(a * (cw - 1)); x <= Math.round(b * (cw - 1)); x++) { t++; if (runs(x) >= 2) k++; } return k / Math.max(1, t); };
+    const L = two(0, 0.3), R = two(0.7, 1);
+    return (L > 0.6 && R < 0.3) || (R > 0.6 && L < 0.3);
+  };
   for (const st of staves) { st.rests = []; st.times = []; st.tuplets = []; }
   readTimes();
   const arcs = [];
@@ -294,6 +304,7 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
       const g = match(M, cw, ch, ['bow'], S);
       const top = Math.max(row(0.04), row(0.1)), bot = Math.max(row(0.94), row(0.99)), mid = row(0.6);
       const dn = top > 0.75 && bot < 0.6 && mid < 0.6, up = top < 0.75 && bot < 0.45 && row(0.1) > bot;
+      if (g) c.bowDist = g.dist;
       if (g && g.dist < 0.42 && g.name === 'stringsDownBow' && dn) return 'dnbow';
       if (g && g.dist < 0.42 && g.name === 'stringsUpBow' && up && !dn) return 'upbow';
     }
@@ -309,17 +320,27 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
     if (used.has(c.id) && !textOnly) continue;
     const st = staffOf(c); if (!st) continue;
     const S = spaceAt(st, c.cx), kind = markKind(c, S); if (!kind || (textOnly && !BOW.has(kind)) || BOW.has(kind) !== (pass === 0)) continue;
+    // (a letter of a word that passes for a bowing mark must look like one clearly: c, r, n)
+    if (textOnly && c.bowDist > 0.32) continue;
     let best = null;
+    // a bowing mark above the stems of the staff below lies in the band of the staff above:
+    // look there too
+    // (not when it hangs just under this staff: there it is more likely a piece of its stems)
+    const k0 = staves.indexOf(st), below = c.y0 - lineY(st, 4, c.cx) > 1.5 * S;
+    const bowStaves = BOW.has(kind) && below ? [st, staves[k0 + 1]].filter(Boolean) : [st];
     for (const ns of chordsOf.values()) {
-      if (ns[0].st !== st || ns.every((n) => n.grace)) continue; // (a grace note's slash and slur pieces are not marks)
+      if (!bowStaves.includes(ns[0].st) || ns.every((n) => n.grace)) continue; // (a grace note's slash and slur pieces are not marks)
       if (BOW.has(kind)) {
         // above the chord's highest point (head or stem end) and above the staff, centred on it
-        const x = ns.reduce((q, n) => q + n.x, 0) / ns.length;
-        if (Math.abs(c.cx - x) > 0.8 * S) continue;
+        // (over the head, or over an up-stem's end)
+        const x = ns.reduce((q, n) => q + n.x, 0) / ns.length, sx = ns.find((n) => n.stem && n.stem.dir < 0)?.stem.x;
+        const off = Math.min(Math.abs(c.cx - x), sx != null ? Math.abs(c.cx - sx) : Infinity);
+        if (off > 0.8 * S) continue;
+        const st = ns[0].st;
         const hi = Math.min(...ns.flatMap((n) => [n.y, n.stem ? n.stem.tip : n.y]), lineY(st, 0, x));
         const d = hi - c.y1;
         if (d < 0.1 * S || d > 3.2 * S) continue;
-        if (!best || Math.abs(c.cx - x) < best.d) best = { d: Math.abs(c.cx - x), ns };
+        if (!best || off + 0.1 * d < best.d) best = { d: off + 0.1 * d, ns };
         continue;
       }
       const x = ns.reduce((q, n) => q + n.x, 0) / ns.length;
@@ -420,7 +441,15 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
     // (a short flat tie fills most of its box; what makes an arc is that it is thin)
     // (a grace note's slur into its note is short)
     const nearGrace = W >= 0.6 && notes.some((n) => n.grace && n.st === st && Math.abs(n.x - c.x0) < 1.3 * S && Math.abs(n.y - c.cy) < 1.6 * S);
-    if ((W >= 0.9 || nearGrace) && H <= Math.max(1.4, 0.35 * W) && (fill < 0.5 || (H <= 0.75 && fill < 0.9)) && c.n / cw < 0.45 * S && !hairpinForm(c, S)) { arcs.push({ st, c }); continue; }
+    if ((W >= 0.9 || nearGrace) && H <= Math.max(1.4, 0.4 * W) && (fill < 0.5 || (H <= 0.75 && fill < 0.9)) && c.n / cw < 0.45 * S && !hairpinForm(c, S) && !wedgeForm(c, S)) { arcs.push({ st, c }); continue; }
+    // a group joined across a staff line can hold an arc and something that only touched the
+    // same line (a staccato dot, a stem end): an arc among its members is still an arc
+    if (c.ids && c.ids.length > 1 && W >= 0.9) {
+      const arcMember = (q) => { const qw = q.x1 - q.x0 + 1, qh = q.y1 - q.y0 + 1, qW = qw / S, qH = qh / S, qf = q.n / (qw * qh);
+        return qW >= 1.3 && qH <= Math.max(1.4, 0.4 * qW) && (qf < 0.5 || (qH <= 0.75 && qf < 0.9)) && q.n / qw < 0.45 * S && !hairpinForm(q, S) && !wedgeForm(q, S); };
+      const ms = c.ids.map((i) => comps[i]).filter((q) => q && arcMember(q));
+      if (ms.length) { for (const q of ms) arcs.push({ st, c: q }); continue; }
+    }
     // whole / half rests: a solid slab hanging from a line (whole) or sitting on one (half); the
     // 4th and middle lines normally, any line or ledger position when a second voice moves it
     const near = c.cy > yt - 2.2 * S && c.cy < yb + 2.2 * S;
@@ -518,6 +547,116 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
     }
   }
 
+  // ---------------------------------------------------------------- arcs merged into notes
+  // A slur that starts or ends on a stem, a head or a beam is part of that note's component
+  // (in tightly engraved editions most are), so it never reached the arcs above. In each
+  // note component, take away the heads, every thick run (stems, beams: an arc is a thin
+  // line) and look at what is left: a long, thin, curved piece is an arc.
+  for (const a of mergedArcs()) arcs.push(a);
+  function mergedArcs() {
+    const out = [], groups = []
+    // note components (with their heads) …
+    const byComp = new Map()
+    for (const n of notes) { if (!byComp.has(n.comp)) byComp.set(n.comp, []); byComp.get(n.comp).push(n) }
+    for (const [id, ns] of byComp) if (comps[id]) groups.push({ ids: new Set([id]), c: comps[id], st: ns[0].st, ns })
+    // … and what is still unread and wide: stems and beams cut from their heads, with a slur on them
+    const isArc = new Set(arcs.map((a) => a.c)), arcIds = new Set(arcs.flatMap((a) => a.c.ids || [a.c.id]))
+    // (rests, tuplet numbers and dots read above are not arc pieces)
+    const taken = new Set([...staves.flatMap((st) => [...st.rests.flatMap((r) => r.ids || []), ...st.tuplets.flatMap((q) => q.ids || [])]), ...dots.flatMap((d) => d.c?.ids || [])])
+    for (const c of syms) {
+      if (!c || used.has(c.id) || isArc.has(c) || (c.ids || [c.id]).some((i) => taken.has(i))) continue
+      const st = staffOf(c); if (!st) continue
+      if (c.x1 - c.x0 < 1.6 * spaceAt(st, c.cx)) continue
+      groups.push({ ids: new Set(c.ids || [c.id]), c, st, ns: st.notes.filter((n) => n.x > c.x0 - S0 && n.x < c.x1 + S0 && n.y > c.y0 - S0 && n.y < c.y1 + S0) })
+    }
+    let seq = 0
+    const superseded = new Set()
+    for (const { ids, c, st, ns } of groups) {
+      const S = spaceAt(st, c.cx)
+      if (c.x1 - c.x0 < 1.6 * S) continue
+      const x0 = c.x0, y0 = c.y0, cw = c.x1 - c.x0 + 1, ch = c.y1 - c.y0 + 1
+      // with the small unread pieces inside the box: an arc crossing stems is cut into the pieces
+      // between them, and its ink at each stem belongs to the stem
+      const take = new Set(ids)
+      for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) {
+        const l = L[(y + y0) * w + x + x0]
+        if (l && !take.has(l) && !used.has(l) && !taken.has(l) && !headComps.has(l) && comps[l] && comps[l].n < 30 * S && comps[l].y1 - comps[l].y0 < 1.2 * S) take.add(l)
+      }
+      const m = new Uint8Array(cw * ch)
+      for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) if (take.has(L[(y + y0) * w + x + x0])) m[y * cw + x] = 1
+      // heads, a little beyond their box
+      for (const n of ns) {
+        const b = n.box, e = 0.05 * S
+        for (let y = Math.max(0, Math.floor(b[1] - e - y0)); y <= Math.min(ch - 1, Math.ceil(b[3] + e - y0)); y++) for (let x = Math.max(0, Math.floor(b[0] - e - x0)); x <= Math.min(cw - 1, Math.ceil(b[2] + e - x0)); x++) m[y * cw + x] = 0
+      }
+      // thick vertical runs (stems, beams, flags near the stem); the run's column neighbours too
+      const thick = Math.max(3, 0.6 * S), cut = new Uint8Array(cw * ch)
+      for (let x = 0; x < cw; x++) for (let y = 0; y < ch;) {
+        if (!m[y * cw + x]) { y++; continue }
+        let e = y; while (e < ch && m[e * cw + x]) e++
+        if (e - y > thick) for (let k = y; k < e; k++) for (let dx = -1; dx <= 1; dx++) if (x + dx >= 0 && x + dx < cw) cut[k * cw + x + dx] = 1
+        y = e
+      }
+      for (let i = 0; i < m.length; i++) if (cut[i]) m[i] = 0
+      // what is left, in pieces (8-connected), each a thin run per column: x → [top, bottom]
+      const lab = new Int32Array(cw * ch), stack = [], pieces = []
+      for (let i0 = 0; i0 < m.length; i0++) {
+        if (!m[i0] || lab[i0]) continue
+        const L2 = ++seq, px = []
+        lab[i0] = L2; stack.push(i0)
+        while (stack.length) {
+          const i = stack.pop(); px.push(i)
+          const x = i % cw, y = (i / cw) | 0
+          for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+            const xx = x + dx, yy = y + dy; if (xx < 0 || yy < 0 || xx >= cw || yy >= ch) continue
+            const j = yy * cw + xx; if (m[j] && !lab[j]) { lab[j] = L2; stack.push(j) }
+          }
+        }
+        if (px.length < 3) continue
+        const col = new Map(), labs = new Set()
+        for (const i of px) { const x = i % cw, y = (i / cw) | 0, q = col.get(x); labs.add(L[(y + y0) * w + x + x0]); if (!q) col.set(x, [y, y, 1]); else { q[0] = Math.min(q[0], y); q[1] = Math.max(q[1], y); q[2]++ } }
+        const xs = [...col.keys()].sort((p, q) => p - q)
+        pieces.push({ col, labs, x0: xs[0], x1: xs[xs.length - 1], n: px.length, yl: col.get(xs[0])[0], yr: col.get(xs[xs.length - 1])[0] })
+      }
+      // pieces cut apart by stems (an arc crossing a beamed group) join again: one begins just
+      // after the other ends, at the height where it left off
+      pieces.sort((p, q) => p.x0 - q.x0)
+      const chains = []
+      for (const p of pieces) {
+        const k = chains.findIndex((c) => p.x0 > c.x1 && p.x0 - c.x1 <= 1.6 * S && Math.abs(p.yl - c.yr) <= 0.5 * S)
+        if (k >= 0) { const c = chains[k]; for (const [x, v] of p.col) c.col.set(x, v); for (const l of p.labs) c.labs.add(l); c.x1 = p.x1; c.yr = p.yr; c.n += p.n; c.parts++ }
+        else chains.push({ ...p, col: new Map(p.col), labs: new Set(p.labs), parts: 1 })
+      }
+      for (const ch2 of chains) {
+        const xs = [...ch2.col.keys()].sort((p, q) => p - q), span = ch2.x1 - ch2.x0 + 1
+        let ay0 = ch, ay1 = 0
+        for (const v of ch2.col.values()) { ay0 = Math.min(ay0, v[0]); ay1 = Math.max(ay1, v[1]) }
+        const W = span / S, H = (ay1 - ay0 + 1) / S
+        if (W < 1.6 || H > Math.max(1.4, 0.4 * W)) continue
+        // ink in most columns (the gaps are the stems it crossed), thin everywhere
+        if (xs.length < 0.7 * span) continue
+        if (ch2.n / xs.length > 0.4 * S || [...ch2.col.values()].some((v) => v[1] - v[0] > 0.65 * S)) continue
+        // curved: the middle bows away from the line between the ends, all to one side
+        const top = (x) => ch2.col.get(x)[0], ya = top(xs[0]), yb = top(xs[xs.length - 1])
+        let dmax = 0, dmin = 0
+        for (const x of xs) { const d = top(x) - (ya + (yb - ya) * (x - xs[0]) / Math.max(1, xs[xs.length - 1] - xs[0])); dmax = Math.max(dmax, d); dmin = Math.min(dmin, d) }
+        const bow = Math.abs(dmax) > Math.abs(dmin) ? dmax : dmin
+        if (Math.abs(bow) < Math.max(0.15 * S, 0.03 * W * S) || Math.min(Math.abs(dmax), Math.abs(dmin)) > 0.35 * Math.abs(bow)) continue
+        // a chain of one piece that is an arc already is that arc; one of several replaces the
+        // pieces read as arcs on their own
+        if (ch2.parts === 1 && [...ch2.labs].every((l) => arcIds.has(l))) continue
+        for (const l of ch2.labs) if (arcIds.has(l)) superseded.add(l)
+        // the arc's height in every column of its span (across the gaps too)
+        const colY = new Map()
+        for (let i = 0, x = xs[0]; x <= xs[xs.length - 1]; x++) { while (xs[i + 1] <= x) i++; colY.set(x + x0, (xs[i] === x ? top(x) : top(xs[i]) + (top(xs[i + 1] ?? xs[i]) - top(xs[i])) * (x - xs[i]) / Math.max(1, (xs[i + 1] ?? xs[i]) - xs[i])) + y0) }
+        out.push({ st, from: [...take], c: { id: 'm' + seq++, merged: true, colY, x0: ch2.x0 + x0, x1: ch2.x1 + x0, y0: ay0 + y0, y1: ay1 + y0, n: ch2.n, cx: (ch2.x0 + ch2.x1) / 2 + x0, cy: (ay0 + ay1) / 2 + y0 } })
+      }
+    }
+    // drop the arcs a longer merged one replaces
+    for (let i = arcs.length - 1; i >= 0; i--) if ((arcs[i].c.ids || [arcs[i].c.id]).some((l) => superseded.has(l))) arcs.splice(i, 1)
+    return out
+  }
+
   // ---------------------------------------------------------------- slurs
   // Every other arc is a slur, from the chord nearest its left end to the one nearest its right
   // end (heads or stem ends within reach). An arc running off the end of the staff continues on
@@ -527,19 +666,19 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
     let best = null;
     for (const n of st.notes) {
       const ys = [n.y, n.stem ? n.stem.tip : n.y], dx = Math.abs(n.x - x), dy = Math.min(...ys.map((v) => Math.abs(v - y)));
-      if (dx > 2.2 * S || dy > 3.2 * S) continue;
+      if (dx > 2.2 * S || dy > 4.5 * S) continue;
       const d = dx + 0.5 * dy; if (!best || d < best.d) best = { d, n };
     }
     return best?.n || null;
   };
-  for (const { st, c } of arcs) {
+  for (let { st, c } of arcs) {
     if (c.isTie) continue;
-    const S = spaceAt(st, c.cx), col = (x) => { for (let y = c.y0; y <= c.y1; y++) if (L[y * w + x] === c.id) return y; return c.cy; };
+    const S = spaceAt(st, c.cx), col = (x) => { if (c.colY) return c.colY.get(x) ?? c.cy; for (let y = c.y0; y <= c.y1; y++) if (L[y * w + x] === c.id) return y; return c.cy; };
     // a slur cut into pieces by staff lines and barlines: follow small fragments along its
     // direction from the right end
     let ex = c.x1, ey = col(c.x1); const frags = [];
     const slope = (ey - col(Math.max(c.x0, Math.round(c.x1 - 0.2 * (c.x1 - c.x0))))) / Math.max(1, 0.2 * (c.x1 - c.x0));
-    for (let grew = true; grew;) {
+    for (let grew = !c.merged; grew;) {
       grew = false;
       for (const q of comps) {
         if (!q || q.id === c.id || used.has(q.id) || headComps.has(q.id) || q.n > 120 || q.x0 <= ex - 1 || q.x0 - ex > 1.6 * S || q.y1 - q.y0 > 0.8 * S) continue;
@@ -548,12 +687,36 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
         ex = q.x1; ey = (q.y0 + q.y1) / 2; grew = true; used.add(q.id); frags.push(q.id); break;
       }
     }
-    const a = ends(st, c.x0, col(c.x0), S), b = ends(st, ex, ey, S);
+    let a = ends(st, c.x0, col(c.x0), S), b = ends(st, ex, ey, S);
+    // an arc between two staves belongs to the one whose notes it joins (a slur above the
+    // stems of the staff below lies in the band of the staff above)
+    if (!a || !b) {
+      const k = staves.indexOf(st);
+      for (const st2 of [staves[k + 1], staves[k - 1]]) {
+        if (!st2) continue;
+        const a2 = ends(st2, c.x0, col(c.x0), S), b2 = ends(st2, ex, ey, S);
+        if (a2 && b2 && a2.chord !== b2.chord) { a = a2; b = b2; st = st2; break; }
+      }
+    }
     const fromEdge = c.x0 < (st.key?.x1 ?? st.x0) + 1.5 * S, toEdge = ex > st.x1 - 1.8 * S;
     if ((!a && !fromEdge) || (!b && !toEdge) || (a && b && a.chord === b.chord)) continue;
+    // (a merged arc between two heads of one pitch already read as a tie is that tie)
+    if (c.merged && a && b && a.tie && a.p === b.p && b.chord === a.chord + 1) continue;
     const yl = col(c.x0), yr = ey, above = c.y0 < Math.min(yl, yr) - 2;
     st.slurs.push({ from: a, to: b, open: !b, cont: !a, box: [c.x0, c.y0, ex, Math.max(c.y1, ey)], yl, yr, peak: above ? c.y0 : c.y1, above, ids: [...(c.ids || [c.id]), ...frags] });
     used.add(c.id);
+  }
+
+  // a slur broken into pieces (a staff line, a barline, a head in the way): consecutive pieces
+  // on one side of the staff whose ends meet are one slur
+  for (const st of staves) {
+    const sl = st.slurs.sort((p, q) => p.box[0] - q.box[0]), S = spaceAt(st, (st.x0 + st.x1) / 2);
+    for (let i = 0; i + 1 < sl.length; i++) {
+      const p = sl[i], q = sl[i + 1];
+      if (p.above !== q.above || q.box[0] - p.box[2] > 2 * S || q.box[0] < p.box[2] - 3 * S || q.box[2] <= p.box[2] || Math.abs(q.yl - p.yr) > 0.8 * S) continue;
+      sl.splice(i, 2, { ...p, to: q.to, open: q.open, box: [p.box[0], Math.min(p.box[1], q.box[1]), q.box[2], Math.max(p.box[3], q.box[3])], yr: q.yr, peak: p.above ? Math.min(p.peak, q.peak) : Math.max(p.peak, q.peak), ids: [...p.ids, ...q.ids] });
+      i--;
+    }
   }
 
   // ---------------------------------------------------------------- hairpins

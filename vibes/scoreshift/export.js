@@ -58,6 +58,22 @@ export function toMusicXML(model, score, { plan = null, instrument = null, title
   for (const part of score.parts) {
     out.push(`<part id="P${part.index + 1}">`);
     const links = tieLinks(part, W), tiedFrom = new Set(links.values());
+    // slur numbers: a slur running off the end of a system continues on the next one (the arc
+    // that starts at that system's left edge), so both halves carry one number
+    const slurNo = new Map(), sysOrder = [...new Set(part.measures.map((m) => m.st))];
+    let carry = [];
+    for (const st of sysOrder) {
+      const sl = (st.slurs || []).slice().sort((a, b) => a.box[0] - b.box[0]), busy = new Set(), next = [];
+      for (const s of sl) {
+        let no = null;
+        if (!s.from && carry.length) no = carry.shift();
+        if (no == null) for (let k = 1; k <= 6; k++) if (!busy.has(k) && !carry.includes(k)) { no = k; break; }
+        no ??= 1;
+        slurNo.set(s, no); busy.add(no);
+        if (s.to) busy.delete(no); else next.push(no);
+      }
+      carry = next;
+    }
     let cur = { clef: null, fifths: null, time: null }, number = 0;
     part.measures.forEach((m, mi) => {
       const pickup = mi === 0 && m.status === 'pickup';
@@ -106,7 +122,7 @@ export function toMusicXML(model, score, { plan = null, instrument = null, title
           const ties = (tieStop ? '<tie type="stop"/>' : '') + (tieStart ? '<tie type="start"/>' : '');
           const tied = (tieStop ? '<tied type="stop"/>' : '') + (tieStart ? '<tied type="start"/>' : '');
           const ART = { stacc: '<staccato/>', ten: '<tenuto/>', acc: '<accent/>' }, art = k === 0 ? (e.notes[0].artic || []).map((a) => ART[a]).join('') : '';
-          const slurs = k === 0 ? (m.st.slurs || []).flatMap((sl, si) => [sl.from && e.notes.includes(sl.from) ? `<slur type="start" number="${(si % 6) + 1}"/>` : '', sl.to && e.notes.includes(sl.to) ? `<slur type="stop" number="${(si % 6) + 1}"/>` : '']).join('') : '';
+          const slurs = k === 0 ? (m.st.slurs || []).flatMap((sl) => [sl.from && e.notes.includes(sl.from) ? `<slur type="start" number="${slurNo.get(sl)}"/>` : '', sl.to && e.notes.includes(sl.to) ? `<slur type="stop" number="${slurNo.get(sl)}"/>` : '']).join('') : '';
           const TECH = { upbow: '<up-bow/>', dnbow: '<down-bow/>' }, tech = k === 0 ? (e.notes[0].artic || []).map((a) => TECH[a] || '').join('') : '';
           const nota = tied + slurs + (k === 0 ? tup : '') + (art ? `<articulations>${art}</articulations>` : '') + (tech ? `<technical>${tech}</technical>` : '');
           out.push(`<note>${e.grace ? `<grace${(e.notes[0].fix?.graceKind ?? e.notes[0].graceKind) === 'app' ? '' : ' slash="yes"'}/>` : ''}${k ? '<chord/>' : ''}<pitch><step>${step}</step>${p.alter ? `<alter>${p.alter}</alter>` : ''}<octave>${oct}</octave></pitch>` +

@@ -284,6 +284,27 @@ rows they can be grouped into. Shown in Interpreted view (`down-bow ⊓`, `up-bo
 note, exported as MusicXML `<technical>`. `bowing` fixture: 22/22 clean, none invented; on the
 CODA sheet the bowings read match the page in the bars checked (1, 7, 11–17, 21).
 
+### Slurs and bowings in tightly engraved editions
+
+Older violin editions on IMSLP (Auer, Carl Fischer 1917; Herrmann, Schirmer 1900) set slurs right against the notes, and the reading above missed many of them:
+- **Merged into note ink.** A slur touching a stem, a head or a beam is part of that note's component. In each note component, and in every wide unread group, ScoreShift now removes the heads and every thick vertical run (stems, beams), then looks at what is left together with the small unread pieces inside the box. A slur crossing a beamed group is cut into the pieces between the stems, so pieces that continue one another (a gap under 1.6 spaces, a height step under half a space) are chained. A chain that is long (1.6 spaces or more), thin and bowed to one side is an arc. It replaces any short arcs read from its pieces.
+- **Joined across a staff line with a dot.** A staccato dot and a slur touching the same staff line were grouped into one symbol and rejected; an arc among a group's members is now still an arc.
+- **Between two staves.** A slur above the stems of the lower staff lies in the band of the upper one. When it has no notes at both ends on its own staff, the neighbouring staves are tried. Slur ends may also be up to 4.5 spaces from the head or stem end (was 3.2), because portato slurs sit beyond their dots.
+- **Steeper and in pieces.** Arcs may be 0.4 times as tall as they are wide (was 0.35). Pieces of one slur whose ends meet are joined.
+- **Not accents.** An accent wedge (two strokes meeting at a point) is no longer read as a slur.
+- **Bowing marks above beams** are attached to a chord centred under them at its head or at its up-stem's end, and to the staff below when they lie in the upper staff's band (but not when they hang just under that staff). A letter of a word must match a bowing glyph closely (distance 0.32) to count as one.
+- **MusicXML across systems.** A slur running off one system and continuing on the next now carries one slur number, so MusicXML readers see one slur.
+
+Checked by eye against the scans:
+
+| | Before | Now |
+|---|---|---|
+| Auer, Partita 1 Allemande, systems 1–3: slurs found | 22 of 36 | 25 of 36 (fixture: 19 → 27 read) |
+| Herrmann, Sonata 1 Presto, systems 1–3: slurs found / false | 11 of 12 / 4 | 12 of 12 / 1 |
+| Auer, Allemande page: bowing marks read | 9 of ~14 | 12 of ~14 |
+
+What is still missed: steep slurs that connect two voices (nearly vertical arcs from a bass note up to a melody note), and bowing marks fused with a beam. On the CODA sheet the change found one more slur (bar 27) and corrected one that was read as a continuation (bar 33); the snapshot was updated. Test: `slurs and bowings in a tightly engraved violin edition`, fixture `fixtures/auer_bwv1002_allemanda.png` (public domain).
+
 ### Grace notes
 
 The CODA waltz (bars 56 and 58) opens two bars with an acciaccatura: a small slashed eighth G♯4,
