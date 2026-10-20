@@ -460,13 +460,19 @@ test('bold scanned sharp in a key signature (IMSLP #96616)', () => {
 // touch a stem, a head or a staccato dot on a staff line, sit between two staves, or are cut
 // apart by the stems they cross; the bowing marks sit above the beams. 36 slurs by eye and 4
 // bowing marks (down, up, up, down); before arcs merged into note ink were recovered 19 slurs
-// were read
+// were read, 27 before steep slurs between voices were
 test('slurs and bowings in a tightly engraved violin edition (Auer, IMSLP #921334)', () => {
   const r = analyze(normalize(decodeGray(fs.readFileSync(new URL('./fixtures/auer_bwv1002_allemanda.png', import.meta.url)))));
   expect(r.staves.length).toBe(3);
   const slurs = r.staves.reduce((a, s) => a + s.slurs.length, 0);
-  expect(slurs).toBeGreaterThanOrEqual(25);
+  expect(slurs).toBeGreaterThanOrEqual(33);
   expect(slurs).toBeLessThanOrEqual(38);
+  // steep slurs between voices (a bass note to the melody): 9 by eye, each joining two chords
+  const steep = r.staves.flatMap((s) => s.slurs.filter((q) => q.steep));
+  expect(steep.length).toBeGreaterThanOrEqual(8);
+  for (const q of steep) { expect(q.from && q.to).toBeTruthy(); expect(q.to.x).toBeGreaterThan(q.from.x); }
+  // (the bracket round the 8/8 is curved, thin and tall too, but joins no notes)
+  expect(steep.some((q) => q.box[0] < 450 && q.box[3] < 260)).toBe(false);
   const bows = r.notes.filter((n) => n.artic.some((a) => /bow/.test(a))).map((n) => n.artic.find((a) => /bow/.test(a)));
   expect(bows.filter((b) => b === 'upbow').length).toBe(2);
   expect(bows.filter((b) => b === 'dnbow').length).toBe(2);

@@ -450,6 +450,12 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
       const ms = c.ids.map((i) => comps[i]).filter((q) => q && arcMember(q));
       if (ms.length) { for (const q of ms) arcs.push({ st, c: q }); continue; }
     }
+    // steep arcs: a slur joining two voices runs nearly vertically, from a bass note up to the
+    // melody (or down), so it is taller than it is wide; read along its long axis it is one
+    // thin run per row, bowing to one side of the line between its ends
+    // (a shorter one is a piece of a slur a staff line cut: kept only if it joins another piece)
+    const sa = steepArc(c, S) || steepArc(c, S, 1.5);
+    if (sa) { arcs.push({ st, c: { ...c, arcEnds: sa.ends, steep: true, bulgeUp: sa.up, piece: Math.hypot(sa.ends[1][0] - sa.ends[0][0], sa.ends[1][1] - sa.ends[0][1]) < 2.5 * S } }); continue; }
     // whole / half rests: a solid slab hanging from a line (whole) or sitting on one (half); the
     // 4th and middle lines normally, any line or ledger position when a second voice moves it
     const near = c.cy > yt - 2.2 * S && c.cy < yb + 2.2 * S;
@@ -494,6 +500,48 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
       // (not the staccato of the next note: just above or below its head)
       !st.notes.some((n) => Math.abs(n.x - d.c.cx) < 0.8 * S && Math.abs(n.y - d.c.cy) < 1.6 * S)).length > 0 ? 1 : 0;
   }
+  function steepArc(c, S, min = 2.5) {
+    const cw = c.x1 - c.x0 + 1, ch = c.y1 - c.y0 + 1
+    if (Math.max(cw, ch) < min * S || ch <= 0.4 * cw || cw < 0.9 * S || ch > 12 * S || cw > 12 * S) return null
+    const { m } = maskOf(c), pts = [], byRow = ch >= cw, N = byRow ? ch : cw, M = byRow ? cw : ch
+    const at = (i, j) => (byRow ? m[i * cw + j] : m[j * cw + i])
+    // read across the long axis: one thin run in each row (or column); a letter, a rest or a
+    // bracket's corner has rows of two runs. (A run is wider where the arc turns flat, but its
+    // centre still follows the arc, so the length and the thickness below stay right.)
+    let multi = 0, ink = 0
+    for (let i = 0; i < N; i++) {
+      const runs = []
+      for (let j = 0; j < M;) { if (!at(i, j)) { j++; continue } let e = j; while (e < M && at(i, e)) e++; runs.push([j, e]); j = e }
+      if (!runs.length) continue
+      ink++
+      if (runs.length > 1) { multi++; continue }
+      const mid = (runs[0][0] + runs[0][1] - 1) / 2
+      pts.push(byRow ? [c.x0 + mid, c.y0 + i] : [c.x0 + i, c.y0 + mid])
+    }
+    if (ink < 0.9 * N || multi > 0.12 * N || pts.length < 10) return null
+    let len = 0
+    for (let i = 1; i < pts.length; i++) len += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1])
+    len *= ink / pts.length
+    const [xa, ya] = pts[0], [xb, yb] = pts[pts.length - 1], chord = Math.hypot(xb - xa, yb - ya)
+    // long enough to join two voices, not curled up, a thin line
+    if (chord < min * S || chord < 0.6 * len || c.n / len > 0.4 * S) return null
+    // signed distance from the chord: one side only, enough to be a curve and not a stem
+    const dist = (p) => ((xb - xa) * (p[1] - ya) - (yb - ya) * (p[0] - xa)) / chord
+    let kmax = 0, kmin = 0
+    for (let i = 0; i < pts.length; i++) { if (dist(pts[i]) > dist(pts[kmax])) kmax = i; if (dist(pts[i]) < dist(pts[kmin])) kmin = i }
+    const dmax = Math.max(0, dist(pts[kmax])), dmin = Math.min(0, dist(pts[kmin])), pos = dmax >= -dmin
+    const bow = pos ? dmax : -dmin, other = pos ? -dmin : dmax
+    // (a piece may be the straight part of a slur: it is kept only if it continues an arc)
+    if (min >= 2.5 ? bow < Math.max(0.3 * S, 0.08 * chord) || other > 0.3 * bow : other > 0.15 * S && other > 0.3 * bow) return null
+    // (a flag cut from its stem curves too, and starts at the stem's end)
+    if (notes.some((n) => n.stem && [[xa, ya], [xb, yb]].some(([x, y]) => Math.abs(x - n.stem.x) < 0.7 * S && Math.abs(y - n.stem.tip) < 1.0 * S))) return null
+    // (an 8th rest's stroke curves too: its head is a blob at one end)
+    if (ch <= 4.6 * S && cw <= 1.7 * S) { const g = match(m, cw, ch, ['rest'], S); if (g && g.dist < 0.4) return null }
+    // the side it bulges to: the point furthest from the chord, against the chord's midpoint
+    const kb = pos ? kmax : kmin
+    const ends = xa <= xb ? [[xa, ya], [xb, yb]] : [[xb, yb], [xa, ya]]
+    return { ends, up: pts[kb][1] < (ya + yb) / 2 }
+  }
   // Ties merged with something else (a phrase slur, a hairpin) are not components of their own:
   // between two neighbouring chords sharing a pitch, look for a thin curve of ink starting next
   // to the first head and ending next to the second, bowing away from the heads on one side.
@@ -533,6 +581,7 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
     }
   }
   for (const { st, c } of arcs) {
+    if (c.steep) continue;
     const S = spaceAt(st, c.cx);
     const col = (x) => { for (let y = c.y0; y <= c.y1; y++) if (L[y * w + x] === c.id) return y; return c.cy; };
     const yl = col(c.x0), yr = col(c.x1);
@@ -671,14 +720,76 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
     }
     return best?.n || null;
   };
+  // the pieces of one arc cut apart by a staff line or a barline, where one is steep (a slur
+  // between voices turning flat at its top) or too short to reach a note on its own: an end of
+  // one meets the start of the next, heading the same way
+  for (const a of joinArcPieces()) arcs.push(a);
+  function joinArcPieces() {
+    const colOf = (c, x) => { if (c.colY) return c.colY.get(x) ?? c.cy; const ids = c.ids || [c.id]; for (let y = c.y0; y <= c.y1; y++) if (ids.includes(L[y * w + x])) return y; return c.cy; };
+    // ends and the direction the arc heads in at each (outward)
+    const geo = (c) => {
+      if (c.arcEnds) {
+        const [[xa, ya], [xb, yb]] = c.arcEnds, ids = c.ids || [c.id], near = (x0, y0, x1, y1) => { // the ink a little way in from the end
+          const tx = x0 + (x1 - x0) * 0.2, ty = y0 + (y1 - y0) * 0.2; let best = null
+          for (let y = c.y0; y <= c.y1; y++) for (let x = c.x0; x <= c.x1; x++) if (ids.includes(L[y * w + x])) { const d = Math.hypot(x - tx, y - ty); if (!best || d < best[2]) best = [x, y, d] }
+          return best ? [x0 - best[0], y0 - best[1]] : [x0 - x1, y0 - y1] }
+        return { l: [xa, ya], r: [xb, yb], dl: near(xa, ya, xb, yb), dr: near(xb, yb, xa, ya) }
+      }
+      const k = Math.max(1, Math.round(0.2 * (c.x1 - c.x0)))
+      return { l: [c.x0, colOf(c, c.x0)], r: [c.x1, colOf(c, c.x1)], dl: [-k, colOf(c, c.x0) - colOf(c, c.x0 + k)], dr: [k, colOf(c, c.x1) - colOf(c, c.x1 - k)] }
+    }
+    const inkOf = (c) => {
+      if (c.parts) return c.parts.flatMap(inkOf)
+      if (c.colY) return [...c.colY].map(([x, y]) => [x, y])
+      const set = new Set(c.ids || [c.id]), out = []
+      for (let y = c.y0; y <= c.y1; y++) for (let x = c.x0; x <= c.x1; x++) if (set.has(L[y * w + x])) out.push([x, y])
+      return out
+    }
+    const curved = (cs, [xa, ya], [xb, yb], S) => {
+      const chord = Math.hypot(xb - xa, yb - ya); let dmax = 0, dmin = 0
+      for (const c of cs) for (const [x, y] of inkOf(c)) { const d = ((xb - xa) * (y - ya) - (yb - ya) * (x - xa)) / chord; if (d > dmax) dmax = d; if (d < dmin) dmin = d }
+      const bow = Math.max(dmax, -dmin), other = Math.min(dmax, -dmin)
+      return bow >= Math.max(0.3 * S, 0.06 * chord) && other <= Math.max(0.3 * bow, 0.2 * S)
+    }
+    const items = arcs.filter((a) => !a.c.isTie).map((a) => ({ a, g: geo(a.c) }))
+    const out = [], gone = new Set()
+    const ang = (u, v) => Math.acos(Math.max(-1, Math.min(1, (u[0] * v[0] + u[1] * v[1]) / (Math.hypot(...u) * Math.hypot(...v) || 1))))
+    for (const p of items) {
+      if (gone.has(p)) continue
+      let cur = p
+      for (let grew = true; grew;) {
+        grew = false
+        const S = spaceAt(cur.a.st, cur.g.r[0])
+        for (const q of items) {
+          if (q === cur || q === p || gone.has(q) || q.a.st !== cur.a.st && Math.abs(q.g.l[1] - cur.g.r[1]) > 2 * S) continue
+          // (two long flat pieces: the slur stage joins them, once each reaches its notes)
+          if (!cur.a.c.steep && !q.a.c.steep && !cur.join && Math.min(cur.a.c.x1 - cur.a.c.x0, q.a.c.x1 - q.a.c.x0) > 2.5 * S) continue
+          if (q.g.r[0] <= cur.g.r[0] || Math.hypot(q.g.l[0] - cur.g.r[0], q.g.l[1] - cur.g.r[1]) > 1.0 * S) continue
+          // continuing the same way: the outward direction at cur's end against q's inward one
+          if (ang(cur.g.dr, [-q.g.dl[0], -q.g.dl[1]]) > 0.9) continue
+          const A = cur.a.c, B = q.a.c, ids = [...(A.ids || [A.id]), ...(B.ids || [B.id])]
+          // together a curve: the ink bows to one side of the line between the two far ends
+          // (an underline or a line of a bracket in pieces does not)
+          if (!curved([A, B], cur.g.l, q.g.r, S)) continue
+          const c = { id: A.id, ids, joined: true, x0: Math.min(A.x0, B.x0), y0: Math.min(A.y0, B.y0), x1: Math.max(A.x1, B.x1), y1: Math.max(A.y1, B.y1), n: A.n + B.n, cx: (A.cx * A.n + B.cx * B.n) / (A.n + B.n), cy: (A.cy * A.n + B.cy * B.n) / (A.n + B.n), arcEnds: [cur.g.l, q.g.r], steep: true, parts: [A, B] }
+          gone.add(cur); gone.add(q)
+          cur = { a: { st: cur.a.st, c }, g: { l: cur.g.l, r: q.g.r, dl: cur.g.dl, dr: q.g.dr }, join: true }
+          grew = true; break
+        }
+      }
+      if (cur !== p) out.push(cur.a)
+    }
+    for (let i = arcs.length - 1; i >= 0; i--) if (items.some((it) => gone.has(it) && it.a === arcs[i])) arcs.splice(i, 1)
+    return out
+  }
   for (let { st, c } of arcs) {
     if (c.isTie) continue;
     const S = spaceAt(st, c.cx), col = (x) => { if (c.colY) return c.colY.get(x) ?? c.cy; for (let y = c.y0; y <= c.y1; y++) if (L[y * w + x] === c.id) return y; return c.cy; };
     // a slur cut into pieces by staff lines and barlines: follow small fragments along its
     // direction from the right end
-    let ex = c.x1, ey = col(c.x1); const frags = [];
+    let ex = c.arcEnds ? c.arcEnds[1][0] : c.x1, ey = c.arcEnds ? c.arcEnds[1][1] : col(c.x1); const frags = [];
     const slope = (ey - col(Math.max(c.x0, Math.round(c.x1 - 0.2 * (c.x1 - c.x0))))) / Math.max(1, 0.2 * (c.x1 - c.x0));
-    for (let grew = !c.merged; grew;) {
+    for (let grew = !c.merged && !c.arcEnds; grew;) {
       grew = false;
       for (const q of comps) {
         if (!q || q.id === c.id || used.has(q.id) || headComps.has(q.id) || q.n > 120 || q.x0 <= ex - 1 || q.x0 - ex > 1.6 * S || q.y1 - q.y0 > 0.8 * S) continue;
@@ -687,14 +798,15 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
         ex = q.x1; ey = (q.y0 + q.y1) / 2; grew = true; used.add(q.id); frags.push(q.id); break;
       }
     }
-    let a = ends(st, c.x0, col(c.x0), S), b = ends(st, ex, ey, S);
+    const lx = c.arcEnds ? c.arcEnds[0][0] : c.x0, ly = c.arcEnds ? c.arcEnds[0][1] : col(c.x0);
+    let a = ends(st, lx, ly, S), b = ends(st, ex, ey, S);
     // an arc between two staves belongs to the one whose notes it joins (a slur above the
     // stems of the staff below lies in the band of the staff above)
     if (!a || !b) {
       const k = staves.indexOf(st);
       for (const st2 of [staves[k + 1], staves[k - 1]]) {
         if (!st2) continue;
-        const a2 = ends(st2, c.x0, col(c.x0), S), b2 = ends(st2, ex, ey, S);
+        const a2 = ends(st2, lx, ly, S), b2 = ends(st2, ex, ey, S);
         if (a2 && b2 && a2.chord !== b2.chord) { a = a2; b = b2; st = st2; break; }
       }
     }
@@ -702,8 +814,12 @@ export function readRhythm({ w, h, S0, t, staves, notes, L, comps, accs, dots, h
     if ((!a && !fromEdge) || (!b && !toEdge) || (a && b && a.chord === b.chord)) continue;
     // (a merged arc between two heads of one pitch already read as a tie is that tie)
     if (c.merged && a && b && a.tie && a.p === b.p && b.chord === a.chord + 1) continue;
-    const yl = col(c.x0), yr = ey, above = c.y0 < Math.min(yl, yr) - 2;
-    st.slurs.push({ from: a, to: b, open: !b, cont: !a, box: [c.x0, c.y0, ex, Math.max(c.y1, ey)], yl, yr, peak: above ? c.y0 : c.y1, above, ids: [...(c.ids || [c.id]), ...frags] });
+    // (a steep slur between voices: on the side it bulges to; it never reaches a note on the
+    // same chord, and its ends are its own, not the edge of the staff)
+    if (c.piece) continue;
+    if (c.steep && (!a || !b || b.x - a.x < 0.8 * S || ex - lx < 0.35 * (b.x - a.x))) continue;
+    const yl = ly, yr = ey, above = c.steep && !c.joined ? !!c.bulgeUp : c.y0 < Math.min(yl, yr) - 2;
+    st.slurs.push({ from: a, to: b, open: !b, cont: !a, box: [c.x0, c.y0, ex, Math.max(c.y1, ey)], yl, yr, peak: above ? c.y0 : c.y1, above, ...(c.steep ? { steep: true } : {}), ids: [...(c.ids || [c.id]), ...frags] });
     used.add(c.id);
   }
 

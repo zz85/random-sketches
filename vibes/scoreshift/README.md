@@ -303,7 +303,19 @@ Checked by eye against the scans:
 | Herrmann, Sonata 1 Presto, systems 1–3: slurs found / false | 11 of 12 / 4 | 12 of 12 / 1 |
 | Auer, Allemande page: bowing marks read | 9 of ~14 | 12 of ~14 |
 
-What is still missed: steep slurs that connect two voices (nearly vertical arcs from a bass note up to a melody note), and bowing marks fused with a beam. On the CODA sheet the change found one more slur (bar 27) and corrected one that was read as a continuation (bar 33); the snapshot was updated. Test: `slurs and bowings in a tightly engraved violin edition`, fixture `fixtures/auer_bwv1002_allemanda.png` (public domain).
+What is still missed: bowing marks fused with a beam, and slurs whose ends merge into a stem or a beam while they are also steep (only flat ones are recovered from note ink).
+
+**Steep slurs between voices.** In Bach's chords and fugues a slur often joins two voices: from a bass note up to the melody, or from the top note down to the next lower one. Those arcs are taller than they are wide, so the flat-arc test above refused them. A free symbol is now also an arc when, read along its long axis, it is one thin run in nearly every row (at most 12 % of rows with two runs), its ends are at least 2.5 spaces apart and its length at most 1.7 times that distance, its ink is under 0.4 spaces thick, and it bows to one side of the line between its ends (by 0.3 spaces or 8 % of that line, with under 30 % of that on the other side). It must not start at a stem's end (a flag cut from its stem), match a rest template (an 8th rest's curved stroke), or be under 0.9 spaces wide. As a slur its ends are its own two ends, not the box's corners; they must reach notes of two chords at least 0.8 spaces apart, spanning at least 35 % of that gap (a bracket or a stray stroke next to one chord does not). A staff line can cut such an arc where it turns flat: a shorter steep piece (from 1.5 spaces) is kept only when it continues another arc piece, end to end within a space and heading the same way (under 0.9 rad), and the two together still bow to one side.
+
+| | Before | Now |
+|---|---|---|
+| Auer Allemande fixture: slurs read | 27 | 36 (the 9 new ones all real by eye) |
+| All 60 Herrmann pages: slurs read | 2,939 | 3,127 (270 steep or joined) |
+| All 43 Auer pages: slurs read | 3,024 | 3,334 (377 steep or joined) |
+
+A random sample of 48 of the steep slurs on 14 pages, checked by eye, had one or two doubtful readings (a thin stroke between two chords) and no clear false ones; an earlier version read flags, an 8th rest, a title's underline and a long stem as slurs, which the checks above now refuse. On the CODA sheet one more slur was found (bar 22, a short rising arc into the next note); the snapshot was updated.
+
+Previously: On the CODA sheet the change found one more slur (bar 27) and corrected one that was read as a continuation (bar 33); the snapshot was updated. Test: `slurs and bowings in a tightly engraved violin edition`, fixture `fixtures/auer_bwv1002_allemanda.png` (public domain).
 
 ### Grace notes
 
