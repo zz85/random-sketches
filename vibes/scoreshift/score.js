@@ -176,24 +176,63 @@ export function buildScore(model) {
 // take the meter the bars themselves agree on.
 function inferMeter(part) {
   const ms = part.measures; if (!ms.length) return;
-  const raw = (m) => m.events.reduce((s, e) => s + evTicks(e), 0);
-  // a bar fits a length in one voice, or in each of two voices
+  // A bar supports a capacity when either its one-voice reading, or every voice of its
+  // two-voice reading, fits exactly or through one inexpensive rhythm correction.
   const S = part.staves[0]?.pts ? spaceAt(part.staves[0], part.staves[0].x0) : 16;
   const two = new Map(part.measures.map((m) => [m, m.raw && twoVoices(m.raw, m.st, S)]));
-  const fits = (m, cap) => raw(m) === cap || (two.get(m) && [0, 1].every((v) => two.get(m).filter((e) => e.voice === v && !e.grace).reduce((q, e) => q + evTicks(e), 0) === cap));
+  const measureFit = (m, cap) => {
+    let best = null;
+    for (const events of [m.events, two.get(m)].filter(Boolean)) {
+      let evidence = false, exact = true, cost = 0, valid = true;
+      for (const v of [...new Set(events.map((e) => e.voice ?? 0))]) {
+        const evs = events.filter((e) => (e.voice ?? 0) === v && !e.grace);
+        // A whole-bar rest carries no evidence about the meter.
+        if (evs.length === 1 && evs[0].kind === 'rest' && evs[0].dur === 1 && !evs[0].dots) continue;
+        evidence = true;
+        if (evs.reduce((sum, e) => sum + evTicks(e), 0) === cap) continue;
+        exact = false;
+        const fix = repair(evs, cap);
+        if (!fix || fix.cost > 2.6) { valid = false; break; }
+        cost += fix.cost;
+      }
+      if (!evidence || !valid || cost > 2.6) continue;
+      const fit = { exact, cost };
+      if (!best || Number(fit.exact) > Number(best.exact) || (fit.exact === best.exact && fit.cost < best.cost)) best = fit;
+    }
+    return best;
+  };
+  const fit = (seg, cap, skipFirst) => {
+    let exact = 0, repaired = 0, cost = 0;
+    for (let i = skipFirst ? 1 : 0; i < seg.length; i++) {
+      const f = measureFit(seg[i], cap);
+      if (f?.exact) exact++;
+      else if (f) { repaired++; cost += f.cost; }
+    }
+    const support = exact + repaired;
+    return { exact, repaired, support, cost, score: 2 * support + 2 * exact - 0.3 * cost };
+  };
   // segments between time signature changes
   let a = 0;
   while (a < ms.length) {
     let b = a + 1; while (b < ms.length && !ms[b].timeShown) b++;
     const seg = ms.slice(a, b), t = seg[0].time;
     if (!t || !t.fixed) {
-      const cnt = (cap) => seg.filter((m, i) => (a > 0 || i > 0) && fits(m, cap)).length;
-      const cur = t ? cnt(capOf(t)) : -1;
-      let best = null;
-      for (const [beats, unit] of METERS) { const c = cnt(capOf({ beats, unit })); if (!best || c > best.c) best = { beats, unit, c }; }
-      // a clearly read time signature needs much stronger evidence to be overruled
+      // Rhythm determines measure capacity, but cannot distinguish equivalent spellings such
+      // as 3/4 and 6/8. Keep the first conventional spelling unless a symbol supplied one.
+      const byCap = new Map();
+      for (const [beats, unit] of METERS) {
+        const cap = capOf({ beats, unit });
+        if (!byCap.has(cap)) byCap.set(cap, { beats, unit, cap, ...fit(seg, cap, a === 0) });
+      }
+      const ranked = [...byCap.values()].sort((x, y) => y.score - x.score || y.exact - x.exact || x.cost - y.cost);
+      const best = ranked[0], next = ranked[1], cur = t ? byCap.get(capOf(t)) : null;
+      const repeated = best && best.support >= 2 && (best.exact >= 1 || best.repaired >= 3);
+      const clear = !next || best.support > next.support || best.score - next.score >= 0.5;
+      // A read time signature needs substantially stronger evidence to be overruled,
+      // especially when its template match was clear.
       const k = t && !t.inferred && (t.dist ?? 1) < 0.25 ? 3 : 2;
-      if (best && best.c >= 2 && best.c > Math.max(1, k * cur + (k - 2) * 2) && !(t && capOf(t) === capOf(best))) {
+      const better = !cur || best.support > Math.max(1, k * cur.support + (k - 2) * 2);
+      if (repeated && clear && better && !(t && capOf(t) === best.cap)) {
         const nt = { beats: best.beats, unit: best.unit, inferred: true };
         for (const m of seg) m.time = nt;
       }

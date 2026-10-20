@@ -315,6 +315,20 @@ describe('score assembly and bar repair', () => {
     expect(evTicks(sc.measures[1].events[0])).toBe(96); // kept; the repair goes elsewhere
     expect(sc.measures[1].events[0].repaired).toBeUndefined();
   });
+  test('meter inference retries with inexpensive rhythm repairs', () => {
+    const s = st([
+      { x: 100, d: 2 }, { x: 160, d: 8, b: 1 },
+      { x: 300, d: 2 }, { x: 360, d: 8, b: 1 },
+      { x: 500, d: 2 }, { x: 560, d: 8, b: 1 },
+      { x: 700, d: 2 }, { x: 760, d: 8, b: 1 },
+    ]);
+    s.times = [];
+    s.bars = [{ x: 200, ids: [] }, { x: 400, ids: [] }, { x: 600, ids: [] }, { x: 800, ids: [] }];
+    const sc = buildScore({ space: 16, staves: [s] });
+    expect(sc.measures.every((m) => m.time?.beats === 3 && m.time?.unit === 4 && m.time?.inferred)).toBe(true);
+    expect(sc.measures.every((m) => m.status === 'ok')).toBe(true);
+    expect(sc.measures.every((m) => m.repairs.includes('one beam fewer'))).toBe(true);
+  });
   test('tick arithmetic', () => {
     expect(baseTicks(4, 1)).toBe(144); expect(evTicks({ dur: 8, dots: 0, tuplet: [3, 2] })).toBe(32);
   });
