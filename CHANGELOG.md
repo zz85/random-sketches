@@ -1,5 +1,8 @@
 # Logs
 
+21 Oct 2026
+- Add [Sorairo](vibes/sorairo/) - anime-style landscape in three.js 0.160 (no build step). Hand-wired post chain so passes can read several inputs: scene to an MSAA HDR target whose alpha carries sun occlusion (sky writes cloud density), radial light shafts from that mask, UnrealBloomPass, lens flare gated on sun visibility, luminance-only Reinhard so colours stay saturated, lift/gain grade, then an anisotropic Kuwahara filter (structure tensor, Gaussian-blurred, 8-sector polynomial weights after Kyprianidis et al.) with edge pigment pooling, canvas weave, vignette and grain. All materials are custom cel shaders sharing one set of lighting uniforms: two-tone terminator, blue-violet ambient shadows, a tree-only shadow map (billboards face the sun camera in the shadow pass), moving cloud shadows and sun-tinted aerial perspective. Five time-of-day keyframes interpolated by one slider. `node smoke.js` renders 7 still shots through headless SwiftShader and fails on shader errors or blank frames.
+
 6 Oct 2026
 - ScoreShift saving and a CODA snapshot test. Corrections autosave in IndexedDB per file (content hash) and page and come back when the same file is opened again; 💾 Save project writes a `.scoreshift` file (source file + edits of every page + settings) that Open restores anywhere. Edits are anchored where symbols were recognised (`edits.js`): pitch steps, accidentals, values / dots / triplets / ties / graces, articulations, deleted notes and rests, clefs, keys, key changes, time signatures. `snapshots/coda.json` snapshots the whole CODA reading bar by bar; `bun test` lists the bars that change, `UPDATE_SNAPSHOTS=1` accepts. 43 tests, 36 smoke checks.
 
