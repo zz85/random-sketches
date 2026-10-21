@@ -60,19 +60,44 @@ export function toMusicXML(model, score, { plan = null, instrument = null, title
     const links = tieLinks(part, W), tiedFrom = new Set(links.values());
     // slur numbers: a slur running off the end of a system continues on the next one (the arc
     // that starts at that system's left edge), so both halves carry one number
-    const slurNo = new Map(), sysOrder = [...new Set(part.measures.map((m) => m.st))];
+    const slurNo = new Map(), sysOrder = sysOrderOf(part), closeAt = new Map(), lastOf = new Map(), continued = new Set(), dropped = new Set();
+    for (const m of part.measures) for (const e of m.events || []) if (e.notes?.length && !e.removed) lastOf.set(m.st, e.notes[0]);
+    // a slur from or to a chord the bar check removed starts on the next chord written (or
+    // ends on the one before), so its start and stop are both in the file
+    const seq = [], at = new Map();
+    for (const m of part.measures) for (const e of m.events || []) if (e.notes?.length) { for (const n of e.notes) at.set(n, seq.length); seq.push(e); }
+    const alive = (n, dir) => { let i = at.get(n); if (i == null) return n; while (seq[i] && seq[i].removed) i += dir; return seq[i]?.notes[0] ?? null; };
+    const ends = new Map();
+    for (const st of sysOrderOf(part)) for (const sl of st.slurs || []) {
+      const from = sl.from && alive(sl.from, 1), to = sl.to && alive(sl.to, -1);
+      if ((sl.from && !from) || (sl.to && !to) || (from && to && at.get(to) <= at.get(from))) { ends.set(sl, null); continue; }
+      ends.set(sl, { from, to });
+    }
+    const fromOf = (sl) => ends.get(sl)?.from, toOf = (sl) => ends.get(sl)?.to;
     let carry = [];
     for (const st of sysOrder) {
-      const sl = (st.slurs || []).slice().sort((a, b) => a.box[0] - b.box[0]), busy = new Set(), next = [];
+      // a number stays taken until its slur's last note has passed: a slur nested inside another,
+      // or two starting on one chord, get different numbers (a reader pairs a stop with the
+      // latest start of its number, so a reused number would leave the outer slur open)
+      const x0 = (s) => (s.from ? fromOf(s).x : -Infinity), x1 = (s) => (s.to ? toOf(s).x : Infinity);
+      const sl = (st.slurs || []).filter((q) => ends.get(q) !== null).sort((a, b) => x0(a) - x0(b) || a.box[0] - b.box[0]), next = [];
+      let active = carry.map(({ no, s }) => ({ no, end: null, s }));
       for (const s of sl) {
+        active = active.filter((a) => a.end == null || a.end >= x0(s));
         let no = null;
-        if (!s.from && carry.length) no = carry.shift();
-        if (no == null) for (let k = 1; k <= 6; k++) if (!busy.has(k) && !carry.includes(k)) { no = k; break; }
+        if (!s.from) { const k = active.findIndex((a) => a.end == null && a.s); if (k >= 0) { no = active[k].no; continued.add(active[k].s); active.splice(k, 1); } }
+        if (no == null) for (let k = 1; k <= 16; k++) if (!active.some((a) => a.no === k)) { no = k; break; }
         no ??= 1;
-        slurNo.set(s, no); busy.add(no);
-        if (s.to) busy.delete(no); else next.push(no);
+        slurNo.set(s, no);
+        active.push({ no, end: x1(s) });
+        if (!s.to) next.push({ no, s });
       }
-      carry = next;
+      // a slur left open at the end of the previous system that nothing on this one continues
+      // (a misread) ends on the last chord of its own system, so the number is closed and a
+      // reader does not slur everything after it. (One still open at the end of the last
+      // system runs on to the next page, as it should.)
+      for (const c of carry) if (!continued.has(c.s)) { const n = lastOf.get(c.st); if (n && n !== fromOf(c.s)) closeAt.set(c.s, n); else dropped.add(c.s); }
+      carry = next.map((c) => ({ ...c, st }));
     }
     let cur = { clef: null, fifths: null, time: null }, number = 0;
     part.measures.forEach((m, mi) => {
@@ -122,7 +147,8 @@ export function toMusicXML(model, score, { plan = null, instrument = null, title
           const ties = (tieStop ? '<tie type="stop"/>' : '') + (tieStart ? '<tie type="start"/>' : '');
           const tied = (tieStop ? '<tied type="stop"/>' : '') + (tieStart ? '<tied type="start"/>' : '');
           const ART = { stacc: '<staccato/>', ten: '<tenuto/>', acc: '<accent/>' }, art = k === 0 ? (e.notes[0].artic || []).map((a) => ART[a]).join('') : '';
-          const slurs = k === 0 ? (m.st.slurs || []).flatMap((sl) => [sl.from && e.notes.includes(sl.from) ? `<slur type="start" number="${slurNo.get(sl)}"/>` : '', sl.to && e.notes.includes(sl.to) ? `<slur type="stop" number="${slurNo.get(sl)}"/>` : '']).join('') : '';
+          // (stops first: a slur ending on the chord where the next one starts)
+          const slurs = k === 0 ? [...[...closeAt].filter(([, n]) => e.notes.includes(n)).map(([sl]) => `<slur type="stop" number="${slurNo.get(sl)}"/>`), ...(m.st.slurs || []).map((sl) => slurNo.has(sl) && sl.to && e.notes.includes(toOf(sl)) ? `<slur type="stop" number="${slurNo.get(sl)}"/>` : ''), ...(m.st.slurs || []).map((sl) => slurNo.has(sl) && sl.from && !dropped.has(sl) && e.notes.includes(fromOf(sl)) ? `<slur type="start" number="${slurNo.get(sl)}"/>` : '')].join('') : '';
           const TECH = { upbow: '<up-bow/>', dnbow: '<down-bow/>' }, tech = k === 0 ? (e.notes[0].artic || []).map((a) => TECH[a] || '').join('') : '';
           const nota = tied + slurs + (k === 0 ? tup : '') + (art ? `<articulations>${art}</articulations>` : '') + (tech ? `<technical>${tech}</technical>` : '');
           out.push(`<note>${e.grace ? `<grace${(e.notes[0].fix?.graceKind ?? e.notes[0].graceKind) === 'app' ? '' : ' slash="yes"'}/>` : ''}${k ? '<chord/>' : ''}<pitch><step>${step}</step>${p.alter ? `<alter>${p.alter}</alter>` : ''}<octave>${oct}</octave></pitch>` +
@@ -140,6 +166,7 @@ export function toMusicXML(model, score, { plan = null, instrument = null, title
   out.push('</score-partwise>');
   return out.join('\n');
 }
+const sysOrderOf = (part) => [...new Set(part.measures.map((m) => m.st))];
 // tuplet bracket start/stop on the first / last event of its group (score.js sets e.tg)
 function tupletEdge(m, e) {
   if (!e.tuplet || !e.tg) return '';
