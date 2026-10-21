@@ -44,7 +44,7 @@ const S = {
   style: Q.get('style') || 'summer', leaves: num('leaves', 1), wind: num('wind', 1.2), windDir: num('windDir', 30),
   birds: Q.get('birds') !== '0', contrail: Q.get('contrail') !== '0',
   painterly: Q.has('paint') ? num('paint', 2.5) : (MOBILE ? 0 : 2.5), shafts: 1, bloom: 0.55, flare: 1, paper: 1, vignette: 1, saturation: 1, exposure: 1,
-  shot: Q.get('shot') || 'hillside', orbit: Q.get('orbit') === '1', seed: num('seed', 7), quality: MOBILE ? 'low' : 'high',
+  shot: Q.get('shot') || 'hillside', orbit: Q.get('orbit') === '1', seed: num('seed', 7), airy: num('airy', 1), quality: MOBILE ? 'low' : 'high',
 };
 
 // ---------- renderer
@@ -62,7 +62,7 @@ const poles = makePoles(shared); scene.add(poles.group);
 const GROUND = heightAt(0, 0);
 const grass = makeGrass(shared, { count: S.quality === 'high' ? 170000 : 60000 });
 scene.add(grass.mesh, grass.flowers);
-let tree = makeTree(shared, GROUND, S.seed, { fallCount: MOBILE ? 220 : 420 });
+let tree = makeTree(shared, GROUND, S.seed, { fallCount: MOBILE ? 220 : 420, airy: S.airy });
 scene.add(tree.group); tree.setStyle(S.style);
 const birds = makeBirds(shared); scene.add(birds.mesh);
 
@@ -269,6 +269,7 @@ fScene.add(S, 'contrail');
 const fTree = gui.addFolder('Tree');
 fTree.add(S, 'style', Object.keys(TREE_STYLES)).onChange((v) => tree.setStyle(v));
 fTree.add(S, 'leaves', 0, 3, 0.01).name('falling leaves');
+fTree.add(S, 'airy', 0, 1, 0.05).name('canopy gaps').onFinishChange(() => rebuildTree());
 fTree.add({ grow: () => { S.seed = (S.seed * 7 + 13) % 1000; rebuildTree(); } }, 'grow').name('grow another tree');
 const fLook = gui.addFolder('Look');
 fLook.add(S, 'painterly', { off: 0, 'soft gouache': 2.5, 'oil paint': 4, 'heavy brush': 6 });
@@ -288,7 +289,7 @@ if (Q.has('noui')) gui.hide();
 
 function rebuildTree() {
   scene.remove(tree.group); tree.dispose();
-  tree = makeTree(shared, GROUND, S.seed, { fallCount: MOBILE ? 220 : 420 });
+  tree = makeTree(shared, GROUND, S.seed, { fallCount: MOBILE ? 220 : 420, airy: S.airy });
   tree.setStyle(S.style); scene.add(tree.group);
 }
 function savePNG() {

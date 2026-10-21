@@ -18,7 +18,7 @@ Drag to orbit, scroll to zoom. **H** hides the panel, **P** saves a PNG.
 
 ## URL parameters
 
-`time` (0 noon … 4 night), `az` sun azimuth, `style` (summer, sakura, autumn), `shot` (hillside, under, wide, path, sky), `paint` (Kuwahara radius, 0 = off), `wind`, `clouds`, `seed`, `orbit=1`, `noui`, `still` + `t` (render one frame at a fixed time).
+`time` (0 noon … 4 night), `az` sun azimuth, `style` (summer, sakura, autumn), `shot` (hillside, under, wide, path, sky), `paint` (Kuwahara radius, 0 = off), `wind`, `clouds`, `seed`, `airy` (canopy gaps, 0 dense … 1 airy), `orbit=1`, `noui`, `still` + `t` (render one frame at a fixed time).
 
 ## Test
 

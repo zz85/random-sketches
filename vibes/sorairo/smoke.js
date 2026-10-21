@@ -37,6 +37,7 @@ const SHOTS = [
   ['under', 'time=1&az=10&shot=under&t=20&style=autumn'],
   ['night', 'time=4&shot=path&t=20'],
   ['sky', 'time=0.75&az=55&shot=sky&t=20'],
+  ['dense', 'time=0.75&az=55&shot=hillside&t=20&airy=0'],
   ['flyover', 'time=1.3&az=-60&shot=wide&t=20'],
   ['raw', 'time=0.75&az=55&shot=hillside&t=20&paint=0'],
 ].filter(([n]) => !process.env.ONLY || process.env.ONLY.split(',').includes(n));

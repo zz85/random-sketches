@@ -53,6 +53,11 @@ function noise3(x, y, z) {
 
 export function makeTree(shared, groundY, seed = 7, opts = {}) {
   const rnd = mulberry32(seed);
+  // airiness: 0 = one dense mass, 1 = separate leaf pads with sky between them.
+  // The branch skeleton consumes the same random numbers at every setting, so the
+  // slider changes only the foliage, not the tree's shape.
+  const A = Math.min(1, Math.max(0, opts.airy ?? 1));
+  const mix = (a, b) => a + (b - a) * A;
   const group = new THREE.Group();
   const branches = []; // {pts:[Vector3], rad:[number]}
   const clumps = [];   // {c:Vector3, r:number}
@@ -73,7 +78,7 @@ export function makeTree(shared, groundY, seed = 7, opts = {}) {
     }
     branches.push({ pts, rad: rads });
     const end = pts[pts.length - 1];
-    if (depth >= 3 || rad < 0.05) { clumps.push({ c: end.clone(), r: 1.15 + rnd() * 0.65 }); return; }
+    if (depth >= 3 || rad < 0.05) { clumps.push({ c: end.clone(), r: mix(1.6, 1.15) + rnd() * mix(0.9, 0.65) }); return; }
     const kids = depth === 0 ? 4 + Math.floor(rnd() * 2) : 2 + Math.floor(rnd() * 2);
     const ang0 = rnd() * Math.PI * 2;
     for (let k = 0; k < kids; k++) {
@@ -88,9 +93,11 @@ export function makeTree(shared, groundY, seed = 7, opts = {}) {
       grow(at, nd, len * (depth === 0 ? 0.75 : 0.66) * (0.8 + rnd() * 0.35), rads[rads.length - 1] * 0.92, depth + 1);
     }
     // side twig clumps along longer limbs
-    if (depth >= 2) for (let i = 2; i < pts.length - 1; i += 2) if (rnd() < 0.3) {
-      const o = new THREE.Vector3(rnd() - 0.5, rnd() * 0.6, rnd() - 0.5).normalize().multiplyScalar(0.8);
-      clumps.push({ c: pts[i].clone().add(o), r: 0.85 + rnd() * 0.45 });
+    if (depth >= 2) for (let i = 2; i < pts.length - 1; i += 2) {
+      const roll = rnd();
+      const o = new THREE.Vector3(rnd() - 0.5, rnd() * 0.6, rnd() - 0.5).normalize().multiplyScalar(mix(0.9, 0.8));
+      const r = mix(1.2, 0.85) + rnd() * mix(0.7, 0.45);
+      if (roll < mix(0.4, 0.3)) clumps.push({ c: pts[i].clone().add(o), r });
     }
   }
   const base = new THREE.Vector3(0, groundY - 0.4, 0);
@@ -165,18 +172,18 @@ export function makeTree(shared, groundY, seed = 7, opts = {}) {
   const nOff = new THREE.Vector3(rnd() * 100, rnd() * 100, rnd() * 100);
   const cards = [];
   for (const c of clumps) {
-    const n = Math.round(30 * c.r * c.r);
+    const n = Math.round(mix(24, 30) * c.r * c.r);
     for (let i = 0; i < n; i++) {
       // points in a flattened sphere (leaf pads), denser toward the surface
       const u = rnd() * 2 - 1, a = rnd() * Math.PI * 2, e = Math.pow(rnd(), 0.5);
       const s = Math.sqrt(1 - u * u);
-      const p = new THREE.Vector3(Math.cos(a) * s, u * 0.62, Math.sin(a) * s).multiplyScalar(e * c.r).add(c.c);
+      const p = new THREE.Vector3(Math.cos(a) * s, u * mix(0.75, 0.62), Math.sin(a) * s).multiplyScalar(e * c.r).add(c.c);
       const q = p.clone().add(nOff);
       const voids = noise3(q.x * 0.21, q.y * 0.3, q.z * 0.21);
       const lobes = noise3(q.x * 0.75 + 31, q.y * 0.9, q.z * 0.75);
       const core = 1 - e;
-      if (voids + core * 0.5 < 0.42) continue;
-      if (lobes + core * 0.6 < 0.4) continue;
+      if (voids + core * 0.5 < 0.42 * A) continue;
+      if (lobes + core * 0.6 < 0.4 * A) continue;
       cards.push([p, c]);
     }
   }
