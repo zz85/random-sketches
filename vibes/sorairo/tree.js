@@ -39,6 +39,18 @@ export const TREE_STYLES = {
   autumn: { leafDark: [0.42, 0.1, 0.04], leafLight: [1.0, 0.55, 0.12], rim: [1.0, 0.85, 0.4], fall: [0.95, 0.4, 0.08], fall2: [0.95, 0.7, 0.15], kind: 'leaf', petals: false },
 };
 
+// 3D value noise in [0,1], smooth, for carving the canopy.
+function hash3(x, y, z) { let h = Math.sin(x * 127.1 + y * 311.7 + z * 74.7) * 43758.5453; return h - Math.floor(h); }
+function noise3(x, y, z) {
+  const ix = Math.floor(x), iy = Math.floor(y), iz = Math.floor(z);
+  const f = (t) => t * t * (3 - 2 * t);
+  const fx = f(x - ix), fy = f(y - iy), fz = f(z - iz);
+  const L = (a, b, t) => a + (b - a) * t;
+  const c = (dx, dy, dz) => hash3(ix + dx, iy + dy, iz + dz);
+  return L(L(L(c(0, 0, 0), c(1, 0, 0), fx), L(c(0, 1, 0), c(1, 1, 0), fx), fy),
+           L(L(c(0, 0, 1), c(1, 0, 1), fx), L(c(0, 1, 1), c(1, 1, 1), fx), fy), fz);
+}
+
 export function makeTree(shared, groundY, seed = 7, opts = {}) {
   const rnd = mulberry32(seed);
   const group = new THREE.Group();
@@ -61,7 +73,7 @@ export function makeTree(shared, groundY, seed = 7, opts = {}) {
     }
     branches.push({ pts, rad: rads });
     const end = pts[pts.length - 1];
-    if (depth >= 3 || rad < 0.05) { clumps.push({ c: end.clone(), r: 1.6 + rnd() * 0.9 }); return; }
+    if (depth >= 3 || rad < 0.05) { clumps.push({ c: end.clone(), r: 1.15 + rnd() * 0.65 }); return; }
     const kids = depth === 0 ? 4 + Math.floor(rnd() * 2) : 2 + Math.floor(rnd() * 2);
     const ang0 = rnd() * Math.PI * 2;
     for (let k = 0; k < kids; k++) {
@@ -76,9 +88,9 @@ export function makeTree(shared, groundY, seed = 7, opts = {}) {
       grow(at, nd, len * (depth === 0 ? 0.75 : 0.66) * (0.8 + rnd() * 0.35), rads[rads.length - 1] * 0.92, depth + 1);
     }
     // side twig clumps along longer limbs
-    if (depth >= 2) for (let i = 2; i < pts.length - 1; i += 2) if (rnd() < 0.4) {
-      const o = new THREE.Vector3(rnd() - 0.5, rnd() * 0.6, rnd() - 0.5).normalize().multiplyScalar(0.9);
-      clumps.push({ c: pts[i].clone().add(o), r: 1.2 + rnd() * 0.7 });
+    if (depth >= 2) for (let i = 2; i < pts.length - 1; i += 2) if (rnd() < 0.3) {
+      const o = new THREE.Vector3(rnd() - 0.5, rnd() * 0.6, rnd() - 0.5).normalize().multiplyScalar(0.8);
+      clumps.push({ c: pts[i].clone().add(o), r: 0.85 + rnd() * 0.45 });
     }
   }
   const base = new THREE.Vector3(0, groundY - 0.4, 0);
@@ -146,14 +158,25 @@ export function makeTree(shared, groundY, seed = 7, opts = {}) {
   let cx = 0, cy = 0, cz = 0;
   for (const c of clumps) { cx += c.c.x; cy += c.c.y; cz += c.c.z; }
   const center = new THREE.Vector3(cx, cy, cz).divideScalar(clumps.length);
+  // The canopy is split into separate leaf masses with sky between them: a coarse noise
+  // carves whole-canopy voids (wavelength ~5 m, deeper than a clump so they see through),
+  // a finer one makes each clump's outline lobed. Clump cores are protected so every
+  // branch tip keeps some leaves.
+  const nOff = new THREE.Vector3(rnd() * 100, rnd() * 100, rnd() * 100);
   const cards = [];
   for (const c of clumps) {
-    const n = Math.round(24 * c.r * c.r);
+    const n = Math.round(30 * c.r * c.r);
     for (let i = 0; i < n; i++) {
-      // points in a squashed sphere, denser toward the surface
-      const u = rnd() * 2 - 1, a = rnd() * Math.PI * 2, rr = Math.pow(rnd(), 0.4) * c.r;
+      // points in a flattened sphere (leaf pads), denser toward the surface
+      const u = rnd() * 2 - 1, a = rnd() * Math.PI * 2, e = Math.pow(rnd(), 0.5);
       const s = Math.sqrt(1 - u * u);
-      const p = new THREE.Vector3(Math.cos(a) * s, u * 0.75, Math.sin(a) * s).multiplyScalar(rr).add(c.c);
+      const p = new THREE.Vector3(Math.cos(a) * s, u * 0.62, Math.sin(a) * s).multiplyScalar(e * c.r).add(c.c);
+      const q = p.clone().add(nOff);
+      const voids = noise3(q.x * 0.21, q.y * 0.3, q.z * 0.21);
+      const lobes = noise3(q.x * 0.75 + 31, q.y * 0.9, q.z * 0.75);
+      const core = 1 - e;
+      if (voids + core * 0.5 < 0.42) continue;
+      if (lobes + core * 0.6 < 0.4) continue;
       cards.push([p, c]);
     }
   }
