@@ -8,6 +8,8 @@ import { makeTerrain, makeMountains, makePoles, heightAt } from './world.js';
 import { makeTree, TREE_STYLES } from './tree.js';
 import { makeGrass } from './grass.js';
 import { makePost } from './post.js';
+import { makeBirds } from './birds.js';
+import { mulberry32 } from './tree.js';
 
 const Q = new URLSearchParams(location.search);
 const num = (k, d) => (Q.has(k) ? parseFloat(Q.get(k)) : d);
@@ -40,6 +42,7 @@ function samplePreset(t) {
 const S = {
   time: num('time', 0.75), azimuth: num('az', 55), clouds: num('clouds', 0.5), towers: num('towers', 1),
   style: Q.get('style') || 'summer', leaves: num('leaves', 1), wind: num('wind', 1.2), windDir: num('windDir', 30),
+  birds: Q.get('birds') !== '0', contrail: Q.get('contrail') !== '0',
   painterly: Q.has('paint') ? num('paint', 2.5) : (MOBILE ? 0 : 2.5), shafts: 1, bloom: 0.55, flare: 1, paper: 1, vignette: 1, saturation: 1, exposure: 1,
   shot: Q.get('shot') || 'hillside', orbit: Q.get('orbit') === '1', seed: num('seed', 7), quality: MOBILE ? 'low' : 'high',
 };
@@ -61,6 +64,7 @@ const grass = makeGrass(shared, { count: S.quality === 'high' ? 170000 : 60000 }
 scene.add(grass.mesh, grass.flowers);
 let tree = makeTree(shared, GROUND, S.seed, { fallCount: MOBILE ? 220 : 420 });
 scene.add(tree.group); tree.setStyle(S.style);
+const birds = makeBirds(shared); scene.add(birds.mesh);
 
 // grass and ground albedo stay fixed; light does the work
 grass.uniforms.uBase.value = C('#1f4a2a'); grass.uniforms.uTip.value = C('#4e9a3c'); grass.uniforms.uTip2.value = C('#98c54e'); grass.uniforms.uSheen.value = C('#f4ffc8');
@@ -154,6 +158,56 @@ function setShot(name) {
 }
 setShot(S.shot);
 
+// ---------- fly-overs. Each cycle picks a new line of flight from wherever the camera is
+// looking when it starts, so a flock or an airliner always crosses the view.
+const view = new THREE.Vector3();
+function viewAzimuth() { camera.getWorldDirection(view); view.y = 0; return view.lengthSq() > 1e-6 ? view.normalize() : view.set(0, 0, -1); }
+const BIRD_P = 55, BIRD_O = BIRD_P - 9, BIRD_SPEED = 8, BIRD_HALF = 90;
+let birdCycle = -1;
+const flockC = new THREE.Vector3(), flockDir = new THREE.Vector3();
+function updateBirds(t, on) {
+  const c = Math.floor((t + BIRD_O) / BIRD_P), tau = (t + BIRD_O) - c * BIRD_P;
+  if (c !== birdCycle) {
+    birdCycle = c;
+    const r = mulberry32(c * 7919 + 1), f = viewAzimuth();
+    const side = new THREE.Vector3(-f.z, 0, f.x);
+    const ahead = 45 + r() * 50;
+    // cross the view at a slant, left-to-right or right-to-left
+    const a = (r() - 0.5) * 0.9;
+    flockDir.copy(side).multiplyScalar(r() < 0.5 ? 1 : -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), a);
+    flockC.copy(camera.position).addScaledVector(f, ahead).addScaledVector(side, (r() - 0.5) * ahead * 0.4);
+    flockC.y = Math.max(camera.position.y, GROUND) + 5 + r() * 7;
+  }
+  const s = tau * BIRD_SPEED - BIRD_HALF;
+  birds.uniforms.uFlockPos.value.copy(flockC).addScaledVector(flockDir, s);
+  birds.uniforms.uFlockPos.value.y += Math.sin(tau * 0.4) * 1.5;
+  birds.uniforms.uFlockDir.value.copy(flockDir);
+  birds.uniforms.uFlockOn.value = on && s < BIRD_HALF ? 1 : 0;
+}
+const TRAIL_P = 130, TRAIL_O = 46, TRAIL_SPEED = 0.022;
+let trailCycle = -1;
+function updateContrail(t, on) {
+  const c = Math.floor((t + TRAIL_O) / TRAIL_P), tau = (t + TRAIL_O) - c * TRAIL_P;
+  const u = sky.uniforms;
+  if (c !== trailCycle) {
+    trailCycle = c;
+    const r = mulberry32(c * 104729 + 3), f = viewAzimuth();
+    // the point where it crosses: in front of the camera, 25-55 degrees up
+    const az = (r() - 0.5) * 1.0, el = THREE.MathUtils.degToRad(25 + r() * 30);
+    const fh = f.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), az);
+    const C = fh.clone().multiplyScalar(Math.cos(el)).setY(Math.sin(el)).normalize();
+    // heading at that point: mostly across the view, tilted a little
+    const across = new THREE.Vector3(-fh.z, 0, fh.x).multiplyScalar(r() < 0.5 ? 1 : -1);
+    const upT = new THREE.Vector3().crossVectors(C, across).normalize();
+    const tangent = across.clone().sub(C.clone().multiplyScalar(across.dot(C))).normalize().addScaledVector(upT, (r() - 0.5) * 0.8).normalize();
+    u.uTrailRef.value.copy(C);
+    u.uTrailAxis.value.crossVectors(C, tangent).normalize();
+  }
+  u.uTrailHead.value = -1.2 + tau * TRAIL_SPEED;
+  u.uTrailLen.value = Math.min(tau * TRAIL_SPEED, 0.9);
+  u.uTrailOn.value = on ? THREE.MathUtils.smoothstep(TRAIL_P - tau, 0, 12) : 0;
+}
+
 // ---------- apply settings each frame
 const tmp = new THREE.Vector3();
 function applyLook() {
@@ -175,6 +229,9 @@ function applyLook() {
   u.uCloudLit.value.copy(P.cloudLit); u.uCloudShade.value.copy(P.cloudShade); u.uCloudRim.value.copy(P.cloudRim);
   u.uDiscColor.value.copy(P.disc).multiplyScalar(lightK); u.uDiscSize.value = P.discSize; u.uGlow.value = P.glow * lightK; u.uStars.value = P.stars;
   u.uTowers.value = S.towers;
+  updateBirds(shared.uTime.value, S.birds && P.night < 0.5 && lightK > 0.3);
+  updateContrail(shared.uTime.value, S.contrail && P.night < 0.5);
+  birds.uniforms.uInk.value.copy(P.cloudShade).multiplyScalar(0.18);
   motes.m.uniforms.uNight.value = P.night;
   tree.fallUniforms.uFallRate.value = S.leaves;
   tree.group.children[2].visible = S.leaves > 0.01;
@@ -207,6 +264,8 @@ fScene.add(S, 'clouds', 0, 1, 0.01).name('cloud cover');
 fScene.add(S, 'towers', 0, 1.6, 0.01).name('cumulus towers');
 fScene.add(S, 'wind', 0, 3, 0.01);
 fScene.add(S, 'windDir', 0, 360, 1).name('wind direction');
+fScene.add(S, 'birds');
+fScene.add(S, 'contrail');
 const fTree = gui.addFolder('Tree');
 fTree.add(S, 'style', Object.keys(TREE_STYLES)).onChange((v) => tree.setStyle(v));
 fTree.add(S, 'leaves', 0, 3, 0.01).name('falling leaves');
@@ -271,4 +330,4 @@ function loop() {
 }
 if (Q.has('still')) { frame(0); window.__ready = true; }
 else { loop(); setTimeout(() => (window.__ready = true), 500); }
-window.__sorairo = { S, grass, tree, frame, setShot };
+window.__sorairo = { S, grass, tree, birds, frame, setShot };

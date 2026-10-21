@@ -26,7 +26,7 @@ const server = http.createServer((req, res) => {
   const u = decodeURIComponent(new URL(req.url, 'http://x').pathname);
   const f = path.join(DIR, u === '/' ? 'index.html' : u);
   if (!f.startsWith(DIR) || !fs.existsSync(f)) { res.writeHead(404); return res.end(); }
-  res.writeHead(200, { 'content-type': MIME[path.extname(f)] || 'application/octet-stream' });
+  res.writeHead(200, { 'content-type': MIME[path.extname(f)] || 'application/octet-stream', 'cache-control': 'no-store' });
   fs.createReadStream(f).pipe(res);
 }).listen(PORT, '127.0.0.1');
 
@@ -37,6 +37,7 @@ const SHOTS = [
   ['under', 'time=1&az=10&shot=under&t=20&style=autumn'],
   ['night', 'time=4&shot=path&t=20'],
   ['sky', 'time=0.75&az=55&shot=sky&t=20'],
+  ['flyover', 'time=1.3&az=-60&shot=wide&t=20'],
   ['raw', 'time=0.75&az=55&shot=hillside&t=20&paint=0'],
 ].filter(([n]) => !process.env.ONLY || process.env.ONLY.split(',').includes(n));
 

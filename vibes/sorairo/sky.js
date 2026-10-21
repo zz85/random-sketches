@@ -17,6 +17,13 @@ export function makeSky(shared) {
     uGlow: { value: 1 },
     uStars: { value: 0 },
     uTowers: { value: 1 },
+    // contrail: a great circle (axis = its normal, ref = angle 0), the plane's angle along it,
+    // how much trail is behind it, and an overall fade
+    uTrailAxis: { value: new THREE.Vector3(0, 0, 1) },
+    uTrailRef: { value: new THREE.Vector3(1, 0, 0) },
+    uTrailHead: { value: 0 },
+    uTrailLen: { value: 0 },
+    uTrailOn: { value: 0 },
   };
   const mat = new THREE.ShaderMaterial({
     uniforms,
@@ -34,6 +41,7 @@ export function makeSky(shared) {
       uniform float uCloudCover;
       uniform vec3 uZenith, uMid, uHorizon, uCloudLit, uCloudShade, uCloudRim, uDiscColor;
       uniform float uDiscSize, uGlow, uStars, uTowers;
+      uniform vec3 uTrailAxis, uTrailRef; uniform float uTrailHead, uTrailLen, uTrailOn;
       varying vec3 vDir;
       #define PI 3.14159265
       float hash12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * .1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
@@ -121,6 +129,32 @@ export function makeSky(shared) {
         col += uSunColor * glow * uGlow * 0.25;
         float disc = smoothstep(uDiscSize, uDiscSize + 0.00015, cosS);
         col += uDiscColor * disc;
+
+        // --- contrail: high above the cumulus, so drawn before them
+        if (uTrailOn > 0.001 && d.y > 0.0) {
+          vec3 b2 = cross(uTrailAxis, uTrailRef);
+          float off = dot(d, uTrailAxis);
+          float ang = atan(dot(d, b2), dot(d, uTrailRef));
+          float age = uTrailHead - ang;                       // radians of trail behind the plane
+          if (age > 0.0 && age < uTrailLen && abs(off) < 0.03) {
+            float a01 = age / 0.9;
+            // the trail drifts and frays as it ages
+            off += (fbm(vec2(ang * 18.0, 3.7), 3) - 0.5) * a01 * 0.006;
+            float w = 0.0009 + a01 * 0.0045;
+            // two engine trails that merge into one a little behind the plane
+            float sep = 0.0011 * (1.0 - smoothstep(0.0, 0.05, age));
+            float core = max(exp(-pow((off - sep) / w, 2.0)), exp(-pow((off + sep) / w, 2.0)));
+            float gap = smoothstep(0.003, 0.012, age);       // short clear gap behind the engines
+            float fray = mix(1.0, smoothstep(0.3, 0.65, fbm(vec2(ang * 45.0, a01 * 3.0), 4)), smoothstep(0.15, 0.9, a01));
+            float a = core * gap * fray * (1.0 - smoothstep(uTrailLen * 0.55, uTrailLen, age)) * smoothstep(0.02, 0.12, d.y) * uTrailOn;
+            vec3 tc = mix(uCloudLit, uCloudShade, 0.15 + a01 * 0.2) + uCloudRim * pow(max(cosS, 0.0), 10.0) * 1.5;
+            col = mix(col, tc, a * 0.85);
+          }
+          // the plane: a tiny glint at the head
+          vec3 hd = uTrailRef * cos(uTrailHead) + b2 * sin(uTrailHead);
+          float pd = length(d - hd);
+          col += uCloudLit * exp(-pd * pd / (0.0006 * 0.0006)) * uTrailOn * 1.2;
+        }
 
         float occl = 0.0;
         // --- overhead layer
