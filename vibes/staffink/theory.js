@@ -3,8 +3,11 @@
 // Staff position `pos`: 0 = bottom line, 1 = first space, ... 8 = top line; ledger
 // positions continue below 0 and above 8. A duration `dur` is the note value
 // denominator (1 whole, 2 half, 4 quarter ... 64). Ticks: DIV per quarter note.
+// Pitch and duration primitives come from the shared notation-ir (../notation-ir).
+import { DIV, baseTicks as noteTicks } from '../notation-ir/duration.js';
+import { LETTERS, keyAlter as coreKeyAlter, stepName, midiOf as coreMidi } from '../notation-ir/pitch.js';
 
-export const DIV = 96;
+export { DIV, LETTERS, stepName };
 
 export function newScore(opts = {}) {
   const staves = opts.staves || [{ clef: 'G' }];
@@ -18,12 +21,7 @@ export function newScore(opts = {}) {
 export function newMeasure(nStaves) { return { attrs: {}, staves: Array.from({ length: nStaves }, () => ({ events: [] })) }; }
 
 /** Written duration in ticks, ignoring any tuplet. */
-export function baseTicks(ev) {
-  const base = (4 / ev.dur) * DIV;
-  let t = base, add = base;
-  for (let i = 0; i < (ev.dots || 0); i++) { add /= 2; t += add; }
-  return t;
-}
+export function baseTicks(ev) { return noteTicks(ev.dur, ev.dots || 0); }
 /** Sounding duration: a tuplet {n, m} plays n notes in the time of m. */
 export function ticks(ev) {
   const t = baseTicks(ev);
@@ -78,16 +76,7 @@ export function resolveAttrs(score) {
 
 // diatonic step of the bottom staff line: C4 = 28 (octave * 7 + letter, C=0)
 export const CLEF_BASE = { G: 30, F: 18, C: 24 };
-const LETTER_SEMIS = [0, 2, 4, 5, 7, 9, 11];
-export const LETTERS = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
-const SHARP_ORDER = [3, 0, 4, 1, 5, 2, 6];  // F C G D A E B
-const FLAT_ORDER = [6, 2, 5, 1, 4, 0, 3];   // B E A D G C F
-
-export function keyAlter(key, letter) {
-  if (key > 0) return SHARP_ORDER.slice(0, key).includes(letter) ? 1 : 0;
-  if (key < 0) return FLAT_ORDER.slice(0, -key).includes(letter) ? -1 : 0;
-  return 0;
-}
+export const keyAlter = (key, letter) => coreKeyAlter(key, letter);
 
 /** Key signature glyph positions on a staff with `clef` (standard engraving order). */
 export function keySigPositions(key, clef) {
@@ -97,8 +86,7 @@ export function keySigPositions(key, clef) {
 }
 
 export function diatonic(pos, clef) { return CLEF_BASE[clef] + pos; }
-export function stepName(d) { return { step: LETTERS[((d % 7) + 7) % 7], octave: Math.floor(d / 7) }; }
-export function midiOf(d, alter) { const l = ((d % 7) + 7) % 7; return LETTER_SEMIS[l] + 12 * (Math.floor(d / 7) + 1) + alter; }
+export const midiOf = (d, alter) => coreMidi(d, alter);
 
 /**
  * Pitches for every head in one staff of one measure: key signature, then accidentals

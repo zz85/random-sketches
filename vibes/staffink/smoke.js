@@ -28,8 +28,9 @@ function cdp(wsUrl) {
 
 const server = http.createServer((req, res) => {
   const u = decodeURIComponent(new URL(req.url, 'http://x').pathname);
-  const f = path.join(DIR, u === '/' ? 'index.html' : u);
-  if (!f.startsWith(DIR) || !fs.existsSync(f)) { res.writeHead(404); res.end(); return; }
+  // served as deployed: the app at /staffink/, the shared notation-ir next to it
+  const root = path.dirname(DIR), f = path.join(root, u.endsWith('/') ? u + 'index.html' : u);
+  if (!f.startsWith(root) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { res.writeHead(404); res.end(); return; }
   res.writeHead(200, { 'content-type': MIME[path.extname(f)] || 'application/octet-stream' });
   fs.createReadStream(f).pipe(res);
 });
@@ -66,7 +67,7 @@ const server = http.createServer((req, res) => {
     const nextX = async (mi) => { const m = await measure(mi); return m.reserveX + 1.2; };
 
     // ---------------------------------------------------------- scene 1: treble staff
-    await c.send('Page.navigate', { url: `http://localhost:${PORT}/?fresh&nohelp&delay=250` });
+    await c.send('Page.navigate', { url: `http://localhost:${PORT}/staffink/?fresh&nohelp&delay=250` });
     await sleep(800);
     await ev('StaffInk.modelReady.then(() => true)');
     const top = await ev('StaffInk.staffTop(0, 0)');
@@ -126,7 +127,7 @@ const server = http.createServer((req, res) => {
 
     // ---------------------------------------------------------- scene 2: grand staff, Petaluma
     await ev('localStorage.setItem("staffink.settings", JSON.stringify({font: "Petaluma", delay: 250})), true');
-    await c.send('Page.navigate', { url: `http://localhost:${PORT}/?fresh&nohelp&delay=250` });
+    await c.send('Page.navigate', { url: `http://localhost:${PORT}/staffink/?fresh&nohelp&delay=250` });
     await sleep(800);
     await ev('StaffInk.modelReady.then(() => true)');
     await ev('(() => { const s = StaffInk.score; s.staves = [{clef:"G"},{clef:"F"}]; for (const m of s.measures) m.staves.push({events: []}); s.key = -2; s.time = [3, 4]; s.title = "Grand staff"; StaffInk.S.undo = []; window.dispatchEvent(new Event("resize")); return true; })()');
@@ -144,7 +145,7 @@ const server = http.createServer((req, res) => {
     fs.writeFileSync(path.join(DIR, 'smoke_grand.png'), Buffer.from((await c.send('Page.captureScreenshot', { format: 'png' })).result.data, 'base64'));
 
     // ---------------------------------------------------------- scene 2b: correcting and editing
-    await c.send('Page.navigate', { url: `http://localhost:${PORT}/?fresh&nohelp&delay=250` });
+    await c.send('Page.navigate', { url: `http://localhost:${PORT}/staffink/?fresh&nohelp&delay=250` });
     await sleep(800);
     await ev('StaffInk.modelReady.then(() => true), localStorage.removeItem("staffink.user"), StaffInk.S.user = [], true');
     const eTop = await ev('StaffInk.staffTop(0, 0)');
@@ -177,7 +178,7 @@ const server = http.createServer((req, res) => {
     fs.writeFileSync(path.join(DIR, 'smoke_edit.png'), Buffer.from((await c.send('Page.captureScreenshot', { format: 'png' })).result.data, 'base64'));
 
     // ---------------------------------------------------------- scene 2c: tuplets, dynamics, hairpins
-    await c.send('Page.navigate', { url: `http://localhost:${PORT}/?fresh&nohelp&delay=250` });
+    await c.send('Page.navigate', { url: `http://localhost:${PORT}/staffink/?fresh&nohelp&delay=250` });
     await sleep(800);
     await ev('StaffInk.modelReady.then(() => true)');
     const dTop = await ev('StaffInk.staffTop(0, 0)');
@@ -205,7 +206,7 @@ const server = http.createServer((req, res) => {
     fs.writeFileSync(path.join(DIR, 'smoke_expr.png'), Buffer.from((await c.send('Page.captureScreenshot', { format: 'png' })).result.data, 'base64'));
 
     // ---------------------------------------------------------- scene 2e: articulations and slurs
-    await c.send('Page.navigate', { url: `http://localhost:${PORT}/?fresh&nohelp&delay=250` });
+    await c.send('Page.navigate', { url: `http://localhost:${PORT}/staffink/?fresh&nohelp&delay=250` });
     await sleep(800);
     await ev('StaffInk.modelReady.then(() => true)');
     const aTop = await ev('StaffInk.staffTop(0, 0)');
@@ -232,13 +233,20 @@ const server = http.createServer((req, res) => {
     check('pen: scribble removes just the tenuto', am.length === 4 && !(am[1].artic || []).includes('tenuto'), JSON.stringify(am.map((e) => e.artic || [])));
     const legato = await ev('import("./export.js").then(m => m.performance(StaffInk.score).notes.map(n => n.dur))');
     check('slurred notes play joined, fermata held', legato[0] === 96 && legato[1] === 96 && legato[3] >= 160, JSON.stringify(legato));
+    // the same notes through the timeline IR: an authored program on the app's player, two cursors
+    const prog = await ev(`(async () => { const ids = StaffInk.score.measures[0].staves[0].events.map((e) => 'si' + e.id);
+      const p = await StaffInk.playProgram({ tempo: 240, root: { par: [{ play: { events: [ids[0]] } }, { play: { events: [ids[2]] } }] } });
+      await new Promise((r) => setTimeout(r, 120)); const on = [...StaffInk.S.playing]; const playing = StaffInk.S.player.playing;
+      await new Promise((r) => setTimeout(r, 900));
+      return { notes: p.notes.length, on: on.length, playing, after: StaffInk.S.player.playing, durs: (await StaffInk.ir()).events.length }; })()`);
+    check('authored playback through the IR lights both cursors', prog.notes === 2 && prog.on === 2 && prog.playing && !prog.after, JSON.stringify(prog));
 
     // ---------------------------------------------------------- scene 2d: offline
     await ev('navigator.serviceWorker.ready.then(() => new Promise((r) => { if (navigator.serviceWorker.controller) r(true); else navigator.serviceWorker.addEventListener("controllerchange", () => r(true)); setTimeout(() => r(!!navigator.serviceWorker.controller), 5000); }))');
     const cached = await ev('caches.open("staffink-v3").then((c) => c.keys()).then((k) => k.length)');
     await c.send('Network.enable');
     await c.send('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
-    await c.send('Page.navigate', { url: `http://localhost:${PORT}/?nohelp&delay=250` });
+    await c.send('Page.navigate', { url: `http://localhost:${PORT}/staffink/?nohelp&delay=250` });
     await sleep(1200);
     const off = await ev('Promise.race([StaffInk.modelReady.then(() => ({ model: !!StaffInk.S.model, extras: StaffInk.S.extras.length, bravura: document.fonts.check("40px Bravura"), notes: StaffInk.score.measures.reduce((n, m) => n + m.staves[0].events.length, 0) })), new Promise((r) => setTimeout(() => r(null), 4000))])');
     const oTop = await ev('StaffInk.staffTop(0, 0)');
@@ -252,7 +260,7 @@ const server = http.createServer((req, res) => {
     await ev('localStorage.removeItem("staffink.settings"), localStorage.removeItem("staffink.user"), true');
     await c.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
     await c.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
-    await c.send('Page.navigate', { url: `http://localhost:${PORT}/?fresh&nohelp&delay=250` });
+    await c.send('Page.navigate', { url: `http://localhost:${PORT}/staffink/?fresh&nohelp&delay=250` });
     await sleep(900);
     await ev('StaffInk.modelReady.then(() => true)');
     const mTop = await ev('StaffInk.staffTop(0, 0)');

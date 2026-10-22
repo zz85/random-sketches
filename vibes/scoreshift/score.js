@@ -8,11 +8,11 @@ import { lineY, spaceAt, keyAt } from './omr.js';
 // User corrections live on the analysis objects (note.fix, rest.fix, rest.deleted, st.timeFix)
 // so they survive a rebuild.
 
-export const DIV = 96;
-export const WHOLE = 4 * DIV;
-export const baseTicks = (dur, dots) => { let t = WHOLE / dur, a = t; for (let i = 0; i < dots; i++) { a /= 2; t += a; } return t; };
-export const evTicks = (e) => (e.grace || e.removed ? 0 : e.full ? e.cap : (baseTicks(e.dur, e.dots) * (e.tuplet ? e.tuplet[1] : 1)) / (e.tuplet ? e.tuplet[0] : 1));
-export const capOf = (time) => (time.beats * WHOLE) / time.unit;
+import { DIV, WHOLE, baseTicks, tupletTicks, barTicks } from '../notation-ir/duration.js';
+
+export { DIV, WHOLE, baseTicks };
+export const evTicks = (e) => (e.grace || e.removed ? 0 : e.full ? e.cap : tupletTicks(e.dur, e.dots, e.tuplet));
+export const capOf = (time) => barTicks(time.beats, time.unit);
 const TUPLET_OF = { 3: [3, 2], 5: [5, 4], 6: [6, 4] };
 const METERS = [[4, 4], [3, 4], [2, 4], [2, 2], [6, 8], [3, 8], [9, 8], [12, 8], [5, 4], [6, 4], [3, 2]];
 

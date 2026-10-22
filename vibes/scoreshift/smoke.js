@@ -13,8 +13,9 @@ const PORT = 8799;
 const MIME = { '.pdf': 'application/pdf', '.mjs': 'text/javascript', '.wasm': 'application/wasm', '.html': 'text/html', '.js': 'text/javascript', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
 const server = http.createServer((req, res) => {
   const u = decodeURIComponent(new URL(req.url, 'http://x').pathname);
-  const f = path.join(DIR, u === '/' ? 'index.html' : u);
-  if (!f.startsWith(DIR) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { res.writeHead(404); res.end(); return; }
+  // served as deployed: the app at /scoreshift/, its siblings (the shared notation-ir, StaffInk) next to it
+  const root = path.dirname(DIR), f = path.join(root, u.endsWith('/') ? u + 'index.html' : u);
+  if (!f.startsWith(root) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { res.writeHead(404); res.end(); return; }
   res.writeHead(200, { 'content-type': MIME[path.extname(f)] || 'application/octet-stream' });
   fs.createReadStream(f).pipe(res);
 });
@@ -28,7 +29,7 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
   const errors = [];
   const shot = async (name) => { const r = await b.send('Page.captureScreenshot', { format: 'png' }); fs.writeFileSync(path.join(DIR, `smoke_${name}.png`), Buffer.from(r.result.data, 'base64')); };
   try {
-    await b.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/` });
+    await b.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/scoreshift/` });
     await waitFor(() => b.evaluate('!!window.__ss'), 10000);
     await b.evaluate(`document.getElementById('sample2').click(); 1`);
     await waitFor(() => b.evaluate('!!window.__ss.S.model'), 30000);
@@ -163,6 +164,21 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
       return {from,a:Math.round(a),b:Math.round(b2),text:document.getElementById('posText').textContent,clicks:__ss.player.metronome}})()`);
     // at tempo 240 x 0.5 = 120 quarter notes a minute: 0.5 s is one quarter, 96 ticks
     check('position, speed and metronome', tp.from === 1152 && tp.a > 1152 && Math.abs(tp.b - tp.a - 96) < 30 && /bar 5/.test(tp.text) && tp.clicks, JSON.stringify(tp));
+    // authored playback over the page: bars 2 and 5 at once, both light up on the photo
+    const pp = await b.evaluate(`(async()=>{document.getElementById('speed').value='1';document.getElementById('speed').dispatchEvent(new Event('input'));
+      const p=await __ss.playProgram({root:{par:[{play:{from:{bar:2},to:{bar:2,edge:'end'}}},{play:{from:{bar:5},to:{bar:5,edge:'end'}}}]}});
+      await new Promise(r=>setTimeout(r,300));const on=(__ss.S.sounding||[]).map(o=>o.m.number);const playing=__ss.player.playing;
+      document.getElementById('play').click();await new Promise(r=>setTimeout(r,50));
+      return {notes:p.notes.length,cursors:new Set(p.notes.map(n=>n.cursor)).size,on,playing,after:__ss.player.playing,label:document.getElementById('play').textContent}})()`);
+    check('authored playback: two bars at once, both on the playhead', pp.cursors === 2 && pp.playing && pp.on.includes(2) && pp.on.includes(5) && !pp.after && /Play/.test(pp.label), JSON.stringify(pp));
+    // hand-off to StaffInk: the transposed (cello) part opens there, ready to edit with a pen
+    const hand = await b.evaluate(`(async()=>{const h=await __ss.editInStaffInk({open:false});const f=document.createElement('iframe');f.style.cssText='position:fixed;left:0;top:0;width:900px;height:600px';
+      document.body.appendChild(f);f.src='../staffink/?import&nohelp&nosw';
+      for(let i=0;i<100&&!(f.contentWindow.StaffInk&&f.contentWindow.StaffInk.layout);i++)await new Promise(r=>setTimeout(r,100));
+      const si=f.contentWindow.StaffInk,sc=si.score,evs=sc.measures.flatMap(m=>m.staves.flatMap(s=>s.events));
+      const r={bars:sc.measures.length,notes:evs.filter(e=>e.kind==='note').length,clef:sc.staves[0].clef,title:sc.title,left:!!f.contentWindow.localStorage.getItem('staffink.import'),
+        report:h.report,url:f.contentWindow.location.search,laid:!!si.layout&&si.layout.systems.length};f.remove();return r})()`);
+    check('Edit in StaffInk: the recognised page opens as an editable score', hand.bars >= 24 && hand.notes >= 90 && hand.clef === 'F' && /cello/i.test(hand.title) && !hand.left && hand.laid > 0 && !/import/.test(hand.url), JSON.stringify({ ...hand, report: undefined }) + ' ' + JSON.stringify(hand.report));
 
     // grace notes move with the transposition: each grace head is ink at its new place
     await b.evaluate(`fetch('fixtures/grace.png').then(r=>r.blob()).then(bl=>__ss.load(new File([bl],'grace.png',{type:'image/png'}),'grace.png')).then(()=>1)`);

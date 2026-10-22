@@ -4,15 +4,22 @@
  * and offline, while an online load quietly fetches the new build for next time.
  * Bump VERSION when the file list changes.
  */
-const VERSION = 'staffink-v3';
+const VERSION = 'staffink-v5';
 const SHELL = [
   './', './index.html', './app.js', './recognizer.js', './extras.js', './parser.js', './theory.js', './layout.js',
   './render.js', './export.js', './audio.js', './smufl.js', './model.json', './digits.json',
   './fonts/Bravura.woff2', './fonts/Petaluma.woff2', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png',
+  // shared with ScoreShift: pitch, duration and the audio player
+  '../notation-ir/rational.js', '../notation-ir/pitch.js', '../notation-ir/duration.js', '../notation-ir/player.js',
+];
+// Authored playback (the timeline IR), loaded on demand from app.js: cached best-effort, so
+// only playProgram fails if a deployment lacks it.
+const OPTIONAL = [
+  '../notation-ir/ir.js', '../notation-ir/interpret.js', '../notation-ir/anchors.js', '../notation-ir/playback.js', '../notation-ir/adapters/staffink.js',
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL).then(() => Promise.all(OPTIONAL.map((u) => c.add(u).catch(() => null))))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {

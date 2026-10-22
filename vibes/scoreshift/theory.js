@@ -2,39 +2,17 @@
 // A pitch is { d, alter }: d = diatonic index (C0 = 0, C4 = 28), alter in semitones.
 // Staff position p counts half spaces up from the bottom line (bottom line 0, top line 8).
 
-const NAT = [0, 2, 4, 5, 7, 9, 11];
-const LETTERS = 'CDEFGAB';
-const BASE_FIFTHS = [0, 2, 4, -1, 1, 3, 5];
-export const SHARP_ORDER = [3, 0, 4, 1, 5, 2, 6]; // F C G D A E B
-export const FLAT_ORDER = [6, 2, 5, 1, 4, 0, 3]; // B E A D G C F
+// The primitives (letters, key alterations, clefs, staff position <-> pitch) are shared with
+// StaffInk through ../notation-ir/pitch.js; this file adds what is specific to transposing.
+import { step, octave, natMidi, keyAlter, SHARP_ORDER, FLAT_ORDER, CLEFS, clefRefP, dOfP, pOfD, nameOf as coreName } from '../notation-ir/pitch.js';
 
-export const step = (d) => ((d % 7) + 7) % 7;
-export const octave = (d) => Math.floor(d / 7);
-export const natMidi = (d) => 12 * (octave(d) + 1) + NAT[step(d)];
+export { step, octave, natMidi, keyAlter, SHARP_ORDER, FLAT_ORDER, CLEFS, clefRefP, dOfP, pOfD };
+const BASE_FIFTHS = [0, 2, 4, -1, 1, 3, 5];
 export const midiOf = ({ d, alter }) => natMidi(d) + alter;
-export function nameOf({ d, alter }) {
-  const acc = alter > 0 ? '♯'.repeat(alter) : alter < 0 ? '♭'.repeat(-alter) : '';
-  return LETTERS[step(d)] + acc + octave(d);
-}
-export function keyAlter(fifths, s) {
-  if (fifths > 0) return SHARP_ORDER.indexOf(s) < fifths ? 1 : 0;
-  if (fifths < 0) return FLAT_ORDER.indexOf(s) < -fifths ? -1 : 0;
-  return 0;
-}
+export const nameOf = ({ d, alter }) => coreName(d, alter > 0 ? '♯'.repeat(alter) : alter < 0 ? '♭'.repeat(-alter) : '');
 const MAJOR = ['C♭', 'G♭', 'D♭', 'A♭', 'E♭', 'B♭', 'F', 'C', 'G', 'D', 'A', 'E', 'B', 'F♯', 'C♯'];
 export const keyName = (f) => (f >= -7 && f <= 7 ? MAJOR[f + 7] + ' major' : `${f} fifths`);
 
-// Clefs: reference pitch on a staff position. line = 1..5 counted from the bottom.
-export const CLEFS = {
-  treble: { sign: 'G', line: 2, d: 32, oct: 0 },
-  treble8vb: { sign: 'G', line: 2, d: 32, oct: -1 },
-  bass: { sign: 'F', line: 4, d: 24, oct: 0 },
-  alto: { sign: 'C', line: 3, d: 28, oct: 0 },
-  tenor: { sign: 'C', line: 4, d: 28, oct: 0 },
-};
-export const clefRefP = (c) => (c.line - 1) * 2;
-export const dOfP = (clef, p) => clef.d + clef.oct * 7 + (p - clefRefP(clef));
-export const pOfD = (clef, d) => d - clef.d - clef.oct * 7 + clefRefP(clef);
 
 // Key signature glyph positions (p) per clef, in order.
 const TREBLE_SHARPS = [8, 5, 9, 6, 3, 7, 4], TREBLE_FLATS = [4, 7, 3, 6, 2, 5, 1];

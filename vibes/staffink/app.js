@@ -525,6 +525,32 @@ function togglePlay() {
   });
 }
 
+/**
+ * Authored playback through the timeline IR (../notation-ir): the score becomes a
+ * measure-free timeline and `program` (see notation-ir/playback.js) says what plays when -
+ * clips, jumps, loops, several cursors at once. Anchor to notes on the page with
+ * { event: 'si<id>' } (StaffInk event ids). Every note any cursor is sounding lights up.
+ * Loaded on first use, so the editor never depends on it.
+ */
+let IR = null;
+async function loadIR() {
+  if (!IR) {
+    const [adapter, playback] = await Promise.all([import('../notation-ir/adapters/staffink.js'), import('../notation-ir/playback.js')]);
+    IR = { ...adapter, ...playback };
+  }
+  return IR;
+}
+async function playProgram(program = {}) {
+  commitGroup();
+  const { fromStaffInk, perform, inkId } = await loadIR();
+  const ir = fromStaffInk(S.score);
+  const p = perform(ir, { tempo: S.score.tempo, root: { walk: {} }, ...program });
+  $('playIc').textContent = '■'; $('playLbl').textContent = 'Stop';
+  S.player.onStop = () => { S.playing = new Set(); $('playIc').textContent = '▶'; $('playLbl').textContent = 'Play'; drawScore(); };
+  S.player.playPerformance(p, (on) => { S.playing = on; drawScore(); }, inkId);
+  return p;
+}
+
 // export
 $('exportBtn').onclick = (e) => { const m = $('exportMenu'); const r = e.currentTarget.getBoundingClientRect(); m.style.left = Math.max(4, Math.min(r.left, innerWidth - 200)) + 'px'; m.style.top = r.bottom + 4 + 'px'; m.classList.toggle('show'); };
 $('exportMenu').onclick = (e) => {
@@ -612,6 +638,23 @@ Promise.all([document.fonts.load('40px Bravura'), document.fonts.load('40px Peta
 resize();
 if (!load('staffink.helped') && !params.has('nohelp')) $('help').showModal();
 
+// Music handed over from another app (ScoreShift's "Edit in StaffInk"): a StaffInk score
+// built through the timeline IR, left in localStorage. Loading it is one undoable change.
+if (params.has('import')) {
+  const got = load('staffink.import');
+  try { localStorage.removeItem('staffink.import'); } catch (e) { /* private mode */ }
+  if (got && validScore(got.score)) {
+    scoreChange((s) => { Object.keys(s).forEach((k) => delete s[k]); Object.assign(s, got.score); });
+    $('title').value = S.score.title; S.pending = []; S.inkHistory = [];
+    const r = got.report || {}, notes = [];
+    if (r.dropped?.length) notes.push(`${r.dropped.reduce((a, d) => a + d.events, 0)} notes in a second voice left out`);
+    if (r.approximated?.length) notes.push(`${r.approximated.length} tuplets written as plain notes`);
+    if (r.clefs?.length) notes.push('a clef StaffInk lacks was replaced');
+    toast(`<b>Opened from ${got.from || 'another app'}</b>${notes.length ? ' · ' + notes.join(' · ') : ''}`, 5000);
+  } else toast('Nothing to import', 2000);
+  history.replaceState(null, '', location.pathname + location.search.replace(/[?&]import\b/, '').replace(/^&/, '?'));
+}
+
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1') && !params.has('nosw')) {
   navigator.serviceWorker.register('sw.js').catch(() => { /* offline support is optional */ });
 }
@@ -623,4 +666,5 @@ window.StaffInk = {
   staffTop(sys = 0, si = 0) { return S.L.systems[sys].staffTops[si]; },
   pageToClient(x, y) { const r = stage.getBoundingClientRect(); return { x: r.left + x * S.scale, y: r.top + (y - S.scrollY) * S.scale }; },
   togglePlay, undo, redo, commitGroup,
+  playProgram, async ir() { return (await loadIR()).fromStaffInk(S.score); },
 };

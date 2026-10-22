@@ -15,7 +15,7 @@ const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replac
  * How each note is written in the chosen version: Map(note -> { pitch, acc }), plus per-staff
  * clef id and fifths. `plan` null = as on the page.
  */
-function writing(model, plan) {
+export function writing(model, plan) {
   const notes = new Map(), staves = new Map();
   for (const st of model.staves) {
     const sp = plan?.staves[st.index];

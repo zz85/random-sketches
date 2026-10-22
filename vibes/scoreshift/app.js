@@ -77,7 +77,7 @@ function probe(src) {
 function show(model, img, name) {
   S.model = model; S.rend = new Renderer(img, model); S.name = name; S.octave = S.octave ?? 'auto';
   $('empty').hidden = true; $('stage').hidden = false; $('export').disabled = false;
-  for (const id of ['play', 'xml', 'midi']) $(id).disabled = false;
+  for (const id of ['play', 'xml', 'midi', 'editInk']) $(id).disabled = false;
   $('transport').hidden = false;
   player.stop(); S.selM = null; S.startTick = 0;
   fitZoom(); update();
@@ -439,6 +439,47 @@ $('speed').value = S.speed; $('speedText').textContent = `×${S.speed.toFixed(2)
 $('speed').oninput = () => { S.speed = +$('speed').value; $('speedText').textContent = `×${S.speed.toFixed(2)}`; player.setSpeed(S.speed); showPos(S.startTick); save(); };
 $('metro').checked = S.metro;
 $('metro').onchange = () => { S.metro = $('metro').checked; player.metronome = S.metro; save(); };
+// ---------- the timeline IR (../notation-ir), loaded on first use ----------
+// Authored playback over the page (clips, jumps, loops, several cursors at once; anchors
+// such as { pos: { x, line } } or { barline } are positions on this photo), and the hand-off
+// to StaffInk for editing the recognised music with a pen.
+let IR = null;
+async function loadIR() {
+  if (!IR) {
+    const [ss, si, pb] = await Promise.all([import('../notation-ir/adapters/scoreshift.js'), import('../notation-ir/adapters/staffink.js'), import('../notation-ir/playback.js')]);
+    IR = { ...ss, toStaffInk: si.toStaffInk, ...pb };
+  }
+  return IR;
+}
+async function toIR() { const { fromScoreShift } = await loadIR(); return fromScoreShift(S.model, S.score, { ...musicOpts(), title: S.name }); }
+async function playProgram(program = {}) {
+  if (!S.model) return null;
+  const { perform } = await loadIR();
+  const { score, byId } = await toIR();
+  const p = perform(score, { tempo: S.tempo, root: { walk: {} }, ...program });
+  $('play').textContent = '■ Stop'; $('play').setAttribute('aria-pressed', 'true');
+  player.speed = S.speed;
+  let last = '';
+  player.playPerformance(p, (on) => {
+    const key = [...on].join();
+    if (key !== last) { last = key; redrawPlay([...on].map((id) => byId.get(id)).filter(Boolean)); }
+  });
+  return p;
+}
+/** The music as shown (as written or transposed) into StaffInk, in a new tab. */
+async function editInStaffInk({ open = true } = {}) {
+  if (!S.model) return null;
+  const { toStaffInk } = await loadIR();
+  const { score, skipped } = await toIR();
+  const { score: si, report } = toStaffInk(score, { tempo: S.tempo });
+  si.title = `${S.name}${S.view === 'transposed' ? ` (${instrument(S.to).name.split(' (')[0]})` : ''}`;
+  report.grace = skipped;
+  try { localStorage.setItem('staffink.import', JSON.stringify({ score: si, report, from: 'ScoreShift', at: Date.now() })); } catch (e) { alert('Could not hand the music over: ' + e.message); return null; }
+  if (open) window.open(new URL('../staffink/?import&nohelp', location.href).href, '_blank');
+  return { score: si, report };
+}
+$('editInk').onclick = () => editInStaffInk();
+
 function onPlayStop() { S.sounding = null; $('play').textContent = '▶ Play'; $('play').setAttribute('aria-pressed', 'false'); update(); }
 player.onStop = onPlayStop;
 const download = (data, type, name) => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([data], { type })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 10000); };
@@ -652,4 +693,4 @@ $('export').onclick = () => {
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
 // test hook
-window.__ss = { S, load, saveProject, idb, update, plan, openPage, exportPdf, player, setFix, eventOf, toMusicXML, toMidi, musicOpts }; window.__yOfP = yOfP;
+window.__ss = { S, load, saveProject, idb, update, plan, openPage, exportPdf, player, setFix, eventOf, toMusicXML, toMidi, musicOpts, playProgram, editInStaffInk, toIR }; window.__yOfP = yOfP;
