@@ -9,7 +9,10 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
-const CHROME = process.env.CHROME || path.join(process.env.HOME, '.cache/ms-playwright/chromium-1134/chrome-linux/chrome');
+// newest Playwright Chromium unless CHROME is set (the version folder changes when Playwright updates)
+const PW = path.join(process.env.HOME, '.cache/ms-playwright');
+const CHROME = process.env.CHROME || (fs.existsSync(PW) && fs.readdirSync(PW).filter((d) => /^chromium-\d+$/.test(d)).sort((a, b) => +b.split('-')[1] - +a.split('-')[1])
+  .map((d) => path.join(PW, d, 'chrome-linux/chrome')).find((f) => fs.existsSync(f))) || 'chromium';
 const PORT = 8811, CDP = 9351;
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.png': 'image/png' };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -35,6 +38,8 @@ const SHOTS = [
   ['golden', 'time=2&az=35&shot=hillside&t=20'],
   ['magic', 'time=3&az=40&shot=wide&t=20&style=sakura'],
   ['under', 'time=1&az=10&shot=under&t=20&style=autumn'],
+  ['autumn', 'time=1.3&az=-60&shot=wide&t=20&style=autumn'],
+  ['autumn2', 'time=1&az=150&shot=hillside&t=20&style=autumn'],
   ['night', 'time=4&shot=path&t=20'],
   ['sky', 'time=0.75&az=55&shot=sky&t=20'],
   ['dense', 'time=0.75&az=55&shot=hillside&t=20&airy=0'],

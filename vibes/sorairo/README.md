@@ -1,25 +1,99 @@
 # Sorairo 空色
 
-An anime / Makoto Shinkai-style hillside rendered in three.js: a lone tree with falling leaves, wind-blown grass, towering cumulus and a painterly post-process. Open `index.html` from any static server (three.js comes from unpkg via an import map).
+An anime / Makoto Shinkai-style hillside rendered in three.js: a lone tree dropping leaves or petals, wind-blown grass, towering cumulus, birds and contrails, and a painterly post-process. Open `index.html` from any static server (three.js comes from unpkg via an import map).
 
 Drag to orbit, scroll to zoom. **H** hides the panel, **P** saves a PNG.
 
-## What's in it
+## How it works
+
+About 1,900 lines of plain ES modules on three.js 0.160, with no build step and no npm dependencies. three.js supplies the renderer, buffers, render targets and `UnrealBloomPass`. Everything visible is a custom `ShaderMaterial`, and all textures, geometry and noise are generated in code.
 
 | File | |
 |---|---|
-| `main.js` | scene assembly, time-of-day keyframes, tree shadow pass, lil-gui panel, camera shots |
-| `sky.js` | sky dome: gradient, sun/moon, stars, horizon cumulus towers, overhead cumulus, cirrus. Alpha = sun occlusion for the light shafts |
-| `world.js` | terrain height function (shared with grass placement), dirt path, mountain ranges, utility poles and wires |
-| `tree.js` | recursive branch tubes, leaf-cluster billboards with sphere normals, stateless falling leaves / petals |
-| `grass.js` | instanced blades bent by a travelling gust field, wildflowers |
-| `post.js` | light shafts, bloom, flare, tone map + grade, anisotropic Kuwahara, canvas / vignette / grain |
-| `glsl.js` | shared GLSL: noise, wind, cel lighting, shadow lookup, cloud shadows, aerial perspective |
+| `main.js` | scene assembly, time-of-day keyframes, shadow pass, fly-over scheduling, lil-gui panel, camera shots |
+| `glsl.js` | shared uniforms and GLSL: noise, wind, cel lighting, shadow lookup, cloud shadows, aerial perspective |
+| `sky.js` | sky dome: gradient, sun/moon, stars, horizon cumulus towers, overhead cumulus, cirrus, contrail |
+| `world.js` | terrain height function, dirt path, mountain ranges, utility poles and wires |
+| `tree.js` | branch skeleton and tubes, leaf-cluster cards, canopy gaps, falling leaves / petals |
+| `grass.js` | instanced grass blades and wildflowers |
+| `birds.js` | instanced flock |
+| `post.js` | light shafts, bloom, flare, tone map and grade, anisotropic Kuwahara, canvas finish |
+| `smoke.js` | headless render test |
+
+### Shared lighting
+
+`glsl.js` defines one set of uniforms (sun direction and colour, ambient, fog, wind, shadow map, cloud cover). Every material spreads that set in by reference, so when the time-of-day slider changes a value once per frame, everything updates together. All materials call the same GLSL helpers:
+
+- `celLight`: the main source of the anime look. A two-tone light model with a narrow, slightly soft terminator; shadows are filled with a blue-violet ambient instead of being darkened toward black.
+- `windBend` / `gustAt`: a wind field of gusts that roll across the scene in the wind direction.
+- `cloudShadowAt`: scrolling noise that darkens ground, tree and poles as cloud shadows pass.
+- `applyFog`: haze that turns sun-coloured looking toward the sun and sky-coloured looking away. This is what fades the mountains.
+
+### Sky (`sky.js`)
+
+One large sphere, computed entirely in its fragment shader.
+
+- **Base:** zenith-to-horizon gradient, sun or moon disc with glow, stars.
+- **Horizon towers:** a height profile along the horizon gives each column a top, noise inside that shape gives density, and a low-frequency shape field decides the lit side so light falls across large masses rather than speckling.
+- **Overhead:** a cumulus layer and cirrus streaks on the dome.
+- **Contrail:** the plane flies a great circle. The shader takes the angle from the plane back along that circle as the age of each part of the trail; age drives width, drift, where the two engine trails merge, fraying and fade.
+- **Alpha:** the sky writes how open it is to the sun into alpha, with clouds lowering it. The light-shaft pass reads it, so clouds block shafts the same way the tree does.
+
+### Terrain and props (`world.js`)
+
+- `heightAt(x, z)` is one JS function (layered noise plus a hill under the tree). It builds the terrain mesh and also places every grass blade, pole and the tree base.
+- The dirt path follows a Catmull-Rom curve. `pathDist` measures distance to it, using a grid so each lookup only checks nearby segments; that distance blends ground to dirt and clears grass off the path.
+- Two rings of mountain ridges at different distances get different amounts of fog.
+- 14 utility poles along the path, with wires sagging in a catenary.
+
+### Tree (`tree.js`)
+
+- **Branches:** recursive growth with random wander and bending (up for main limbs, out and down for smaller ones). Children sprout slightly below the parent's tip so joints look grown. Branches become tubes merged into one mesh.
+- **Foliage:** about 1,450 camera-facing leaf-cluster cards, textured with leaf shapes drawn on a canvas, 4 variants in a 2×2 atlas. Each card's normal blends the direction out from its cluster with the direction out from the whole canopy, so the cel lighting shades the canopy as a few big soft volumes, like a painter's blocked-in masses, rather than thousands of flat cards.
+- **Canopy gaps (`airy`):** two 3D noise fields remove cards. A coarse one (about 5 m) cuts holes through the canopy, a fine one makes each pad's outline lobed. Pad centres are protected so every branch tip keeps leaves. The branch growth draws the same random numbers at every setting, so the slider changes only the leaves.
+- **Autumn colours:** the `autumn` style gives each card one of five colours (green, light green, yellow, orange, brown) in turning order, mostly turned (10% / 12% / 30% / 30% / 18%). A card's stage comes from noise at its clump's centre, so leaves turn a pad at a time, with slight bias for the top and outside, per-card scatter and the odd stray leaf. Stage thresholds are taken from quantiles so each colour keeps its share of the canopy on any seed. Shadow sides are a deep version of each leaf's colour; falling leaves use only the turned colours. `maple` is the older all-orange style.
+- **Falling leaves / petals:** 420 instances the CPU never updates. Each leaf's position is a function of time and its seed: spawn point, fall, flutter, spin, wind drift, landing and fade. Most start in the canopy; about 30% are drifters crossing the view from upwind.
+
+### Grass (`grass.js`)
+
+- 170,000 instances of one 5-segment tapered strip, scattered over the terrain and kept off the path.
+- The vertex shader bends each blade quadratically by the shared gust field, shortening it as it bends so its length stays about the same.
+- Normals are partly flattened toward the ground normal so the field shades as one surface. Tips glow when backlit, and a brighter sheen travels where gusts press blades flat, giving the rolling wave. Wildflowers are a second instanced set.
+
+### Birds (`birds.js`)
+
+- About 11 instances of a 10-vertex V silhouette in a loose formation with stragglers. A per-vertex wing weight makes the tips move most; glides happen when a slow noise crosses a threshold.
+- At the start of each cycle the CPU picks a new line of flight from wherever the camera faces, so a flock always crosses the view.
+
+### Shadows
+
+One sun-aimed depth map, 2048² (1024² on mobile). Only the tree and poles cast; everything else is hidden for that pass. A mesh can swap in a cheaper material for the shadow pass, which is how leaf cards cast cut-out leaf shadows. Receivers use 3×3 PCF.
+
+### Post-processing (`post.js`)
+
+Passes are wired by hand rather than through `EffectComposer`, because some read more than one earlier image.
+
+1. **Scene** to a half-float target with 4× MSAA; alpha holds the sky's sun-occlusion mask.
+2. **Light shafts:** 40 jittered, decaying samples marched toward the sun's screen position. Only open sky near the sun contributes, so shafts pour through gaps in the canopy and clouds.
+3. **Bloom:** `UnrealBloomPass` on the shaft output.
+4. **Grade:** lens-flare ghosts and an anamorphic streak scaled by sun visibility (9 taps of the mask), then a brightness-only tone map, lift, gain, saturation and sRGB. Mapping only brightness keeps oranges and magentas saturated where a normal tone map would wash them toward white.
+5. **Anisotropic Kuwahara** (after Kyprianidis et al. 2009), three passes:
+   - the structure tensor measures local edge direction;
+   - a 13-tap separable Gaussian smooths it;
+   - each pixel averages 8 overlapping sectors of an ellipse stretched along the edge with polynomial weights, the lowest-variance sector counting most.
+
+   Areas flatten into brush-stroke patches that follow contours and keep edges crisp: the gouache / oil-paint look. Radius scales with pixel ratio; off by default on mobile.
+6. **Finish:** slight chromatic fringe, edge darkening like pooled paint, procedural canvas weave, vignette, grain.
+
+### Time of day and runtime
+
+- Five keyframes (noon, afternoon, golden hour, magic hour, night) set sun height, sky and cloud colours, fog, ambient, bloom and grade. One slider blends neighbouring keyframes.
+- Pixel ratio is capped at 1.5 (1.25 on mobile) and drops automatically below about 40 fps.
 
 ## URL parameters
 
-`time` (0 noon … 4 night), `az` sun azimuth, `style` (summer, sakura, autumn), `shot` (hillside, under, wide, path, sky), `paint` (Kuwahara radius, 0 = off), `wind`, `clouds`, `seed`, `airy` (canopy gaps, 0 dense … 1 airy), `orbit=1`, `noui`, `still` + `t` (render one frame at a fixed time).
+`time` (0 noon … 4 night), `az` sun azimuth, `style` (summer, sakura, autumn, maple), `shot` (hillside, under, wide, path, sky), `paint` (Kuwahara radius, 0 = off), `wind`, `windDir`, `clouds`, `towers`, `leaves`, `seed`, `airy` (canopy gaps, 0 dense … 1 airy), `birds=0`, `contrail=0`, `orbit=1`, `noui`, `pr` (pixel-ratio scale), `still=1` + `t` (render one frame at a fixed time and set `window.__ready`).
 
 ## Test
 
-`node smoke.js` renders each shot headless (SwiftShader), fails on shader/console errors or a blank frame, and writes `shot_*.png`.
+`node smoke.js` has no dependencies. It starts a static server and headless Chromium with SwiftShader, drives it over the Chrome DevTools Protocol directly, and renders 9 still shots. A shot fails on any console or shader error, an exception, or a nearly flat frame (pixel read-back, brightness standard deviation). Shots are written to `shot_*.png` (git-ignored); the server sends `no-store` so they always reflect the current code. `ONLY=afternoon,night` runs a subset.
