@@ -33,14 +33,24 @@ function makeClusterTexture(kind) {
   return t;
 }
 
+// Canopy share of each autumn stop at turned = 0, 0.5 and 1 (linear in between).
+const TURN_KEYS = [
+  [0.58, 0.24, 0.11, 0.05, 0.015, 0.005],
+  [0.1, 0.12, 0.24, 0.24, 0.2, 0.1],
+  [0.0, 0.01, 0.06, 0.2, 0.52, 0.21],
+];
+export function autumnShares(t) {
+  const x = Math.min(1, Math.max(0, t)) * 2, i = Math.min(1, Math.floor(x)), f = x - i;
+  return TURN_KEYS[i].map((a, k) => a + (TURN_KEYS[i + 1][k] - a) * f);
+}
+
 export const TREE_STYLES = {
   summer: { leafDark: [0.06, 0.2, 0.12], leafLight: [0.42, 0.68, 0.18], rim: [0.9, 1.0, 0.45], fall: [0.35, 0.6, 0.15], fall2: [0.6, 0.72, 0.2], kind: 'leaf', petals: false },
   sakura: { leafDark: [0.62, 0.32, 0.45], leafLight: [1.0, 0.82, 0.88], rim: [1.0, 0.9, 0.95], fall: [1.0, 0.78, 0.85], fall2: [0.98, 0.9, 0.95], kind: 'petal', petals: true },
-  // A tree mid-turn: pads of green, light green, yellow, orange and brown. Stops are in
-  // turning order, with the share of the canopy each one covers.
+  // A tree mid-turn: green, light green, yellow, orange, orange-red and brown, in turning
+  // order. `turned` (0 early … 1 late autumn) sets the share of the canopy at each stop.
   autumn: { leafDark: [0.16, 0.1, 0.05], leafLight: [0.9, 0.6, 0.15], rim: [1.0, 0.85, 0.4], fall: [0.95, 0.55, 0.1], fall2: [0.6, 0.32, 0.1], kind: 'leaf', petals: false,
-    palette: [[0.22, 0.46, 0.14], [0.55, 0.74, 0.2], [0.98, 0.8, 0.18], [0.96, 0.5, 0.1], [0.55, 0.3, 0.12]],
-    shares: [0.1, 0.12, 0.3, 0.3, 0.18] },
+    palette: [[0.22, 0.46, 0.14], [0.55, 0.74, 0.2], [0.98, 0.8, 0.18], [0.98, 0.52, 0.1], [0.88, 0.2, 0.07], [0.5, 0.24, 0.1]] },
   maple: { leafDark: [0.42, 0.1, 0.04], leafLight: [1.0, 0.55, 0.12], rim: [1.0, 0.85, 0.4], fall: [0.95, 0.4, 0.08], fall2: [0.95, 0.7, 0.15], kind: 'leaf', petals: false },
 };
 
@@ -201,7 +211,7 @@ export function makeTree(shared, groundY, seed = 7, opts = {}) {
     const q = c.c.clone().add(nOff);
     const pad = noise3(q.x * 0.7 + 50, q.y * 0.7, q.z * 0.7) * 0.75 + noise3(q.x * 1.6, q.y * 1.6 + 9, q.z * 1.6) * 0.25;
     const up = (p.y - center.y) * 0.03, out = Math.hypot(p.x - center.x, p.z - center.z) * 0.015;
-    return pad * 0.8 + up + out + (crnd() - 0.5) * 0.18 + (crnd() < 0.06 ? (crnd() - 0.5) * 1.5 : 0);
+    return pad * 0.8 + up + out + (crnd() - 0.5) * 0.3 + (crnd() < 0.1 ? (crnd() - 0.5) * 1.5 : 0);
   });
   // stop thresholds from quantiles, so each style's shares hold for any tree
   const sorted = [...turn].sort((a, b) => a - b);
@@ -234,15 +244,15 @@ export function makeTree(shared, groundY, seed = 7, opts = {}) {
     uTex: { value: clusterTex.leaf },
     uLeafDark: { value: new THREE.Color() }, uLeafLight: { value: new THREE.Color() }, uRim: { value: new THREE.Color() },
     uCenter: { value: center },
-    uPal: { value: [0, 1, 2, 3, 4].map(() => new THREE.Color()) }, uPalOn: { value: 0 },
+    uPal: { value: [0, 1, 2, 3, 4, 5].map(() => new THREE.Color()) }, uPalOn: { value: 0 },
   };
   const leafVS = /* glsl */ `
-    uniform float uTime; uniform vec2 uWind; uniform vec3 uPal[5];
+    uniform float uTime; uniform vec2 uWind; uniform vec3 uPal[6];
     attribute vec3 iPos; attribute vec3 iNrm; attribute vec4 iRnd; attribute float iStage;
     varying vec2 vUv; varying vec3 vN; varying vec3 vWp; varying float vDepth; varying float vCell; varying vec3 vTint;
     void main() {
       int st = int(iStage + 0.5);
-      vTint = st == 0 ? uPal[0] : st == 1 ? uPal[1] : st == 2 ? uPal[2] : st == 3 ? uPal[3] : uPal[4];
+      vTint = st == 0 ? uPal[0] : st == 1 ? uPal[1] : st == 2 ? uPal[2] : st == 3 ? uPal[3] : st == 4 ? uPal[4] : uPal[5];
       vec3 wp = iPos;
       // canopy sways as a whole, outer cards more
       float sway = sin(uTime * 0.9 + iPos.x * 0.15) * 0.5 + sin(uTime * 1.7 + iPos.z * 0.3) * 0.25;
@@ -331,7 +341,7 @@ export function makeTree(shared, groundY, seed = 7, opts = {}) {
     side: THREE.DoubleSide,
     alphaToCoverage: true,
     vertexShader: /* glsl */ `
-      uniform float uTime; uniform vec2 uWind; uniform float uGround; uniform float uPetal; uniform float uFallRate; uniform vec3 uPal[5];
+      uniform float uTime; uniform vec2 uWind; uniform float uGround; uniform float uPetal; uniform float uFallRate; uniform vec3 uPal[6];
       attribute vec4 iSpawn; attribute vec4 iRnd;
       varying vec2 vUv; varying vec3 vWp; varying vec3 vN; varying float vSeed; varying float vFade; varying vec3 vTint;
       mat3 rotAxis(vec3 a, float ang) { float c = cos(ang), s = sin(ang), t = 1.0 - c;
@@ -365,8 +375,8 @@ export function makeTree(shared, groundY, seed = 7, opts = {}) {
         vec3 local = R * vec3(position.x * size, position.y * size * mix(0.55, 0.85, uPetal), 0.0);
         vN = R * vec3(0.0, 0.0, 1.0);
         vWp = p + local; vUv = position.xy; vSeed = iRnd.w;
-        float fs = iRnd.w * 4.0;
-        vTint = fs < 0.6 ? uPal[1] : fs < 1.9 ? uPal[2] : fs < 3.2 ? uPal[3] : uPal[4];
+        float fs = iRnd.w * 5.0;
+        vTint = fs < 0.5 ? uPal[1] : fs < 1.7 ? uPal[2] : fs < 2.9 ? uPal[3] : fs < 4.0 ? uPal[4] : uPal[5];
         vFade = smoothstep(0.0, 0.04, life) * (1.0 - smoothstep(0.85, 1.0, life));
         gl_Position = projectionMatrix * viewMatrix * vec4(vWp, 1.0);
       }`,
@@ -390,8 +400,13 @@ export function makeTree(shared, groundY, seed = 7, opts = {}) {
   falling.frustumCulled = false;
   group.add(falling);
 
+  let turned = opts.turned ?? 0.5, styleName = null;
+  function setTurned(t) {
+    turned = t;
+    if (TREE_STYLES[styleName]?.palette) { iStage.set(stageOf(autumnShares(turned))); stageAttr.needsUpdate = true; }
+  }
   function setStyle(name) {
-    const s = TREE_STYLES[name];
+    const s = TREE_STYLES[name]; styleName = name;
     leafUniforms.uLeafDark.value.setRGB(...s.leafDark);
     leafUniforms.uLeafLight.value.setRGB(...s.leafLight);
     leafUniforms.uRim.value.setRGB(...s.rim);
@@ -402,12 +417,12 @@ export function makeTree(shared, groundY, seed = 7, opts = {}) {
     leafUniforms.uPalOn.value = s.palette ? 1 : 0;
     if (s.palette) {
       s.palette.forEach((c, i) => leafUniforms.uPal.value[i].setRGB(...c));
-      iStage.set(stageOf(s.shares)); stageAttr.needsUpdate = true;
+      setTurned(turned);
     }
   }
   function dispose() {
     tg.dispose(); qg.dispose(); fg.dispose(); barkMat.dispose(); leafMat.dispose(); leafShadowMat.dispose(); fallMat.dispose();
     clusterTex.leaf.dispose(); clusterTex.petal.dispose();
   }
-  return { group, setStyle, dispose, center, fallUniforms, cards: N, clumps: clumps.length };
+  return { group, setStyle, setTurned, dispose, center, fallUniforms, cards: N, clumps: clumps.length };
 }
