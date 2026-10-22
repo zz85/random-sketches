@@ -14,7 +14,7 @@
 <link rel="apple-touch-icon" href="icon-192.png">
 <style>
   :root {
-    --bg: #28282a; --panel: rgba(36, 36, 39, 0.86); --line: rgba(255, 255, 255, 0.09); --ink: #ece9e2; --dim: #9c9a95;
+    --bg: #28282a; --panel: rgba(38, 38, 41, 0.96); --line: rgba(255, 255, 255, 0.09); --ink: #ece9e2; --dim: #9c9a95;
     --accent: #e8c27a; --r: 14px; --safe-t: env(safe-area-inset-top, 0px); --safe-b: env(safe-area-inset-bottom, 0px);
     --safe-l: env(safe-area-inset-left, 0px); --safe-r: env(safe-area-inset-right, 0px);
   }
@@ -23,7 +23,8 @@
     -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; overscroll-behavior: none; touch-action: none; }
   canvas#gl { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; touch-action: none; cursor: none; }
   button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; touch-action: manipulation; }
-  .panel { position: fixed; background: var(--panel); -webkit-backdrop-filter: blur(18px) saturate(1.4); backdrop-filter: blur(18px) saturate(1.4);
+  /* no backdrop-filter: blurring what is under a panel would redo the blur on every frame the painting animates */
+  .panel { position: fixed; background: var(--panel);
     border: 1px solid var(--line); border-radius: var(--r); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35); z-index: 5; }
   .ico { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 11px; color: var(--ink); position: relative; }
   .ico svg { width: 24px; height: 24px; stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
@@ -191,6 +192,7 @@
   <button class="item" id="exportBtn"><span>Export PNG<small>full resolution, dried</small></span></button>
   <h3>Paper</h3>
   <div id="paperList"></div>
+  <div class="row"><span>Show paper texture</span><input type="checkbox" id="optTexture"></div>
   <div class="row"><span>Tint</span><div id="tints" style="display:flex;gap:8px"></div></div>
   <div class="row"><span>Sheet size</span><div class="seg" id="sizeSeg"></div></div>
   <div class="row"><span>Orientation</span><div class="seg" id="orientSeg"></div></div>

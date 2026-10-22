@@ -19,15 +19,16 @@
  *               conserved exactly; small diffusion inside wet areas (wet-in-wet softness);
  *               absorption into and diffusion within the paper; evaporation, faster near the
  *               edge of a wet area, which pulls water and pigment outward (edge darkening,
- *               Deegan et al.'s coffee ring, as Curtis et al. 1997 model it). Brush stamps
- *               of the frame are applied here as well.
+ *               Deegan et al.'s coffee ring, as Curtis et al. 1997 model it).
  *   C transfer: Curtis et al.'s adsorption/desorption between water and paper, with
  *               granulating pigment settling into the paper's valleys and staining pigment
  *               resisting lift; everything left in the water drops out when it dries.
- *               Lift / erase stamps act on deposited pigment here.
  *
- * Rendering composites deposited + suspended pigment over the lit paper with Kubelka-Munk,
- * then adds the darkening and specular sheen of standing water.
+ * Brush stamps are drawn in their own passes, scissored to each batch's bounding box.
+ *
+ * Rendering composites deposited + suspended pigment over the paper colour with Kubelka-Munk,
+ * plus the darkening and sheen of standing water, into an sRGB texture, updated only over the
+ * active rect. The screen pass then just samples it and multiplies in the paper's relief.
  */
 
 const MAX_ST = 48; // 3 vec4 uniforms each: 144 of the 224 fragment vectors WebGL2 guarantees
@@ -47,7 +48,7 @@ float noise1(float x) { float i = floor(x), f = fract(x); float a = hash(vec2(i,
 const ivec2 DIR[4] = ivec2[4](ivec2(1, 0), ivec2(-1, 0), ivec2(0, 1), ivec2(0, -1));
 `;
 
-// brush footprint, shared by the water pass (B) and the transfer pass (C)
+// brush footprint, used by the stamp passes (scissored to the batch's bounding box)
 const STAMPS = `
 uniform vec4 uSt[${MAX_ST}];   // x, y, radius, strength
 uniform vec4 uSt2[${MAX_ST}];  // stroke dir x, y, dryness, seed
@@ -79,7 +80,6 @@ float coverage(int i, vec2 p, float h) {
   }
   return cov * s.w;
 }
-bool inBox(vec2 p) { return uN > 0 && p.x >= uBox.x && p.y >= uBox.y && p.x <= uBox.z && p.y <= uBox.w; }
 `;
 
 const FS_FLUX = HDR + COMMON + `
@@ -112,11 +112,9 @@ void main() {
   o = vec4(f[0], f[1], f[2], f[3]) * k;
 }`;
 
-const FS_WATER = HDR + COMMON + STAMPS + `
+const FS_WATER = HDR + COMMON + `
 uniform sampler2D uW, uF, uFK, uFS;
-uniform float uEvap, uEdge, uAbsorb, uCap, uCapDiff, uEvapS, uDiff, uMix, uDryAll;
-uniform int uMode;  // 0 paint, 1 clear water, 2 lift, 3 erase
-uniform vec4 uBK, uBS;
+uniform float uEvap, uEdge, uAbsorb, uCap, uCapDiff, uEvapS, uDiff, uDryAll;
 layout(location = 0) out vec4 oW; layout(location = 1) out vec4 oK; layout(location = 2) out vec4 oS;
 float wetAt(ivec2 q) { return step(0.003, texelFetch(uW, cl(q), 0).x); }
 void main() {
@@ -155,35 +153,12 @@ void main() {
   s -= uEvapS * (wn > 0.01 ? 0.15 : 1.0) + uDryAll * 0.02;
   wn = max(wn, 0.0); s = max(s, 0.0);
   if (wn < 1e-4) wn = 0.0;
-  // brush stamps of this frame
-  if (inBox(p)) {
-    for (int i = 0; i < ${MAX_ST}; i++) {
-      if (i >= uN) break;
-      float c = coverage(i, p, h);
-      if (c <= 0.0) continue;
-      if (uMode <= 1) {
-        // the brush tops the water up to its own load; into wet paint it still lets a little
-        // more go (that push is what makes a bloom), but never piles water up without bound
-        float wt = uSt3[i].w;
-        float add = wt > wn ? (wt - wn) * min(1.0, c * 0.7) : max(0.0, min(wt * c * 0.06, wt * 1.35 - wn));
-        // pigment arrives with the water it is suspended in...
-        nk += uBK * add; ns += uBS * add; wn += add;
-        // ...and the hairs exchange paint with the wash they touch (mixing on the paper)
-        float mx = c * (uMode == 1 ? 0.05 : uMix * 0.35);
-        nk += (uBK * wn - nk) * mx; ns += (uBS * wn - ns) * mx;
-      } else if (uMode == 2) {
-        wn *= 1.0 - c * 0.35; s *= 1.0 - c * 0.15; nk *= 1.0 - c * 0.3; ns *= 1.0 - c * 0.3;
-      } else {
-        wn *= 1.0 - c * 0.5; s *= 1.0 - c * 0.3; nk *= 1.0 - c * 0.6; ns *= 1.0 - c * 0.6;
-      }
-    }
-  }
   oW = vec4(wn, s, 0.0, 1.0); oK = max(nk, 0.0); oS = max(ns, 0.0);
 }`;
 
-const FS_TRANSFER = HDR + COMMON + STAMPS + `
+const FS_TRANSFER = HDR + COMMON + `
 uniform sampler2D uW, uFK, uFS, uDK, uDS;
-uniform float uDown, uUp; uniform int uMode, uForceDry;
+uniform float uDown, uUp; uniform int uForceDry;
 layout(location = 0) out vec4 oFK; layout(location = 1) out vec4 oFS; layout(location = 2) out vec4 oDK; layout(location = 3) out vec4 oDS;
 float mass(vec4 k, vec4 s) { return k.r + k.g + k.b + s.r + s.g + s.b; }
 void main() {
@@ -203,20 +178,65 @@ void main() {
   down = clamp(down, 0.0, 1.0); up = clamp(up, 0.0, 1.0);
   vec4 nfk = fk * (1.0 - down) + dk * up, nfs = fs * (1.0 - down) + ds * up;
   vec4 ndk = dk * (1.0 - up) + fk * down, nds = ds * (1.0 - up) + fs * down;
-  if (uMode >= 2 && inBox(p)) {
-    for (int i = 0; i < ${MAX_ST}; i++) {
-      if (i >= uN) break;
-      float c = coverage(i, p, h);
-      if (c <= 0.0) continue;
-      // lift: a damp sponge / tissue takes liftable pigment, more when the paper is wet
-      float k = uMode == 2 ? c * 0.05 * (0.25 + liftD * 1.5) * (0.5 + 2.0 * smoothstep(0.0, 0.3, w)) : c * 0.35;
-      ndk *= 1.0 - k; nds *= 1.0 - k;
-    }
-  }
   oFK = nfk; oFS = nfs; oDK = ndk; oDS = nds;
 }`;
 
-// composite: KM over lit paper, standing water sheen; screen pixel -> sheet via uInv
+
+// brush stamps on the water layer: paint / clear water add water and pigment, lift and
+// erase take them away. Drawn only over the batch's bounding box.
+const FS_STAMP = HDR + COMMON + STAMPS + `
+uniform sampler2D uW, uFK, uFS; uniform int uMode; uniform vec4 uBK, uBS; uniform float uMix;
+layout(location = 0) out vec4 oW; layout(location = 1) out vec4 oK; layout(location = 2) out vec4 oS;
+void main() {
+  ivec2 P = ivec2(gl_FragCoord.xy); vec2 p = vec2(P);
+  vec4 w0 = texelFetch(uW, P, 0); float wn = w0.x, s = w0.y;
+  vec4 nk = texelFetch(uFK, P, 0), ns = texelFetch(uFS, P, 0);
+  float h = hAt(p);
+  for (int i = 0; i < ${MAX_ST}; i++) {
+    if (i >= uN) break;
+    float c = coverage(i, p, h);
+    if (c <= 0.0) continue;
+    if (uMode <= 1) {
+      // the brush tops the water up to its own load; into wet paint it still lets a little
+      // more go (that push is what makes a bloom), but never piles water up without bound
+      float wt = uSt3[i].w;
+      float add = wt > wn ? (wt - wn) * min(1.0, c * 0.7) : max(0.0, min(wt * c * 0.06, wt * 1.35 - wn));
+      // pigment arrives with the water it is suspended in...
+      nk += uBK * add; ns += uBS * add; wn += add;
+      // ...and the hairs exchange paint with the wash they touch (mixing on the paper)
+      float mx = c * (uMode == 1 ? 0.05 : uMix * 0.35);
+      nk += (uBK * wn - nk) * mx; ns += (uBS * wn - ns) * mx;
+    } else if (uMode == 2) {
+      wn *= 1.0 - c * 0.35; s *= 1.0 - c * 0.15; nk *= 1.0 - c * 0.3; ns *= 1.0 - c * 0.3;
+    } else {
+      wn *= 1.0 - c * 0.5; s *= 1.0 - c * 0.3; nk *= 1.0 - c * 0.6; ns *= 1.0 - c * 0.6;
+    }
+  }
+  oW = vec4(wn, s, 0.0, 1.0); oK = max(nk, 0.0); oS = max(ns, 0.0);
+}`;
+
+// lift / erase on the deposited layer
+const FS_STAMP_D = HDR + COMMON + STAMPS + `
+uniform sampler2D uW, uDK, uDS; uniform int uMode;
+layout(location = 0) out vec4 oDK; layout(location = 1) out vec4 oDS;
+void main() {
+  ivec2 P = ivec2(gl_FragCoord.xy); vec2 p = vec2(P);
+  float w = texelFetch(uW, P, 0).x;
+  vec4 dk = texelFetch(uDK, P, 0), ds = texelFetch(uDS, P, 0);
+  float md = dk.r + dk.g + dk.b + ds.r + ds.g + ds.b;
+  float liftD = md > 1e-6 ? clamp(ds.a / md, 0.0, 1.0) : 0.0;
+  float h = hAt(p);
+  for (int i = 0; i < ${MAX_ST}; i++) {
+    if (i >= uN) break;
+    float c = coverage(i, p, h);
+    if (c <= 0.0) continue;
+    // lift: a damp brush / tissue takes liftable pigment, more when the paper is wet
+    float k = uMode == 2 ? c * 0.05 * (0.25 + liftD * 1.5) * (0.5 + 2.0 * smoothstep(0.0, 0.3, w)) : c * 0.35;
+    dk *= 1.0 - k; ds *= 1.0 - k;
+  }
+  oDK = dk; oDS = ds;
+}`;
+
 const KM_GLSL = `
 vec3 kmOver(vec3 K, vec3 S, vec3 r0) {
   if (K.r + K.g + K.b + S.r + S.g + S.b < 1e-5) return r0;
@@ -229,52 +249,58 @@ vec3 kmOver(vec3 K, vec3 S, vec3 r0) {
 vec3 toSrgb(vec3 c) { c = clamp(c, 0.0, 1.0); return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
 `;
 
-const FS_RENDER = HDR + `
-uniform sampler2D uPaper, uW, uFK, uFS, uDK, uDS; uniform float uPaperN;
-uniform mat3 uInv; uniform vec2 uSheet, uCanvas; uniform float uDpr, uZoom, uWetShow;
-uniform vec3 uPaperCol, uDesk; uniform int uExport;
+// composite, in sheet space: KM of all pigment over the (unlit) paper colour, plus the look of
+// standing water. Written to an sRGB texture and only updated where the sheet is wet, so the
+// per-frame screen pass is a couple of texture reads however big the painting is.
+const FS_COMP = HDR + `
+uniform sampler2D uW, uFK, uFS, uDK, uDS; uniform vec3 uPaperCol; uniform float uWetShow; uniform vec2 uSheet;
 out vec4 o;
 ` + KM_GLSL + `
-float ph(vec2 p) { return texture(uPaper, (p + 0.5) / uPaperN).r; }
 void main() {
-  vec2 css = uExport == 1 ? vec2(gl_FragCoord.x, gl_FragCoord.y) : vec2(gl_FragCoord.x, uCanvas.y - gl_FragCoord.y) / uDpr;
-  vec2 p = uExport == 1 ? css : (uInv * vec3(css, 1.0)).xy;
+  ivec2 P = ivec2(gl_FragCoord.xy);
+  vec4 w = texelFetch(uW, P, 0);
+  vec3 R = kmOver(texelFetch(uDK, P, 0).rgb + texelFetch(uFK, P, 0).rgb, texelFetch(uDS, P, 0).rgb + texelFetch(uFS, P, 0).rgb, uPaperCol);
+  // wet paint is darker and more saturated; standing water catches the light
+  float wet = smoothstep(0.004, 0.25, w.x) * uWetShow, damp = smoothstep(0.02, 0.4, w.y) * uWetShow;
+  if (wet + damp > 0.0) {
+    R *= mix(1.0, 0.93, damp * 0.6);
+    R = mix(R, R * R / max(dot(R, vec3(0.333)), 1e-3) * 0.95, wet * 0.18);
+    R *= mix(1.0, 0.92, wet);
+    ivec2 sz = ivec2(uSheet) - 1;
+    float gx = texelFetch(uW, min(P + ivec2(2, 0), sz), 0).x - texelFetch(uW, max(P - ivec2(2, 0), ivec2(0)), 0).x;
+    float gy = texelFetch(uW, min(P + ivec2(0, 2), sz), 0).x - texelFetch(uW, max(P - ivec2(0, 2), ivec2(0)), 0).x;
+    vec3 L = normalize(vec3(-0.55, -0.65, 0.75));
+    vec3 nw = normalize(vec3(-gx * 4.5, -gy * 4.5, 1.0));
+    float spec = pow(max(dot(reflect(-L, nw), vec3(0.0, 0.0, 1.0)), 0.0), 28.0);
+    R += vec3(0.95, 0.97, 1.0) * spec * wet * 0.22;
+  }
+  o = vec4(clamp(R, 0.0, 1.0), 1.0);
+}`;
+
+// screen: sheet -> screen transform, paper relief (precomputed light tile), desk and shadow
+const FS_SCREEN = HDR + `
+uniform sampler2D uComp, uLit; uniform float uPaperN, uLitAmt;
+uniform mat3 uInv; uniform vec2 uSheet, uCanvas; uniform float uDpr, uZoom;
+uniform vec3 uDesk; uniform int uExport;
+out vec4 o;
+vec3 toSrgb(vec3 c) { c = clamp(c, 0.0, 1.0); return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
+void main() {
+  vec2 p = uExport == 1 ? gl_FragCoord.xy : (uInv * vec3(vec2(gl_FragCoord.x, uCanvas.y - gl_FragCoord.y) / uDpr, 1.0)).xy;
   if (p.x < 0.0 || p.y < 0.0 || p.x > uSheet.x || p.y > uSheet.y) {
     // soft drop shadow of the sheet on the desk
     vec2 q = p - vec2(3.0, 5.0) / uZoom * uDpr;
     vec2 dd = max(max(-q, q - uSheet), 0.0) * uZoom / uDpr;
-    float sh = 1.0 - 0.45 * exp(-length(dd) / 7.0);
-    o = vec4(toSrgb(uDesk * sh), 1.0); return;
+    o = vec4(toSrgb(uDesk * (1.0 - 0.45 * exp(-length(dd) / 7.0))), 1.0); return;
   }
   vec2 uv = p / uSheet;
-  // paper relief lighting, light from the upper left
-  float st = max(1.0, 0.7 / uZoom);
-  float hx = ph(p + vec2(st, 0.0)) - ph(p - vec2(st, 0.0)), hy = ph(p + vec2(0.0, st)) - ph(p - vec2(0.0, st));
-  vec3 n = normalize(vec3(-hx * 2.2 / st, -hy * 2.2 / st, 1.0));
-  vec3 L = normalize(vec3(-0.55, -0.65, 0.75));
-  float lit = clamp(dot(n, L) / L.z, 0.6, 1.4);
-  vec3 paper = uPaperCol * mix(1.0, lit, 0.16);
-  // zoomed out, several screen pixels share a sheet pixel's neighbourhood: average 4 taps
-  // of pigment (KM is non-linear, so this is done on the reflectance)
-  vec4 w = texture(uW, uv);
-  vec3 R = vec3(0.0);
-  float fp = clamp(0.5 / uZoom, 0.0, 2.0);
-  for (int i = 0; i < 4; i++) {
-    vec2 o = (vec2(i & 1, i >> 1) - 0.5) * fp / uSheet;
-    vec4 dk = texture(uDK, uv + o), ds = texture(uDS, uv + o), fk = texture(uFK, uv + o), fs = texture(uFS, uv + o);
-    R += 0.25 * kmOver(dk.rgb + fk.rgb, ds.rgb + fs.rgb, paper);
+  vec3 R;
+  if (uZoom >= 1.0) R = texture(uComp, uv).rgb;
+  else {
+    // zoomed out, one screen pixel covers several sheet pixels: average 4 taps
+    vec2 d = 0.5 / (uZoom * uSheet);
+    R = 0.25 * (texture(uComp, uv + vec2(-d.x, -d.y)).rgb + texture(uComp, uv + vec2(d.x, -d.y)).rgb + texture(uComp, uv + vec2(-d.x, d.y)).rgb + texture(uComp, uv + d).rgb);
   }
-  // wet paint is darker and more saturated; standing water catches the light
-  float wet = smoothstep(0.004, 0.25, w.x) * uWetShow, damp = smoothstep(0.02, 0.4, w.y) * uWetShow;
-  R *= mix(1.0, 0.93, damp * 0.6);
-  R = mix(R, R * R / max(dot(R, vec3(0.333)), 1e-3) * 0.95, wet * 0.18);
-  R *= mix(1.0, 0.92, wet);
-  float tx = 1.5 / uSheet.x, ty = 1.5 / uSheet.y;
-  float gx = texture(uW, uv + vec2(tx, 0.0)).x - texture(uW, uv - vec2(tx, 0.0)).x;
-  float gy = texture(uW, uv + vec2(0.0, ty)).x - texture(uW, uv - vec2(0.0, ty)).x;
-  vec3 nw = normalize(vec3(-gx * 6.0, -gy * 6.0, 1.0) + vec3(n.xy * 0.3, 0.0));
-  float spec = pow(max(dot(reflect(-L, nw), vec3(0.0, 0.0, 1.0)), 0.0), 28.0);
-  R += vec3(0.95, 0.97, 1.0) * spec * wet * 0.22;
+  if (uLitAmt > 0.0) R *= mix(1.0, texture(uLit, (p + 0.5) / uPaperN).r * 1.25, uLitAmt);
   o = vec4(toSrgb(R), 1.0);
 }`;
 
@@ -334,7 +360,9 @@ export class Sim {
     this.floatRead = !!gl.getExtension('EXT_color_buffer_float');
     if (!this.floatRead && !gl.getExtension('EXT_color_buffer_half_float')) throw new Error('This device cannot render to floating-point textures (EXT_color_buffer_float).');
     this.vao = gl.createVertexArray();
-    this.prog = { flux: compile(gl, FS_FLUX), water: compile(gl, FS_WATER), transfer: compile(gl, FS_TRANSFER), render: compile(gl, FS_RENDER), probe: compile(gl, FS_PROBE), dried: compile(gl, FS_DRIED) };
+    this.prog = { flux: compile(gl, FS_FLUX), water: compile(gl, FS_WATER), transfer: compile(gl, FS_TRANSFER), stamp: compile(gl, FS_STAMP), stampD: compile(gl, FS_STAMP_D), comp: compile(gl, FS_COMP), screen: compile(gl, FS_SCREEN), probe: compile(gl, FS_PROBE), dried: compile(gl, FS_DRIED) };
+    this.comp = this.tex(W, H, 'SRGB8_ALPHA8');
+    this.paperCol = [1, 1, 1]; this.litAmt = 0;
     const pp = () => ({ t: [this.tex(), this.tex()], i: 0, get cur() { return this.t[this.i]; }, get nxt() { return this.t[1 - this.i]; }, flip() { this.i = 1 - this.i; } });
     this.s = { W: pp(), FK: pp(), FS: pp(), DK: pp(), DS: pp() };
     this.F = this.tex();
@@ -350,6 +378,7 @@ export class Sim {
     this.stepsDone = 0; this.wetTime = 0;
     for (const k in this.s) for (const t of this.s[k].t) this.clearTex(t);
     this.clearTex(this.F);
+    this.compose();
   }
 
   tex(w = this.W, h = this.H, fmt = 'RGBA16F') {
@@ -393,6 +422,7 @@ export class Sim {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
     this.paperTex = t; this.paperN = N; this.paper = paper;
+    this.buildLit();
   }
 
   // ---- program helpers ----
@@ -463,7 +493,6 @@ export class Sim {
 
   setStampUniforms(batch) {
     const gl = this.gl, u = this.cur.u;
-    if (!batch) { this.i1('uN', 0); return; }
     const n = batch.st.length, a = new Float32Array(MAX_ST * 4), b = new Float32Array(MAX_ST * 4), c = new Float32Array(MAX_ST * 4);
     let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
     batch.st.forEach((s, i) => {
@@ -474,22 +503,51 @@ export class Sim {
     });
     gl.uniform4fv(u.uSt, a); gl.uniform4fv(u.uSt2, b); gl.uniform4fv(u.uSt3, c);
     this.i1('uN', n); this.i1('uShape', batch.b.shape || 0); this.i1('uMode', batch.b.mode || 0);
-    gl.uniform4f(u.uBox, x0, y0, x1, y1);
     if (u.uBK) { gl.uniform4fv(u.uBK, batch.b.bK); gl.uniform4fv(u.uBS, batch.b.bS); this.f1('uMix', batch.b.mix ?? 0.3); }
+    return this.clampRect([x0, y0, x1 + 1, y1 + 1]);
+  }
+
+  /** Copy nxt -> cur over a rect for some ping-pong textures (after a scissored pass). */
+  keep(keys, r) {
+    const gl = this.gl;
+    for (const k of keys) {
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, this.fbo([this.s[k].nxt])); gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.fbo([this.s[k].cur]));
+      gl.blitFramebuffer(r[0], r[1], r[2], r[3], r[0], r[1], r[2], r[3], gl.COLOR_BUFFER_BIT, gl.NEAREST);
+    }
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null); gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+  }
+
+  /**
+   * Apply one batch of brush stamps, drawn only over the batch's bounding box (a brush dab
+   * costs its own footprint, not the whole wet area), then copied back so cur stays the truth.
+   */
+  applyBatch(batch) {
+    const s = this.s;
+    this.use('stamp');
+    this.bind('uW', s.W.cur); this.bind('uFK', s.FK.cur); this.bind('uFS', s.FS.cur);
+    const r = this.setStampUniforms(batch);
+    if (r[2] <= r[0] || r[3] <= r[1]) return;
+    this.draw([s.W.nxt, s.FK.nxt, s.FS.nxt], r); this.keep(['W', 'FK', 'FS'], r);
+    if (batch.b.mode >= 2) {
+      this.use('stampD');
+      this.bind('uW', s.W.cur); this.bind('uDK', s.DK.cur); this.bind('uDS', s.DS.cur);
+      this.setStampUniforms(batch);
+      this.draw([s.DK.nxt, s.DS.nxt], r); this.keep(['DK', 'DS'], r);
+    }
   }
 
   // ---- simulation ----
-  substep(batch, dt) {
-    // flow runs at a fixed substep for stability; slow processes (evaporation, absorption,
-    // deposition) scale with the real time a substep stands for, so drying takes the same
-    // wall time on a slow GPU that can only afford a few substeps per frame
-    const s = this.s, P = this.params, R = this.active, k = dt * SUB_HZ;
+  substep(dt) {
+    // slow processes (evaporation, absorption, deposition) scale with the real time a substep
+    // stands for, so drying takes the same wall time however many substeps a device affords.
+    // Flow and diffusion are explicit: they scale too, but only up to what stays stable
+    const s = this.s, P = this.params, R = this.active, k = dt * SUB_HZ, kf = 1; // flow and diffusion are explicit and stay at their stable per-substep rate (scaling them up oscillates)
     const boost = 1 + this.dryBoost * 30;
     let u = this.use('flux');
     this.bind('uW', s.W.cur); this.bind('uF', this.F);
     this.gl.uniform2f(u.uGrav, P.grav[0], P.grav[1]);
     this.gl.uniform4i(u.uRect, R[0], R[1], R[2], R[3]);
-    this.f1('uPin', P.pin * (this.paper.pin || 1)); this.f1('uHk', P.hk); this.f1('uC', P.c); this.f1('uDamp', P.damp); this.f1('uCap', P.cap);
+    this.f1('uPin', P.pin * (this.paper.pin || 1)); this.f1('uHk', P.hk); this.f1('uC', P.c * kf); this.f1('uDamp', P.damp); this.f1('uCap', P.cap);
     // flux is written in place of itself: render to a scratch copy
     this.Fn ??= this.tex();
     this.draw([this.Fn], R); [this.F, this.Fn] = [this.Fn, this.F];
@@ -498,15 +556,13 @@ export class Sim {
     this.bind('uW', s.W.cur); this.bind('uF', this.F); this.bind('uFK', s.FK.cur); this.bind('uFS', s.FS.cur);
     const ev = this.speed / SUB_HZ;
     this.f1('uEvap', P.evap * ev * boost * k); this.f1('uEdge', P.edge); this.f1('uAbsorb', P.absorb * (this.paper.absorb || 1) * k);
-    this.f1('uCap', P.cap); this.f1('uCapDiff', P.capDiff); this.f1('uEvapS', P.evapS * ev * boost * k); this.f1('uDiff', P.diff);
+    this.f1('uCap', P.cap); this.f1('uCapDiff', Math.min(0.15, P.capDiff * kf)); this.f1('uEvapS', P.evapS * ev * boost * k); this.f1('uDiff', Math.min(0.18, P.diff * kf)); // explicit 4-neighbour diffusion: stable below 0.25, minus headroom for the flow term
     this.f1('uDryAll', this.dryBoost > 0.5 ? 1 : 0);
-    this.setStampUniforms(batch);
     this.draw([s.W.nxt, s.FK.nxt, s.FS.nxt], R); s.W.flip(); s.FK.flip(); s.FS.flip();
 
     this.use('transfer');
     this.bind('uW', s.W.cur); this.bind('uFK', s.FK.cur); this.bind('uFS', s.FS.cur); this.bind('uDK', s.DK.cur); this.bind('uDS', s.DS.cur);
     this.f1('uDown', P.down * k * (0.6 + 0.4 * this.speed)); this.f1('uUp', P.up * k); this.i1('uForceDry', 0);
-    this.setStampUniforms(batch && batch.b.mode >= 2 ? batch : null);
     this.draw([s.FK.nxt, s.FS.nxt, s.DK.nxt, s.DS.nxt], R); s.FK.flip(); s.FS.flip(); s.DK.flip(); s.DS.flip();
     this.stepsDone++;
   }
@@ -514,10 +570,14 @@ export class Sim {
   /** Advance by dt seconds of wall time. Returns true if anything changed. */
   step(dt) {
     if (!this.active) { this.queue.length = 0; return false; }
-    const n = Math.max(Math.min(this.queue.length, 16), Math.min(this.maxSub, Math.max(1, Math.round(dt * SUB_HZ))));
-    for (let i = 0; i < n; i++) this.substep(this.queue.shift() || null, dt / n);
+    // every stamp of the frame goes down now (cheap, footprint only), then the water moves
+    for (const b of this.queue) this.applyBatch(b);
+    this.queue.length = 0;
+    const n = Math.min(this.maxSub, Math.max(1, Math.round(dt * SUB_HZ)));
+    for (let i = 0; i < n; i++) this.substep(dt / n);
     this.dryBoost = Math.max(0, this.dryBoost - dt);
     this.wetTime += dt;
+    this.compose(this.active);
     this.probe();
     return true;
   }
@@ -528,11 +588,12 @@ export class Sim {
     const s = this.s, R = this.active;
     this.use('transfer');
     this.bind('uW', s.W.cur); this.bind('uFK', s.FK.cur); this.bind('uFS', s.FS.cur); this.bind('uDK', s.DK.cur); this.bind('uDS', s.DS.cur);
-    this.f1('uDown', 1); this.f1('uUp', 0); this.i1('uForceDry', 1); this.i1('uN', 0);
+    this.f1('uDown', 1); this.f1('uUp', 0); this.i1('uForceDry', 1);
+    this.queue.length = 0;
     this.draw([s.FK.nxt, s.FS.nxt, s.DK.nxt, s.DS.nxt], R); s.FK.flip(); s.FS.flip(); s.DK.flip(); s.DS.flip();
     for (const t of s.W.t) this.clearTex(t, R);
     for (const t of [...s.FK.t, ...s.FS.t]) this.clearTex(t, R);
-    this.sync(R); this.setActive(null);
+    this.sync(R); this.compose(R); this.setActive(null);
   }
 
   /** Every ~0.4 s read back a coarse wet map of the active rect (async) and shrink / grow it. */
@@ -547,7 +608,7 @@ export class Sim {
       if (rect !== this.active) return; // changed meanwhile
       let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1;
       for (let j = 0; j < cells; j++) for (let i = 0; i < cells; i++) if (px[(j * cells + i) * 4] > 127) { x0 = Math.min(x0, i); x1 = Math.max(x1, i); y0 = Math.min(y0, j); y1 = Math.max(y1, j); }
-      if (x1 < 0) { if (this.queue.length === 0) this.setActive(null); return; }
+      if (x1 < 0) { if (this.queue.length === 0) { this.compose(rect); this.setActive(null); } return; }
       const bw = (rect[2] - rect[0]) / cells, bh = (rect[3] - rect[1]) / cells, M = 48;
       const wet = [rect[0] + x0 * bw - M, rect[1] + y0 * bh - M, rect[0] + (x1 + 1) * bw + M, rect[1] + (y1 + 1) * bh + M];
       // wet paper near the edge of the active rect: grow it (water must never hit the scissor)
@@ -638,7 +699,7 @@ export class Sim {
     let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1;
     for (const t of from.tiles) { x0 = Math.min(x0, t.tx * TILE); y0 = Math.min(y0, t.ty * TILE); x1 = Math.max(x1, (t.tx + 1) * TILE); y1 = Math.max(y1, (t.ty + 1) * TILE); }
     this.queue.length = 0;
-    if (x1 > 0) { const a = this.active; this.active = this.clampRect(a ? [Math.min(a[0], x0), Math.min(a[1], y0), Math.max(a[2], x1), Math.max(a[3], y1)] : [x0, y0, x1, y1]); }
+    if (x1 > 0) { const a = this.active; this.active = this.clampRect(a ? [Math.min(a[0], x0), Math.min(a[1], y0), Math.max(a[2], x1), Math.max(a[3], y1)] : [x0, y0, x1, y1]); this.compose(this.clampRect([x0, y0, x1, y1])); }
     this.clearTex(this.F);
     return true;
   }
@@ -663,49 +724,116 @@ export class Sim {
     this.begin(); this.saveTiles([0, 0, this.W, this.H]);
     for (const k in this.s) for (const t of this.s[k].t) this.clearTex(t);
     this.clearTex(this.F); this.active = null; this.queue.length = 0;
+    this.compose();
   }
 
   // ---- rendering ----
-  render(view, canvasW, canvasH, dpr, opts = {}) {
-    const gl = this.gl, s = this.s;
-    const u = this.use('render');
+  /** Recomposite a rect of the sheet (default: all of it) into the sRGB colour texture. */
+  compose(r = [0, 0, this.W, this.H], target = this.comp, wetShow = 1) {
+    if (!r) return;
+    const gl = this.gl, s = this.s, u = this.use('comp');
     for (const [n, t] of [['uW', s.W.cur], ['uFK', s.FK.cur], ['uFS', s.FS.cur], ['uDK', s.DK.cur], ['uDS', s.DS.cur]]) this.bind(n, t);
+    gl.uniform3fv(u.uPaperCol, this.paperCol); gl.uniform2f(u.uSheet, this.W, this.H); this.f1('uWetShow', wetShow);
+    this.draw([target], r);
+  }
+  /** Paper colour (linear RGB) and how much of the paper's relief is shown (0 = flat). */
+  setLook(paperCol, litAmt) {
+    const changed = paperCol.some((v, i) => v !== this.paperCol[i]);
+    this.paperCol = paperCol; this.litAmt = litAmt;
+    if (changed) this.compose();
+  }
+  /** Precomputed relief shading of the paper tile, light from the upper left. */
+  buildLit() {
+    const gl = this.gl, P = this.paper, N = P.N, h = P.h, d = new Uint8Array(N * N);
+    const L = [-0.55, -0.65, 0.75], ll = Math.hypot(...L);
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      const hx = h[y * N + (x + 1) % N] - h[y * N + (x + N - 1) % N], hy = h[((y + 1) % N) * N + x] - h[((y + N - 1) % N) * N + x];
+      const nx = -hx * 2.2, ny = -hy * 2.2, nl = Math.hypot(nx, ny, 1);
+      const lit = Math.min(1.4, Math.max(0.6, ((nx * L[0] + ny * L[1] + L[2]) / nl / ll) / (L[2] / ll)));
+      d[y * N + x] = Math.round((1 + (lit - 1) * 0.16) / 1.25 * 255);
+    }
+    if (this.litTex) gl.deleteTexture(this.litTex);
+    const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t); gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, N, N, 0, gl.RED, gl.UNSIGNED_BYTE, d); gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+    this.litTex = t;
+  }
+  /** Draw the sheet to the screen: a couple of texture reads per pixel. */
+  render(view, canvasW, canvasH, dpr, opts = {}) {
+    const gl = this.gl;
+    const u = this.use('screen');
+    this.bind('uComp', opts.comp || this.comp); this.bind('uLit', this.litTex);
+    this.f1('uPaperN', this.paperN); this.f1('uLitAmt', this.litAmt);
     gl.uniformMatrix3fv(u.uInv, false, view.inv);
     gl.uniform2f(u.uSheet, this.W, this.H); gl.uniform2f(u.uCanvas, canvasW, canvasH);
-    this.f1('uDpr', dpr); this.f1('uZoom', view.zoom * dpr); this.f1('uWetShow', opts.wetShow ?? 1);
-    gl.uniform3fv(u.uPaperCol, opts.paperCol || [0.93, 0.91, 0.86]); gl.uniform3fv(u.uDesk, opts.desk || [0.16, 0.16, 0.17]);
+    this.f1('uDpr', dpr); this.f1('uZoom', view.zoom * dpr);
+    gl.uniform3fv(u.uDesk, opts.desk || [0.16, 0.16, 0.17]);
     this.i1('uExport', opts.exportFbo ? 1 : 0);
     gl.bindFramebuffer(gl.FRAMEBUFFER, opts.exportFbo || null);
     gl.viewport(0, 0, canvasW, canvasH);
     gl.bindVertexArray(this.vao); gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 
-  /** RGBA8 pixels of the painting at sheet resolution, top row first. */
+  dropTex(t) {
+    const gl = this.gl;
+    for (const [k, f] of this.fbos) if (k.split(',').includes(String(t.__id))) { gl.deleteFramebuffer(f); this.fbos.delete(k); }
+    gl.deleteTexture(t);
+  }
+
+  /** RGBA8 pixels of the painting at sheet resolution, top row first, as if dry. */
   exportPixels(opts = {}) {
-    const gl = this.gl, t = this.tex(this.W, this.H, 'RGBA8'), f = this.fbo([t]);
-    this.render({ inv: [1, 0, 0, 0, 1, 0, 0, 0, 1], zoom: 1 }, this.W, this.H, 1, { ...opts, exportFbo: f, wetShow: opts.wetShow ?? 0 });
+    const gl = this.gl, c = this.tex(this.W, this.H, 'SRGB8_ALPHA8'), t = this.tex(this.W, this.H, 'RGBA8');
+    const pc = this.paperCol; if (opts.paperCol) this.paperCol = opts.paperCol;
+    this.compose(undefined, c, 0); this.paperCol = pc;
+    this.render({ inv: [1, 0, 0, 0, 1, 0, 0, 0, 1], zoom: 1 }, this.W, this.H, 1, { comp: c, exportFbo: this.fbo([t]) });
     const px = new Uint8Array(this.W * this.H * 4);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, f); gl.readPixels(0, 0, this.W, this.H, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    gl.readPixels(0, 0, this.W, this.H, gl.RGBA, gl.UNSIGNED_BYTE, px);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    this.fbos.delete([...this.fbos.entries()].find(([, v]) => v === f)[0]); gl.deleteFramebuffer(f); gl.deleteTexture(t);
+    this.dropTex(c); this.dropTex(t);
     return px;
   }
 
-  /** Dried pigment (deposited + suspended) as two half-float RGBA arrays, for saving. */
-  readDried() {
-    const gl = this.gl, s = this.s, tk = this.tex(), ts = this.tex();
+  /**
+   * Dried pigment (deposited + suspended) as two half-float RGBA arrays, for saving. Async:
+   * the readback goes through pixel-pack buffers and a fence, so painting never stalls on it.
+   */
+  async readDried() {
+    const gl = this.gl, s = this.s, n = this.W * this.H * 4, tk = this.tex(), ts = this.tex();
     this.use('dried'); this.bind('uFK', s.FK.cur); this.bind('uFS', s.FS.cur); this.bind('uDK', s.DK.cur); this.bind('uDS', s.DS.cur);
     this.draw([tk, ts], [0, 0, this.W, this.H]);
-    const out = [];
+    const jobs = [];
     for (const t of [tk, ts]) {
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo([t]));
-      const n = this.W * this.H * 4, h = new Uint16Array(n);
-      if (this.floatRead) { const f = new Float32Array(n); gl.readPixels(0, 0, this.W, this.H, gl.RGBA, gl.FLOAT, f); for (let i = 0; i < n; i++) h[i] = f[i] === 0 ? 0 : toHalf(f[i]); }
-      else gl.readPixels(0, 0, this.W, this.H, gl.RGBA, gl.HALF_FLOAT, h);
-      out.push(h);
+      // read halves directly where the driver offers it, else floats
+      const half = gl.getParameter(gl.IMPLEMENTATION_COLOR_READ_TYPE) === gl.HALF_FLOAT && gl.getParameter(gl.IMPLEMENTATION_COLOR_READ_FORMAT) === gl.RGBA;
+      const buf = gl.createBuffer(); gl.bindBuffer(gl.PIXEL_PACK_BUFFER, buf); gl.bufferData(gl.PIXEL_PACK_BUFFER, n * (half ? 2 : 4), gl.STREAM_READ);
+      gl.readPixels(0, 0, this.W, this.H, gl.RGBA, half ? gl.HALF_FLOAT : gl.FLOAT, 0);
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+      jobs.push({ buf, half });
     }
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    for (const t of [tk, ts]) { const key = [...this.fbos.entries()].find(([k]) => k === String(t.__id)); if (key) { gl.deleteFramebuffer(key[1]); this.fbos.delete(key[0]); } gl.deleteTexture(t); }
+    const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0); gl.flush();
+    while (gl.clientWaitSync(sync, 0, 0) === gl.TIMEOUT_EXPIRED) await new Promise((r) => setTimeout(r, 16));
+    gl.deleteSync(sync);
+    const out = [];
+    for (const { buf, half } of jobs) {
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, buf);
+      let h;
+      if (half) { h = new Uint16Array(n); gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, h); }
+      else {
+        const f = new Float32Array(n); gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, f);
+        if (typeof Float16Array !== 'undefined') h = new Uint16Array(new Float16Array(f).buffer);
+        else {
+          // no native Float16Array: convert in slices so the page stays responsive
+          h = new Uint16Array(n);
+          for (let i = 0; i < n; i += 1 << 18) { const e = Math.min(n, i + (1 << 18)); for (let j = i; j < e; j++) h[j] = f[j] === 0 ? 0 : toHalf(f[j]); await new Promise((r) => setTimeout(r, 0)); }
+        }
+      }
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null); gl.deleteBuffer(buf);
+      out.push(h);
+    }
+    this.dropTex(tk); this.dropTex(ts);
     return { K: out[0], S: out[1] };
   }
 
@@ -718,6 +846,7 @@ export class Sim {
       gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, this.W, this.H, gl.RGBA, gl.HALF_FLOAT, data);
     }
     this.active = null; this.undo = []; this.redo = []; this.rec = null; this.initUndoFree();
+    this.compose();
   }
   initUndoFree() { const n = this.atlas.cols * this.atlas.rows; this.atlas.free = Array.from({ length: n }, (_, i) => n - 1 - i); }
 
@@ -725,7 +854,7 @@ export class Sim {
     const gl = this.gl;
     for (const k in this.s) for (const t of this.s[k].t) gl.deleteTexture(t);
     for (const k in this.atlas.tex) gl.deleteTexture(this.atlas.tex[k]);
-    for (const t of [this.F, this.Fn, this.paperTex, this.probeTex]) if (t) gl.deleteTexture(t);
+    for (const t of [this.F, this.Fn, this.paperTex, this.litTex, this.probeTex, this.comp]) if (t) gl.deleteTexture(t);
     for (const f of this.fbos.values()) gl.deleteFramebuffer(f);
     for (const k in this.prog) gl.deleteProgram(this.prog[k].p);
   }

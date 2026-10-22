@@ -17,8 +17,8 @@ function fatal(msg) { const e = $('#err'); e.style.display = 'block'; e.innerHTM
 
 // ---------- settings ----------
 const SIZES = { S: [1200, 900], M: [1600, 1200], L: [2400, 1800] };
-const TINTS = { white: [0.95, 0.94, 0.905], cream: [0.94, 0.905, 0.82], grey: [0.74, 0.73, 0.70], blue: [0.70, 0.75, 0.79], black: [0.17, 0.17, 0.18] };
-const DEF = { tool: 'round', paper: 'cold', tint: 'white', sheet: 'M', drying: 1, runDry: true, fingers: 'auto', smooth: 0.45, rotate: true, pig: ['ultra'], weights: [1],
+const TINTS = { white: [1, 1, 1], natural: [0.95, 0.94, 0.905], cream: [0.94, 0.905, 0.82], grey: [0.74, 0.73, 0.70], blue: [0.70, 0.75, 0.79], black: [0.17, 0.17, 0.18] };
+const DEF = { tool: 'round', paper: 'cold', tint: 'white', texture: false, sheet: 'M', drying: 1, runDry: true, fingers: 'auto', smooth: 0.3, rotate: true, pig: ['ultra'], weights: [1],
   brush: Object.fromEntries(Object.entries(BRUSHES).map(([k, b]) => [k, { size: b.size, water: b.water, paint: b.paint }])), customs: [], helpSeen: false };
 let S;
 try { S = { ...DEF, ...JSON.parse(localStorage.getItem('aquarelle:settings') || '{}') }; } catch { S = { ...DEF }; }
@@ -37,19 +37,24 @@ const pigById = (id) => allPigments().find((p) => p.id === id) || PIGMENTS[0];
 const gl = canvas.getContext('webgl2', { antialias: false, alpha: false, depth: false, stencil: false, premultipliedAlpha: false, preserveDrawingBuffer: false, powerPreference: 'high-performance', desynchronized: true });
 if (!gl) fatal('WebGL2 is not available in this browser.');
 let sim, paper;
+let dpr = Math.min(window.devicePixelRatio || 1, 2);
+const view = { x: 0, y: 0, z: 1, r: 0 };
+let needsRender = true;
 function makeSim() {
   let [W, H] = SIZES[S.sheet] || SIZES.M;
   if (S.portrait) [W, H] = [H, W];
   paper = makePaper(S.paper, 512, 3);
   try { sim?.dispose(); sim = new Sim(gl, W, H, paper); } catch (e) { fatal(e.message); }
   sim.speed = S.drying;
+  applyLook();
 }
 makeSim();
 
+/** Paper colour and whether its relief is drawn (the physics always uses the paper's grain). */
+function applyLook() { sim.setLook(TINTS[S.tint].map(srgbToLinear), S.texture ? 1 : 0); needsRender = true; }
+
 // ---------- view ----------
-let dpr = Math.min(window.devicePixelRatio || 1, 2);
-const view = { x: 0, y: 0, z: 1, r: 0 };
-let needsRender = true;
+
 function resize() {
   dpr = Math.min(window.devicePixelRatio || 1, 2);
   canvas.width = Math.round(innerWidth * dpr); canvas.height = Math.round(innerHeight * dpr);
@@ -267,7 +272,7 @@ canvas.addEventListener('pointermove', (e) => {
     if (pendingTouch) {
       pendingTouch.evs.push(...(e.getCoalescedEvents ? e.getCoalescedEvents() : [e]).map(copyEv));
       const moved = Math.hypot(e.clientX - pendingTouch.e.clientX, e.clientY - pendingTouch.e.clientY);
-      if (moved > 8 || performance.now() - pendingTouch.t0 > 90) {
+      if (moved > 8 || performance.now() - pendingTouch.t0 > 60) {
         const p = pendingTouch; pendingTouch = null; clearTimeout(lpTimer); tapCand = null;
         stroke0 = performance.now();
         beginStroke(p.e, S.tool === 'pick' ? lastPaintTool : S.tool);
@@ -539,7 +544,7 @@ function buildMenu() {
   for (const [k, v] of Object.entries(TINTS)) {
     const b = document.createElement('button'); b.className = 'chip' + (S.tint === k ? ' on' : ''); b.title = k;
     b.style.background = rgbToHex(v);
-    b.onclick = () => { S.tint = k; needsRender = true; saveSettings(); buildMenu(); buildWells(); drawMixWell(); };
+    b.onclick = () => { S.tint = k; applyLook(); saveSettings(); buildMenu(); buildWells(); drawMixWell(); };
     tc.appendChild(b);
   }
   const ss = $('#sizeSeg'); ss.innerHTML = '';
@@ -556,6 +561,7 @@ function buildMenu() {
   }
   document.querySelectorAll('#drySeg button').forEach((b) => { b.classList.toggle('on', +b.dataset.v === S.drying); b.onclick = () => { S.drying = +b.dataset.v; sim.speed = S.drying; saveSettings(); buildMenu(); }; });
   document.querySelectorAll('#fingerSeg button').forEach((b) => { b.classList.toggle('on', b.dataset.v === S.fingers); b.onclick = () => { S.fingers = b.dataset.v; saveSettings(); buildMenu(); }; });
+  $('#optTexture').checked = S.texture; $('#optTexture').onchange = (e) => { S.texture = e.target.checked; applyLook(); saveSettings(); };
   $('#optLoad').checked = S.runDry; $('#optLoad').onchange = (e) => { S.runDry = e.target.checked; saveSettings(); };
   $('#optSmooth').value = S.smooth; $('#optSmooth').oninput = (e) => { S.smooth = +e.target.value; saveSettings(); };
   $('#optRotate').checked = S.rotate; $('#optRotate').onchange = (e) => { S.rotate = e.target.checked; if (!S.rotate) { view.r = 0; needsRender = true; } saveSettings(); };
@@ -613,7 +619,7 @@ $('#helpClose').addEventListener('click', () => toggleHelp(false));
 
 // ---------- export ----------
 async function exportPNG() {
-  const px = sim.exportPixels({ paperCol: TINTS[S.tint].map(srgbToLinear) });
+  const px = sim.exportPixels();
   const c = document.createElement('canvas'); c.width = sim.W; c.height = sim.H;
   c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(px.buffer), sim.W, sim.H), 0, 0);
   const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
@@ -640,7 +646,7 @@ async function save() {
   if (stroke || sim.wet) { saveT = setTimeout(save, 1500); return; } // save once it has dried
   saving = true;
   try {
-    const { K, S: Sc } = sim.readDried();
+    const { K, S: Sc } = await sim.readDried();
     const gzipped = typeof CompressionStream !== 'undefined';
     await idbPut('current', { v: 1, W: sim.W, H: sim.H, sheet: S.sheet, gzipped, K: await gz(new Uint8Array(K.buffer)), S: await gz(new Uint8Array(Sc.buffer)), t: Date.now() });
     dirty = false; window.__saved = (window.__saved || 0) + 1;
@@ -664,9 +670,20 @@ addEventListener('visibilitychange', () => { if (document.visibilityState === 'h
 let lastT = performance.now();
 const statusEl = $('#status'), statusText = $('#statusText');
 let wasWet = null;
-function render() { sim.render({ inv: invMat(), zoom: view.z }, canvas.width, canvas.height, dpr, { paperCol: TINTS[S.tint].map(srgbToLinear), desk: [0.022, 0.022, 0.025] }); }
+function render() { sim.render({ inv: invMat(), zoom: view.z }, canvas.width, canvas.height, dpr, { desk: [0.022, 0.022, 0.025] }); }
+// Adaptive load: if frames run long while the sheet is wet, take fewer simulation substeps per
+// frame (the sim scales flow and drying per substep, so it looks the same, just coarser in
+// time); give them back when there is headroom. Brush stamps are never delayed by this.
+let frameEma = 16, lastAdapt = 0;
+function adapt(t, ms) {
+  frameEma = frameEma * 0.9 + Math.min(ms, 100) * 0.1;
+  if (!sim.wet || t - lastAdapt < 400) return;
+  if (frameEma > 21 && sim.maxSub > 1) { sim.maxSub--; lastAdapt = t; }
+  else if (frameEma < 14 && sim.maxSub < 6) { sim.maxSub++; lastAdapt = t + 600; }
+}
 function frame(t) {
-  const dt = Math.min(0.25, (t - lastT) / 1000); lastT = t;
+  const ms = t - lastT, dt = Math.min(0.25, ms / 1000); lastT = t;
+  adapt(t, ms);
   sim.params.grav = gravity();
   sim.dryBoost = dryHold ? 3 : 0;
   if (sim.step(dt)) needsRender = true;
