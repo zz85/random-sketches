@@ -40,14 +40,24 @@ export class Smoother {
   }
 }
 
-/** Brush presets. Sizes are radii in sheet pixels at full pressure. */
+/**
+ * Brush library. Sizes are radii in sheet pixels at full pressure. `mode`: 0 paint, 1 clear
+ * water, 2 lift; smudge and erase are tools that borrow a paint brush's shape.
+ * `angle` (degrees) holds a flat brush's chisel at a fixed angle to the page.
+ */
 export const BRUSHES = {
-  round: { name: 'Round', size: 22, water: 0.65, paint: 0.55, shape: 0, spacing: 0.18, sizePressure: 0.75, paintPressure: 0.4, note: 'pointed round: pressure makes it fat' },
-  wash: { name: 'Wash', size: 70, water: 0.9, paint: 0.35, shape: 1, spacing: 0.15, sizePressure: 0.25, paintPressure: 0.2, note: 'big flat mop for skies and washes' },
-  detail: { name: 'Detail', size: 6, water: 0.45, paint: 0.7, shape: 0, spacing: 0.2, sizePressure: 0.8, paintPressure: 0.5, note: 'rigger for lines and twigs' },
-  dry: { name: 'Dry brush', size: 26, water: 0.15, paint: 0.8, shape: 2, spacing: 0.15, sizePressure: 0.5, paintPressure: 0.4, note: 'little water: only the paper tooth takes paint' },
-  splatter: { name: 'Splatter', size: 40, water: 0.7, paint: 0.6, shape: 3, spacing: 0.6, sizePressure: 0.5, paintPressure: 0.3, note: 'flick drops off the brush' },
+  round: { name: 'Round', cat: 'Watercolour', size: 22, water: 0.65, paint: 0.55, shape: 0, spacing: 0.18, sizePressure: 0.75, paintPressure: 0.4, note: 'pointed round: pressure makes it fat' },
+  wash: { name: 'Wash', cat: 'Watercolour', size: 70, water: 0.9, paint: 0.35, shape: 1, spacing: 0.15, sizePressure: 0.25, paintPressure: 0.2, note: 'big soft mop for skies and washes' },
+  flat: { name: 'Flat', cat: 'Watercolour', size: 26, water: 0.7, paint: 0.5, shape: 1, spacing: 0.12, sizePressure: 0.3, paintPressure: 0.3, angle: 45, flat: 2.6, note: 'chisel edge: thin one way, broad the other' },
+  detail: { name: 'Rigger', cat: 'Watercolour', size: 6, water: 0.45, paint: 0.7, shape: 0, spacing: 0.2, sizePressure: 0.8, paintPressure: 0.5, note: 'long thin hairs for lines and twigs' },
+  dry: { name: 'Dry brush', cat: 'Watercolour', size: 26, water: 0.15, paint: 0.8, shape: 2, spacing: 0.15, sizePressure: 0.5, paintPressure: 0.4, note: 'little water: only the paper tooth takes paint' },
+  water: { name: 'Clear water', cat: 'Water', mode: 1, size: 30, water: 0.8, paint: 0, shape: 0, spacing: 0.18, sizePressure: 0.5, paintPressure: 0, note: 'wet the paper first, soften edges, make blooms' },
+  lift: { name: 'Lift', cat: 'Water', mode: 2, size: 24, water: 0.3, paint: 0.8, shape: 0, spacing: 0.18, sizePressure: 0.5, paintPressure: 0, note: 'blot paint back off with a damp brush' },
+  splatter: { name: 'Splatter', cat: 'Effects', size: 40, water: 0.7, paint: 0.6, shape: 3, spacing: 0.6, sizePressure: 0.5, paintPressure: 0.3, note: 'flick drops off the brush' },
 };
+export const CATEGORIES = ['Watercolour', 'Water', 'Effects'];
+/** Brushes smudge and erase can borrow a shape from. */
+export const SHAPES = ['round', 'wash', 'flat', 'detail', 'dry'];
 
 /** Random droplets for a splatter stamp, deterministic in `seed`. */
 export function splatterDrops(s, radius, seed) {

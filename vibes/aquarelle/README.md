@@ -1,51 +1,79 @@
 # Aquarelle
 
 Watercolour painting in the browser, built on a fluid simulation rather than textured
-stamps. Paint is pigment carried by water: it flows while the paper is wet, blooms when
-you drop wet into wet, darkens at the edges as it dries, settles into the paper's tooth,
-and glazes over dried layers. Made for Apple Pencil / stylus first; finger and mouse work too.
-No backend, no build step, no dependencies: plain ES modules and WebGL2. Installable PWA,
-works offline.
+stamps, with a Procreate-style interface. Paint is pigment carried by water: it flows while
+the paper is wet, blooms when you drop wet into wet, darkens at the edges as it dries,
+settles into the paper's tooth, and glazes over dried layers. Made for Apple Pencil /
+stylus first; finger and mouse work too. No backend, no build step, no dependencies: plain
+ES modules and WebGL2. Installable PWA, works offline.
 
 ![scene](shot_scene.png)
 
 ```
 python3 -m http.server      # any static server (the service worker needs https or localhost)
 bun test                    # pigment optics, mixing, stroke resampling, paper: 10 tests
-node smoke.js               # headless Chromium (SwiftShader), real pen/touch/mouse events: 26 checks + screenshots
+node smoke.js               # headless Chromium (SwiftShader), real pen/touch/mouse events through the UI: 42 checks + screenshots
                             # SKIP_SCENE=1 skips painting the landscape; PORT= / CDP= / CHROME= to override
 ```
 
 ## Using it
 
+![interface](shot_scene_ui.png)
+
+The layout follows Procreate. **Gallery** (top left) holds every painting with its
+thumbnail: + makes a new canvas (screen size, 4:3, square, A4, postcard, large), ⋯ renames,
+duplicates or deletes, Import turns a photo into a glaze layer to paint over. Next to it,
+the **wrench** (Actions: share PNG / JPEG / time-lapse video; canvas paper, texture,
+colour, flip; time-lapse replay; preferences; help) and the **drop** (water and drying: dry
+now, hair dryer, drying speed, tilt the board). The dot after it pulses while the sheet is
+wet. On the right: **paint, smudge, erase** (tap the active one again for its brush
+library), **layers** and the **colour** disc.
+
+The **sidebar** has brush size, the eyedropper square, opacity (how much paint the brush
+carries, or the strength of smudge / erase) and water, then undo and redo. Sliders drag
+relative to where you touch them, finer when you drag sideways; a bubble shows the value.
+Right-hand interface puts it on the other side.
+
 | Input | Does |
 |---|---|
-| Pencil / stylus | paints. Pressure sets size and load, tilt lays the brush on its side (wider, elliptical footprint). Hover shows the brush outline |
-| Finger | paints until a pen has been used, then navigates (Menu → Fingers with a pen) |
-| Two fingers | pan, pinch-zoom, twist to rotate (snaps back to square). Two-finger tap: undo, three-finger tap: redo |
-| Long-press / Alt-click / I | pick a colour off the painting as a new pigment |
-| Mouse | left paints (speed stands in for pressure: slow is heavier), middle/right or Space-drag pans, wheel zooms |
-| Keys | B W R Y S brushes, Q clear water, L lift, E erase, `[` `]` size, 1–9 pigments (Shift adds to the mix), F dry now, ⌘Z / ⇧⌘Z, 0 fit, Tab hide UI, ? help |
+| Pencil / stylus | paints. Pressure sets size and load (pressure curve in Prefs), tilt lays the brush on its side. Hover shows the brush outline |
+| Finger | paints until a pen has been used, then navigates (Prefs → Fingers) |
+| Two fingers | pan, pinch-zoom, twist to rotate (snaps square); a quick pinch in fits the canvas |
+| Two / three / four-finger tap | undo / redo / hide the interface |
+| Touch and hold | eyedropper (also the sidebar square, Alt-click or I) |
+| Hold at the end of a stroke | QuickShape: the stroke is taken back, with everything its water did, and painted again as a straight line or an ellipse (circle when nearly round) |
+| Mouse | left paints (speed stands in for pressure), middle/right or Space-drag pans, wheel zooms |
+| Keys | B paint, S smudge, E erase, L layers, C colours, I eyedropper, `[` `]` size, 1–9 pigments (Shift adds to the mix), F dry now, ⌘Z / ⇧⌘Z, 0 fit, Tab hide UI |
 
-Brushes: Round (pressure makes it fat), Wash (big mop), Detail (rigger), Dry brush (thick
-paint, little water: only the paper's peaks take it, in streaks), Splatter. Tools: clear
-water (wet the paper first for wet-in-wet, or soften an edge), Lift (damp brush; granulating
-pigments lift easily, staining ones barely), Eraser. Three sliders per brush: size, water,
-paint. With "brush runs dry" on, a stroke empties as it goes, so long strokes break up
-into drybrush at the end like a real brush.
+**Brush library**: Watercolour (Round, Wash, Flat with a chisel edge, Rigger, Dry brush),
+Water (Clear water to wet the paper or soften edges, Lift to blot paint back off),
+Effects (Splatter). Each shows a stroke preview; tap the selected brush again (or
+Settings) for its brush studio: size, water, paint, pressure → size, pressure → paint,
+spacing, reset. Smudge and erase borrow the shape of any watercolour brush. Smudge drags
+wet paint along the stroke and pushes dried paint around more gently (liftable pigments
+move more). With "brush runs dry" on, a stroke empties as it goes.
 
-19 pigments, each with its own masstone, transparency, granulation and staining (Hansa
-Yellow, New Gamboge, Yellow Ochre, Pyrrole Orange, Cadmium Red, Quinacridone Rose,
-Dioxazine Violet, French Ultramarine, Cerulean, Phthalo Blue/Green, Hooker's and Sap Green,
-Burnt Sienna/Umber, Indian Red, Payne's Grey, Potter's Pink, Titanium White) plus custom
-colours. Tap + Mix (or Shift / long-press a well) to load up to four pigments on the brush.
-Three papers (cold press, rough, hot press), five paper tints, three sheet sizes,
-portrait/landscape. Hair dryer button: hold to dry faster, double-tap to dry at once.
-Tilt button: board tilted (wet paint runs down) or, on a tablet, follow the device's tilt.
-Undo is 1:1 with strokes, including everything the water did afterwards. The painting
-autosaves to IndexedDB once dry; PNG export at sheet resolution (share sheet on iPad).
+**Colours**: a Procreate-style disc (hue ring, saturation × brightness inside) whose picks
+become custom pigments with an adjustable opacity (glassy to body colour) and granulation,
+the palette of 19 artist pigments (Hansa Yellow, New Gamboge, Yellow Ochre, Pyrrole Orange,
+Cadmium Red, Quinacridone Rose, Dioxazine Violet, French Ultramarine, Cerulean, Phthalo
+Blue/Green, Hooker's and Sap Green, Burnt Sienna/Umber, Indian Red, Payne's Grey, Potter's
+Pink, Titanium White) with + Mix to load up to four on the brush, and a history row.
 
-![close-up](shot_scene_closeup.png)
+**Layers**: add, select, hide, opacity, rename, clear, duplicate, merge down, move,
+delete — all undoable, in the same history as strokes. The paper is the background layer.
+Only the active layer is ever wet (switching layers dries the one you leave); layers are
+composited over each other with Kubelka-Munk, so a layer glazes like a dried wash. The
+layer count is capped by canvas size (about 256 MB of layer textures: 8 at 1600 × 1200).
+
+**Time-lapse**: while you paint, small JPEG frames are read back asynchronously (at most
+about two a second, only when something changed, thinned out past 1800 frames) and stored
+with the painting. Replay with a scrubber, export 30 s or full length as MP4 (Safari) or
+WebM via MediaRecorder.
+
+Everything autosaves to IndexedDB once the sheet is dry, and when the page is hidden.
+The paper is plain white with no visible texture by default; Canvas → Show paper texture
+draws the relief (the grain drives the physics either way: granulation, edges, dry brush).
 
 ## How it works
 
@@ -54,11 +82,13 @@ and water held in the paper; suspended pigment as Kubelka-Munk absorption K (rgb
 scattering S (rgb) amounts, plus granulation and liftability carried as mass-weighted
 channels; the same for pigment deposited in the paper; pipe-model outflow fluxes.
 
-**Each substep** (180 Hz, fixed for stability; slow processes scale with real time so
-drying takes the same seconds on a slow GPU) is three fragment passes, scissored to the
-rectangle that is actually wet — a dry sheet costs nothing, and a stroke costs only its
-neighbourhood. An async readback every 0.4 s of a 48×48 wet map shrinks or grows that
-rectangle (`fenceSync`, no stalls).
+**Each substep** (180 Hz; when frames run long it takes fewer per frame — flow stays at
+its stable per-substep rate, drying scales with real time) is three fragment passes,
+scissored to the rectangle that is actually wet — a dry sheet costs nothing, and a stroke
+costs only its neighbourhood. An async readback every 0.4 s of a 48×48 wet map shrinks or
+grows that rectangle (`fenceSync`, no stalls). Brush stamps are separate passes scissored
+to each batch's footprint, so every pointer sample of a frame goes down at once without
+extra substeps.
 
 1. **Flux** — virtual-pipe shallow water (O'Brien & Hodgins 1995, as used by Mei, Decaudin
    & Hu 2007): outflow to the four neighbours driven by the difference in water surface,
@@ -71,18 +101,20 @@ rectangle (`fenceSync`, no stalls).
    Absorption into the paper and diffusion inside it. Evaporation, faster at the rim of a
    wet area — that pulls water and pigment outward and gives edge darkening, the
    "coffee ring" of Deegan et al. 1997, modelled the way Curtis et al. 1997 do. Brush
-   stamps are applied here: the brush tops water up to its load, adds pigment with the
-   water, and exchanges paint with the wash it touches.
+   stamps (their own pass) top water up to the brush's load, add pigment with the water,
+   and exchange paint with the wash they touch.
 3. **Transfer** — Curtis et al.'s adsorption/desorption between water and paper:
    granulating pigment settles into the valleys of the paper, liftable pigment comes back
    off the peaks under water, staining pigment stays put; whatever is still suspended
    drops out when the water is gone. Lift and erase act here.
 
-**Rendering** composites deposited + suspended pigment over the lit paper with the
-Kubelka-Munk two-flux model (reflectance and transmittance of a layer, then layer over
-background), four taps averaged in reflectance when zoomed out. Wet areas are darker and
-more saturated with a specular sheen from the water surface. Paper relief is lit from
-the upper left. Because pigment lives as K and S amounts, mixing on the brush, mixing on
+**Rendering** composites each layer's pigment over what lies below it (the paper colour,
+then the layers underneath) with the Kubelka-Munk two-flux model (reflectance and
+transmittance of a layer, then layer over background) into an sRGB texture, updated only
+over the wet rectangle. Wet areas are darker and more saturated with a specular sheen from
+the water surface. The per-frame screen pass is then one or four texture reads plus a
+precomputed paper-relief tile, so panning, zooming and a drying wash stay cheap at retina
+resolution. Because pigment lives as K and S amounts, mixing on the brush, mixing on
 the paper and glazing a dry layer all behave subtractively: ultramarine over gamboge is
 green, three glazes get deeper rather than greyer.
 
@@ -107,11 +139,16 @@ is withdrawn without touching redo.
 
 **Undo** copies the 128 px tiles a stroke can touch into a GPU atlas before the stroke
 (and any tiles the spreading water reaches later), so undo restores the sheet including
-everything the water did afterwards; ~1.15 sheets of tiles, oldest steps evicted.
+everything the water did afterwards; ~1.15 sheets of tiles, oldest steps evicted. Layer
+operations are entries in the same history that keep what they need to reverse themselves.
 
-**Saving** sums deposited and suspended pigment into two half-float layers and stores
-them gzip-compressed (`CompressionStream`) in IndexedDB once the sheet is dry, and when the
-page is hidden.
+**Memory**: water and suspended pigment exist once; each layer owns one K and one S
+half-float texture, and the active layer borrows two shared scratch textures as its
+ping-pong partners, copied home when it stops being active.
+
+**Saving** reads each layer's pigment back through pixel-pack buffers and a fence (no
+main-thread stall), converts to half floats (`Float16Array` where available) and stores
+it gzip-compressed (`CompressionStream`) in IndexedDB with a JPEG thumbnail.
 
 ## Research notes
 
@@ -133,7 +170,9 @@ page is hidden.
   close to this project in spirit: water and pigment tracked separately, backruns,
   pigment-like mixing, re-wetting dried paint, gravity from device tilt, 28 papers.
 - **Procreate** — the best-selling iPad painting app, but its watercolour is stamp-based
-  brushes with "wet mix"; no fluid. Same for most others: **Tayasui Watercolor**,
+  brushes with "wet mix"; no fluid. Its interface is the one iPad painters know (gallery,
+  tool row, size / opacity sidebar, finger-tap undo, QuickShape, time-lapse), so Aquarelle
+  borrows that layout around its own engine. Same for most others: **Tayasui Watercolor**,
   **Clip Studio**, **Krita**, **Corel Painter** (Painter's "Real Watercolor" since 2017 does
   simulate flow on the desktop).
 
@@ -182,13 +221,14 @@ that matters, Pencil pressure and tilt, and gestures that keep the canvas unclut
 - **Three RGB channels** for K/S rather than spectral: 3 channels are enough for the
   classic mixtures (blue + yellow = green, ultramarine + rose = violet, complementary
   mixes grey) and keep everything in two RGBA16F textures.
-- **One layer**, not a layer stack: glazing comes from the physics (dried pigment is in the
-  deposit layer, new wet pigment sits on top in the same KM composite). This is how real
-  watercolour works and keeps the UI to "paint".
+- **Layers glaze**: within a layer, glazing comes from the physics (dried pigment in the
+  deposit layer, new wet pigment on top in the same KM composite); between layers the same
+  KM compositing applies, so layers behave like separately dried washes.
 - **Active rectangle + async probe** keeps an iPad at 120 Hz while one stroke is wet and
   costs nothing once everything has dried.
 - **Requires WebGL2 with float render targets** (all current iPads / iPhones in Safari,
   Chrome, Firefox).
 
-Not done: brush bristle simulation, layers, masking fluid, salt, time-lapse. Re-wetting is
-only partial: liftable pigment desorbs under new water, staining pigment does not.
+Not done: brush bristle simulation, selections and transform, masking fluid, salt, blend
+modes other than glazing. Re-wetting is only partial: liftable pigment desorbs under new
+water, staining pigment does not.

@@ -208,6 +208,11 @@ void main() {
       nk += (uBK * wn - nk) * mx; ns += (uBS * wn - ns) * mx;
     } else if (uMode == 2) {
       wn *= 1.0 - c * 0.35; s *= 1.0 - c * 0.15; nk *= 1.0 - c * 0.3; ns *= 1.0 - c * 0.3;
+    } else if (uMode == 4) {
+      // smudge: drag wet paint along the stroke (take what lies upstream of the brush)
+      ivec2 q = cl(ivec2(p - uSt2[i].xy * uSt[i].z * 0.35));
+      float m = c * 0.55;
+      wn = mix(wn, texelFetch(uW, q, 0).x, m); nk = mix(nk, texelFetch(uFK, q, 0), m); ns = mix(ns, texelFetch(uFS, q, 0), m);
     } else {
       wn *= 1.0 - c * 0.5; s *= 1.0 - c * 0.3; nk *= 1.0 - c * 0.6; ns *= 1.0 - c * 0.6;
     }
@@ -231,6 +236,13 @@ void main() {
     float c = coverage(i, p, h);
     if (c <= 0.0) continue;
     // lift: a damp brush / tissue takes liftable pigment, more when the paper is wet
+    if (uMode == 4) {
+      // smudge dried paint too, more gently, more easily for liftable pigment
+      ivec2 q = cl(ivec2(p - uSt2[i].xy * uSt[i].z * 0.35));
+      float m = c * (0.12 + 0.3 * liftD + 0.3 * smoothstep(0.0, 0.3, w));
+      dk = mix(dk, texelFetch(uDK, q, 0), m); ds = mix(ds, texelFetch(uDS, q, 0), m);
+      continue;
+    }
     float k = uMode == 2 ? c * 0.05 * (0.25 + liftD * 1.5) * (0.5 + 2.0 * smoothstep(0.0, 0.3, w)) : c * 0.35;
     dk *= 1.0 - k; ds *= 1.0 - k;
   }
@@ -253,39 +265,58 @@ vec3 toSrgb(vec3 c) { c = clamp(c, 0.0, 1.0); return mix(c * 12.92, 1.055 * pow(
 // standing water. Written to an sRGB texture and only updated where the sheet is wet, so the
 // per-frame screen pass is a couple of texture reads however big the painting is.
 const FS_COMP = HDR + `
-uniform sampler2D uW, uFK, uFS, uDK, uDS; uniform vec3 uPaperCol; uniform float uWetShow; uniform vec2 uSheet;
+uniform sampler2D uW, uFK, uFS, uDK, uDS, uBase; uniform vec3 uPaperCol; uniform float uWetShow, uOpacity; uniform vec2 uSheet;
+uniform int uHasBase, uActive;
 out vec4 o;
 ` + KM_GLSL + `
 void main() {
   ivec2 P = ivec2(gl_FragCoord.xy);
-  vec4 w = texelFetch(uW, P, 0);
-  vec3 R = kmOver(texelFetch(uDK, P, 0).rgb + texelFetch(uFK, P, 0).rgb, texelFetch(uDS, P, 0).rgb + texelFetch(uFS, P, 0).rgb, uPaperCol);
-  // wet paint is darker and more saturated; standing water catches the light
-  float wet = smoothstep(0.004, 0.25, w.x) * uWetShow, damp = smoothstep(0.02, 0.4, w.y) * uWetShow;
-  if (wet + damp > 0.0) {
-    R *= mix(1.0, 0.93, damp * 0.6);
-    R = mix(R, R * R / max(dot(R, vec3(0.333)), 1e-3) * 0.95, wet * 0.18);
-    R *= mix(1.0, 0.92, wet);
-    ivec2 sz = ivec2(uSheet) - 1;
-    float gx = texelFetch(uW, min(P + ivec2(2, 0), sz), 0).x - texelFetch(uW, max(P - ivec2(2, 0), ivec2(0)), 0).x;
-    float gy = texelFetch(uW, min(P + ivec2(0, 2), sz), 0).x - texelFetch(uW, max(P - ivec2(0, 2), ivec2(0)), 0).x;
-    vec3 L = normalize(vec3(-0.55, -0.65, 0.75));
-    vec3 nw = normalize(vec3(-gx * 4.5, -gy * 4.5, 1.0));
-    float spec = pow(max(dot(reflect(-L, nw), vec3(0.0, 0.0, 1.0)), 0.0), 28.0);
-    R += vec3(0.95, 0.97, 1.0) * spec * wet * 0.22;
+  // what lies under this layer: the paper, or the layers below composited already
+  vec3 base = uHasBase == 1 ? texelFetch(uBase, P, 0).rgb : uPaperCol;
+  vec3 K = texelFetch(uDK, P, 0).rgb, S = texelFetch(uDS, P, 0).rgb;
+  if (uActive == 1) { K += texelFetch(uFK, P, 0).rgb; S += texelFetch(uFS, P, 0).rgb; }
+  vec3 R = mix(base, kmOver(K, S, base), uOpacity);
+  if (uActive == 1) {
+    vec4 w = texelFetch(uW, P, 0);
+    // wet paint is darker and more saturated; standing water catches the light
+    float wet = smoothstep(0.004, 0.25, w.x) * uWetShow, damp = smoothstep(0.02, 0.4, w.y) * uWetShow;
+    if (wet + damp > 0.0) {
+      R *= mix(1.0, 0.93, damp * 0.6);
+      R = mix(R, R * R / max(dot(R, vec3(0.333)), 1e-3) * 0.95, wet * 0.18);
+      R *= mix(1.0, 0.92, wet);
+      ivec2 sz = ivec2(uSheet) - 1;
+      float gx = texelFetch(uW, min(P + ivec2(2, 0), sz), 0).x - texelFetch(uW, max(P - ivec2(2, 0), ivec2(0)), 0).x;
+      float gy = texelFetch(uW, min(P + ivec2(0, 2), sz), 0).x - texelFetch(uW, max(P - ivec2(0, 2), ivec2(0)), 0).x;
+      vec3 L = normalize(vec3(-0.55, -0.65, 0.75));
+      vec3 nw = normalize(vec3(-gx * 4.5, -gy * 4.5, 1.0));
+      float spec = pow(max(dot(reflect(-L, nw), vec3(0.0, 0.0, 1.0)), 0.0), 28.0);
+      R += vec3(0.95, 0.97, 1.0) * spec * wet * 0.22;
+    }
   }
   o = vec4(clamp(R, 0.0, 1.0), 1.0);
+}`;
+
+// one layer over white, sampled down to a thumbnail
+const FS_THUMB = HDR + `
+uniform sampler2D uDK, uDS, uFK, uFS; uniform int uActive; uniform vec2 uOut;
+out vec4 o;
+` + KM_GLSL + `
+void main() {
+  vec2 uv = gl_FragCoord.xy / uOut;
+  vec3 K = texture(uDK, uv).rgb, S = texture(uDS, uv).rgb;
+  if (uActive == 1) { K += texture(uFK, uv).rgb; S += texture(uFS, uv).rgb; }
+  o = vec4(toSrgb(kmOver(K, S, vec3(1.0))), 1.0);
 }`;
 
 // screen: sheet -> screen transform, paper relief (precomputed light tile), desk and shadow
 const FS_SCREEN = HDR + `
 uniform sampler2D uComp, uLit; uniform float uPaperN, uLitAmt;
 uniform mat3 uInv; uniform vec2 uSheet, uCanvas; uniform float uDpr, uZoom;
-uniform vec3 uDesk; uniform int uExport;
+uniform vec3 uDesk; uniform int uExport; uniform float uExpScale;
 out vec4 o;
 vec3 toSrgb(vec3 c) { c = clamp(c, 0.0, 1.0); return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
 void main() {
-  vec2 p = uExport == 1 ? gl_FragCoord.xy : (uInv * vec3(vec2(gl_FragCoord.x, uCanvas.y - gl_FragCoord.y) / uDpr, 1.0)).xy;
+  vec2 p = uExport == 1 ? gl_FragCoord.xy * uExpScale : (uInv * vec3(vec2(gl_FragCoord.x, uCanvas.y - gl_FragCoord.y) / uDpr, 1.0)).xy;
   if (p.x < 0.0 || p.y < 0.0 || p.x > uSheet.x || p.y > uSheet.y) {
     // soft drop shadow of the sheet on the desk
     vec2 q = p - vec2(3.0, 5.0) / uZoom * uDpr;
@@ -294,7 +325,7 @@ void main() {
   }
   vec2 uv = p / uSheet;
   vec3 R;
-  if (uZoom >= 1.0) R = texture(uComp, uv).rgb;
+  if (uZoom >= 1.0 || uExport == 1 && uExpScale <= 1.0) R = texture(uComp, uv).rgb;
   else {
     // zoomed out, one screen pixel covers several sheet pixels: average 4 taps
     vec2 d = 0.5 / (uZoom * uSheet);
@@ -322,9 +353,33 @@ void main() {
 
 // sum deposited and suspended pigment: "dried" state for saving
 const FS_DRIED = HDR + `
-uniform sampler2D uFK, uFS, uDK, uDS;
+uniform sampler2D uFK, uFS, uDK, uDS; uniform int uActive;
 layout(location = 0) out vec4 oK; layout(location = 1) out vec4 oS;
-void main() { ivec2 P = ivec2(gl_FragCoord.xy); oK = texelFetch(uDK, P, 0) + texelFetch(uFK, P, 0); oS = texelFetch(uDS, P, 0) + texelFetch(uFS, P, 0); }`;
+void main() { ivec2 P = ivec2(gl_FragCoord.xy); float a = float(uActive); oK = texelFetch(uDK, P, 0) + a * texelFetch(uFK, P, 0); oS = texelFetch(uDS, P, 0) + a * texelFetch(uFS, P, 0); }`;
+
+// a photo turned into pigment: each pixel becomes a unit layer of a transparent paint whose
+// masstone over white is that pixel (the Kubelka-Munk inversion km.js uses for pigments)
+const FS_IMPORT = HDR + `
+uniform sampler2D uImg; uniform vec2 uOut;
+layout(location = 0) out vec4 oK; layout(location = 1) out vec4 oS;
+float acoth(float x) { return 0.5 * log((x + 1.0) / (x - 1.0)); }
+void main() {
+  vec3 c = texture(uImg, gl_FragCoord.xy / uOut).rgb;
+  vec3 rw = clamp(mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c)), 0.002, 0.995);
+  vec3 rb = rw * 0.05, K, S;
+  for (int i = 0; i < 3; i++) {
+    float w = rw[i], b0 = rb[i], a = 0.5 * (w + (b0 - w + 1.0) / b0), b = sqrt(a * a - 1.0);
+    S[i] = acoth((b * b - (a - w) * (a - 1.0)) / (b * (1.0 - w))) / b; K[i] = S[i] * (a - 1.0);
+  }
+  float m = K.r + K.g + K.b + S.r + S.g + S.b;
+  oK = vec4(K, m * 0.15); oS = vec4(S, m * 0.6);
+}`;
+
+// merge a layer into the one below (pigment amounts add, scaled by the upper layer's opacity)
+const FS_MERGE = HDR + `
+uniform sampler2D uAK, uAS, uBK, uBS; uniform float uOpacity;
+layout(location = 0) out vec4 oK; layout(location = 1) out vec4 oS;
+void main() { ivec2 P = ivec2(gl_FragCoord.xy); oK = texelFetch(uBK, P, 0) + uOpacity * texelFetch(uAK, P, 0); oS = texelFetch(uBS, P, 0) + uOpacity * texelFetch(uAS, P, 0); }`;
 
 function compile(gl, fs) {
   const mk = (type, src) => {
@@ -360,13 +415,16 @@ export class Sim {
     this.floatRead = !!gl.getExtension('EXT_color_buffer_float');
     if (!this.floatRead && !gl.getExtension('EXT_color_buffer_half_float')) throw new Error('This device cannot render to floating-point textures (EXT_color_buffer_float).');
     this.vao = gl.createVertexArray();
-    this.prog = { flux: compile(gl, FS_FLUX), water: compile(gl, FS_WATER), transfer: compile(gl, FS_TRANSFER), stamp: compile(gl, FS_STAMP), stampD: compile(gl, FS_STAMP_D), comp: compile(gl, FS_COMP), screen: compile(gl, FS_SCREEN), probe: compile(gl, FS_PROBE), dried: compile(gl, FS_DRIED) };
-    this.comp = this.tex(W, H, 'SRGB8_ALPHA8');
+    this.prog = { flux: compile(gl, FS_FLUX), water: compile(gl, FS_WATER), transfer: compile(gl, FS_TRANSFER), stamp: compile(gl, FS_STAMP), stampD: compile(gl, FS_STAMP_D), comp: compile(gl, FS_COMP), screen: compile(gl, FS_SCREEN), probe: compile(gl, FS_PROBE), dried: compile(gl, FS_DRIED), thumb: compile(gl, FS_THUMB), merge: compile(gl, FS_MERGE), import: compile(gl, FS_IMPORT) };
+    // two sRGB colour buffers: layers composite into them alternately, the top one lands in comp
+    this.comp = this.tex(W, H, 'SRGB8_ALPHA8'); this.comp2 = this.tex(W, H, 'SRGB8_ALPHA8');
     this.paperCol = [1, 1, 1]; this.litAmt = 0;
-    const pp = () => ({ t: [this.tex(), this.tex()], i: 0, get cur() { return this.t[this.i]; }, get nxt() { return this.t[1 - this.i]; }, flip() { this.i = 1 - this.i; } });
-    this.s = { W: pp(), FK: pp(), FS: pp(), DK: pp(), DS: pp() };
-    this.F = this.tex();
     this.fbos = new Map();
+    // water and suspended pigment are shared: only the active layer is ever wet. Each layer
+    // owns its deposited pigment (DK, DS); s.DK / s.DS point at the active layer's.
+    this.s = { W: this.pp(), FK: this.pp(), FS: this.pp() };
+    this.layers = []; this.layer = null;
+    this.F = this.tex();
     this.setPaper(paper);
     this.params = { evap: 0.045, edge: 2.5, absorb: 0.00012, cap: 0.22, capDiff: 0.1, evapS: 0.022, diff: 0.16, pin: 0.5, hk: 0.006, c: 0.2, damp: 0.94, down: 0.0006, up: 0.0005, grav: [0, 0] };
     this.speed = 1; this.dryBoost = 0; this.maxSub = 6;
@@ -378,7 +436,134 @@ export class Sim {
     this.stepsDone = 0; this.wetTime = 0;
     for (const k in this.s) for (const t of this.s[k].t) this.clearTex(t);
     this.clearTex(this.F);
+    this.setLayer(this.addLayer());
     this.compose();
+  }
+
+  pp() { return { t: [this.tex(), this.tex()], i: 0, get cur() { return this.t[this.i]; }, get nxt() { return this.t[1 - this.i]; }, flip() { this.i = 1 - this.i; } }; }
+
+  // ---- layers ----
+  /** Create an empty layer at `index` (default: above the active one). Not undoable by itself. */
+  // A layer owns one K and one S texture. The active layer borrows two shared scratch
+  // textures as its ping-pong partners (s.DK, s.DS); when it stops being active its latest
+  // state is copied home, so a layer costs 2 textures instead of 4.
+  addLayer(index, name) {
+    this.nLayers = (this.nLayers || 0) + 1;
+    const L = { id: ++Sim.lid, name: name || 'Layer ' + this.nLayers, K: this.tex(), S: this.tex(), visible: true, opacity: 1 };
+    this.clearTex(L.K); this.clearTex(L.S);
+    const i = index ?? (this.layer ? this.layers.indexOf(this.layer) + 1 : this.layers.length);
+    this.layers.splice(i, 0, L);
+    return L;
+  }
+  /** Make L the layer brushes paint on (wet paint on the previous one dries first). */
+  setLayer(L) {
+    if (!L || L === this.layer) return;
+    this.dryNow();
+    this.parkLayer();
+    this.scratch ??= { K: this.tex(), S: this.tex() };
+    this.blitFull(L.K, this.scratch.K); this.blitFull(L.S, this.scratch.S);
+    const pp = (own, scr) => ({ t: [own, scr], i: 0, get cur() { return this.t[this.i]; }, get nxt() { return this.t[1 - this.i]; }, flip() { this.i = 1 - this.i; } });
+    this.layer = L; this.s.DK = pp(L.K, this.scratch.K); this.s.DS = pp(L.S, this.scratch.S);
+    this.compose();
+  }
+  /** Copy the active layer's latest state into its own textures. */
+  parkLayer() {
+    const L = this.layer; if (!L) return;
+    for (const pp of [this.s.DK, this.s.DS]) if (pp.i === 1) { this.blitFull(pp.t[1], pp.t[0]); pp.i = 0; }
+  }
+  kOf(L) { return L === this.layer ? this.s.DK.cur : L.K; }
+  sOf(L) { return L === this.layer ? this.s.DS.cur : L.S; }
+  freeLayer(L) { this.dropTex(L.K); this.dropTex(L.S); }
+  /** Most layers a sheet this size gets (about 256 MB of layer textures). */
+  get maxLayers() { return Math.max(2, Math.min(16, Math.floor(256e6 / (this.W * this.H * 16)))); }
+  /** Undoable layer operations, recorded as op entries in the same history as strokes. */
+  opRecord(op) {
+    this.dryNow();
+    for (const r of this.redo) this.freeRecord(r, true);
+    this.redo = []; this.rec = null;
+    this.undo.push({ op, tiles: [] });
+    this.trimOps();
+  }
+  trimOps() { while (this.undo.length > 120) this.freeRecord(this.undo.shift(), false); }
+  newLayerOp() {
+    const L = this.addLayer(); const i = this.layers.indexOf(L), prev = this.layer;
+    this.setLayer(L);
+    this.opRecord({
+      undo: () => { this.layers.splice(this.layers.indexOf(L), 1); this.setLayer(prev && this.layers.includes(prev) ? prev : this.layers[0]); this.compose(); },
+      redo: () => { this.layers.splice(i, 0, L); this.setLayer(L); this.compose(); },
+      free: (inRedo) => { if (inRedo) this.freeLayer(L); },
+    });
+    return L;
+  }
+  deleteLayerOp(L) {
+    if (this.layers.length < 2) return false;
+    this.dryNow();
+    const i = this.layers.indexOf(L);
+    const del = () => { this.layers.splice(this.layers.indexOf(L), 1); if (this.layer === L) this.setLayer(this.layers[Math.max(0, i - 1)]); this.compose(); };
+    del();
+    this.opRecord({ undo: () => { this.layers.splice(i, 0, L); this.setLayer(L); this.compose(); }, redo: del, free: (inRedo) => { if (!inRedo) this.freeLayer(L); } });
+    return true;
+  }
+  moveLayerOp(L, to) {
+    const from = this.layers.indexOf(L); to = Math.max(0, Math.min(this.layers.length - 1, to));
+    if (from === to) return;
+    const mv = (a, b) => { this.layers.splice(a, 1); this.layers.splice(b, 0, L); this.compose(); };
+    this.dryNow(); mv(from, to);
+    this.opRecord({ undo: () => mv(to, from), redo: () => mv(from, to), free: () => {} });
+  }
+  /** Merge L into the layer below it. */
+  mergeDownOp(L) {
+    const i = this.layers.indexOf(L); if (i <= 0) return false;
+    const B = this.layers[i - 1];
+    this.setLayer(B);
+    const backup = { K: this.tex(), S: this.tex() };
+    this.blitFull(this.kOf(B), backup.K); this.blitFull(this.sOf(B), backup.S);
+    const merge = () => {
+      this.setLayer(B);
+      this.use('merge'); this.bind('uAK', L.K); this.bind('uAS', L.S); this.bind('uBK', this.s.DK.cur); this.bind('uBS', this.s.DS.cur); this.f1('uOpacity', L.visible ? L.opacity : 0);
+      this.draw([this.s.DK.nxt, this.s.DS.nxt], [0, 0, this.W, this.H]); this.s.DK.flip(); this.s.DS.flip();
+      this.blitFull(this.s.DK.cur, this.s.DK.nxt); this.blitFull(this.s.DS.cur, this.s.DS.nxt);
+      this.layers.splice(this.layers.indexOf(L), 1); this.compose();
+    };
+    merge();
+    this.opRecord({
+      undo: () => { this.setLayer(B); for (const [src, pp] of [[backup.K, this.s.DK], [backup.S, this.s.DS]]) for (const t of pp.t) this.blitFull(src, t); this.layers.splice(this.layers.indexOf(B) + 1, 0, L); this.setLayer(L); },
+      redo: merge,
+      free: (inRedo) => { this.dropTex(backup.K); this.dropTex(backup.S); if (!inRedo) this.freeLayer(L); },
+    });
+    return true;
+  }
+  /** Replace the active layer with an image (ImageBitmap / canvas) turned into pigment. */
+  importImage(img) {
+    const gl = this.gl, t = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, t); gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, img);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    const u = this.use('import'); this.bind('uImg', t); gl.uniform2f(u.uOut, this.W, this.H);
+    this.draw([this.s.DK.nxt, this.s.DS.nxt], [0, 0, this.W, this.H]); this.s.DK.flip(); this.s.DS.flip();
+    this.blitFull(this.s.DK.cur, this.s.DK.nxt); this.blitFull(this.s.DS.cur, this.s.DS.nxt);
+    gl.deleteTexture(t);
+    this.compose();
+  }
+  setLayerProps(L, props) { Object.assign(L, props); this.compose(); }
+  blitFull(from, to) {
+    const gl = this.gl;
+    this.bindBlit(from, to);
+    gl.blitFramebuffer(0, 0, this.W, this.H, 0, 0, this.W, this.H, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null); gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+  }
+  /** Small RGBA8 picture of one layer over white (top row first). */
+  layerThumb(L, w, h) {
+    const gl = this.gl, t = this.tex(w, h, 'RGBA8');
+    const u = this.use('thumb');
+    this.bind('uDK', this.kOf(L)); this.bind('uDS', this.sOf(L)); this.bind('uFK', this.s.FK.cur); this.bind('uFS', this.s.FS.cur);
+    this.i1('uActive', L === this.layer ? 1 : 0); gl.uniform2f(u.uOut, w, h);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo([t])); gl.viewport(0, 0, w, h);
+    gl.bindVertexArray(this.vao); gl.drawArrays(gl.TRIANGLES, 0, 3);
+    const px = new Uint8Array(w * h * 4); gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null); this.dropTex(t);
+    return px;
   }
 
   tex(w = this.W, h = this.H, fmt = 'RGBA16F') {
@@ -388,6 +573,13 @@ export class Sim {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     return t;
+  }
+
+  /** Bind read / draw framebuffers for a blit. Both are created first: creating one binds it
+   *  to FRAMEBUFFER (read and draw), which would silently replace the read side. */
+  bindBlit(from, to) {
+    const gl = this.gl, r = this.fbo([from]), d = this.fbo([to]);
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, r); gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, d);
   }
 
   fbo(texs) {
@@ -461,7 +653,7 @@ export class Sim {
     const gl = this.gl;
     for (const k in this.s) {
       const s = this.s[k];
-      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, this.fbo([s.cur])); gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.fbo([s.nxt]));
+      this.bindBlit(s.cur, s.nxt);
       gl.blitFramebuffer(rect[0], rect[1], rect[2], rect[3], rect[0], rect[1], rect[2], rect[3], gl.COLOR_BUFFER_BIT, gl.NEAREST);
     }
     gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null); gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
@@ -511,7 +703,7 @@ export class Sim {
   keep(keys, r) {
     const gl = this.gl;
     for (const k of keys) {
-      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, this.fbo([this.s[k].nxt])); gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.fbo([this.s[k].cur]));
+      this.bindBlit(this.s[k].nxt, this.s[k].cur);
       gl.blitFramebuffer(r[0], r[1], r[2], r[3], r[0], r[1], r[2], r[3], gl.COLOR_BUFFER_BIT, gl.NEAREST);
     }
     gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null); gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
@@ -637,31 +829,35 @@ export class Sim {
   get wet() { return !!this.active; }
 
   // ---- undo: tiles copied to an atlas on the GPU ----
+  // A stroke record holds the 128 px tiles it (and the water it left) touched, for W, FK, FS
+  // and its layer's DK, DS. Layer operations are op records with undo / redo / free.
+  static KEYS = ['W', 'FK', 'FS', 'DK', 'DS'];
   initUndo() {
     const tw = Math.ceil(this.W / TILE), th = Math.ceil(this.H / TILE);
     const slots = Math.ceil(tw * th * 1.15) + 4, cols = Math.ceil(Math.sqrt(slots)), rows = Math.ceil(slots / cols);
     this.atlas = { cols, rows, free: Array.from({ length: cols * rows }, (_, i) => cols * rows - 1 - i), tex: {} };
-    for (const k in this.s) this.atlas.tex[k] = this.tex(cols * TILE, rows * TILE);
+    for (const k of Sim.KEYS) this.atlas.tex[k] = this.tex(cols * TILE, rows * TILE);
   }
   blitTile(fromTex, fx, fy, toTex, tx, ty, w, h) {
     const gl = this.gl;
-    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, this.fbo([fromTex])); gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.fbo([toTex]));
+    this.bindBlit(fromTex, toTex);
     gl.blitFramebuffer(fx, fy, fx + w, fy + h, tx, ty, tx + w, ty + h, gl.COLOR_BUFFER_BIT, gl.NEAREST);
   }
   slotXY(slot) { return [(slot % this.atlas.cols) * TILE, Math.floor(slot / this.atlas.cols) * TILE]; }
+  freeRecord(r, inRedo) { for (const t of r.tiles) this.atlas.free.push(t.slot); r.op?.free?.(inRedo); }
   allocSlot() {
     while (!this.atlas.free.length) {
       // evict the oldest history
       const old = this.undo.length && this.undo[0] !== this.rec ? this.undo.shift() : null;
       if (!old) return -1;
-      for (const t of old.tiles) this.atlas.free.push(t.slot);
+      this.freeRecord(old, false);
     }
     return this.atlas.free.pop();
   }
   copyTiles(tiles, toAtlas) {
     for (const t of tiles) {
       const [ax, ay] = this.slotXY(t.slot), x = t.tx * TILE, y = t.ty * TILE, w = Math.min(TILE, this.W - x), h = Math.min(TILE, this.H - y);
-      for (const k in this.s) {
+      for (const k of Sim.KEYS) {
         if (toAtlas) this.blitTile(this.s[k].cur, x, y, this.atlas.tex[k], ax, ay, w, h);
         else for (const dst of this.s[k].t) this.blitTile(this.atlas.tex[k], ax, ay, dst, x, y, w, h);
       }
@@ -670,11 +866,12 @@ export class Sim {
   }
   /** Start an undo step (call when a stroke begins). */
   begin() {
-    for (const r of this.redo) for (const t of r.tiles) this.atlas.free.push(t.slot);
+    for (const r of this.redo) this.freeRecord(r, true);
     this.redo = [];
-    this.rec = { tiles: [], keys: new Set() };
+    this.rec = { tiles: [], keys: new Set(), layer: this.layer };
     this.undo.push(this.rec);
     if (this.active) this.saveTiles(this.active);
+    this.trimOps();
   }
   saveTiles(r) {
     if (!this.rec) return;
@@ -688,8 +885,11 @@ export class Sim {
     if (add.length) this.copyTiles(add, true);
   }
   swapRecord(from, to) {
+    if (from.op) { (to === this.redo ? from.op.undo : from.op.redo)(); to.push(from); return true; }
+    // a stroke on another layer: that layer becomes the active one (its wet state is dry now)
+    if (from.layer && from.layer !== this.layer && this.layers.includes(from.layer)) this.setLayer(from.layer);
     // save current state of from's tiles into a new record, restore from's tiles
-    const rec = { tiles: [], keys: new Set(from.keys) };
+    const rec = { tiles: [], keys: new Set(from.keys), layer: from.layer };
     for (const t of from.tiles) { const slot = this.allocSlot(); if (slot < 0) return false; rec.tiles.push({ tx: t.tx, ty: t.ty, slot }); }
     this.copyTiles(rec.tiles, true);
     if (this.active) this.sync(this.active);
@@ -715,26 +915,40 @@ export class Sim {
     return this.swapRecord(r, this.undo);
   }
   /** Undo the last step without keeping it for redo. */
-  discardLast() { if (this.undoStep()) { const r = this.redo.pop(); for (const t of r.tiles) this.atlas.free.push(t.slot); } }
+  discardLast() { if (this.undoStep()) this.freeRecord(this.redo.pop(), true); }
   get canUndo() { return this.undo.length > 0 && !this.undo.at(-1).broken; }
   get canRedo() { return this.redo.length > 0; }
 
-  /** Wipe the sheet (keeps undo: it is one big step). */
+  /** Clear the active layer (one undo step). */
   clearAll() {
+    this.dryNow();
     this.begin(); this.saveTiles([0, 0, this.W, this.H]);
-    for (const k in this.s) for (const t of this.s[k].t) this.clearTex(t);
+    for (const k of Sim.KEYS) for (const t of this.s[k].t) this.clearTex(t);
     this.clearTex(this.F); this.active = null; this.queue.length = 0;
     this.compose();
   }
 
   // ---- rendering ----
-  /** Recomposite a rect of the sheet (default: all of it) into the sRGB colour texture. */
-  compose(r = [0, 0, this.W, this.H], target = this.comp, wetShow = 1) {
-    if (!r) return;
-    const gl = this.gl, s = this.s, u = this.use('comp');
-    for (const [n, t] of [['uW', s.W.cur], ['uFK', s.FK.cur], ['uFS', s.FS.cur], ['uDK', s.DK.cur], ['uDS', s.DS.cur]]) this.bind(n, t);
-    gl.uniform3fv(u.uPaperCol, this.paperCol); gl.uniform2f(u.uSheet, this.W, this.H); this.f1('uWetShow', wetShow);
-    this.draw([target], r);
+  /**
+   * Recomposite a rect of the sheet (default: all of it): each visible layer is laid over
+   * what is below it with Kubelka-Munk, alternating between two buffers so the top layer
+   * lands in `targets[0]`.
+   */
+  compose(r = [0, 0, this.W, this.H], targets = [this.comp, this.comp2], wetShow = 1) {
+    if (!r || !this.layers) return targets[0];
+    const gl = this.gl, s = this.s, vis = this.layers.filter((l) => l.visible && l.opacity > 0);
+    const n = Math.max(1, vis.length);
+    let base = null;
+    for (let i = 0; i < n; i++) {
+      const L = vis[i], tgt = targets[(n - 1 - i) % 2], u = this.use('comp');
+      this.bind('uW', s.W.cur); this.bind('uFK', s.FK.cur); this.bind('uFS', s.FS.cur);
+      this.bind('uDK', L ? this.kOf(L) : s.W.cur); this.bind('uDS', L ? this.sOf(L) : s.W.cur); this.bind('uBase', base || s.W.cur); // (never the target: a feedback loop drops the draw)
+      gl.uniform3fv(u.uPaperCol, this.paperCol); gl.uniform2f(u.uSheet, this.W, this.H); this.f1('uWetShow', wetShow);
+      this.f1('uOpacity', L ? L.opacity : 0); this.i1('uHasBase', base ? 1 : 0); this.i1('uActive', L && L === this.layer ? 1 : 0);
+      this.draw([tgt], r);
+      base = tgt;
+    }
+    return targets[0];
   }
   /** Paper colour (linear RGB) and how much of the paper's relief is shown (0 = flat). */
   setLook(paperCol, litAmt) {
@@ -769,7 +983,7 @@ export class Sim {
     gl.uniform2f(u.uSheet, this.W, this.H); gl.uniform2f(u.uCanvas, canvasW, canvasH);
     this.f1('uDpr', dpr); this.f1('uZoom', view.zoom * dpr);
     gl.uniform3fv(u.uDesk, opts.desk || [0.16, 0.16, 0.17]);
-    this.i1('uExport', opts.exportFbo ? 1 : 0);
+    this.i1('uExport', opts.exportFbo ? 1 : 0); this.f1('uExpScale', opts.scale || 1);
     gl.bindFramebuffer(gl.FRAMEBUFFER, opts.exportFbo || null);
     gl.viewport(0, 0, canvasW, canvasH);
     gl.bindVertexArray(this.vao); gl.drawArrays(gl.TRIANGLES, 0, 3);
@@ -781,26 +995,43 @@ export class Sim {
     gl.deleteTexture(t);
   }
 
-  /** RGBA8 pixels of the painting at sheet resolution, top row first, as if dry. */
+  /** RGBA8 pixels of the painting, top row first, as if dry. `scale` < 1 gives a smaller picture. */
   exportPixels(opts = {}) {
-    const gl = this.gl, c = this.tex(this.W, this.H, 'SRGB8_ALPHA8'), t = this.tex(this.W, this.H, 'RGBA8');
+    const gl = this.gl, sc = opts.scale || 1, w = Math.round(this.W * sc), h = Math.round(this.H * sc);
+    const c = [this.tex(this.W, this.H, 'SRGB8_ALPHA8'), this.tex(this.W, this.H, 'SRGB8_ALPHA8')], t = this.tex(w, h, 'RGBA8');
     const pc = this.paperCol; if (opts.paperCol) this.paperCol = opts.paperCol;
-    this.compose(undefined, c, 0); this.paperCol = pc;
-    this.render({ inv: [1, 0, 0, 0, 1, 0, 0, 0, 1], zoom: 1 }, this.W, this.H, 1, { comp: c, exportFbo: this.fbo([t]) });
-    const px = new Uint8Array(this.W * this.H * 4);
-    gl.readPixels(0, 0, this.W, this.H, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    const out = this.compose(undefined, c, opts.wetShow ?? 0); this.paperCol = pc;
+    this.render({ inv: [1, 0, 0, 0, 1, 0, 0, 0, 1], zoom: sc }, w, h, 1, { comp: out, exportFbo: this.fbo([t]), scale: 1 / sc });
+    const px = new Uint8Array(w * h * 4);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    this.dropTex(c); this.dropTex(t);
+    this.dropTex(c[0]); this.dropTex(c[1]); this.dropTex(t);
     return px;
+  }
+
+  /** Small picture of what is on screen now (wet included), read back asynchronously. */
+  async snapshot(maxW) {
+    const gl = this.gl, sc = Math.min(1, maxW / this.W), w = Math.round(this.W * sc), h = Math.round(this.H * sc), t = this.tex(w, h, 'RGBA8');
+    this.render({ inv: [1, 0, 0, 0, 1, 0, 0, 0, 1], zoom: sc }, w, h, 1, { exportFbo: this.fbo([t]), scale: 1 / sc });
+    const buf = gl.createBuffer(); gl.bindBuffer(gl.PIXEL_PACK_BUFFER, buf); gl.bufferData(gl.PIXEL_PACK_BUFFER, w * h * 4, gl.STREAM_READ);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, 0);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null); gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0); gl.flush();
+    while (gl.clientWaitSync(sync, 0, 0) === gl.TIMEOUT_EXPIRED) await new Promise((r) => setTimeout(r, 16));
+    gl.deleteSync(sync);
+    const px = new Uint8Array(w * h * 4);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, buf); gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, px); gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+    gl.deleteBuffer(buf); this.dropTex(t);
+    return { w, h, px };
   }
 
   /**
    * Dried pigment (deposited + suspended) as two half-float RGBA arrays, for saving. Async:
    * the readback goes through pixel-pack buffers and a fence, so painting never stalls on it.
    */
-  async readDried() {
+  async readDried(L = this.layer) {
     const gl = this.gl, s = this.s, n = this.W * this.H * 4, tk = this.tex(), ts = this.tex();
-    this.use('dried'); this.bind('uFK', s.FK.cur); this.bind('uFS', s.FS.cur); this.bind('uDK', s.DK.cur); this.bind('uDS', s.DS.cur);
+    this.use('dried'); this.bind('uFK', s.FK.cur); this.bind('uFS', s.FS.cur); this.bind('uDK', this.kOf(L)); this.bind('uDS', this.sOf(L)); this.i1('uActive', L === this.layer ? 1 : 0);
     this.draw([tk, ts], [0, 0, this.W, this.H]);
     const jobs = [];
     for (const t of [tk, ts]) {
@@ -837,26 +1068,45 @@ export class Sim {
     return { K: out[0], S: out[1] };
   }
 
-  /** Load a dried painting (half-float arrays from readDried). */
-  loadDried(K, S) {
-    const gl = this.gl, s = this.s;
-    for (const k in s) for (const t of s[k].t) this.clearTex(t);
-    for (const [pp, data] of [[s.DK, K], [s.DS, S]]) for (const t of pp.t) {
-      gl.bindTexture(gl.TEXTURE_2D, t); gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
-      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, this.W, this.H, gl.RGBA, gl.HALF_FLOAT, data);
+  /** Dried painting, every layer: {layers: [{name, visible, opacity, K, S}], active}. */
+  async readAll() {
+    const layers = [];
+    for (const L of this.layers) { const { K, S } = await this.readDried(L); layers.push({ name: L.name, visible: L.visible, opacity: L.opacity, K, S }); }
+    return { layers, active: this.layers.indexOf(this.layer) };
+  }
+  /** Replace all layers with saved ones (half-float arrays from readDried). Clears history. */
+  loadAll(data) {
+    const gl = this.gl;
+    this.queue.length = 0; this.active = null;
+    for (const k of ['W', 'FK', 'FS']) for (const t of this.s[k].t) this.clearTex(t);
+    for (const r of [...this.undo, ...this.redo]) this.freeRecord(r, false);
+    for (const L of this.layers) this.freeLayer(L);
+    this.layers = []; this.layer = null; this.s.DK = this.s.DS = null;
+    for (const d of data.layers) {
+      const L = this.addLayer(this.layers.length, d.name); L.visible = d.visible ?? true; L.opacity = d.opacity ?? 1;
+      for (const [t, arr] of [[L.K, d.K], [L.S, d.S]]) {
+        gl.bindTexture(gl.TEXTURE_2D, t); gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, this.W, this.H, gl.RGBA, gl.HALF_FLOAT, arr);
+      }
     }
-    this.active = null; this.undo = []; this.redo = []; this.rec = null; this.initUndoFree();
+    if (!this.layers.length) this.addLayer();
+    this.setLayer(this.layers[Math.min(this.layers.length - 1, Math.max(0, data.active ?? this.layers.length - 1))]);
+    this.undo = []; this.redo = []; this.rec = null; this.initUndoFree();
     this.compose();
   }
   initUndoFree() { const n = this.atlas.cols * this.atlas.rows; this.atlas.free = Array.from({ length: n }, (_, i) => n - 1 - i); }
 
   dispose() {
     const gl = this.gl;
-    for (const k in this.s) for (const t of this.s[k].t) gl.deleteTexture(t);
+    for (const k of ['W', 'FK', 'FS']) for (const t of this.s[k].t) gl.deleteTexture(t);
+    for (const L of this.layers) { gl.deleteTexture(L.K); gl.deleteTexture(L.S); }
+    if (this.scratch) { gl.deleteTexture(this.scratch.K); gl.deleteTexture(this.scratch.S); }
+    for (const r of this.undo) r.op?.free?.(false);
+    for (const r of this.redo) r.op?.free?.(true);
     for (const k in this.atlas.tex) gl.deleteTexture(this.atlas.tex[k]);
-    for (const t of [this.F, this.Fn, this.paperTex, this.litTex, this.probeTex, this.comp]) if (t) gl.deleteTexture(t);
+    for (const t of [this.F, this.Fn, this.paperTex, this.litTex, this.probeTex, this.comp, this.comp2]) if (t) gl.deleteTexture(t);
     for (const f of this.fbos.values()) gl.deleteFramebuffer(f);
     for (const k in this.prog) gl.deleteProgram(this.prog[k].p);
   }
 }
-Sim.ids = 0;
+Sim.ids = 0; Sim.lid = 0;
