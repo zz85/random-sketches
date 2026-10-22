@@ -90,10 +90,17 @@ Passes are wired by hand rather than through `EffectComposer`, because some read
 - Five keyframes (noon, afternoon, golden hour, magic hour, night) set sun height, sky and cloud colours, fog, ambient, bloom and grade. One slider blends neighbouring keyframes.
 - Pixel ratio is capped at 1.5 (1.25 on mobile) and drops automatically below about 40 fps.
 
+### Sound (`audio.js`)
+
+Everything is synthesised with Web Audio; there are no sample files. Browsers only allow audio after a gesture, so it starts from the ♪ button, the M key or the Sound folder (`?sound=1` starts it on the first click or key press anywhere). Music and ambience each have a volume slider.
+
+- **Ambience** follows the scene. Wind is looped pink noise in two bands (a low body and a bandpass whistle that rises with gusts), scaled by the `wind` setting, with a high-passed leaf rustle in gusts. Songbirds (short pitch-swept whistles) call by day, and more often when the flock crosses. A far low rumble comes in with the contrail. Higurashi cicadas give their falling evening call from golden hour to magic hour, and three crickets chirp at night.
+- **Music** is a slow generative piano over a detuned-saw pad at 64 bpm in D major, on the royal-road progression (IVmaj7, V, iii7, vi) that anime soundtracks lean on, then ii7, V7, I. The melody is a random walk on the pentatonic scale that lands on chord tones on the beat. At night it drops an octave, plays fewer notes and the pad darkens. Everything goes through a generated stereo hall reverb and a soft limiter.
+
 ## URL parameters
 
-`time` (0 noon … 4 night), `az` sun azimuth, `style` (summer, sakura, autumn, maple), `shot` (hillside, under, wide, path, sky), `paint` (Kuwahara radius, 0 = off), `wind`, `windDir`, `clouds`, `towers`, `leaves`, `seed`, `airy` (canopy gaps, 0 dense … 1 airy), `turned` (autumn progress, 0 early … 1 late), `birds=0`, `contrail=0`, `orbit=1`, `noui`, `pr` (pixel-ratio scale), `still=1` + `t` (render one frame at a fixed time and set `window.__ready`).
+`time` (0 noon … 4 night), `az` sun azimuth, `style` (summer, sakura, autumn, maple), `shot` (hillside, under, wide, path, sky), `paint` (Kuwahara radius, 0 = off), `wind`, `windDir`, `clouds`, `towers`, `leaves`, `seed`, `airy` (canopy gaps, 0 dense … 1 airy), `turned` (autumn progress, 0 early … 1 late), `sound=1`, `music` and `ambience` (volumes, 0 … 1), `birds=0`, `contrail=0`, `orbit=1`, `noui`, `pr` (pixel-ratio scale), `still=1` + `t` (render one frame at a fixed time and set `window.__ready`).
 
 ## Test
 
-`node smoke.js` has no dependencies. It starts a static server and headless Chromium with SwiftShader, drives it over the Chrome DevTools Protocol directly, and renders 9 still shots. A shot fails on any console or shader error, an exception, or a nearly flat frame (pixel read-back, brightness standard deviation). Shots are written to `shot_*.png` (git-ignored); the server sends `no-store` so they always reflect the current code. `ONLY=afternoon,night` runs a subset.
+`node smoke.js` has no dependencies. It starts a static server and headless Chromium with SwiftShader, drives it over the Chrome DevTools Protocol directly, and renders 12 still shots, then renders the sound graph offline for day, dusk and night (failing on silence, NaN or clipping) and checks that the ♪ button starts live audio without errors. A shot fails on any console or shader error, an exception, or a nearly flat frame (pixel read-back, brightness standard deviation). Shots are written to `shot_*.png` (git-ignored); the server sends `no-store` so they always reflect the current code. `ONLY=afternoon,night` runs a subset.

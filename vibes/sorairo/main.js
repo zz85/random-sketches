@@ -10,6 +10,7 @@ import { makeGrass } from './grass.js';
 import { makePost } from './post.js';
 import { makeBirds } from './birds.js';
 import { mulberry32 } from './tree.js';
+import { makeLiveAudio } from './audio.js';
 
 const Q = new URLSearchParams(location.search);
 const num = (k, d) => (Q.has(k) ? parseFloat(Q.get(k)) : d);
@@ -44,7 +45,7 @@ const S = {
   style: Q.get('style') || 'summer', leaves: num('leaves', 1), wind: num('wind', 1.2), windDir: num('windDir', 30),
   birds: Q.get('birds') !== '0', contrail: Q.get('contrail') !== '0',
   painterly: Q.has('paint') ? num('paint', 2.5) : (MOBILE ? 0 : 2.5), shafts: 1, bloom: 0.55, flare: 1, paper: 1, vignette: 1, saturation: 1, exposure: 1,
-  shot: Q.get('shot') || 'hillside', orbit: Q.get('orbit') === '1', seed: num('seed', 7), airy: num('airy', 1), turned: num('turned', 0.5), quality: MOBILE ? 'low' : 'high',
+  shot: Q.get('shot') || 'hillside', orbit: Q.get('orbit') === '1', seed: num('seed', 7), airy: num('airy', 1), turned: num('turned', 0.5), sound: false, music: num('music', 0.6), ambience: num('ambience', 0.8), quality: MOBILE ? 'low' : 'high',
 };
 
 // ---------- renderer
@@ -233,6 +234,8 @@ function applyLook() {
   updateContrail(shared.uTime.value, S.contrail && P.night < 0.5);
   birds.uniforms.uInk.value.copy(P.cloudShade).multiplyScalar(0.18);
   motes.m.uniforms.uNight.value = P.night;
+  sound.update({ day: 1 - P.night, night: P.night, dusk: THREE.MathUtils.smoothstep(S.time, 1.6, 2.4) * (1 - THREE.MathUtils.smoothstep(S.time, 3.3, 3.8)),
+    wind: S.wind, leaves: Math.min(1, S.leaves), trail: sky.uniforms.uTrailOn.value, flock: birds.uniforms.uFlockOn.value, music: S.music, amb: S.ambience }, shared.uTime.value);
   tree.fallUniforms.uFallRate.value = S.leaves;
   tree.group.children[2].visible = S.leaves > 0.01;
 
@@ -272,6 +275,10 @@ fTree.add(S, 'turned', 0, 1, 0.01).name('autumn turned').onChange((v) => tree.se
 fTree.add(S, 'leaves', 0, 3, 0.01).name('falling leaves');
 fTree.add(S, 'airy', 0, 1, 0.05).name('canopy gaps').onFinishChange(() => rebuildTree());
 fTree.add({ grow: () => { S.seed = (S.seed * 7 + 13) % 1000; rebuildTree(); } }, 'grow').name('grow another tree');
+const fSound = gui.addFolder('Sound');
+const soundCtl = fSound.add(S, 'sound').name('sound on (M)').onChange((v) => setSound(v));
+fSound.add(S, 'music', 0, 1, 0.01);
+fSound.add(S, 'ambience', 0, 1, 0.01).name('wind, birds, insects');
 const fLook = gui.addFolder('Look');
 fLook.add(S, 'painterly', { off: 0, 'soft gouache': 2.5, 'oil paint': 4, 'heavy brush': 6 });
 fLook.add(S, 'shafts', 0, 2, 0.01).name('light shafts');
@@ -297,9 +304,21 @@ function savePNG() {
   frame(0);
   renderer.domElement.toBlob((b) => { const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `sorairo-${Date.now()}.png`; a.click(); });
 }
+// ---------- sound: browsers only allow audio after a gesture, so it starts on a click.
+// ?sound=1 arms it to start on the first click or key anywhere.
+const sound = makeLiveAudio();
+const soundBtn = document.getElementById('sound');
+function setSound(on) {
+  S.sound = on; sound.setOn(on); soundCtl.updateDisplay();
+  soundBtn.textContent = on ? '♪ sound on' : '♪ sound off'; soundBtn.classList.toggle('on', on);
+}
+soundBtn.addEventListener('click', () => setSound(!S.sound));
+if (Q.get('sound') === '1') { const arm = () => { setSound(true); removeEventListener('pointerdown', arm); removeEventListener('keydown', arm); }; addEventListener('pointerdown', arm); addEventListener('keydown', arm); }
+if (Q.has('noui')) soundBtn.style.display = 'none';
 addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') return;
-  if (e.key === 'h' || e.key === 'H') { gui._hidden ? gui.show() : gui.hide(); document.getElementById('title').classList.toggle('gone'); }
+  if (e.key === 'm' || e.key === 'M') setSound(!S.sound);
+  if (e.key === 'h' || e.key === 'H') { gui._hidden ? gui.show() : gui.hide(); document.getElementById('title').classList.toggle('gone'); soundBtn.classList.toggle('gone'); }
   if (e.key === 'p' || e.key === 'P') savePNG();
 });
 

@@ -73,6 +73,35 @@ try {
     console.log(`${ok ? 'ok  ' : 'FAIL'} ${name.padEnd(10)} ${((Date.now() - t0) / 1000).toFixed(1)}s mean ${st.mean?.toFixed(0)} sd ${st.sd?.toFixed(0)} grass ${st.grass} cards ${st.cards}`);
     for (const e of errs) console.log('     ', e);
   }
+  // sound: render the audio graph offline for day, dusk and night; fail on silence,
+  // NaN or clipping
+  if (!process.env.ONLY || process.env.ONLY.split(',').includes('audio')) {
+    const t0 = Date.now();
+    if (!SHOTS.length) { await c.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/index.html?still=1&noui=1&pr=0.25` }); await sleep(3000); }
+    const r = await c.send('Runtime.evaluate', { awaitPromise: true, returnByValue: true, expression: `(async () => {
+      const { makeAudio } = await import('./audio.js');
+      const out = {};
+      for (const [name, s] of [['day', { day: 1, night: 0, dusk: 0, trail: 1, flock: 1 }], ['dusk', { day: 0.7, night: 0, dusk: 1 }], ['night', { day: 0, night: 1, dusk: 0 }]]) {
+        const SR = 22050, T = 14, ctx = new OfflineAudioContext(2, SR * T, SR), a = makeAudio(ctx);
+        a.setOn(true); a.update({ wind: 1.2, music: 0.6, amb: 0.8, leaves: 1, trail: 0, flock: 0, ...s }, 5); a.schedule(T);
+        const b = await ctx.startRendering(); let s2 = 0, pk = 0, bad = 0, n = 0, hi = 0, hp = 0;
+        for (let ch = 0; ch < 2; ch++) { const d = b.getChannelData(ch); for (let i = SR * 3; i < d.length; i++) { const v = d[i]; if (!isFinite(v)) bad++; s2 += v * v; pk = Math.max(pk, Math.abs(v)); hi += (v - hp) * (v - hp); hp = v; n++; } }
+        out[name] = { rms: Math.sqrt(s2 / n), peak: pk, bad, bright: Math.sqrt(hi / n) };
+      }
+      return out; })()` });
+    // live path: the button starts the real AudioContext and frames keep running
+    c.events.length = 0;
+    await c.send('Runtime.evaluate', { userGesture: true, expression: "document.getElementById('sound').click()" });
+    await sleep(1500);
+    const live = await c.send('Runtime.evaluate', { returnByValue: true, expression: "for (let i = 0; i < 5; i++) window.__sorairo.frame(0.016); [document.getElementById('sound').textContent, window.__sorairo.S.sound]" });
+    const liveErrs = c.events.filter((e) => e.method === 'Runtime.exceptionThrown' || (e.method === 'Runtime.consoleAPICalled' && e.params.type === 'error'));
+    const liveOk = live.result?.result?.value?.[1] === true && !liveErrs.length;
+    if (!liveOk) console.log('      live sound:', JSON.stringify(live.result?.result?.value), liveErrs.map((e) => JSON.stringify(e.params).slice(0, 300)));
+    const v = r.result?.result?.value, err = r.result?.exceptionDetails?.exception?.description;
+    const ok = liveOk && v && Object.values(v).every((x) => x.rms > 0.01 && x.peak < 1 && !x.bad);
+    if (!ok) failed++;
+    console.log(`${ok ? 'ok  ' : 'FAIL'} ${'audio'.padEnd(10)} ${((Date.now() - t0) / 1000).toFixed(1)}s ` + (v ? Object.entries(v).map(([k, x]) => `${k} rms ${x.rms.toFixed(3)} peak ${x.peak.toFixed(2)}`).join(', ') : err));
+  }
   c.close();
 } finally { chrome.kill(); server.close(); }
 process.exit(failed ? 1 : 0);
