@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#28282a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="description" content="Watercolour painting with a fluid simulation: wet-in-wet blooms, edge darkening, granulation, glazing and lifting, for Apple Pencil, stylus, finger or mouse.">
+<title>Aquarelle</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+  :root {
+    --bg: #28282a; --panel: rgba(36, 36, 39, 0.86); --line: rgba(255, 255, 255, 0.09); --ink: #ece9e2; --dim: #9c9a95;
+    --accent: #e8c27a; --r: 14px; --safe-t: env(safe-area-inset-top, 0px); --safe-b: env(safe-area-inset-bottom, 0px);
+    --safe-l: env(safe-area-inset-left, 0px); --safe-r: env(safe-area-inset-right, 0px);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--ink); font: 13px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; overscroll-behavior: none; touch-action: none; }
+  canvas#gl { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; touch-action: none; cursor: none; }
+  button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; touch-action: manipulation; }
+  .panel { position: fixed; background: var(--panel); -webkit-backdrop-filter: blur(18px) saturate(1.4); backdrop-filter: blur(18px) saturate(1.4);
+    border: 1px solid var(--line); border-radius: var(--r); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35); z-index: 5; }
+  .ico { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 11px; color: var(--ink); position: relative; }
+  .ico svg { width: 24px; height: 24px; stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+  .ico:hover { background: rgba(255, 255, 255, 0.06); }
+  .ico.on { background: rgba(232, 194, 122, 0.18); color: var(--accent); }
+  .ico:disabled { opacity: 0.3; cursor: default; }
+  .ico .tip { display: none; }
+
+  /* top bar */
+  #top { top: calc(10px + var(--safe-t)); right: calc(10px + var(--safe-r)); display: flex; gap: 2px; padding: 4px; }
+  #menuBtnWrap { top: calc(10px + var(--safe-t)); left: calc(10px + var(--safe-l)); display: flex; align-items: center; gap: 2px; padding: 4px; }
+  #title { font-weight: 600; letter-spacing: 0.02em; padding: 0 10px 0 4px; font-size: 14px; }
+  #status { font-size: 12px; color: var(--dim); padding: 0 8px; min-width: 64px; display: flex; align-items: center; gap: 6px; }
+  #status i { width: 8px; height: 8px; border-radius: 50%; background: #7fb3e6; display: inline-block; opacity: 0; transition: opacity .3s; }
+  #status.wet i { opacity: 1; animation: pulse 1.4s infinite ease-in-out; }
+  @keyframes pulse { 50% { transform: scale(0.6); opacity: 0.5; } }
+
+  /* tools (left) */
+  #tools { left: calc(10px + var(--safe-l)); top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 2px; padding: 4px; }
+  #tools hr { border: 0; border-top: 1px solid var(--line); margin: 4px 6px; }
+
+  /* sliders (left of tools) */
+  #sliders { left: calc(66px + var(--safe-l)); top: 50%; transform: translateY(-50%); display: flex; gap: 10px; padding: 12px 10px; }
+  .vs { width: 30px; height: 190px; position: relative; touch-action: none; cursor: ns-resize; }
+  .vs .track { position: absolute; left: 12px; top: 0; bottom: 0; width: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.12); overflow: hidden; }
+  .vs .fill { position: absolute; left: 0; right: 0; bottom: 0; background: rgba(232, 194, 122, 0.55); }
+  .vs .knob { position: absolute; left: 3px; width: 24px; height: 24px; margin-top: -12px; border-radius: 50%; background: #f3efe6; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5); }
+  .vs label { position: absolute; bottom: -22px; left: -8px; right: -8px; text-align: center; font-size: 10px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.06em; }
+  .vs .val { position: absolute; top: -20px; left: -10px; right: -10px; text-align: center; font-size: 11px; color: var(--ink); font-variant-numeric: tabular-nums; }
+  #sliders { padding-top: 28px; padding-bottom: 30px; }
+
+  /* palette (bottom) */
+  #palette { left: 50%; transform: translateX(-50%); bottom: calc(10px + var(--safe-b)); display: flex; align-items: center; gap: 8px; padding: 8px 10px; max-width: calc(100vw - 20px); }
+  #wells { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding: 2px; touch-action: pan-x; }
+  #wells::-webkit-scrollbar { display: none; }
+  .well { flex: 0 0 auto; width: 38px; height: 38px; border-radius: 50%; position: relative; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25), 0 1px 2px rgba(0, 0, 0, 0.4); transition: transform .12s; touch-action: pan-x; }
+  .well.on { box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--accent); }
+  .well.part::after { content: ''; position: absolute; right: -2px; top: -2px; width: 11px; height: 11px; border-radius: 50%; background: var(--accent); border: 2px solid var(--panel); }
+  .well:active { transform: scale(0.92); }
+  #mixWell { width: 54px; height: 54px; border-radius: 50%; flex: 0 0 auto; position: relative; overflow: hidden; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25); }
+  #mixWell canvas { width: 100%; height: 100%; display: block; }
+  #mixInfo { min-width: 92px; max-width: 150px; font-size: 11px; color: var(--dim); line-height: 1.3; }
+  #mixInfo b { color: var(--ink); font-weight: 600; display: block; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #mixToggle { font-size: 11px; padding: 5px 9px; border-radius: 8px; border: 1px solid var(--line); color: var(--dim); white-space: nowrap; }
+  #mixToggle.on { color: var(--accent); border-color: rgba(232, 194, 122, 0.5); background: rgba(232, 194, 122, 0.1); }
+  .sep { width: 1px; align-self: stretch; background: var(--line); }
+
+  /* popovers */
+  .pop { display: none; position: fixed; z-index: 10; padding: 10px; min-width: 240px; }
+  .pop.open { display: block; }
+  .pop h3 { margin: 4px 6px 8px; font-size: 11px; font-weight: 600; color: var(--dim); text-transform: uppercase; letter-spacing: 0.08em; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 6px; border-radius: 8px; }
+  .item { display: flex; align-items: center; gap: 10px; padding: 9px 8px; border-radius: 9px; width: 100%; text-align: left; }
+  .item:hover { background: rgba(255, 255, 255, 0.06); }
+  .item.on { background: rgba(232, 194, 122, 0.12); color: var(--accent); }
+  .item small { color: var(--dim); display: block; font-size: 11px; }
+  .seg { display: flex; background: rgba(255, 255, 255, 0.06); border-radius: 9px; padding: 2px; }
+  .seg button { padding: 6px 10px; border-radius: 7px; font-size: 12px; color: var(--dim); }
+  .seg button.on { background: rgba(255, 255, 255, 0.12); color: var(--ink); }
+  .chip { width: 28px; height: 28px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.3); }
+  .chip.on { box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--accent); }
+  input[type=range] { accent-color: var(--accent); width: 130px; }
+  #menu { top: calc(64px + var(--safe-t)); left: calc(10px + var(--safe-l)); width: 290px; max-height: calc(100vh - 90px); overflow: auto; }
+  #pigInfo { bottom: calc(86px + var(--safe-b)); left: 50%; transform: translateX(-50%); min-width: 260px; }
+  #help { top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(560px, calc(100vw - 30px)); max-height: calc(100vh - 40px); overflow: auto; padding: 18px 20px; }
+  #help h2 { margin: 0 0 6px; font-size: 20px; }
+  #help p { color: #cfccc4; margin: 8px 0; }
+  #help table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  #help td { padding: 4px 6px; border-top: 1px solid var(--line); vertical-align: top; }
+  #help td:first-child { color: var(--accent); white-space: nowrap; }
+  .primary { background: var(--accent); color: #2a2418; padding: 9px 16px; border-radius: 10px; font-weight: 600; }
+
+  #cursor { position: fixed; left: 0; top: 0; pointer-events: none; border-radius: 50%; border: 1px solid rgba(0, 0, 0, 0.55); box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.55); z-index: 4; display: none; transform-origin: 50% 50%; }
+  #toast { position: fixed; top: calc(70px + var(--safe-t)); left: 50%; transform: translateX(-50%); padding: 8px 14px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line);
+    font-size: 12.5px; z-index: 20; opacity: 0; transition: opacity .25s; pointer-events: none; }
+  #toast.show { opacity: 1; }
+  #err { display: none; position: fixed; inset: 0; z-index: 50; background: var(--bg); padding: 40px; font-size: 15px; }
+  body.ui-hidden .panel:not(#help) { opacity: 0; pointer-events: none; }
+  .panel { transition: opacity .2s; }
+
+  @media (max-width: 720px), (max-height: 520px) {
+    .ico { width: 40px; height: 40px; }
+    #sliders { left: auto; right: calc(10px + var(--safe-r)); }
+    .vs { height: 120px; width: 26px; }
+    .vs .track { left: 10px; } .vs .knob { left: 1px; }
+    #sliders { top: auto; bottom: calc(80px + var(--safe-b)); transform: none; gap: 6px; padding: 26px 6px 28px; opacity: 0.92; }
+    .vs label { font-size: 8.5px; letter-spacing: 0; left: -4px; right: -4px; }
+    #mixInfo, #mixToggle { display: none; }
+    .well { width: 34px; height: 34px; }
+    #mixWell { width: 44px; height: 44px; }
+    #title { display: none; }
+  }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="cursor"></div>
+<div id="toast"></div>
+<div id="err"></div>
+
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="i-round" viewBox="0 0 24 24"><path d="M19 3c-3 1.5-7 6-9.2 9.6"/><path d="M10 12.5c-2.6-.4-4.7 1.6-4.9 4.1C4.9 19 4 20 3 21c3 .3 6.6-.5 7.8-3.3.7-1.7.4-3.6-.8-5.2Z"/></symbol>
+  <symbol id="i-wash" viewBox="0 0 24 24"><path d="M10 2.5h4v7h-4z"/><path d="M9 9.5h6l1.5 3.5h-9z"/><path d="M7.5 13c-.6 3 .2 6.2 1.2 8.5M10.5 13.5c-.2 3 .1 5.6.6 8M13.5 13.5c.2 3-.1 5.6-.6 8M16.5 13c.6 3-.2 6.2-1.2 8.5"/></symbol>
+  <symbol id="i-detail" viewBox="0 0 24 24"><path d="M20 4 9.5 14.5"/><path d="M9.5 14.5c-1.2 0-2.2.6-2.6 1.8L5 21l4.7-1.9c1.2-.4 1.8-1.4 1.8-2.6z"/></symbol>
+  <symbol id="i-dry" viewBox="0 0 24 24"><path d="M21 3 13 11"/><path d="M13 11c-1.4-.6-3 0-3.6 1.4L8.5 15l2.5 2.5 2.6-.9c1.4-.6 2-2.2 1.4-3.6z"/><path d="M2.5 15.5h3M2 18.5h5.5M4 21.5h3M9 21.5h1.5M10 18.5h2"/></symbol>
+  <symbol id="i-splatter" viewBox="0 0 24 24"><circle cx="8" cy="9" r="2.3"/><circle cx="15.5" cy="7" r="1.2"/><circle cx="16" cy="15" r="3"/><circle cx="7" cy="17" r="1.4"/><circle cx="11.5" cy="12.5" r=".7"/><circle cx="19.5" cy="11" r=".7"/><circle cx="11" cy="19.5" r=".8"/></symbol>
+  <symbol id="i-water" viewBox="0 0 24 24"><path d="M12 3c3.5 4.4 6 7.7 6 10.8a6 6 0 0 1-12 0C6 10.7 8.5 7.4 12 3z"/><path d="M9 14.5a3 3 0 0 0 3 3"/></symbol>
+  <symbol id="i-lift" viewBox="0 0 24 24"><path d="M4 15c3-1 4-5 8-5s5 4 8 5"/><path d="M4 15c2 4 5 5.5 8 5.5s6-1.5 8-5.5"/><path d="M12 3v4M9 5l3-2 3 2"/></symbol>
+  <symbol id="i-erase" viewBox="0 0 24 24"><path d="M8.5 20H20"/><path d="m4.6 15.4 9.9-9.9a2 2 0 0 1 2.8 0l2.2 2.2a2 2 0 0 1 0 2.8l-7.6 7.6a3 3 0 0 1-2.1.9H8.2a2 2 0 0 1-1.4-.6l-2.2-2.2a.6.6 0 0 1 0-.8z"/><path d="m9 11 5 5"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></symbol>
+  <symbol id="i-redo" viewBox="0 0 24 24"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></symbol>
+  <symbol id="i-dryer" viewBox="0 0 24 24"><circle cx="9" cy="9" r="5.5"/><circle cx="9" cy="9" r="1.8"/><path d="M14 7h6.5v4H14M9 14.5l1.5 6.5h3L12 13.7"/></symbol>
+  <symbol id="i-tilt" viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="2" transform="rotate(-12 12 12)"/><path d="M12 9v7M9.5 13.5 12 16l2.5-2.5"/></symbol>
+  <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+  <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 15V3M7.5 7.5 12 3l4.5 4.5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></symbol>
+  <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.3a2.5 2.5 0 0 1 4.8.9c0 1.7-2.4 2.2-2.4 3.8M12 17h.01"/></symbol>
+  <symbol id="i-pick" viewBox="0 0 24 24"><path d="m14.5 6.5 3 3"/><path d="M19.4 4.6a2 2 0 0 0-2.8 0l-2.1 2.1 2.8 2.8 2.1-2.1a2 2 0 0 0 0-2.8z"/><path d="M15.9 8.1 6.5 17.5 5 21l3.5-1.5 9.4-9.4"/></symbol>
+</svg>
+
+<div id="menuBtnWrap" class="panel">
+  <button class="ico" id="menuBtn" title="Menu"><svg><use href="#i-menu"/></svg></button>
+  <span id="title">Aquarelle</span>
+  <span id="status"><i></i><span id="statusText">dry</span></span>
+</div>
+
+<div id="top" class="panel">
+  <button class="ico" id="undoBtn" title="Undo (⌘Z, two-finger tap)" disabled><svg><use href="#i-undo"/></svg></button>
+  <button class="ico" id="redoBtn" title="Redo (⇧⌘Z, three-finger tap)" disabled><svg><use href="#i-redo"/></svg></button>
+  <button class="ico" id="dryBtn" title="Hair dryer: hold to dry faster, double-tap to dry at once (F)"><svg><use href="#i-dryer"/></svg></button>
+  <button class="ico" id="tiltBtn" title="Tilt the board: wet paint runs downhill"><svg><use href="#i-tilt"/></svg></button>
+  <button class="ico" id="shareBtn" title="Export PNG"><svg><use href="#i-share"/></svg></button>
+  <button class="ico" id="helpBtn" title="Help (?)"><svg><use href="#i-help"/></svg></button>
+</div>
+
+<div id="tools" class="panel">
+  <button class="ico" data-tool="round" title="Round brush (B)"><svg><use href="#i-round"/></svg></button>
+  <button class="ico" data-tool="wash" title="Wash / mop (W)"><svg><use href="#i-wash"/></svg></button>
+  <button class="ico" data-tool="detail" title="Detail rigger (R)"><svg><use href="#i-detail"/></svg></button>
+  <button class="ico" data-tool="dry" title="Dry brush (Y)"><svg><use href="#i-dry"/></svg></button>
+  <button class="ico" data-tool="splatter" title="Splatter (S)"><svg><use href="#i-splatter"/></svg></button>
+  <hr>
+  <button class="ico" data-tool="water" title="Clear water: wet the paper, soften edges (Q)"><svg><use href="#i-water"/></svg></button>
+  <button class="ico" data-tool="lift" title="Lift: blot paint off with a damp brush (L)"><svg><use href="#i-lift"/></svg></button>
+  <button class="ico" data-tool="erase" title="Eraser (E)"><svg><use href="#i-erase"/></svg></button>
+  <button class="ico" data-tool="pick" title="Pick a colour from the painting (I, or long-press / Alt-click)"><svg><use href="#i-pick"/></svg></button>
+</div>
+
+<div id="sliders" class="panel">
+  <div class="vs" id="sSize"><div class="val"></div><div class="track"><div class="fill"></div></div><div class="knob"></div><label>Size</label></div>
+  <div class="vs" id="sWater"><div class="val"></div><div class="track"><div class="fill"></div></div><div class="knob"></div><label>Water</label></div>
+  <div class="vs" id="sPaint"><div class="val"></div><div class="track"><div class="fill"></div></div><div class="knob"></div><label>Paint</label></div>
+</div>
+
+<div id="palette" class="panel">
+  <div id="mixWell" title="On the brush"><canvas width="108" height="108"></canvas></div>
+  <div id="mixInfo"><b id="mixName">—</b><span id="mixNote"></span></div>
+  <button id="mixToggle" title="Mix: tap pigments to add them to the brush (hold Shift / long-press a well)">+ Mix</button>
+  <div class="sep"></div>
+  <div id="wells"></div>
+</div>
+
+<div id="menu" class="panel pop">
+  <h3>Painting</h3>
+  <button class="item" id="newBtn"><span>New sheet</span></button>
+  <button class="item" id="exportBtn"><span>Export PNG<small>full resolution, dried</small></span></button>
+  <h3>Paper</h3>
+  <div id="paperList"></div>
+  <div class="row"><span>Tint</span><div id="tints" style="display:flex;gap:8px"></div></div>
+  <div class="row"><span>Sheet size</span><div class="seg" id="sizeSeg"></div></div>
+  <div class="row"><span>Orientation</span><div class="seg" id="orientSeg"></div></div>
+  <h3>Behaviour</h3>
+  <div class="row"><span>Drying</span><div class="seg" id="drySeg"><button data-v="0.45">Slow</button><button data-v="1">Normal</button><button data-v="2.2">Fast</button></div></div>
+  <div class="row"><span>Brush runs dry</span><input type="checkbox" id="optLoad"></div>
+  <div class="row"><span>Fingers with a pen</span><div class="seg" id="fingerSeg"><button data-v="auto">Navigate</button><button data-v="paint">Paint</button></div></div>
+  <div class="row"><span>Stroke smoothing</span><input type="range" id="optSmooth" min="0" max="0.9" step="0.05"></div>
+  <div class="row"><span>Rotate canvas</span><input type="checkbox" id="optRotate"></div>
+  <div class="row"><span>Custom colour</span><input type="color" id="customColor" value="#3a7bd5" style="width:44px;height:30px;border:0;background:none"></div>
+</div>
+
+<div id="pigInfo" class="panel pop"></div>
+
+<div id="help" class="panel pop">
+  <h2>Aquarelle</h2>
+  <p>Real watercolour: paint is pigment carried by water. It flows while wet, pools at the edges as it dries, settles into the paper's grain, and glazes over dried layers. Watch the dot next to the title: while it pulses, the sheet is wet.</p>
+  <table>
+    <tr><td>Pencil / stylus</td><td>paints; pressure sets size and load, tilt lays the brush on its side. Hover shows the brush.</td></tr>
+    <tr><td>Finger</td><td>paints until a pen is used, then navigates (Menu → Fingers).</td></tr>
+    <tr><td>Two fingers</td><td>pan, pinch to zoom, twist to rotate. Tap: undo. Three-finger tap: redo.</td></tr>
+    <tr><td>Long-press / Alt-click</td><td>pick a colour from the painting</td></tr>
+    <tr><td>Wet-in-wet</td><td>wet the paper with clear water (Q) first, then drop paint in and watch it bloom</td></tr>
+    <tr><td>Glazing</td><td>let a layer dry (or hair-dry it) and paint over it: colours multiply like real glazes</td></tr>
+    <tr><td>Mixing</td><td>tap + Mix (or Shift-click / long-press a well) to add pigments; they mix subtractively: blue + yellow = green</td></tr>
+    <tr><td>Granulation</td><td>Ultramarine, Potter's Pink, Burnt Umber, Cerulean settle in the paper's tooth; try Rough paper</td></tr>
+    <tr><td>Keys</td><td>B W R Y S tools, Q water, L lift, E erase, I pick, [ ] size, 1–9 pigments, F dry, ⌘Z / ⇧⌘Z, Space-drag pan, wheel zoom, 0 fit, Tab hide UI</td></tr>
+  </table>
+  <p style="text-align:right;margin-top:14px"><button class="primary" id="helpClose">Paint</button></p>
+</div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <radialGradient id="a" cx="40%" cy="38%" r="60%"><stop offset="0" stop-color="#3a52c4" stop-opacity=".95"/><stop offset=".7" stop-color="#2b3fa6" stop-opacity=".75"/><stop offset=".93" stop-color="#1d2c80"/><stop offset="1" stop-color="#1d2c80" stop-opacity="0"/></radialGradient>
+    <radialGradient id="b" cx="50%" cy="50%" r="55%"><stop offset="0" stop-color="#f2a81a" stop-opacity=".8"/><stop offset=".85" stop-color="#e48f0c" stop-opacity=".7"/><stop offset=".97" stop-color="#c46f05"/><stop offset="1" stop-color="#c46f05" stop-opacity="0"/></radialGradient>
+    <radialGradient id="c" cx="50%" cy="50%" r="55%"><stop offset="0" stop-color="#c42f6e" stop-opacity=".7"/><stop offset=".85" stop-color="#b42562" stop-opacity=".65"/><stop offset=".97" stop-color="#8e1446"/><stop offset="1" stop-color="#8e1446" stop-opacity="0"/></radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="110" fill="#f3efe4"/>
+  <circle cx="215" cy="215" r="135" fill="url(#a)"/>
+  <circle cx="320" cy="300" r="110" fill="url(#b)" style="mix-blend-mode:multiply"/>
+  <circle cx="200" cy="345" r="80" fill="url(#c)" style="mix-blend-mode:multiply"/>
+</svg>
