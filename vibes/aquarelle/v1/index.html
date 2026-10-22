@@ -21,7 +21,7 @@
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--ink); font: 13px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
     -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; overscroll-behavior: none; touch-action: none; }
-  canvas#gl { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; touch-action: none; cursor: none; }
+  canvas#gl { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: none; }
   button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; touch-action: manipulation; }
   /* no backdrop-filter: blurring what is under a panel would redo the blur on every frame the painting animates */
   .panel { position: fixed; background: var(--panel);
@@ -87,9 +87,9 @@
   .chip { width: 28px; height: 28px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.3); }
   .chip.on { box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--accent); }
   input[type=range] { accent-color: var(--accent); width: 130px; }
-  #menu { top: calc(64px + var(--safe-t)); left: calc(10px + var(--safe-l)); width: 290px; max-height: calc(100vh - 90px); overflow: auto; }
+  #menu { top: calc(64px + var(--safe-t)); left: calc(10px + var(--safe-l)); width: 290px; max-height: calc(100% - 90px); overflow: auto; }
   #pigInfo { bottom: calc(86px + var(--safe-b)); left: 50%; transform: translateX(-50%); min-width: 260px; }
-  #help { top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(560px, calc(100vw - 30px)); max-height: calc(100vh - 40px); overflow: auto; padding: 18px 20px; }
+  #help { top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(560px, calc(100vw - 30px)); max-height: calc(100% - 40px); overflow: auto; padding: 18px 20px; }
   #help h2 { margin: 0 0 6px; font-size: 20px; }
   #help p { color: #cfccc4; margin: 8px 0; }
   #help table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
@@ -126,6 +126,8 @@
 <div id="err"></div>
 
 <svg width="0" height="0" style="position:absolute">
+    <symbol id="i-fs" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></symbol>
+  <symbol id="i-fsexit" viewBox="0 0 24 24"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></symbol>
   <symbol id="i-round" viewBox="0 0 24 24"><path d="M19 3c-3 1.5-7 6-9.2 9.6"/><path d="M10 12.5c-2.6-.4-4.7 1.6-4.9 4.1C4.9 19 4 20 3 21c3 .3 6.6-.5 7.8-3.3.7-1.7.4-3.6-.8-5.2Z"/></symbol>
   <symbol id="i-wash" viewBox="0 0 24 24"><path d="M10 2.5h4v7h-4z"/><path d="M9 9.5h6l1.5 3.5h-9z"/><path d="M7.5 13c-.6 3 .2 6.2 1.2 8.5M10.5 13.5c-.2 3 .1 5.6.6 8M13.5 13.5c.2 3-.1 5.6-.6 8M16.5 13c.6 3-.2 6.2-1.2 8.5"/></symbol>
   <symbol id="i-detail" viewBox="0 0 24 24"><path d="M20 4 9.5 14.5"/><path d="M9.5 14.5c-1.2 0-2.2.6-2.6 1.8L5 21l4.7-1.9c1.2-.4 1.8-1.4 1.8-2.6z"/></symbol>
@@ -156,6 +158,7 @@
   <button class="ico" id="dryBtn" title="Hair dryer: hold to dry faster, double-tap to dry at once (F)"><svg><use href="#i-dryer"/></svg></button>
   <button class="ico" id="tiltBtn" title="Tilt the board: wet paint runs downhill"><svg><use href="#i-tilt"/></svg></button>
   <button class="ico" id="shareBtn" title="Export PNG"><svg><use href="#i-share"/></svg></button>
+  <button class="ico" id="fsBtn" title="Full screen"><svg><use href="#i-fs"/></svg></button>
   <button class="ico" id="helpBtn" title="Help (?)"><svg><use href="#i-help"/></svg></button>
 </div>
 
@@ -201,6 +204,7 @@
   <div class="row"><span>Brush runs dry</span><input type="checkbox" id="optLoad"></div>
   <div class="row"><span>Fingers with a pen</span><div class="seg" id="fingerSeg"><button data-v="auto">Navigate</button><button data-v="paint">Paint</button></div></div>
   <div class="row"><span>Stroke smoothing</span><input type="range" id="optSmooth" min="0" max="0.9" step="0.05"></div>
+  <div class="row"><span>Full screen on first touch</span><input type="checkbox" id="optFs"></div>
   <div class="row"><span>Rotate canvas</span><input type="checkbox" id="optRotate"></div>
   <div class="row"><span>Custom colour</span><input type="color" id="customColor" value="#3a7bd5" style="width:44px;height:30px;border:0;background:none"></div>
 </div>

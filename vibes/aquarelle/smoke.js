@@ -379,7 +379,62 @@ try {
   await c.send('Emulation.setTouchEmulationEnabled', { enabled: false });
   await c.send('Emulation.setDeviceMetricsOverride', { width: VW, height: VH, deviceScaleFactor: 1, mobile: false });
 
-  // 16. offline: register the service worker, reload offline
+  // 16. pen-to-paint alignment, full screen and resizing, on both interfaces (this one and v1/)
+  await c.send('Emulation.setDeviceMetricsOverride', { width: 632, height: 840, deviceScaleFactor: 2, mobile: true });
+  const colAt = (x) => ev(`(() => { __aq.render(); const c = document.querySelector('#gl'), gl = __aq.sim.gl, r = c.getBoundingClientRect(), sx = c.width / r.width; const bx = Math.round((${x} - r.left) * sx), px = new Uint8Array(4 * c.height); gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.readPixels(bx, 0, 1, c.height, gl.RGBA, gl.UNSIGNED_BYTE, px); return { px: Array.from(px), top: r.top, sy: c.height / r.height, H: c.height }; })()`);
+  const dabAt = async (x, y) => {
+    const before = await colAt(x);
+    for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1, pointerType: 'pen', force: 0.8 });
+    await sleep(500); await ev('__aq.sim.dryNow(); true');
+    const after = await colAt(x);
+    let lo = 1e9, hi = -1;
+    for (let row = 0; row < after.H; row++) { const i = row * 4, d = Math.abs(after.px[i] - before.px[i]) + Math.abs(after.px[i + 1] - before.px[i + 1]) + Math.abs(after.px[i + 2] - before.px[i + 2]); if (d > 40) { const y2 = after.top + (after.H - 1 - row + 0.5) / after.sy; lo = Math.min(lo, y2); hi = Math.max(hi, y2); } }
+    return hi < 0 ? null : (lo + hi) / 2 - y;
+  };
+  for (const app of ['index.html', 'v1/index.html']) {
+    c.events.length = 0;
+    await c.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/${app}?fresh=1&nohelp=1&nosw=1&nosave=1` });
+    for (let i = 0; i < 150 && !(await ev('!!window.__ready').catch(() => false)); i++) await sleep(100);
+    await sleep(300);
+    await ev(`(() => { if (__aq.S.sel) { __aq.setMode('paint'); __aq.setTool('paint'); __aq.selectBrush('round'); } else __aq.setTool('round'); __aq.choosePigment('payne'); Object.assign(__aq.S.brush.round, { size: 6, water: 0.3, paint: 0.9 }); return true; })()`);
+    // a canvas box taller than innerHeight, as 100vh is on Android Chrome with its address bar showing
+    await ev(`(() => { const c = document.querySelector('#gl'); c.style.setProperty('height', '940px', 'important'); c.style.setProperty('bottom', 'auto', 'important'); return true; })()`);
+    await sleep(1200);
+    const offs = [await dabAt(300, 220), await dabAt(300, 700)];
+    check(offs.every((o) => o != null && Math.abs(o) < 3), `${app}: paint lands under the pen (canvas taller than the window)`, offs.map((o) => (o == null ? 'none' : o.toFixed(1))).join(', ') + ' px');
+    await ev(`(() => { const c = document.querySelector('#gl'); c.style.removeProperty('height'); c.style.removeProperty('bottom'); return true; })()`);
+    await sleep(1200);
+    const offs2 = [await dabAt(320, 260), await dabAt(320, 650)];
+    check(offs2.every((o) => o != null && Math.abs(o) < 3), `${app}: and after the window changes size`, offs2.map((o) => (o == null ? 'none' : o.toFixed(1))).join(', ') + ' px');
+    // full screen button in and out
+    const fb = async () => ev(`(() => { const b = document.querySelector('#fsBtn').getBoundingClientRect(); return [b.left + b.width / 2, b.top + b.height / 2, b.width]; })()`);
+    let b = await fb();
+    check(b[2] > 20, `${app}: full screen button`);
+    for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x: b[0], y: b[1], button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1 });
+    await sleep(500);
+    const inFs = await ev('!!document.fullscreenElement');
+    b = await fb();
+    for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x: b[0], y: b[1], button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1 });
+    await sleep(500);
+    check(inFs && !(await ev('!!document.fullscreenElement')), `${app}: full screen on and off from the button`);
+    // a resize mid-stroke leaves the page where it is; refitted once the pen lifts
+    await sleep(800);
+    const v0 = await ev('[__aq.view.x, __aq.view.y, __aq.view.z]');
+    await c.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: 200, y: 400, button: 'left', buttons: 1, clickCount: 1, pointerType: 'pen', force: 0.6 });
+    await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 220, y: 400, button: 'left', buttons: 1, pointerType: 'pen', force: 0.6 });
+    await ev(`(() => { const c = document.querySelector('#gl'); c.style.setProperty('height', '760px', 'important'); c.style.setProperty('bottom', 'auto', 'important'); return true; })()`);
+    await sleep(1200);
+    const v1 = await ev('[__aq.view.x, __aq.view.y, __aq.view.z]');
+    await c.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 220, y: 400, button: 'left', buttons: 0, clickCount: 1, pointerType: 'pen' });
+    let refit = false;
+    for (let i = 0; i < 30 && !refit; i++) { await sleep(150); refit = await ev(`(() => { const v = [__aq.view.x, __aq.view.y, __aq.view.z], b = __aq.box.h; __aq.fit(); const f = [__aq.view.x, __aq.view.y, __aq.view.z]; [__aq.view.x, __aq.view.y, __aq.view.z] = v; return b === 760 && v.every((q, i) => Math.abs(q - f[i]) < 1e-6); })()`); }
+    check(v1.every((v, i) => Math.abs(v - v0[i]) < 1e-6) && refit, `${app}: a resize mid-stroke waits for the pen to lift`);
+    await ev(`(() => { const c = document.querySelector('#gl'); c.style.removeProperty('height'); c.style.removeProperty('bottom'); return true; })()`);
+    check(errors().length === 0, `${app}: no console errors`, errors().join(' | '));
+  }
+  await c.send('Emulation.setDeviceMetricsOverride', { width: VW, height: VH, deviceScaleFactor: 1, mobile: false });
+
+  // 17. offline: register the service worker, reload offline
   check(await load('nohelp=1'), 'load with service worker');
   for (let i = 0; i < 50 && !(await ev('!!navigator.serviceWorker.controller')); i++) await sleep(200);
   if (!(await ev('!!navigator.serviceWorker.controller'))) { await load('nohelp=1'); await sleep(500); }

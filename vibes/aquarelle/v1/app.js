@@ -18,7 +18,7 @@ function fatal(msg) { const e = $('#err'); e.style.display = 'block'; e.innerHTM
 // ---------- settings ----------
 const SIZES = { S: [1200, 900], M: [1600, 1200], L: [2400, 1800] };
 const TINTS = { white: [1, 1, 1], natural: [0.95, 0.94, 0.905], cream: [0.94, 0.905, 0.82], grey: [0.74, 0.73, 0.70], blue: [0.70, 0.75, 0.79], black: [0.17, 0.17, 0.18] };
-const DEF = { tool: 'round', paper: 'cold', tint: 'white', texture: false, sheet: 'M', drying: 1, runDry: true, fingers: 'auto', smooth: 0.3, rotate: true, pig: ['ultra'], weights: [1],
+const DEF = { autoFs: /Android/i.test(navigator.userAgent) && matchMedia('(pointer: coarse)').matches, tool: 'round', paper: 'cold', tint: 'white', texture: false, sheet: 'M', drying: 1, runDry: true, fingers: 'auto', smooth: 0.3, rotate: true, pig: ['ultra'], weights: [1],
   brush: Object.fromEntries(Object.entries(BRUSHES).map(([k, b]) => [k, { size: b.size, water: b.water, paint: b.paint }])), customs: [], helpSeen: false };
 let S;
 try { S = { ...DEF, ...JSON.parse(localStorage.getItem('aquarelle-classic:settings') || '{}') }; } catch { S = { ...DEF }; }
@@ -55,29 +55,56 @@ function applyLook() { sim.setLook(TINTS[S.tint].map(srgbToLinear), S.texture ? 
 
 // ---------- view ----------
 
+// The canvas is sized and mapped from its measured box, never from 100vh / innerHeight: on
+// Chrome for Android 100vh is the height with the address bar hidden, so with the bar
+// showing the image was stretched and paint landed below the pen (26 px at the top of a
+// 7" screen, 84 px at the bottom). view.x/y stay in client (page) coordinates.
+const box = { x: 0, y: 0, w: innerWidth, h: innerHeight };
+function measure() {
+  const r = canvas.getBoundingClientRect();
+  box.x = r.left; box.y = r.top; box.w = r.width || innerWidth; box.h = r.height || innerHeight;
+}
 function resize() {
+  measure();
   dpr = Math.min(window.devicePixelRatio || 1, 2);
-  canvas.width = Math.round(innerWidth * dpr); canvas.height = Math.round(innerHeight * dpr);
+  canvas.width = Math.round(box.w * dpr); canvas.height = Math.round(box.h * dpr);
+  dpr = canvas.height / box.h; // the exact scale after rounding, so the mapping has no drift
   needsRender = true;
 }
+/** Resize: keep the page under the pen mid-stroke, refit afterwards if the view was not moved. */
+let fitPending = false;
+function onResize() {
+  const cx = box.x + box.w / 2, cy = box.y + box.h / 2;
+  resize();
+  // mid-stroke the page stays exactly where it is on screen (the line keeps following the
+  // pen); it is refitted when the pen lifts
+  if (stroke) { fitPending = true; return; }
+  if (!userMovedView) { fit(); return; }
+  // a view you moved yourself: keep what was at the old centre at the new centre
+  view.x += box.x + box.w / 2 - cx; view.y += box.y + box.h / 2 - cy; needsRender = true;
+}
 function fit() {
-  const pad = innerWidth < 720 ? 16 : 90, W = sim.W, H = sim.H;
-  const z = Math.min((innerWidth - pad * 2) / W, (innerHeight - pad * 1.6 - 60) / H);
-  view.z = z; view.r = 0; view.x = (innerWidth - W * z) / 2; view.y = (innerHeight - H * z) / 2 - (innerWidth < 720 ? 10 : 6);
+  const vw = box.w, vh = box.h, pad = vw < 720 ? 16 : 90, W = sim.W, H = sim.H;
+  const z = Math.min((vw - pad * 2) / W, (vh - pad * 1.6 - 60) / H);
+  view.z = z; view.r = 0; view.x = box.x + (vw - W * z) / 2; view.y = box.y + (vh - H * z) / 2 - (vw < 720 ? 10 : 6);
   needsRender = true;
 }
 const toSheet = (cx, cy) => { const c = Math.cos(view.r), s = Math.sin(view.r), dx = cx - view.x, dy = cy - view.y; return { x: (c * dx + s * dy) / view.z, y: (-s * dx + c * dy) / view.z }; };
 const toScreen = (sx, sy) => { const c = Math.cos(view.r), s = Math.sin(view.r); return { x: view.z * (c * sx - s * sy) + view.x, y: view.z * (s * sx + c * sy) + view.y }; };
+/** Canvas pixel (CSS px from the canvas's own corner) -> sheet. */
 function invMat() {
   const c = Math.cos(view.r), s = Math.sin(view.r), z = view.z, a = c / z, b = s / z, cc = -s / z, d = c / z;
-  return [a, cc, 0, b, d, 0, -(a * view.x + b * view.y), -(cc * view.x + d * view.y), 1];
+  const tx = view.x - box.x, ty = view.y - box.y;
+  return [a, cc, 0, b, d, 0, -(a * tx + b * ty), -(cc * tx + d * ty), 1];
 }
 function zoomAt(cx, cy, f) {
   const nz = Math.min(12, Math.max(0.15, view.z * f)); const p = toSheet(cx, cy); view.z = nz;
   const q = toScreen(p.x, p.y); view.x += cx - q.x; view.y += cy - q.y; needsRender = true;
 }
 resize(); fit();
-addEventListener('resize', () => { resize(); if (!userMovedView) fit(); });
+addEventListener('resize', onResize);
+window.visualViewport?.addEventListener('resize', onResize);
+new ResizeObserver(() => { const r = canvas.getBoundingClientRect(); if (Math.abs(r.width - box.w) > 0.5 || Math.abs(r.height - box.h) > 0.5) onResize(); }).observe(canvas);
 let userMovedView = false;
 
 // ---------- brush state ----------
@@ -188,6 +215,7 @@ function endStroke() {
   if (!stroke) return;
   for (const q of stroke.sm.finish()) emit(q);
   stroke = null;
+  if (fitPending) { fitPending = false; if (!userMovedView) fit(); }
   updateUndoButtons(); scheduleSave();
 }
 
@@ -195,7 +223,7 @@ function endStroke() {
 function pickAt(cx, cy) {
   render();
   const px = new Uint8Array(4 * 25);
-  const x = Math.round(cx * dpr), y = Math.round(canvas.height - cy * dpr);
+  const x = Math.round((cx - box.x) * dpr), y = Math.round(canvas.height - (cy - box.y) * dpr);
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   gl.readPixels(Math.max(0, x - 2), Math.max(0, y - 2), 5, 5, gl.RGBA, gl.UNSIGNED_BYTE, px);
   let r = 0, g = 0, b = 0; for (let i = 0; i < 25; i++) { r += px[i * 4]; g += px[i * 4 + 1]; b += px[i * 4 + 2]; }
@@ -446,7 +474,7 @@ for (const id in sliders) {
 function showSizePreview(size) {
   const c = $('#cursor'), r = Math.max(2, size * view.z);
   c.style.display = 'block'; c.style.width = c.style.height = 2 * r + 'px';
-  c.style.transform = `translate(${innerWidth / 2 - r}px, ${innerHeight / 2 - r}px)`;
+  c.style.transform = `translate(${box.x + box.w / 2 - r}px, ${box.y + box.h / 2 - r}px)`;
 }
 function hideSizePreview() { $('#cursor').style.display = 'none'; }
 
@@ -564,6 +592,7 @@ function buildMenu() {
   $('#optTexture').checked = S.texture; $('#optTexture').onchange = (e) => { S.texture = e.target.checked; applyLook(); saveSettings(); };
   $('#optLoad').checked = S.runDry; $('#optLoad').onchange = (e) => { S.runDry = e.target.checked; saveSettings(); };
   $('#optSmooth').value = S.smooth; $('#optSmooth').oninput = (e) => { S.smooth = +e.target.value; saveSettings(); };
+  $('#optFs').checked = S.autoFs; $('#optFs').onchange = (e) => { S.autoFs = e.target.checked; saveSettings(); if (S.autoFs) setFullscreen(true); };
   $('#optRotate').checked = S.rotate; $('#optRotate').onchange = (e) => { S.rotate = e.target.checked; if (!S.rotate) { view.r = 0; needsRender = true; } saveSettings(); };
 }
 $('#newBtn').addEventListener('click', () => { sim.clearAll(); needsRender = true; updateUndoButtons(); closePops(); scheduleSave(); toast('New sheet — undo brings the old one back'); });
@@ -667,6 +696,31 @@ async function restore() {
 }
 addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && dirty) { sim.dryNow(); save(); } });
 
+
+// ---------- fullscreen ----------
+// Fullscreen API where the browser has it (Android, desktop, iPad Safari with the webkit
+// prefix); an installed app already runs full screen from its manifest.
+const fsEl = () => document.fullscreenElement || document.webkitFullscreenElement;
+const fsAvail = () => !!(document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen);
+// installed to the home screen (Chrome also reports display-mode: fullscreen while the Fullscreen API is active, hence the fsEl check)
+const standalone = () => !fsEl() && (matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches || navigator.standalone);
+async function setFullscreen(on) {
+  try {
+    if (on && !fsEl()) { const d = document.documentElement; await (d.requestFullscreen ? d.requestFullscreen({ navigationUI: 'hide' }) : d.webkitRequestFullscreen()); }
+    else if (!on && fsEl()) await (document.exitFullscreen ? document.exitFullscreen() : document.webkitExitFullscreen());
+  } catch (e) { console.info('fullscreen refused', e.message); }
+}
+function updateFsButton() { const b = $('#fsBtn'); if (!b) return; b.style.display = fsAvail() && !standalone() ? '' : 'none'; b.classList.toggle('on', !!fsEl()); b.querySelector('use').setAttribute('href', fsEl() ? '#i-fsexit' : '#i-fs'); }
+for (const ev of ['fullscreenchange', 'webkitfullscreenchange']) document.addEventListener(ev, () => { updateFsButton(); setTimeout(onResize, 60); });
+$('#fsBtn')?.addEventListener('click', (e) => { e.stopPropagation(); setFullscreen(!fsEl()); });
+// first touch goes full screen (a browser only allows it from a tap), if the preference is on
+let fsTried = false;
+document.addEventListener('pointerdown', () => {
+  if (fsTried || !S.autoFs || !fsAvail() || standalone() || fsEl()) return;
+  fsTried = true; setFullscreen(true);
+}, true);
+updateFsButton();
+
 // ---------- frame loop ----------
 let lastT = performance.now();
 const statusEl = $('#status'), statusText = $('#statusText');
@@ -702,5 +756,5 @@ requestAnimationFrame(frame);
 if ('serviceWorker' in navigator && !qs.has('nosw') && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
 
 // test / debugging hook
-window.__aq = { get sim() { return sim; }, view, S, get stroke() { return stroke; }, fit, setTool, choosePigment, render, redraw: () => { needsRender = true; }, exportPNG, save, toSheet, toScreen, get penSeen() { return penSeen; } };
+window.__aq = { box, get dpr() { return dpr; }, setFullscreen, get sim() { return sim; }, view, S, get stroke() { return stroke; }, fit, setTool, choosePigment, render, redraw: () => { needsRender = true; }, exportPNG, save, toSheet, toScreen, get penSeen() { return penSeen; } };
 window.__ready = true;

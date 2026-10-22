@@ -31,6 +31,7 @@ const DEF = {
   pig: ['ultra'], weights: [1], customs: [], history: [], colOpacity: 0.15, colGran: 0.15,
   drying: 1, runDry: true, fingers: 'auto', smooth: 0.3, rotate: true, right: false, cursor: true, pressure: 1, quick: true, record: true,
   helpSeen: false, currentId: null,
+  autoFs: /Android/i.test(navigator.userAgent) && matchMedia('(pointer: coarse)').matches,
   // pen mode (notes): nib, ink colour, highlighter colour, size per nib
   mode: 'paint', pen: { nib: 'ballpoint', col: '#141414', mark: '#ffe24a', size: Object.fromEntries(Object.entries(INKS).map(([k, v]) => [k, v.size])), customs: [] },
   eink: null,
@@ -107,19 +108,42 @@ function newDoc(W, H, name, pattern = 0) {
 }
 
 // ---------- view ----------
+// The canvas is sized and mapped from its measured box, never from 100vh / innerHeight: on
+// Chrome for Android 100vh is the height with the address bar hidden, so with the bar
+// showing the image was stretched and paint landed below the pen (26 px at the top of a
+// 7" screen, 84 px at the bottom). view.x/y stay in client (page) coordinates.
+const box = { x: 0, y: 0, w: innerWidth, h: innerHeight };
+function measure() {
+  const r = canvas.getBoundingClientRect();
+  box.x = r.left; box.y = r.top; box.w = r.width || innerWidth; box.h = r.height || innerHeight;
+}
 function resize() {
+  measure();
   dpr = Math.min(window.devicePixelRatio || 1, 2);
-  canvas.width = Math.round(innerWidth * dpr); canvas.height = Math.round(innerHeight * dpr);
+  canvas.width = Math.round(box.w * dpr); canvas.height = Math.round(box.h * dpr);
+  dpr = canvas.height / box.h; // the exact scale after rounding, so the mapping has no drift
   needsRender = true;
+}
+/** Resize: keep the page under the pen mid-stroke, refit afterwards if the view was not moved. */
+let fitPending = false;
+function onResize() {
+  const cx = box.x + box.w / 2, cy = box.y + box.h / 2;
+  resize();
+  // mid-stroke the page stays exactly where it is on screen (the line keeps following the
+  // pen); it is refitted when the pen lifts
+  if (stroke) { fitPending = true; return; }
+  if (!userMovedView) { fit(); return; }
+  // a view you moved yourself: keep what was at the old centre at the new centre
+  view.x += box.x + box.w / 2 - cx; view.y += box.y + box.h / 2 - cy; needsRender = true;
 }
 const barH = () => $('#bar').getBoundingClientRect().height;
 function fit() {
   if (!sim) return;
-  const top = barH(), side = innerWidth < 700 ? 58 : 76, W = sim.W, H = sim.H;
-  const bottom = S.mode === 'pen' ? ($('#penBar').getBoundingClientRect().height || 110) + 16 : innerWidth < 700 ? 20 : 40;
-  const aw = innerWidth - side * 2, ah = innerHeight - top - bottom;
+  const vw = box.w, vh = box.h, top = barH(), side = vw < 700 ? 58 : 76, W = sim.W, H = sim.H;
+  const bottom = S.mode === 'pen' ? ($('#penBar').getBoundingClientRect().height || 110) + 16 : vw < 700 ? 20 : 40;
+  const aw = vw - side * 2, ah = box.y + vh - top - bottom;
   const z = Math.min(aw / W, ah / H);
-  view.z = z; view.r = 0; view.x = side + (aw - W * z) / 2; view.y = top + (ah - H * z) / 2 + (S.mode === 'pen' ? 4 : (innerWidth < 700 ? 10 : 20));
+  view.z = z; view.r = 0; view.x = box.x + side + (aw - W * z) / 2; view.y = top + (ah - H * z) / 2 + (S.mode === 'pen' ? 4 : (vw < 700 ? 10 : 20));
   if (view.f < 0) view.x += W * z;
   needsRender = true;
 }
@@ -127,16 +151,20 @@ function fit() {
 function fwd() { const c = Math.cos(view.r), s = Math.sin(view.r), z = view.z, f = view.f; return [z * c * f, z * s * f, -z * s, z * c]; } // columns: [a b; c d] as [m00 m10 m01 m11]
 const toScreen = (sx, sy) => { const [a, b, c, d] = fwd(); return { x: a * sx + c * sy + view.x, y: b * sx + d * sy + view.y }; };
 const toSheet = (cx, cy) => { const [a, b, c, d] = fwd(), det = a * d - b * c, x = cx - view.x, y = cy - view.y; return { x: (d * x - c * y) / det, y: (-b * x + a * y) / det }; };
+/** Canvas pixel (CSS px from the canvas's own corner) -> sheet. */
 function invMat() {
   const [a, b, c, d] = fwd(), det = a * d - b * c, ia = d / det, ib = -b / det, ic = -c / det, id = a / det;
-  return [ia, ib, 0, ic, id, 0, -(ia * view.x + ic * view.y), -(ib * view.x + id * view.y), 1];
+  const tx = view.x - box.x, ty = view.y - box.y;
+  return [ia, ib, 0, ic, id, 0, -(ia * tx + ic * ty), -(ib * tx + id * ty), 1];
 }
 function zoomAt(cx, cy, f) {
   const p = toSheet(cx, cy); view.z = Math.min(12, Math.max(0.1, view.z * f));
   const q = toScreen(p.x, p.y); view.x += cx - q.x; view.y += cy - q.y; needsRender = true; userMovedView = true;
 }
 resize();
-addEventListener('resize', () => { resize(); if (!userMovedView) fit(); });
+addEventListener('resize', onResize);
+window.visualViewport?.addEventListener('resize', onResize);
+new ResizeObserver(() => { const r = canvas.getBoundingClientRect(); if (Math.abs(r.width - box.w) > 0.5 || Math.abs(r.height - box.h) > 0.5) onResize(); }).observe(canvas);
 
 // ---------- brush ----------
 let loaded;
@@ -293,6 +321,7 @@ function endStroke() {
   if (stroke.tool === 'paint' && current().mode === 0) pushHistory(S.pig.length === 1 ? S.pig[0] : null);
   if (stroke.tool === 'pen' && S.pen.nib !== 'highlighter') S.pen.customs = [S.pen.col, ...S.pen.customs.filter((c) => c !== S.pen.col)].slice(0, 6);
   stroke = null;
+  if (fitPending) { fitPending = false; if (!userMovedView) fit(); }
   updateUndo(); scheduleSave(); thumbsDirty = true;
 }
 
@@ -333,7 +362,7 @@ function quickShape() {
 let picking = false;
 function pickAt(cx, cy) {
   render();
-  const px = new Uint8Array(4 * 25), x = Math.round(cx * dpr), y = Math.round(canvas.height - cy * dpr);
+  const px = new Uint8Array(4 * 25), x = Math.round((cx - box.x) * dpr), y = Math.round(canvas.height - (cy - box.y) * dpr);
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   gl.readPixels(Math.max(0, x - 2), Math.max(0, y - 2), 5, 5, gl.RGBA, gl.UNSIGNED_BYTE, px);
   let r = 0, g = 0, b = 0; for (let i = 0; i < 25; i++) { r += px[i * 4]; g += px[i * 4 + 1]; b += px[i * 4 + 2]; }
@@ -619,7 +648,7 @@ for (const id in SLIDERS) {
 function showSizePreview() {
   const c = $('#cursor'), r = brushRadiusPx();
   c.style.display = 'block'; c.style.width = c.style.height = 2 * r + 'px'; c.style.borderStyle = 'solid';
-  c.style.transform = `translate(${innerWidth / 2 - r}px, ${(innerHeight + barH()) / 2 - r}px)`;
+  c.style.transform = `translate(${box.x + box.w / 2 - r}px, ${(box.y + box.h + barH()) / 2 - r}px)`;
 }
 
 // ---------- popovers ----------
@@ -852,6 +881,7 @@ function buildActions() {
   chk('#optFlip', () => view.f < 0, (v) => { const c = toSheet(innerWidth / 2, innerHeight / 2); view.f = v ? -1 : 1; const q = toScreen(c.x, c.y); view.x += innerWidth / 2 - q.x; view.y += innerHeight / 2 - q.y; needsRender = true; });
   chk('#optRecord', () => S.record, (v) => (S.record = v));
   chk('#optRight', () => S.right, (v) => { S.right = v; document.body.classList.toggle('right', v); });
+  chk('#optFs', () => !!S.autoFs, (v) => { S.autoFs = v; if (v) setFullscreen(true); });
   chk('#optEink', () => !!S.eink, (v) => { S.eink = v; applyTheme(); });
   chk('#optCursor', () => S.cursor, (v) => { S.cursor = v; updateCursor(); });
   chk('#optQuick', () => S.quick, (v) => (S.quick = v));
@@ -1030,6 +1060,31 @@ $('#importFile').onchange = async (e) => {
   return d;
 };
 
+
+// ---------- fullscreen ----------
+// Fullscreen API where the browser has it (Android, desktop, iPad Safari with the webkit
+// prefix); an installed app already runs full screen from its manifest.
+const fsEl = () => document.fullscreenElement || document.webkitFullscreenElement;
+const fsAvail = () => !!(document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen);
+// installed to the home screen (Chrome also reports display-mode: fullscreen while the Fullscreen API is active, hence the fsEl check)
+const standalone = () => !fsEl() && (matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches || navigator.standalone);
+async function setFullscreen(on) {
+  try {
+    if (on && !fsEl()) { const d = document.documentElement; await (d.requestFullscreen ? d.requestFullscreen({ navigationUI: 'hide' }) : d.webkitRequestFullscreen()); }
+    else if (!on && fsEl()) await (document.exitFullscreen ? document.exitFullscreen() : document.webkitExitFullscreen());
+  } catch (e) { console.info('fullscreen refused', e.message); }
+}
+function updateFsButton() { const b = $('#fsBtn'); if (!b) return; b.style.display = fsAvail() && !standalone() ? '' : 'none'; b.classList.toggle('on', !!fsEl()); b.querySelector('use').setAttribute('href', fsEl() ? '#i-fsexit' : '#i-fs'); }
+for (const ev of ['fullscreenchange', 'webkitfullscreenchange']) document.addEventListener(ev, () => { updateFsButton(); setTimeout(onResize, 60); });
+$('#fsBtn')?.addEventListener('click', (e) => { e.stopPropagation(); setFullscreen(!fsEl()); });
+// first touch goes full screen (a browser only allows it from a tap), if the preference is on
+let fsTried = false;
+document.addEventListener('pointerdown', () => {
+  if (fsTried || !S.autoFs || !fsAvail() || standalone() || fsEl()) return;
+  fsTried = true; setFullscreen(true);
+}, true);
+updateFsButton();
+
 // ---------- frame loop ----------
 let lastRender = 0, lastT = performance.now(), frameEma = 16, lastAdapt = 0, lastTick = -1, wasWet = null;
 function render() { sim.render({ inv: invMat(), zoom: view.z }, canvas.width, canvas.height, dpr, { desk: S.eink ? [0.8, 0.8, 0.8] : [0.025, 0.025, 0.028] }); }
@@ -1086,7 +1141,7 @@ if ('serviceWorker' in navigator && !qs.has('nosw') && location.protocol !== 'fi
 
 // test / debugging hook
 window.__aq = {
-  get sim() { return sim; }, get doc() { return doc; }, view, S, get stroke() { return stroke; }, fit, setTool, selectBrush, choosePigment, useCustom, render,
+  box, get dpr() { return dpr; }, setFullscreen, get sim() { return sim; }, get doc() { return doc; }, view, S, get stroke() { return stroke; }, fit, setTool, selectBrush, choosePigment, useCustom, render,
   redraw: () => { needsRender = true; }, setMode, setNib, setPenColour, exportImage, save, toSheet, toScreen, openGallery, openById, createPainting, rec, togglePop, dupLayer,
   get penSeen() { return penSeen; },
 };

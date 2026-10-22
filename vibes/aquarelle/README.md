@@ -14,7 +14,7 @@ The first interface (tools on the left, pigment wells along the bottom) is kept 
 ```
 python3 -m http.server      # any static server (the service worker needs https or localhost)
 bun test                    # pigment optics, mixing, stroke resampling, paper: 10 tests
-node smoke.js               # headless Chromium (SwiftShader), real pen/touch/mouse events through the UI: 53 checks + screenshots
+node smoke.js               # headless Chromium (SwiftShader), real pen/touch/mouse events through the UI: 65 checks + screenshots
                             # SKIP_SCENE=1 skips painting the landscape; PORT= / CDP= / CHROME= to override
 ```
 
@@ -76,6 +76,11 @@ fits between the top bar and the pen bar and every control is at least 30 CSS px
 5 mm). On Android the low-latency canvas mode is off, because it can put the canvas on a
 hardware overlay plane that e-paper drivers handle badly. For the snappiest pen, set the
 B7 Pro's per-app refresh mode for the browser to its fast mode in the Bigme E-Ink centre.
+
+**Full screen.** The ⛶ button in the top bar goes full screen (Fullscreen API: Android
+Chrome, desktop, Safari); Prefs → Full screen on first touch does it with the first tap (on
+by default on Android tablets and phones; a browser only allows it from a tap). Added to the
+home screen, the app opens full screen by itself.
 
 **Brush library**: Watercolour (Round, Wash, Flat with a chisel edge, Rigger, Dry brush),
 Water (Clear water to wet the paper or soften edges, Lift to blot paint back off),
@@ -160,6 +165,14 @@ felt texture of mould-made paper, fBm mottling and short fibres. It drives every
 lighting, where water advances first, how much water a pixel holds, granulation, dry
 brush and the roughness of stroke edges. Rough has bigger, deeper cells; hot press is
 nearly flat.
+
+**Pen alignment.** The canvas is sized and mapped from its measured box, not from
+`100vh` / `innerHeight`. On Chrome for Android `100vh` is the height with the address bar
+hidden, so while the bar showed, the picture was stretched vertically and paint landed
+below the pen (26 px at the top of a 7" screen, 84 px at the bottom). A resize during a
+stroke (address bar, entering full screen) leaves the page where it is until the pen lifts.
+The smoke test reads the pixels on screen under a pen tap with the canvas box taller than
+the window and checks the paint is within 3 px of the pen.
 
 **Input** uses Pointer Events with `getCoalescedEvents()` for full-rate Pencil samples,
 pressure and `altitudeAngle`/`azimuthAngle` (or `tiltX/Y`), resampled at a fixed spacing
