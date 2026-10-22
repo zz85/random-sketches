@@ -39,7 +39,7 @@
 import { r, ZERO, add, sub, cmp, lt, le, max as rmax, min as rmin, parse, toFloat, str } from './rational.js';
 import { MAIN, active, endOf, altOptions } from './ir.js';
 import { interpret } from './interpret.js';
-import { resolveAnchor, fragmentEnd, positionAt } from './anchors.js';
+import { resolveAnchor, fragmentEnd, positionAt, findById, AnchorError } from './anchors.js';
 
 const INHERIT = ['tempo', 'transpose', 'gaps', 'minConf', 'alts', 'articulate'];
 
@@ -181,12 +181,13 @@ export function perform(score, program) {
     const clip = typeof c === 'string' ? P.clips[c] : c;
     if (!clip) throw new Error(`no clip ${c}`);
     if (clip.events) {
-      const evs = score.events.filter((e) => clip.events.includes(e.id));
-      if (!evs.length) throw new Error('clip: no events');
+      const evs = clip.events.map((id) => findById(score, 'event', id));
+      const lost = clip.events.filter((id, i) => !evs[i]);
+      if (lost.length) throw new AnchorError({ events: lost }, `${lost.length} of the clip's events are gone`);
       const fragment = evs[0].fragment ?? MAIN;
       let a = evs[0].onset, b = endOf(evs[0]);
       for (const e of evs) { a = rmin(a, e.onset); b = rmax(b, endOf(e)); }
-      return { fragment, a, b, filter: { events: clip.events } };
+      return { fragment, a, b, filter: { events: evs.map((e) => e.id) } };
     }
     const A = at(clip.from || { edge: 'start' }), B = clip.to ? at(clip.to) : { fragment: A.fragment, t: fragmentEnd(score, A.fragment) };
     if (A.fragment !== B.fragment) throw new Error('clip: from and to are in different fragments (use walk with a jump)');
@@ -247,4 +248,30 @@ export function playheadsAt(score, perf, T) {
 function mulberry(seed) {
   let s = seed >>> 0;
   return () => { s = (s + 0x6d2b79f5) >>> 0; let t = s; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 2 ** 32; };
+}
+
+/**
+ * Every anchor in a program that names nothing in this score, with where it is in the
+ * program: [{ path, anchor, why }]. Empty when the program can play. Use it after the music
+ * changed (a correction, an edit) to show which markers lost their note.
+ */
+export function checkProgram(score, program) {
+  const out = [], interp = new Map();
+  const interpOf = (f) => { if (!interp.has(f)) interp.set(f, interpret(score, { ...(program.interp?.[f] || {}), fragment: f })); return interp.get(f); };
+  const test = (a, path) => { if (!a) return; try { resolveAnchor(score, a, interpOf); } catch (e) { out.push({ path, anchor: a, why: e.message }); } };
+  const clip = (c, path) => {
+    if (typeof c === 'string') { if (!program.clips?.[c]) out.push({ path, anchor: c, why: `no clip ${c}` }); else clip(program.clips[c], `clips.${c}`); return; }
+    if (c.events) { const lost = c.events.filter((id) => !findById(score, 'event', id)); if (lost.length) out.push({ path: `${path}.events`, anchor: { events: lost }, why: `${lost.length} of the clip's events are gone` }); return; }
+    test(c.from, `${path}.from`); test(c.to, `${path}.to`);
+  };
+  (program.jumps || []).forEach((j, i) => { test(j.at, `jumps[${i}].at`); test(j.to, `jumps[${i}].to`); });
+  const walk = (n, path) => {
+    if (!n) return;
+    if (n.play !== undefined) clip(n.play, `${path}.play`);
+    if (n.walk) { test(n.walk.from, `${path}.walk.from`); test(n.walk.to, `${path}.walk.to`); (n.walk.jumps || []).forEach((j, i) => { test(j.at, `${path}.walk.jumps[${i}].at`); test(j.to, `${path}.walk.jumps[${i}].to`); }); }
+    for (const k of ['seq', 'par', 'choose']) (n[k] || []).forEach((c, i) => walk(c, `${path}.${k}[${i}]`));
+    if (n.body) walk(n.body, `${path}.body`);
+  };
+  walk(program.root, 'root');
+  return out;
 }

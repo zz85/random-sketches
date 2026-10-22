@@ -122,3 +122,71 @@ describe('IR -> StaffInk, edge cases', async () => {
   });
 });
 
+
+describe('stable ids: a saved program survives corrections', async () => {
+  const { loadFixture } = await import('../scoreshift/eval.js');
+  const { analyze, normalize, interpret: respell, yOfP } = await import('../scoreshift/omr.js');
+  const { markOriginal, collectEdits, applyEdits } = await import('../scoreshift/edits.js');
+  const { checkProgram } = await import('./playback.js');
+  const { findById, parsePageId, AnchorError } = await import('./anchors.js');
+  const read = () => markOriginal(analyze(normalize(loadFixture('minuet').img)));
+  const ir = (model) => fromScoreShift(model, buildScore(model)).score;
+
+  const a = read(), A = ir(a);
+  const evs = A.events.filter((e) => e.src.line === 0);
+  const bars = A.directions.filter((d) => d.kind === 'barline' && d.src.line === 0);
+  // a loop from bar 3's printed barline to a note in bar 5, plus a lasso of two notes
+  const program = { tempo: 120, root: { seq: [
+    { loop: 2, body: { play: { from: { barline: bars[1].id }, to: { event: evs.find((e) => e.onset.n / e.onset.d >= 3 * 0.75 + 0.25).id } } } },
+    { play: { events: [evs[12].id, evs[14].id] }, gaps: 'compress' },
+  ] } };
+  const sound = (s) => perform(s, program).notes.map((n) => `${n.midi}@${n.t.toFixed(3)}`);
+  const before = sound(A);
+
+  test('ids are keyed to the page', () => {
+    const k = parsePageId(evs[0].id);
+    expect(k).toMatchObject({ kind: 'ss', line: 0, voice: 'v1' });
+    expect(Math.abs(k.q * A.pageIds.unit - evs[0].src.x)).toBeLessThanOrEqual(A.pageIds.unit / 2);
+    expect(new Set(A.events.map((e) => e.id)).size).toBe(A.events.length);
+    expect(parsePageId(bars[1].id).kind).toBe('ssb');
+    expect(checkProgram(A, program)).toEqual([]);
+  });
+  test('deleting a note earlier on the page keeps every later id, and the program sounds the same', () => {
+    const b = read(), st = b.staves[0], gone = st.notes[1];
+    st.notes.splice(1, 1); b.notes.splice(b.notes.indexOf(gone), 1); respell(st);
+    const B = ir(b);
+    // every later event moved up one place in the list, so an index-based id would now name its neighbour
+    expect(B.events.findIndex((e) => e.id === evs[12].id)).toBe(A.events.findIndex((e) => e.id === evs[12].id) - 1);
+    const later = A.events.filter((e) => e.src.line > 0 || e.src.x > evs[2].src.x).map((e) => e.id);
+    const ids = new Set(B.events.map((e) => e.id));
+    expect(later.every((id) => ids.has(id))).toBe(true);
+    expect(B.events.length).toBe(A.events.length - 1);
+    expect(checkProgram(B, program)).toEqual([]);
+    expect(sound(B)).toEqual(before);
+  });
+  test('the same edit through a saved project file', () => {
+    const b = read(); b.staves[0].notes.splice(1, 1); respell(b.staves[0]);
+    const edits = JSON.parse(JSON.stringify(collectEdits(b))), saved = JSON.parse(JSON.stringify(program));
+    const c = read(); applyEdits(c, edits, { interpret: respell, yOfP });
+    expect(sound(ir(c)).length).toBe(before.length);
+    expect(perform(ir(c), saved).notes.map((n) => n.midi)).toEqual(perform(A, program).notes.map((n) => n.midi));
+  });
+  test('a head that moved a little is still found; a deleted one is reported, not replaced', () => {
+    const b = read(), st = b.staves[0], target = A.events.find((e) => e.id === evs[12].id);
+    const n = st.notes.find((q) => Math.abs(q.x - target.src.x) < 1);
+    n.x += 5; respell(st); // re-read a few pixels off: less than half a space (8 px)
+    const B = ir(b);
+    expect(B.events.some((e) => e.id === evs[12].id)).toBe(false);
+    expect(findById(B, 'event', evs[12].id).heads[0].d).toBe(target.heads[0].d);
+    expect(sound(B).length).toBe(before.length);
+
+    const c = read(), sc = c.staves[0];
+    sc.notes.splice(sc.notes.findIndex((q) => Math.abs(q.x - target.src.x) < 1), 1); respell(sc);
+    const C = ir(c);
+    expect(findById(C, 'event', evs[12].id)).toBe(null);
+    const lost = checkProgram(C, program);
+    expect(lost.map((l) => l.path)).toEqual(['root.seq[1].play.events']);
+    expect(lost[0].anchor.events).toEqual([evs[12].id]);
+    expect(() => perform(C, program)).toThrow(AnchorError);
+  });
+});

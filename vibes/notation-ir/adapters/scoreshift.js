@@ -11,6 +11,13 @@
 // accidental as printed. part.transpose is the written -> concert shift in semitones.
 // Grace notes take no time in ScoreShift's measures and are left out (counted in `skipped`).
 //
+// Ids are keyed to the page, not to the order events are met, so a program saved with a
+// project still points at the same notes after a correction elsewhere rebuilds the score:
+//   event    ss:L<staff line>:q<x in quarter staff spaces>:<voice>   e.g. ss:L2:q164:P1v1
+//   barline  ssb:L<staff line>:q<x>
+// (a second event at the same key gets #2, #3). anchors.js resolves such ids within half a
+// staff space when the exact one is gone, and reports them when nothing is there.
+//
 // Returns { score, byId: Map(IR event id -> ScoreShift timeline entry { e, m, tick, ... }),
 // skipped }.
 import { timeline } from '../../scoreshift/score.js';
@@ -29,6 +36,10 @@ export function fromScoreShift(model, sscore, { plan = null, from = null, title 
   const shift = plan ? plan.to.ds : from ? from.ds : 0;
   const parts = sscore.parts.filter((p) => p.measures.length);
   const score = createScore({ title, staves: 1 });
+  const S = model.space || 16, Q = S / 4;
+  score.pageIds = { unit: Q, tol: 2 }; // quarter spaces; match within half a space
+  const taken = new Set();
+  const key = (base) => { let k = base, n = 1; while (taken.has(k)) k = `${base}#${++n}`; taken.add(k); return k; };
   score.parts[0].name = 'Part 1';
   while (score.parts.length < parts.length) addPart(score, { staves: 1 });
   const byId = new Map();
@@ -52,8 +63,12 @@ export function fromScoreShift(model, sscore, { plan = null, from = null, title 
       if (mf !== fifths) { addDirection(score, 'key', T(t0), { fifths: mf }, { staff }); fifths = mf; }
       if (mc !== clef) { const c = CLEFS[mc] || CLEFS.treble; addDirection(score, 'clef', T(t0), { sign: c.sign, line: c.line, octave: c.oct }, { staff }); clef = mc; }
       t0 += len;
-      if (pi === 0 && len > 0) addDirection(score, 'barline', T(t0), { style: m.endBar && m === part.measures[part.measures.length - 1] ? 'final' : m.double ? 'double' : 'regular' },
-        { src: { x: m.endBar ? m.st.x1 : m.x1, line: m.st.index } });
+      if (pi === 0 && len > 0) {
+        const bx = m.endBar ? m.st.x1 : m.x1;
+        const d = addDirection(score, 'barline', T(t0), { style: m.endBar && m === part.measures[part.measures.length - 1] ? 'final' : m.double ? 'double' : 'regular' },
+          { src: { x: bx, line: m.st.index } });
+        d.id = key(`ssb:L${m.st.index}:q${Math.round(bx / Q)}`);
+      }
     }
 
     // events
@@ -63,8 +78,10 @@ export function fromScoreShift(model, sscore, { plan = null, from = null, title 
     for (const q of tl) {
       const { e, m, tick, ticks } = q;
       if (e.grace || !(ticks > 0)) { if (e.grace) skipped++; continue; }
+      const voice = voiceOf(q.voice ?? 0);
       const ev = addEvent(score, {
-        voice: voiceOf(q.voice ?? 0), onset: T(tick), dur: T(ticks),
+        id: key(`ss:L${m.st.index}:q${Math.round(e.x / Q)}:${voice}`),
+        voice, onset: T(tick), dur: T(ticks),
         heads: e.kind === 'note' ? e.notes.map((n) => { const w = W.notes.get(n); return { d: w.pitch.d, alter: w.pitch.alter, acc: w.acc ?? null }; }) : [],
         written: e.full ? undefined : { type: e.dur, dots: e.dots || 0, tuplet: e.tuplet || null },
         src: { x: e.x, y: e.kind === 'note' ? e.notes.reduce((s, n) => s + n.y, 0) / e.notes.length : (e.rest.box[1] + e.rest.box[3]) / 2, line: m.st.index },

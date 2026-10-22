@@ -11,7 +11,7 @@ import { Renderer, plan, describe, drawOverlay } from './render.js';
 const $ = (id) => document.getElementById(id);
 const cv = $('cv'), ov = $('ov'), ctx = cv.getContext('2d'), octx = ov.getContext('2d');
 const store = JSON.parse(localStorage.getItem('scoreshift') || '{}');
-const S = { edits: new Map(), source: null, speed: store.speed || 1, metro: !!store.metro, startTick: 0, from: store.from || 'C', to: store.to || 'Bb-clarinet', octave: 'auto', clef: store.clef || 'auto', view: 'transposed', labels: !!store.labels, zoom: 1, model: null, rend: null, name: 'score', sel: null, tempo: store.tempo || 100, score: null, sounding: null };
+const S = { edits: new Map(), programs: new Map(), source: null, speed: store.speed || 1, metro: !!store.metro, startTick: 0, from: store.from || 'C', to: store.to || 'Bb-clarinet', octave: 'auto', clef: store.clef || 'auto', view: 'transposed', labels: !!store.labels, zoom: 1, model: null, rend: null, name: 'score', sel: null, tempo: store.tempo || 100, score: null, sounding: null };
 const save = () => localStorage.setItem('scoreshift', JSON.stringify({ from: S.from, to: S.to, clef: S.clef, labels: S.labels, tempo: S.tempo, show: S.show, speed: S.speed, metro: S.metro }));
 
 for (const sel of [$('from'), $('to')]) for (const i of INSTRUMENTS) sel.add(new Option(i.name, i.id));
@@ -91,7 +91,8 @@ async function saveProject() {
   const n = S.pdf ? S.pdf.n : 1;
   for (let k = 1; k <= n; k++) { const e = S.edits.get(k) ?? (await idb.get(editKey(k)))?.edits; if (e) pages[k] = e; }
   const settings = { from: S.from, to: S.to, clef: S.clef, octave: S.octave, tempo: S.tempo, speed: S.speed };
-  const text = makeProject({ bytes: S.source.bytes, name: S.source.name, mime: S.source.mime, pages, settings });
+  const programs = Object.fromEntries([...(S.programs || new Map())].filter(([, v]) => v));
+  const text = makeProject({ bytes: S.source.bytes, name: S.source.name, mime: S.source.mime, pages, settings, programs });
   download(text, 'application/json', `${S.source.name.replace(/\.[^.]+$/, '')}.scoreshift`);
   return { pages: Object.keys(pages).length, size: text.length };
 }
@@ -112,6 +113,7 @@ async function load(blob, name, fromProject = null) {
   const bytes = new Uint8Array(await blob.arrayBuffer());
   S.source = { bytes, name: name || blob.name || 'score', mime: blob.type || (await isPdf(blob) ? 'application/pdf' : 'image/png'), key: await fileKey(bytes) };
   S.edits = new Map(fromProject ? Object.entries(fromProject.pages).map(([k, v]) => [+k, v]) : []);
+  S.programs = new Map(fromProject ? Object.entries(fromProject.programs || {}).map(([k, v]) => [+k, v]) : []);
   if (fromProject) for (const [k, v] of S.edits) idb.put(editKey(k), v ? { edits: v, name: S.source.name, saved: Date.now() } : null);
   $('saveProject').disabled = false;
   if (await isPdf(blob)) return loadPdf(blob, name);
@@ -452,11 +454,21 @@ async function loadIR() {
   return IR;
 }
 async function toIR() { const { fromScoreShift } = await loadIR(); return fromScoreShift(S.model, S.score, { ...musicOpts(), title: S.name }); }
-async function playProgram(program = {}) {
+/**
+ * Play a program over this page and keep it as the page's program (saved with the project).
+ * With no argument, plays the page's saved program. Markers whose note was deleted by a
+ * correction are reported and nothing plays.
+ */
+async function playProgram(program) {
   if (!S.model) return null;
-  const { perform } = await loadIR();
+  const { perform, checkProgram } = await loadIR();
   const { score, byId } = await toIR();
-  const p = perform(score, { tempo: S.tempo, root: { walk: {} }, ...program });
+  if (program) (S.programs ||= new Map()).set(pageNo(), program);
+  else program = S.programs?.get(pageNo()) || {};
+  const full = { tempo: S.tempo, root: { walk: {} }, ...program };
+  const lost = checkProgram(score, full);
+  if (lost.length) { setStatus(`<b>${lost.length} playback marker${lost.length > 1 ? 's' : ''} lost ${lost.length > 1 ? 'their' : 'its'} note</b> (deleted or moved by a correction): ${lost.map((l) => l.path).join(', ')}`); return { lost }; }
+  const p = perform(score, full);
   $('play').textContent = '■ Stop'; $('play').setAttribute('aria-pressed', 'true');
   player.speed = S.speed;
   let last = '';

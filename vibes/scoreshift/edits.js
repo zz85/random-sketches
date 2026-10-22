@@ -105,16 +105,20 @@ export function applyEdits(model, edits, { interpret, yOfP } = {}) {
 const b64 = (u8) => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode(...u8.subarray(i, i + 0x8000)); return btoa(s); };
 const unb64 = (s) => { const b = atob(s), u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; };
 
-/** A project: the source file's bytes, its name and type, edits per page, the settings. */
-export function makeProject({ bytes, name, mime, pages, settings }) {
-  return JSON.stringify({ format: PROJECT_FORMAT, version: PROJECT_VERSION, saved: new Date().toISOString(), name, mime, settings, pages, source: b64(bytes) });
+/**
+ * A project: the source file's bytes, its name and type, edits per page, the settings, and
+ * playback programs per page (notation-ir playback.js; anchored by page-keyed ids, so they
+ * still resolve after the page's corrections are applied).
+ */
+export function makeProject({ bytes, name, mime, pages, settings, programs }) {
+  return JSON.stringify({ format: PROJECT_FORMAT, version: PROJECT_VERSION, saved: new Date().toISOString(), name, mime, settings, pages, ...(programs && Object.keys(programs).length ? { programs } : {}), source: b64(bytes) });
 }
-/** Parse a project file; returns { bytes, name, mime, pages, settings } or null if it is not one. */
+/** Parse a project file; returns { bytes, name, mime, pages, settings, programs } or null if it is not one. */
 export function readProject(text) {
   let j; try { j = JSON.parse(text); } catch (e) { return null; }
   if (!j || j.format !== PROJECT_FORMAT) return null;
   if (j.version > PROJECT_VERSION) throw new Error(`project version ${j.version} is newer than this app`);
-  return { bytes: unb64(j.source), name: j.name, mime: j.mime, pages: j.pages || {}, settings: j.settings || {} };
+  return { bytes: unb64(j.source), name: j.name, mime: j.mime, pages: j.pages || {}, settings: j.settings || {}, programs: j.programs || {} };
 }
 
 /** Content key of a source file (same file -> same key), for the autosave. */

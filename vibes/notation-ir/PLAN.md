@@ -48,9 +48,10 @@ happen. Each step lists what has to be true before it counts as done.
 Every adapter is `from<App>(…) → IR` plus, where useful, `to<App>(IR) → { score, report }`.
 
 - **IDs.** IR event ids must map back to the app's own ids so highlighting and anchors work.
+  They must stay the same across rebuilds, so saved programs keep their anchors.
   - StaffInk: ids are `si<StaffInk id>`.
-  - ScoreShift: the adapter returns `byId` (IR id → timeline entry), because ScoreShift events
-    have no stable id.
+  - ScoreShift: ids are keyed to the page (staff line, x in quarter spaces, voice), and the
+    adapter also returns `byId` (IR id → timeline entry).
 - **Pitch.** Ink sets `acc` only. OMR and imports set `alter`. A transposing part sets
   `part.transpose` (written to concert pitch, in semitones).
 - **Expression.** `vel` holds the dynamic level only. `marks` uses the IR vocabulary:
@@ -88,9 +89,14 @@ Every adapter is `from<App>(…) → IR` plus, where useful, `to<App>(IR) → { 
    - With the printed values ignored (`written: false`), the rules reproduce the engraved
      rhythm of 14 of the 15 fixtures. The exception is `sixeight`, where the Verovio
      engraving lets a quarter cross the second beat.
-2. **Ids that survive a rebuild for ScoreShift events** (e.g. hashed from staff index + x +
-   first note), so programs and anchors saved with a project still resolve after a correction.
-   - *Done when* a program saved in a `.scoreshift` project replays after a note is edited.
+2. ~~**Ids that survive a rebuild for ScoreShift events.**~~ Done.
+   - Events are `ss:L<line>:q<x in quarter spaces>:<voice>` and barlines `ssb:L<line>:q<x>`.
+   - `findById` matches a moved head within half a staff space, preferring the same voice. A
+     deleted note returns null and is never replaced by its neighbour.
+   - `checkProgram` lists every anchor that no longer resolves, and `perform` throws
+     `AnchorError` for one.
+   - ScoreShift saves the page's program in the `.scoreshift` project (`programs`), and
+     `playProgram()` with no argument replays it, reporting any markers that lost their note.
 3. **Program UI in both apps.**
    - Put loop, jump and clip markers on the page as anchors (`{ event }` and `{ pos }` in
      StaffInk; `{ barline }` and `{ pos }` in ScoreShift), drawn through `positionAt`, with

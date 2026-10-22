@@ -217,6 +217,17 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
     await waitFor(() => b.evaluate(`!!(__ss.S.model && __ss.S.model.staves[0].notes[2])`), 20000);
     const fromProj = await b.evaluate(`({name:__ss.S.model.staves[0].notes[2].name,n1:__ss.S.model.staves[1].notes.length})`);
     check('project file reopens with its corrections', /\.scoreshift$/.test(proj.name) && fromProj.name === edited.name && fromProj.n1 === edited.n1, JSON.stringify({ proj, fromProj }));
+    // a playback program saved in the project follows its notes through the corrections
+    const prog = await b.evaluate(`(async()=>{const ir=(await __ss.toIR()).score,ev=ir.events.filter(e=>e.src.line===0);
+      const want=[ev[6],ev[8]].map(e=>e.heads.map(h=>h.d).join());
+      const p=await __ss.playProgram({root:{play:{events:[ev[6].id,ev[8].id]},gaps:'compress'}});__ss.player.stop();
+      const proj=await new Promise((res)=>{const a=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){HTMLAnchorElement.prototype.click=a;fetch(this.href).then(r=>r.text()).then(res)};__ss.saveProject();});
+      await __ss.load(new File([proj],'p.scoreshift',{type:'application/json'}),'p.scoreshift');
+      for(let i=0;i<100&&!(__ss.S.model&&__ss.S.score);i++)await new Promise(r=>setTimeout(r,100));
+      const again=await __ss.playProgram();__ss.player.stop();
+      const ir2=(await __ss.toIR()).score;const got=again.notes?again.notes.map(n=>ir2.events.find(e=>e.id===n.event)).map(e=>e.heads.map(h=>h.d).join()):[];
+      return {saved:JSON.parse(proj).programs?Object.keys(JSON.parse(proj).programs).length:0,notes:p.notes.length,again:again.notes?.length,same:JSON.stringify([...new Set(got)])===JSON.stringify(want),lost:again.lost?.length||0}})()`);
+    check('a playback program saved in the project plays the same notes after reopening', prog.saved === 1 && prog.notes === 2 && prog.again === 2 && prog.same && !prog.lost, JSON.stringify(prog));
 
     // the CODA audition sheet, if present locally (not committed): every bar adds up
     if (fs.existsSync(path.join(DIR, 'fixtures/local/coda.pdf'))) {

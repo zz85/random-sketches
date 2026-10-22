@@ -19,16 +19,47 @@ import { MAIN, fragOf, active, scoreEnd, endOf } from './ir.js';
 
 export function fragmentEnd(score, fragment = MAIN) { return scoreEnd(score, active(score, {}, fragment), fragment); }
 
+/** An anchor that names nothing in the score (the note was deleted, the bar is gone). */
+export class AnchorError extends Error {
+  constructor(anchor, why) { super(`anchor ${JSON.stringify(anchor)}: ${why}`); this.anchor = anchor; this.code = 'unresolved-anchor'; }
+}
+
+// Page-keyed ids (adapters/scoreshift.js): <kind>:L<line>:q<x>[:<voice>][#n]
+const PAGE_ID = /^(\w+):L(\d+):q(-?\d+)(?::([^#]+))?(?:#\d+)?$/;
+export const parsePageId = (id) => { const m = PAGE_ID.exec(id || ''); return m && { kind: m[1], line: +m[2], q: +m[3], voice: m[4] ?? null }; };
+
+/**
+ * The object an id names: exactly, or for a page-keyed id the nearest one of the same kind on
+ * the same staff line within score.pageIds.tol (same voice first). null when nothing is close:
+ * a deleted note is never replaced by its neighbour.
+ */
+export function findById(score, kind, id) {
+  const list = kind === 'event' ? score.events : score.directions.filter((d) => d.kind === 'barline');
+  const exact = list.find((x) => x.id === id);
+  if (exact || !score.pageIds) return exact || null;
+  const k = parsePageId(id);
+  if (!k) return null;
+  const { unit, tol = 2 } = score.pageIds;
+  let best = null, bd = Infinity;
+  for (const x of list) {
+    const p = parsePageId(x.id);
+    if (!p || p.kind !== k.kind || p.line !== k.line || x.src?.x == null) continue;
+    const d = Math.abs(x.src.x / unit - k.q) + (k.voice && p.voice !== k.voice ? 0.5 : 0); // prefer the same voice
+    if (Math.abs(x.src.x / unit - k.q) <= tol && d < bd) { bd = d; best = x; }
+  }
+  return best;
+}
+
 /** interpOf(fragment) -> interpret() result; needed only for { bar } anchors. */
 export function resolveAnchor(score, a, interpOf) {
   if (a.event) {
-    const e = score.events.find((x) => x.id === a.event);
-    if (!e) throw new Error(`anchor: no event ${a.event}`);
+    const e = findById(score, 'event', a.event);
+    if (!e) throw new AnchorError(a, 'no such event (deleted?)');
     return { fragment: fragOf(e), t: a.edge === 'end' ? endOf(e) : e.onset };
   }
   if (a.barline) {
-    const d = score.directions.find((x) => x.id === a.barline);
-    if (!d) throw new Error(`anchor: no barline ${a.barline}`);
+    const d = findById(score, 'barline', a.barline);
+    if (!d) throw new AnchorError(a, 'no such barline');
     return { fragment: fragOf(d), t: d.at };
   }
   const fragment = a.fragment ?? MAIN;
@@ -36,12 +67,12 @@ export function resolveAnchor(score, a, interpOf) {
   if (a.bar != null) {
     const ms = interpOf(fragment).measures;
     const m = ms[a.bar - 1];
-    if (!m) throw new Error(`anchor: no bar ${a.bar} in ${fragment} (${ms.length} bars)`);
+    if (!m) throw new AnchorError(a, `no bar ${a.bar} in ${fragment} (${ms.length} bars)`);
     return { fragment, t: a.edge === 'end' ? m.end : m.start };
   }
   if (a.pos) return { fragment, t: timeAtPos(score, fragment, a.pos) };
   if (a.edge) return { fragment, t: a.edge === 'end' ? fragmentEnd(score, fragment) : ZERO };
-  throw new Error(`anchor: cannot resolve ${JSON.stringify(a)}`);
+  throw new AnchorError(a, 'cannot resolve');
 }
 
 /** Source points on one line of a fragment: { x, t } from notes and printed barlines. */
@@ -55,7 +86,7 @@ function points(score, fragment, line) {
 /** Page x on a line -> score time, interpolating between the nearest source points. */
 export function timeAtPos(score, fragment, { x, line }) {
   const pts = points(score, fragment, line).sort((a, b) => a.x - b.x);
-  if (!pts.length) throw new Error(`anchor: no source positions on line ${line}`);
+  if (!pts.length) throw new AnchorError({ pos: { x, line } }, `no source positions on line ${line}`);
   if (x <= pts[0].x) return pts[0].t;
   for (let i = 1; i < pts.length; i++) {
     const p = pts[i - 1], q = pts[i];
