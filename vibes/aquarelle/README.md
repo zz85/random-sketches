@@ -9,6 +9,8 @@ ES modules and WebGL2. Installable PWA, works offline.
 
 ![scene](shot_scene.png)
 
+The first interface (tools on the left, pigment wells along the bottom) is kept at [`v1/`](v1/) for side-by-side testing; it stores its paintings separately.
+
 ```
 python3 -m http.server      # any static server (the service worker needs https or localhost)
 bun test                    # pigment optics, mixing, stroke resampling, paper: 10 tests
