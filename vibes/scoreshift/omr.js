@@ -889,9 +889,21 @@ export function analyze(norm, opts = {}) {
     if (!k && endK != null && st.key.detected !== endK && (!st.key.detected || (Math.sign(st.key.detected) === Math.sign(endK) && Math.abs(st.key.detected) < Math.abs(endK)))) k = endK;
     const fromPrev = k === endK && k != null;
     if (!k && st.key.detected && confirmed.includes(st.key.detected)) continue;
-    // in a part, two staves in a row with no key signature are a section in C / a minor (a page
-    // can end one movement and start another): no key is inferred for them
-    if (!k && sys.length < 2 && !st.key.detected && [staves[st.index - 1], staves[st.index + 1]].some((o) => o && sysOf(o).length < 2 && !o.key.detected && !o.keyChanges?.length)) continue;
+    // in a part, two staves in a row with no key signature and nothing key-like after the clef
+    // are a section in C / a minor (a page can end one movement and start another): no key is
+    // inferred for them. (On old scans a signature is often missed on two staves in a row; its
+    // glyphs are still there as ink, so those staves still get the page's key.)
+    const keyInk = (o) => {
+      const S = spaceAt(o, o.key.x0), first = Math.min(o.x1, ...notes.filter((q) => q.st === o).map((q) => q.box[0]));
+      const ya = lineY(o, 0, o.key.x0), yb = lineY(o, 4, o.key.x0);
+      return cc.comps.some((c) => {
+        if (!c || c.x0 < o.key.x0 - 0.2 * S || c.x1 > Math.min(first, o.key.x0 + 3 * S) || c.y1 - c.y0 < 1.2 * S || c.x1 - c.x0 > 1.6 * S || c.y1 <= ya || c.y0 >= yb) return false;
+        if (opts.glyphnet === false) return true;
+        const pr = classify(bin, [c.x0, c.y0, c.x1, c.y1]); // (time-signature digits are not sharps or flats)
+        return pr.sharp + pr.flat > 0.5;
+      });
+    };
+    if (!k && sys.length < 2 && !st.key.detected && !keyInk(st) && [staves[st.index - 1], staves[st.index + 1]].some((o) => o && sysOf(o).length < 2 && !o.key.detected && !o.keyChanges?.length && !keyInk(o))) continue;
     if (!k && st.key.detected) {
       const same = confirmed.filter((c) => Math.sign(c) === Math.sign(st.key.detected));
       const best = Math.min(...same.map((c) => Math.abs(Math.abs(c) - Math.abs(st.key.detected))));

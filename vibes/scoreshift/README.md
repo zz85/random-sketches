@@ -486,14 +486,19 @@ staff, key changes between movements on one page, and tighter engraving.
 
 | edition | heads found | pitch right | extra | clefs | keys |
 |---|---|---|---|---|---|
-| typeset from the MusicXML (31 pp.) | 99.5% | 98.0% → 98.3% | 16 → 12 | 287/289 | 285 → 289/289 |
-| Bärenreiter 1955 scan (24 pp.) | 97.8% | 95.4% → 95.8% | 113 → 110 | 259/259 | 253 → 257/259 |
-| Kallmeyer c.1927 scan (50 pp.) | 91.3% | 86.0% → 85.9% | 211 → 209 | 298/301 | 265 → 266/301 |
+| typeset from the MusicXML (31 pp.) | 99.5% | 98.2% | 45 → 43 | 289/289 | 287/289 |
+| Bärenreiter 1955 scan (24 pp.) | 97.7% | 95.2% → 95.6% | 145 → 142 | 259/259 | 253 → 256/259 |
+| Kallmeyer c.1927 scan (50 pp.) | 91.3% | 86.0% | 231 → 229 | 298/301 | 265 → 267/301 |
+
+(Before → after these fixes, measured on top of the slur / grace-note work of October, with the
+same evaluator on both sides. The flute editions are unchanged: 99.7% typeset, 98.8% scan.)
 
 Fixes from it: a ring closed by a sharp's stroke, a staff line and the next symbol is not a half
 note (it was hiding the second sharp of D major in tight engraving); a flat's bowl is not a
 hollow head; a stemless "whole note" right after a key glyph is a time-signature digit's loop;
-two staves in a row with no key in a part are a C / a-minor movement, not a missed key.
+two staves in a row with no key in a part, and no sharp- or flat-like ink where a key would be,
+are a C / a-minor movement, not a missed key (without the ink check this rule cost the 1927 scan
+0.2%: there a signature is often missed on two staves in a row).
 
 The evaluator changed too, and the Telemann flute numbers above are unchanged by it: notes are
 compared column by column, low to high (two voices on one staff put their heads a few pixels
