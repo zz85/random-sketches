@@ -74,7 +74,6 @@ Every adapter is `from<App>(…) → IR` plus, where useful, `to<App>(IR) → { 
 - Only the first voice per staff is written.
 - Only 3:2 and 6:4 tuplets survive.
 - There is no anacrusis: a pickup is padded with rests.
-- Durations are split greedily, not by beat (step 4).
 - Tenor and octave clefs are written as the nearest StaffInk clef.
 
 **fromStaffInk**
@@ -82,11 +81,13 @@ Every adapter is `from<App>(…) → IR` plus, where useful, `to<App>(IR) → { 
 
 ## 4. Next steps, in order
 
-1. **Beat-aware notation in `interpret`.** Split values at beat boundaries (syncopation, the
-   half-bar rule in 4/4, dotted values in 6/8). This is the biggest visible gap when OMR or
-   free-time music reaches StaffInk.
-   - *Done when* `| C4q D4h E4q |` in 4/4 is written as `D4q~D4q`, and every fixture
-     round-trips with the same beaming StaffInk would draw.
+1. ~~**Beat-aware notation in `interpret`.**~~ Done. A meter tree (bar, then beat groups,
+   then beats, then subdivisions; simple, compound and additive meters) decides how each span
+   is written. Syncopations and dotted values are accepted where the dot reaches the middle of
+   the next unit. Rests take exact beats only. Gaps merge into the rests next to them.
+   - With the printed values ignored (`written: false`), the rules reproduce the engraved
+     rhythm of 14 of the 15 fixtures. The exception is `sixeight`, where the Verovio
+     engraving lets a quarter cross the second beat.
 2. **Ids that survive a rebuild for ScoreShift events** (e.g. hashed from staff index + x +
    first note), so programs and anchors saved with a project still resolve after a correction.
    - *Done when* a program saved in a `.scoreshift` project replays after a note is edited.

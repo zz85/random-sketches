@@ -2,7 +2,7 @@
 import { test, expect, describe } from 'bun:test';
 import { r, add, eq, str, parse } from './rational.js';
 import { createScore, addEvent, addDirection, addLink, addVoice, check } from './ir.js';
-import { interpret, toText, notateDuration } from './interpret.js';
+import { interpret, toText, notateDuration, meterTree } from './interpret.js';
 import { layoutLine, fitWithGaps } from './layout.js';
 import { parseName } from './pitch.js';
 import { fromStaffInk } from './adapters/staffink.js';
@@ -233,6 +233,66 @@ describe('StaffInk adapter', () => {
   });
   test('the same ink without its meter, or as paper still being written', () => {
     expect(toText(interpret(ir, { meter: 'none', fillGaps: 'space' }), 'v1')).toBe('C4q D4q~ D4q _q rw E#4h');
-    expect(toText(interpret(ir, { meter: [{ beats: 3, unit: 4 }] }), 'v1')).toBe('| C4q D4q~ D4q | rq rh | rh E#4q~ | E4q |');
+    expect(toText(interpret(ir, { meter: [{ beats: 3, unit: 4 }] }), 'v1')).toBe('| C4q D4q~ D4q | R | rq rq E#4q~ | E4q |');
+  });
+});
+
+describe('beat-aware values', () => {
+  const play = (meter, notes, opts = {}) => {
+    const s = createScore();
+    line(s, notes);
+    return toText(interpret(s, { meter: [meter], ...opts }), 'v1');
+  };
+  const q = (n, d) => [n, d];
+  test('4/4: the middle of the bar stays visible; q h q is accepted', () => {
+    expect(play({ beats: 4, unit: 4 }, [q('C4', '1/4'), q('D4', '1/2'), q('E4', '1/4')])).toBe('| C4q D4h E4q |');
+    expect(play({ beats: 4, unit: 4 }, [q('C4', '1/4'), q('D4', '3/4')])).toBe('| C4q D4q~ D4h |');
+    expect(play({ beats: 4, unit: 4 }, [q('C4', '1/4'), q('D4', '3/8'), q('E4', '3/8')])).toBe('| C4q D4q~ D4e E4e~ E4q |');
+    expect(play({ beats: 4, unit: 4 }, [q('C4', '3/4'), q('D4', '1/4')])).toBe('| C4h. D4q |');
+    expect(play({ beats: 4, unit: 4 }, [q('C4', '5/8'), q('D4', '3/8')])).toBe('| C4h~ C4e D4e~ D4q |');
+  });
+  test('syncopation: e q e inside a half bar, tied across the middle', () => {
+    expect(play({ beats: 4, unit: 4 }, [q('C4', '1/8'), q('D4', '1/4'), q('E4', '1/8'), q('F4', '1/2')])).toBe('| C4e D4q E4e F4h |');
+    expect(play({ beats: 4, unit: 4 }, [q('C4', '1/4'), q('C4', '1/8'), q('D4', '1/4'), q('E4', '1/8'), q('F4', '1/4')])).toBe('| C4q C4e D4e~ D4e E4e F4q |');
+    expect(play({ beats: 4, unit: 4 }, [q('C4', '1/8'), q('D4', '1/4'), q('E4', '1/8'), q('F4', '1/2')], { syncopation: false })).toBe('| C4e D4e~ D4e E4e F4h |');
+    expect(play({ beats: 2, unit: 4 }, [q('C4', '1/16'), q('D4', '1/8'), q('E4', '1/16'), q('F4', '1/4')])).toBe('| C4s D4e E4s F4q |');
+  });
+  test('3/4: a half or dotted quarter on beat 2 is fine', () => {
+    expect(play({ beats: 3, unit: 4 }, [q('C4', '1/4'), q('D4', '1/2')])).toBe('| C4q D4h |');
+    expect(play({ beats: 3, unit: 4 }, [q('C4', '1/4'), q('D4', '3/8'), q('E4', '1/8')])).toBe('| C4q D4q. E4e |');
+  });
+  test('6/8: two dotted-quarter beats, never hidden', () => {
+    expect(play({ beats: 6, unit: 8 }, [q('C4', '1/4'), q('D4', '1/4'), q('E4', '1/4')])).toBe('| C4q D4e~ D4e E4q |');
+    expect(play({ beats: 6, unit: 8 }, [q('C4', '1/2'), q('D4', '1/4')])).toBe('| C4q.~ C4e D4q |');
+    expect(play({ beats: 6, unit: 8 }, [q('C4', '3/8'), q('D4', '3/8')])).toBe('| C4q. D4q. |');
+    expect(play({ beats: 6, unit: 8 }, [q('C4', '3/4')])).toBe('| C4h. |');
+  });
+  test('additive 7/8 as 2 + 2 + 3', () => {
+    expect(play({ beats: 7, unit: 8, groups: [2, 2, 3] }, [q('C4', '1/8'), q('D4', '1/4'), q('E4', '1/8'), q('F4', '3/8')])).toBe('| C4e D4e~ D4e E4e F4q. |');
+  });
+  test('rests take exact beats only', () => {
+    const s = createScore();
+    addEvent(s, { onset: '1/4', dur: '1/4', heads: [{ d: 28 }] });
+    addEvent(s, { onset: '7/8', dur: '1/8', heads: [{ d: 29 }] });
+    expect(toText(interpret(s, { meter: [{ beats: 4, unit: 4 }] }), 'v1')).toBe('| rq C4q rq re D4e |');
+    const t = createScore();
+    addEvent(t, { onset: '1/8', dur: '1/8', heads: [{ d: 28 }] });
+    expect(toText(interpret(t, { meter: [{ beats: 4, unit: 4 }], end: '1' }), 'v1')).toBe('| re C4e rq rh |');
+  });
+  test('a pickup is the end of a bar; written values win; free time stays greedy', () => {
+    expect(play({ beats: 4, unit: 4 }, [q('C4', '1/8'), q('D4', '1/4'), q('E4', '1/2')], { pickup: '3/8' })).toBe('| C4e D4q | E4h |');
+    const s = createScore();
+    addEvent(s, { onset: '1/4', dur: '3/4', heads: [{ d: 28 }], written: { type: 2, dots: 1 } });
+    expect(toText(interpret(s, { meter: [{ beats: 4, unit: 4 }] }), 'v1')).toBe('| rq C4h. |');
+    expect(toText(interpret(s, { meter: [{ beats: 4, unit: 4 }], written: false }), 'v1')).toBe('| rq C4q~ C4h |');
+    expect(toText(interpret(s, { meter: [{ beats: 4, unit: 4 }], beats: false, written: false }), 'v1')).toBe('| rq C4h. |');
+  });
+  test('the beat tree', () => {
+    const lens = (n) => n.kids().map((k) => str(k.len));
+    expect(lens(meterTree({ beats: 4, unit: 4 }))).toEqual(['1/2', '1/2']);
+    expect(lens(meterTree({ beats: 12, unit: 8 }))).toEqual(['3/4', '3/4']);
+    expect(lens(meterTree({ beats: 12, unit: 8 }).kids()[0])).toEqual(['3/8', '3/8']);
+    expect(lens(meterTree({ beats: 3, unit: 4 }))).toEqual(['1/4', '1/4', '1/4']);
+    expect(lens(meterTree({ beats: 5, unit: 4 }))).toEqual(['3/4', '1/2']);
   });
 });

@@ -16,7 +16,7 @@ adapter contract, known gaps and next steps.
 | Layer | File | Holds |
 |---|---|---|
 | Content | `ir.js` | Events on one timeline (exact rational onset and duration, in voices on staves), links between events (tie, slur, tuplet, beam), directions at a time (clef, key, meter, printed barline, dynamic). Competing readings share an `alt` group. Source geometry is kept in `src`. **No measures.** |
-| Interpretation | `interpret.js` | Decisions made on the content: the meter (as printed, overridden, or none), barlines (printed bars win and re-phase the meter, the rest are derived), a pickup, rests or empty space in gaps, how far an accidental carries (`bar` / `note` / a time window), and which reading of each `alt` group. Output: measures with a status that is reported, never repaired (`ok pickup end under over free`), plus written pieces per voice. Pieces are events cut at barlines into tied values, with tuplets inferred from the duration (1/12 is a triplet eighth, 1/20 a quintuplet sixteenth) and every head spelled. |
+| Interpretation | `interpret.js` | Decisions made on the content: the meter (as printed, overridden, or none), barlines (printed bars win and re-phase the meter, the rest are derived), a pickup, rests or empty space in gaps, how far an accidental carries (`bar` / `note` / a time window), and which reading of each `alt` group. Output: measures with a status that is reported, never repaired (`ok pickup end under over free`), plus written pieces per voice. Pieces are events cut at barlines into tied values that keep the beat visible (a meter tree: half-bar in 4/4, dotted beats in 6/8, additive groups; standard syncopations accepted; rests on exact beats), with tuplets inferred from the duration (1/12 is a triplet eighth, 1/20 a quintuplet sixteenth) and every head spelled. |
 | Layout | `layout.js` | Horizontal positions. Three modes: `engraved` (duration spacing), `proportional` (x = time) and `anchored` (stay near the ink or the printed note). All three are one least-squares fit with minimum gaps, solved exactly. |
 
 | Anchors | `anchors.js` | References that survive edits. An anchor can name a moment, a note (`{ event }`), a printed barline (`{ barline }`), the n-th bar of the interpretation (`{ bar }`), a point on the page (`{ pos: { x, line } }`, read through the notes' source positions) or a fragment end. It resolves when used, so it follows the music. `positionAt` maps score time back to a page position for drawing markers and playheads. |
@@ -55,7 +55,6 @@ toText(interpret(s, { meter: [{ beats: 2, unit: 4 }] }), 'v1'); // "| C4q D4q~ |
 
 ## Not yet
 
-- Splitting durations by beat (syncopation, the half-bar rule in 4/4). Values are currently greedy.
 - Beaming, vertical layout, line breaking, and drawing.
 - MusicXML / MIDI writers from interpreted output.
 - Live triggering. A ScoreShift hook (its `Player` has the same shape).

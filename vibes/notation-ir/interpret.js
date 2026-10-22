@@ -11,6 +11,15 @@
 //                its own note only), or { window: '1/2' } (a duration, also cut at bars) -
 //                free-time music needs a rule like this since there is no bar to end it
 //   maxDots      dots allowed when writing a duration
+//   beats        true (default): write values so the beat stays visible (see meterTree);
+//                false: greedy values, cut only at barlines
+//   syncopation  true (default): allow the standard syncopations (q h q in 4/4, e q e,
+//                s e s) instead of tying them
+//   written      true (default): keep the input's own spelling (event.written) whenever it
+//                fits, even where the beat rules would split it - a printed page or a pen
+//                stroke said so
+//
+// A meter direction may carry groups for additive meters: { beats: 7, unit: 8, groups: [2, 2, 3] }.
 //   picks        { altGroup: option } to choose a non-default reading
 //   fragment     which fragment to interpret (default 'main')
 //
@@ -23,7 +32,7 @@ import { r, ZERO, add, sub, mul, cmp, lt, le, eq, max, parse } from './rational.
 import { active, directions, directionAt, scoreEnd, endOf, staffOf } from './ir.js';
 import { midiOf, keyAlter, step, nameOf, ACC_TEXT } from './pitch.js';
 
-const DEFAULTS = { fragment: 'main', meter: 'auto', bars: 'auto', pickup: ZERO, fillGaps: 'rests', accidentals: 'bar', maxDots: 1, picks: {} };
+const DEFAULTS = { fragment: 'main', meter: 'auto', bars: 'auto', pickup: ZERO, fillGaps: 'rests', accidentals: 'bar', maxDots: 1, beats: true, syncopation: true, written: true, picks: {} };
 
 export function interpret(score, opts = {}) {
   const o = { ...DEFAULTS, ...opts };
@@ -47,7 +56,7 @@ export const capacity = (m) => r(m.beats, m.unit);
 function meterMap(score, o) {
   if (o.meter === 'none') return [];
   if (Array.isArray(o.meter)) return o.meter.map((m) => ({ ...m, at: parse(m.at ?? 0) })).sort((a, b) => cmp(a.at, b.at));
-  return directions(score, 'meter', undefined, o.fragment).map((d) => ({ at: d.at, beats: d.beats, unit: d.unit }));
+  return directions(score, 'meter', undefined, o.fragment).map((d) => ({ at: d.at, beats: d.beats, unit: d.unit, ...(d.groups ? { groups: d.groups } : {}) }));
 }
 
 const meterAt = (meters, t) => { let cur = null; for (const m of meters) { if (le(m.at, t)) cur = m; else break; } return cur; };
@@ -142,6 +151,119 @@ export function notateDuration(D, hint, maxDots = 1) {
   return out;
 }
 
+// ------------------------------------------------------------------- beats
+//
+// A bar as a tree of metrical levels: bar -> beat groups -> beats -> subdivisions. Simple
+// meters beat in 1/unit and subdivide by two; compound meters (6/8, 9/8, 12/8, 6/4: beats a
+// multiple of 3 above 3) beat in dotted values of three units; four beats group as 2 + 2 (so
+// the middle of a 4/4 or 12/8 bar stays visible), five as 3 + 2, seven as 2 + 2 + 3, or as a
+// meter's own groups. Two and three beats sit directly under the bar.
+//
+// A span is written at the highest node it fits in:
+//   - it is that node exactly                                  -> one value (h on beat 3 of 4/4)
+//   - it lies inside one child                                 -> go down into the child
+//   - notes only: it starts on a child boundary and ends on one
+//     (q h in 3/4), or is dotted and its dot reaches the middle
+//     of the next child (h. from beat 1 of 4/4, q. on beat 2 of 3/4) -> one value
+//   - notes only, syncopation: a plain value one child long,
+//     starting and ending on grandchild boundaries, crossing one
+//     child boundary (q h q in 4/4, e q e, s e s)                -> one value
+//   - otherwise it is cut at the child boundaries and each piece written the same way, tied
+// Rests take only exact nodes, so a rest never hides a beat.
+
+const GROUPING = { 4: [2, 2], 5: [3, 2], 6: [3, 3], 7: [2, 2, 3], 8: [4, 4] };
+function beatGroups(n) { if (n <= 3) return Array(n).fill(1); if (GROUPING[n]) return GROUPING[n]; const g = Array(Math.floor(n / 2) - 1).fill(2); g.push(n - 2 * g.length); return g; }
+
+export function meterTree(meter) {
+  const unit = r(1, meter.unit);
+  const bin = (start, len) => ({ start, len, kids: () => (len.d >= 256 ? [] : [bin(start, mul(len, r(1, 2))), bin(add(start, mul(len, r(1, 2))), mul(len, r(1, 2)))]) });
+  const seq = (start, lens, make) => { let t = start; return lens.map((l) => { const n = make(t, l); t = add(t, l); return n; }); };
+  if (meter.groups) {
+    // additive: groups of units, each unit subdivided by two
+    const kids = () => seq(ZERO, meter.groups.map((g) => mul(unit, r(g))), (t, l) => ({ start: t, len: l, kids: () => seq(t, Array(Math.round(l.n * meter.unit / l.d)).fill(unit), bin) }));
+    return { start: ZERO, len: r(meter.beats, meter.unit), kids };
+  }
+  const compound = meter.beats % 3 === 0 && meter.beats > 3;
+  const nBeats = compound ? meter.beats / 3 : meter.beats;
+  const beatLen = compound ? mul(unit, r(3)) : unit;
+  const beat = (start) => (compound ? { start, len: beatLen, kids: () => seq(start, [unit, unit, unit], bin) } : bin(start, beatLen));
+  const group = (start, n) => {
+    if (n === 1) return beat(start);
+    const parts = beatGroups(n);
+    return { start, len: mul(beatLen, r(n)), kids: () => seq(start, parts.map((k) => mul(beatLen, r(k))), (t, l) => group(t, Math.round(toFloatR(l) / toFloatR(beatLen)))) };
+  };
+  return group(ZERO, nBeats);
+}
+const toFloatR = (x) => x.n / x.d;
+const binary = (x) => oddPart(x.d) === 1;
+
+/** One plain or dotted value for D, or null. */
+function single(D, maxDots) {
+  const v = notateDuration(D, null, maxDots);
+  return v.length === 1 && !v[0].tuplet && !v[0].unnotatable ? v[0] : null;
+}
+
+/** Values for [s, e) (positions from the start of the bar) under a node of the meter tree. */
+function underNode(node, s, e, kind, o, out) {
+  const nEnd = add(node.start, node.len), D = sub(e, s);
+  if (eq(s, node.start) && eq(e, nEnd)) { const v = single(D, o.maxDots); if (v) { out.push(v); return; } }
+  const kids = node.kids();
+  if (!kids.length) { out.push(...notateDuration(D, null, o.maxDots)); return; }
+  const inside = kids.find((k) => le(k.start, s) && le(e, add(k.start, k.len)));
+  if (inside) { underNode(inside, s, e, kind, o, out); return; }
+  if (kind === 'note') {
+    const bounds = kids.map((k) => k.start);
+    const onKid = (t) => bounds.some((b) => eq(b, t)) || eq(t, nEnd);
+    const v = single(D, o.maxDots);
+    if (v && onKid(s)) {
+      if (onKid(e)) { out.push(v); return; }
+      const next = kids.find((k) => lt(k.start, e) && lt(e, add(k.start, k.len)));
+      const prev = kids.findIndex((k) => eq(k.start, s));
+      if (v.dots && next && kids.indexOf(next) === prev + 1 && eq(e, add(next.start, mul(next.len, r(1, 2))))) { out.push(v); return; }
+    }
+    if (v && !v.dots && o.syncopation) {
+      const crossed = kids.filter((k) => lt(s, k.start) && lt(k.start, e)).length;
+      const childLen = kids[0].len;
+      const onGrand = (t) => kids.some((k) => k.kids().some((g) => eq(g.start, t)) || eq(add(k.start, k.len), t));
+      if (crossed === 1 && kids.every((k) => eq(k.len, childLen)) && eq(D, childLen) && onGrand(s) && onGrand(e)) { out.push(v); return; }
+    }
+  }
+  // cut at the child boundaries
+  let t = s;
+  for (const k of kids) {
+    const ks = k.start, ke = add(k.start, k.len);
+    if (le(ke, t) || le(e, ks)) continue;
+    const a = max(t, ks), b = lt(e, ke) ? e : ke;
+    if (lt(a, b)) underNode(k, a, b, kind, o, out);
+    t = b;
+  }
+}
+
+/**
+ * Written values for the span [a, b) of score time inside measure m. Uses the meter tree when
+ * the bar has a meter and the span sits on the binary grid; tuplet spans and free time are
+ * written greedily.
+ */
+function notateInBar(m, a, b, kind, o, hint) {
+  const D = sub(b, a);
+  if (hint && o.written && eq(valueDur(hint), D)) return notateDuration(D, hint, o.maxDots);
+  if (!o.beats || !m?.cap || !m.meter || kind === 'space') return notateDuration(D, null, o.maxDots);
+  // position in the bar: a pickup is the end of a bar
+  const off = m.status === 'pickup' ? sub(m.cap, m.len) : ZERO;
+  const s0 = add(sub(a, m.start), off), e0 = add(sub(b, m.start), off);
+  if (![s0, e0, D].every(binary)) return notateDuration(D, null, o.maxDots);
+  const tree = meterTree(m.meter), out = [];
+  // an overfull bar: carry on into virtual bars of the same meter
+  let s = s0;
+  while (lt(s, e0)) {
+    const k = Math.floor(toFloatR(s) / toFloatR(m.cap)), base = mul(m.cap, r(k)), top = add(base, m.cap);
+    const e = lt(e0, top) ? e0 : top;
+    underNode(tree, sub(s, base), sub(e, base), kind, o, out);
+    s = e;
+  }
+  return out;
+}
+
 // ------------------------------------------------------------------- pieces
 
 function notateVoice(score, v, events, measures, end, o, diag) {
@@ -150,6 +272,7 @@ function notateVoice(score, v, events, measures, end, o, diag) {
   const pieces = [];
   const emit = (ev, s, e) => {
     const kind = !ev ? (o.fillGaps === 'space' ? 'space' : 'rest') : ev.kind;
+    const hint = ev?.written && !ev.mergedGap ? ev.written : null;
     const cuts = [s, ...measures.map((m) => m.start).filter((t) => lt(s, t) && lt(t, e)), e];
     const mine = [];
     for (let i = 0; i + 1 < cuts.length; i++) {
@@ -159,7 +282,7 @@ function notateVoice(score, v, events, measures, end, o, diag) {
         continue;
       }
       let t = a;
-      for (const val of notateDuration(sub(b, a), cuts.length === 2 ? ev?.written : null, o.maxDots)) {
+      for (const val of notateInBar(m, a, b, kind, o, cuts.length === 2 ? hint : null)) {
         if (val.unnotatable) diag.push({ kind: 'unnotatable', voice: v.id, event: ev?.id, at: t, dur: val.dur });
         mine.push({ kind, onset: t, ...val, measure: mi });
         t = add(t, val.dur);
@@ -171,14 +294,24 @@ function notateVoice(score, v, events, measures, end, o, diag) {
     });
     pieces.push(...mine);
   };
+  // segments: events and the gaps between them. A gap next to a written rest joins it, so
+  // silence is written once for its whole length (a bar of it becomes a bar rest).
+  const segs = [];
   let t = ZERO;
   for (const ev of evs) {
-    if (lt(t, ev.onset)) emit(null, t, ev.onset);
+    if (lt(t, ev.onset)) segs.push({ ev: null, s: t, e: ev.onset });
     if (lt(ev.onset, t)) diag.push({ kind: 'overlap', voice: v.id, event: ev.id, at: ev.onset });
-    emit(ev, ev.onset, endOf(ev));
+    segs.push({ ev, s: ev.onset, e: endOf(ev) });
     t = max(t, endOf(ev));
   }
-  if (evs.length && lt(t, end)) emit(null, t, end);
+  if (evs.length && lt(t, end)) segs.push({ ev: null, s: t, e: end });
+  if (o.fillGaps === 'rests') for (let i = 0; i + 1 < segs.length; i++) {
+    const x = segs[i], y = segs[i + 1], rest = (q) => q.ev && q.ev.kind === 'rest';
+    if (eq(x.e, y.s) && ((!x.ev && rest(y)) || (rest(x) && !y.ev))) {
+      segs.splice(i, 2, { ev: { ...(x.ev || y.ev), mergedGap: true }, s: x.s, e: y.e }); i--;
+    }
+  }
+  for (const g of segs) emit(g.ev, g.s, g.e);
   groupTuplets(pieces);
   return pieces;
 }
