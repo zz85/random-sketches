@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="icon" href="data:,">
+<title>Line Rider 3D</title>
+<style>
+  :root { --ink: #1d2433; --paper: #f4f1ea; --blue: #2a5bd7; --red: #d93636; --green: #2fa84f; --panel: rgba(255, 255, 255, 0.86); }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--paper); font: 13px/1.35 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink); }
+  canvas { display: block; touch-action: none; }
+  .bar { position: fixed; display: flex; gap: 4px; align-items: center; flex-wrap: wrap; background: var(--panel); backdrop-filter: blur(6px);
+    border: 1px solid rgba(29, 36, 51, 0.12); border-radius: 10px; padding: 5px; box-shadow: 0 2px 10px rgba(29, 36, 51, 0.08); user-select: none; }
+  #tools { top: 10px; left: 10px; max-width: calc(100vw - 20px); }
+  #play { bottom: 10px; left: 50%; transform: translateX(-50%); width: min(720px, calc(100vw - 20px)); box-sizing: border-box; flex-wrap: nowrap; }
+  #hud { position: fixed; top: 10px; right: 12px; text-align: right; font: 600 13px ui-monospace, Menlo, monospace; pointer-events: none; text-shadow: 0 1px 0 #fff; }
+  #hud .crash { display: inline-block; margin-top: 4px; background: var(--red); color: #fff; padding: 2px 8px; border-radius: 6px; letter-spacing: 0.08em; }
+  button, select { font: inherit; color: inherit; background: transparent; border: 1px solid transparent; border-radius: 7px; padding: 4px 8px; cursor: pointer; min-height: 30px; }
+  button:hover { background: rgba(29, 36, 51, 0.07); }
+  button.on { background: var(--ink); color: #fff; }
+  select { border-color: rgba(29, 36, 51, 0.15); }
+  .sep { width: 1px; align-self: stretch; background: rgba(29, 36, 51, 0.13); margin: 0 3px; }
+  .sw { width: 22px; height: 22px; padding: 0; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,0.2); min-height: 0; }
+  .sw.on { box-shadow: 0 0 0 2px var(--ink); background-clip: padding-box; }
+  label.rng { display: inline-flex; align-items: center; gap: 4px; padding: 0 4px; white-space: nowrap; }
+  label.rng input { width: 70px; }
+  #timeline { flex: 1; min-width: 60px; }
+  #time { font: 12px ui-monospace, Menlo, monospace; min-width: 62px; text-align: right; }
+  #help { position: fixed; inset: 0; display: none; place-items: center; background: rgba(244, 241, 234, 0.6); backdrop-filter: blur(3px); z-index: 5; }
+  #help.show { display: grid; }
+  #help > div { background: #fff; border-radius: 12px; padding: 18px 22px; max-width: 620px; max-height: 80vh; overflow: auto; box-shadow: 0 10px 40px rgba(0,0,0,0.15); }
+  #help h2 { margin: 0 0 6px; font-size: 18px; }
+  #help table { border-collapse: collapse; width: 100%; }
+  #help td { padding: 3px 6px; vertical-align: top; border-top: 1px solid #eee; }
+  #help td:first-child { white-space: nowrap; font-weight: 600; }
+  kbd { font: 11px ui-monospace, Menlo, monospace; background: #f1f1f1; border: 1px solid #ccc; border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; }
+  #toast { position: fixed; left: 50%; bottom: 64px; transform: translateX(-50%); background: var(--ink); color: #fff; padding: 6px 12px; border-radius: 8px; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
+  #toast.show { opacity: 0.92; }
+  body.noui .bar, body.noui #hud, body.noui #toast { display: none; }
+  @media (max-width: 700px) { .wide { display: none; } }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.160.1/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.160.1/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="tools" class="bar">
+  <button data-tool="pencil" title="Pencil (Q)">✏️ <span class="wide">Pencil</span></button>
+  <button data-tool="line" title="Line (W)">📏 <span class="wide">Line</span></button>
+  <button data-tool="eraser" title="Eraser (E)">🧽 <span class="wide">Eraser</span></button>
+  <button data-tool="flag" title="Start flag (R)">🚩</button>
+  <button data-tool="view" title="Look around (T). Right-drag also orbits, middle-drag pans">✋</button>
+  <div class="sep"></div>
+  <button class="sw" data-type="0" title="Normal line (1)" style="background: var(--blue)"></button>
+  <button class="sw" data-type="1" title="Accelerate line (2)" style="background: var(--red)"></button>
+  <button class="sw" data-type="2" title="Scenery line, no collision (3)" style="background: var(--green)"></button>
+  <div class="sep"></div>
+  <button id="viewMode" title="2.5D side view or free 3D camera (G)">2.5D</button>
+  <button id="planeMode" title="Sketch plane: wall (side view, 2D Line Rider) or floor (top-down) (Tab)">Wall</button>
+  <button id="yawL" title="Turn the plane left (A, hold while drawing to steer)">⟲</button>
+  <button id="yawR" title="Turn the plane right (D, hold while drawing to steer)">⟳</button>
+  <button id="toView" title="Face the plane to the camera (V)">⊙</button>
+  <button id="bank" title="Bank turns for the rider's speed (B)">Bank</button>
+  <label class="rng wide" id="gradeBox" title="Floor strokes go downhill at this grade">grade <input id="grade" type="range" min="0" max="0.4" step="0.01" value="0.08"></label>
+  <label class="rng wide" title="Ribbon width">width <input id="width" type="range" min="0.8" max="6" step="0.1" value="2.4"></label>
+  <div class="sep"></div>
+  <button id="undo" title="Undo (Ctrl+Z)">↶</button>
+  <button id="redo" title="Redo (Ctrl+Shift+Z)">↷</button>
+  <select id="file" title="Track">
+    <option value="">Track…</option>
+    <option value="demo">Load demo</option>
+    <option value="new">New (empty)</option>
+    <option value="export">Export .json</option>
+    <option value="import">Import .json</option>
+  </select>
+  <button id="helpBtn" title="Help (?)">?</button>
+</div>
+<div id="play" class="bar">
+  <button id="stop" title="Stop and rewind (Esc)">⏹</button>
+  <button id="playBtn" title="Play / pause (Space)">▶</button>
+  <input id="timeline" type="range" min="0" max="1800" step="1" value="0">
+  <span id="time">0:00.00</span>
+  <select id="speed" title="Playback speed">
+    <option value="0.25">¼×</option><option value="0.5">½×</option><option value="1" selected>1×</option><option value="2">2×</option>
+  </select>
+  <select id="cam" title="Camera while riding (C)">
+    <option value="follow">Follow</option><option value="chase">Chase</option><option value="free">Free</option>
+  </select>
+</div>
+<div id="hud"></div>
+<div id="toast"></div>
+<input id="importFile" type="file" accept=".json,application/json" hidden>
+<div id="help"><div>
+  <h2>Line Rider 3D</h2>
+  <p>Draw a track, press <kbd>Space</kbd>, watch the sledder ride it. Every stroke is drawn on the <b>sketch plane</b> (the grid) and becomes a ribbon.
+  On a <b>wall</b> plane it works like 2D Line Rider seen from the side: draw left&nbsp;→&nbsp;right for a floor, right&nbsp;→&nbsp;left for a ceiling (the pale side is the riding side, the dark side lets the rider through).
+  Turn the plane between strokes, or hold <kbd>A</kbd>/<kbd>D</kbd> while drawing to steer the track around corners. A <b>floor</b> plane draws top-down and runs downhill at the set grade; with <b>Bank</b> on, turns tilt for the speed the rider should have there.</p>
+  <table>
+    <tr><td><kbd>Q</kbd> <kbd>W</kbd> <kbd>E</kbd> <kbd>R</kbd> <kbd>T</kbd></td><td>pencil, line, eraser, start flag, look around</td></tr>
+    <tr><td><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></td><td>normal, accelerate, scenery line</td></tr>
+    <tr><td><kbd>Shift</kbd> while drawing</td><td>flip the riding side</td></tr>
+    <tr><td>start on a line end</td><td>snaps to it and moves the plane there (<kbd>Alt</kbd> to not snap). A line tool end on another line end bridges them anywhere in 3D</td></tr>
+    <tr><td><kbd>A</kbd> <kbd>D</kbd></td><td>turn the plane 15° (hold while drawing to steer)</td></tr>
+    <tr><td><kbd>Shift</kbd>+wheel, <kbd>PgUp</kbd>/<kbd>PgDn</kbd></td><td>push the plane away / pull it closer (floor: up / down)</td></tr>
+    <tr><td><kbd>Tab</kbd> <kbd>V</kbd> <kbd>B</kbd></td><td>wall / floor plane, face plane to camera, banking</td></tr>
+    <tr><td><kbd>G</kbd></td><td>2.5D side view (default: looks at the sketch plane like 2D Line Rider, with depth; swings around corners while riding) or free 3D</td></tr>
+    <tr><td>right-drag, middle-drag, wheel</td><td>pan (2.5D) or orbit (3D), pan, zoom (two fingers on touch)</td></tr>
+    <tr><td><kbd>Space</kbd> <kbd>Esc</kbd> <kbd>C</kbd></td><td>play / pause, stop, camera mode</td></tr>
+    <tr><td><kbd>F</kbd></td><td>turn the start flag around</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></td><td>undo / redo</td></tr>
+  </table>
+  <p style="margin-bottom:0">The track saves itself in this browser. Hard landings and hitting ceilings throw the rider off the sled.</p>
+</div></div>
+<script type="module" src="./main.js"></script>
+</body>
+</html>
