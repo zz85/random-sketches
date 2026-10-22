@@ -79,7 +79,7 @@ try {
   // 0. a small landscape for the README
   if (!process.env.SKIP_SCENE) {
     await load('fresh=1&nohelp=1&nosw=1&nosave=1');
-    await ev('__aq.createPainting(1600, 1200); true');
+    await ev('__aq.createPainting(1600, 1200).then(() => true)');
     await setT('paint', 'water', null, { size: 90, water: 0.85 });
     for (let y = 60; y < 640; y += 70) await pen(line(40, y, 1560, y + 10, 26), { pressure: () => 0.9 });
     await setT('paint', 'wash', 'ultra', { size: 75, water: 0.8, paint: 0.5 });
@@ -123,7 +123,7 @@ try {
   check(await load('fresh=1&nohelp=1&nosw=1'), 'loads');
   check(errors().length === 0, 'no console errors on load', errors().join(' | '));
   check(await ev('__aq.sim.W > 1000 && __aq.sim.H > 600 && !!__aq.doc.id'), 'first visit opens a screen-shaped canvas');
-  await ev('__aq.createPainting(1600, 1200); true');
+  await ev('__aq.createPainting(1600, 1200).then(() => true)');
   const W = await ev('__aq.sim.W'), H = await ev('__aq.sim.H');
   await sleep(300); await shot('ui');
 
@@ -292,7 +292,7 @@ try {
   const nCards = await ev('document.querySelectorAll("#ggrid .card").length');
   check(nCards >= 2, 'gallery lists paintings', String(nCards));
   await shot('gallery');
-  await ev('__aq.createPainting(1200, 900); true'); await sleep(300);
+  await ev('__aq.createPainting(1200, 900).then(() => true)'); await sleep(300);
   check(await ev('__aq.sim.W === 1200 && !document.querySelector("#gallery").classList.contains("open")'), 'new canvas from the gallery');
   await ev(`__aq.openById(${JSON.stringify(id0)})`); await sleep(400);
   check(Math.abs((await stat(0, 0, W, H)).mean - ref.mean) < 0.2, 'reopened from the gallery');
@@ -316,7 +316,70 @@ try {
   await c.send('Emulation.setTouchEmulationEnabled', { enabled: false });
   await c.send('Emulation.setDeviceMetricsOverride', { width: VW, height: VH, deviceScaleFactor: 1, mobile: false });
 
-  // 15. offline: register the service worker, reload offline
+  // 15. pen mode on a Bigme B7 Pro-sized e-paper screen (7", 1264 x 1680, CSS 632 x 840 at 2x)
+  await c.send('Emulation.setDeviceMetricsOverride', { width: 632, height: 840, deviceScaleFactor: 2, mobile: true });
+  await c.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+  check(await load('fresh=1&nosw=1&nosave=1&nohelp=1&eink=1'), 'loads on a 7" e-paper screen');
+  check(await ev('document.body.classList.contains("eink")'), 'e-paper theme');
+  await ev(`__aq.createPainting(1264, 1680, 'Notes', 1).then(() => { __aq.setMode('pen'); return true; })`); await sleep(300);
+  check(await ev('document.body.classList.contains("penmode") && getComputedStyle(document.querySelector("#penBar")).display === "flex"'), 'pen mode shows nibs and ink colours');
+  // fits between the bars
+  const fitOk = await ev(`(() => { const a = __aq.toScreen(0, 0), b = __aq.toScreen(__aq.sim.W, __aq.sim.H), top = document.querySelector('#bar').getBoundingClientRect().bottom, pb = document.querySelector('#penBar').getBoundingClientRect().top; return a.y >= top - 1 && b.y <= pb + 1 && a.x >= 0 && b.x <= innerWidth; })()`);
+  check(fitOk, 'page fits between the top bar and the pen bar');
+  const tgt = await ev(`[...document.querySelectorAll('#bar button, #side button, #penBar button')].filter((b) => b.offsetParent).map((b) => { const r = b.getBoundingClientRect(); return Math.min(r.width, r.height); }).sort((a, b) => a - b)[0]`);
+  check(tgt >= 30, 'touch targets at least 30 CSS px (≈ 5 mm on the B7 Pro)', tgt.toFixed(0) + ' px');
+  // handwriting: a few cursive-ish words as pen strokes
+  const word = (x0, y0, n) => { const pts = []; for (let i = 0; i <= n * 12; i++) { const t = i / 12; pts.push([x0 + t * 34, y0 - 26 * Math.abs(Math.sin(t * Math.PI * 0.9)) + 6 * Math.sin(t * 7)]); } return pts; };
+  const ls = await ev('__aq.sim.pattern.sp');
+  const n0 = await stat(150, ls * 3 - 40, 1100, ls * 3 + 10);
+  for (let w = 0; w < 4; w++) await pen(word(170 + w * 230, ls * 3 - 4, 5), { pressure: (t) => 0.5 + 0.3 * Math.sin(t * 20) });
+  await sleep(200);
+  check(!(await ev('__aq.sim.wet')), 'pen ink is dry immediately (no water)');
+  const n1 = await stat(150, ls * 3 - 40, 1100, ls * 3 + 10);
+  check(n1.mean < n0.mean - 4, 'pen writes ink', `${n0.mean.toFixed(1)} -> ${n1.mean.toFixed(1)}`);
+  // colour from the bar: red, then a fineliner line
+  await ev(`document.querySelector('#penCols [data-col="#d02424"]').click(); document.querySelector('#nibs [data-nib="fineliner"]').click(); true`);
+  await pen(line(170, ls * 4 - 6, 900, ls * 4 - 6, 40), { pressure: () => 0.6 });
+  const red = await ev(`(() => { const px = __aq.sim.exportPixels(); const W = __aq.sim.W, y = Math.round(${ls} * 4 - 6); let r = 0, g = 0, n = 0; for (let x = 200; x < 880; x += 4) { const i = (y * W + x) * 4; r += px[i]; g += px[i + 1]; n++; } return [r / n, g / n]; })()`);
+  check(red[0] > red[1] + 60, 'ink colour from the pen bar', red.map((v) => v.toFixed(0)).join(','));
+  // highlighter over the first line keeps the writing readable
+  await ev(`document.querySelector('#nibs [data-nib="highlighter"]').click(); true`);
+  await pen(line(160, ls * 3 - 14, 1100, ls * 3 - 14, 40), { pressure: () => 0.6 });
+  const hl = await stat(150, ls * 3 - 40, 1100, ls * 3 + 10);
+  check(hl.dark > n1.dark * 0.8, 'highlighter does not cover the ink', `${n1.dark.toFixed(3)} / ${hl.dark.toFixed(3)}`);
+  await shot('eink_notes');
+  // eraser nib, then undo
+  await ev(`document.querySelector('#nibs [data-nib="inkerase"]').click(); __aq.S.pen.size.inkerase = 20; true`);
+  for (let k = 0; k < 3; k++) await pen(line(170, ls * 4 - 6 + (k - 1) * 8, 900, ls * 4 - 6 + (k - 1) * 8, 40), { pressure: () => 0.8 });
+  const er = await ev(`(() => { const px = __aq.sim.exportPixels(); const W = __aq.sim.W, y = Math.round(${ls} * 4 - 6); let r = 0, g = 0, n = 0; for (let x = 200; x < 880; x += 4) { const i = (y * W + x) * 4; r += px[i]; g += px[i + 1]; n++; } return [r / n, g / n]; })()`);
+  check(Math.abs(er[0] - er[1]) < 30, 'eraser nib rubs ink out', er.map((v) => v.toFixed(0)).join(','));
+  await sel('#undoBtn'); await sleep(100); await sel('#undoBtn'); await sel('#undoBtn'); await sleep(100);
+  // colour disc in pen mode sets the ink colour
+  await ev(`document.querySelector('#nibs [data-nib="ballpoint"]').click(); __aq.togglePop('colPop'); true`); await sleep(300);
+  await shot('eink_colour');
+  const dc2 = await ev(`(() => { const r = document.querySelector('#disc').getBoundingClientRect(); return [r.left + r.width * 0.94, r.top + r.height * 0.5]; })()`);
+  for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x: dc2[0], y: dc2[1], button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1 });
+  await sleep(200);
+  check(await ev(`__aq.S.pen.col !== '#d02424'`), 'colour disc sets the ink colour', await ev('__aq.S.pen.col'));
+  await ev(`__aq.togglePop('colPop'); true`);
+  // the stylus's eraser end erases (buttons 32)
+  await ev(`__aq.S.pen.size.ballpoint = 2.4; true`);
+  const sp0 = await scr(200, ls * 6), sp1 = await scr(800, ls * 6);
+  await pen(line(200, ls * 6, 800, ls * 6, 30), { pressure: () => 0.7 });
+  const e0 = await stat(200, ls * 6 - 8, 800, ls * 6 + 8);
+  await c.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: sp0[0], y: sp0[1], button: 'left', buttons: 33, clickCount: 1, pointerType: 'pen', force: 0.8 });
+  for (let i = 1; i <= 30; i++) { await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: sp0[0] + (sp1[0] - sp0[0]) * i / 30, y: sp0[1], button: 'left', buttons: 33, pointerType: 'pen', force: 0.8 }); await sleep(6); }
+  await c.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: sp1[0], y: sp1[1], button: 'left', buttons: 0, clickCount: 1, pointerType: 'pen' });
+  const e1 = await stat(200, ls * 6 - 8, 800, ls * 6 + 8);
+  console.log(`     stylus eraser end: ${e0.mean.toFixed(1)} -> ${e1.mean.toFixed(1)} (CDP may not deliver button 32)`);
+  await ev(`__aq.togglePop('actPop'); document.querySelector('#actTabs [data-t="canvas"]').click(); true`); await sleep(200);
+  await shot('eink_canvas');
+  await ev(`__aq.togglePop('actPop'); __aq.setMode('paint'); true`); await sleep(300);
+  await shot('eink_paint');
+  await c.send('Emulation.setTouchEmulationEnabled', { enabled: false });
+  await c.send('Emulation.setDeviceMetricsOverride', { width: VW, height: VH, deviceScaleFactor: 1, mobile: false });
+
+  // 16. offline: register the service worker, reload offline
   check(await load('nohelp=1'), 'load with service worker');
   for (let i = 0; i < 50 && !(await ev('!!navigator.serviceWorker.controller')); i++) await sleep(200);
   if (!(await ev('!!navigator.serviceWorker.controller'))) { await load('nohelp=1'); await sleep(500); }

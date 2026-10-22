@@ -172,12 +172,58 @@
   #err { display: none; position: fixed; inset: 0; z-index: 100; background: var(--bg); padding: 40px; font-size: 15px; }
   body.ui-hidden #bar, body.ui-hidden #side, body.ui-hidden .pop { display: none !important; }
 
+  /* ---- mode switch + pen bar ---- */
+  #modeSeg { flex: 0 0 auto; }
+  #modeSeg button { padding: 7px 14px; font-size: 14px; font-weight: 500; }
+  #modeSeg button.on { background: var(--accent); color: #fff; }
+  #penBar { display: none; position: fixed; left: 0; right: 0; margin: 0 auto; width: fit-content; bottom: calc(10px + var(--safe-b)); z-index: 5; max-width: calc(100vw - 16px);
+    background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 6px 8px; gap: 8px; align-items: center; box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35); }
+  body.penmode #penBar { display: flex; flex-direction: column; }
+  body.penmode [data-tool], body.penmode #adjBtn, body.penmode #wet, body.penmode #sPaint, body.penmode #sWater { display: none; }
+  #nibs, #penCols { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+  #nibs { flex-wrap: nowrap; }
+  body.penmode #colPop .pane-paint, body.penmode #colTabs { display: none; }
+  .nib { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 64px; padding: 6px 4px; border-radius: 10px; font-size: 11.5px; color: #d0d0d4; }
+  .nib svg { width: 26px; height: 26px; }
+  .nib.on { background: var(--accent); color: #fff; }
+  .pc { width: 38px; height: 38px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35); font-size: 22px; line-height: 1; color: var(--ink); }
+  .pc.on { box-shadow: 0 0 0 3px var(--panel), 0 0 0 5px var(--accent); }
+  .pc.more { background: conic-gradient(#d8483a, #e9c23c, #5aa252, #2f7fc1, #7a4fb3, #d8483a); color: #fff; text-shadow: 0 0 3px #000; }
+
+  /* ---- colour e-paper (Bigme B7 Pro and friends): white, black, thick lines, nothing that moves ---- */
+  body.eink { --bar: #fff; --bg: #e6e6e6; --panel: #fff; --panel2: #fff; --line: #000; --ink: #000; --dim: #333; --accent: #000; }
+  body.eink *, body.eink *::before, body.eink *::after { transition: none !important; animation: none !important; box-shadow: none !important; text-shadow: none !important; }
+  body.eink #bar { border-bottom: 2px solid #000; }
+  body.eink .tb, body.eink .sb, body.eink .nib, body.eink #brushCats button, body.eink #modeSeg button { color: #000; }
+  body.eink .pop, body.eink #side, body.eink #penBar, body.eink .menu { border: 2px solid #000; }
+  body.eink .item.on, body.eink .nib.on, body.eink .lay.on, body.eink .bru.on, body.eink #modeSeg button.on, body.eink .seg button.on, body.eink .tabs button.on { background: #000; color: #fff; }
+  body.eink .nib.on svg { stroke: #fff; }
+  body.eink .item small, body.eink .lay.on .nm small, body.eink .item.on small { color: inherit; }
+  body.eink .pc, body.eink .sw, body.eink .well { box-shadow: inset 0 0 0 2px #000 !important; }
+  body.eink .pc.on, body.eink .sw.on, body.eink .well.on { outline: 3px solid #000; outline-offset: 3px; }
+  body.eink .vs .track { background: #fff; border: 2px solid #000; }
+  body.eink .vs .fill { background: #000; }
+  body.eink .vs .knob { background: #fff; border: 2px solid #000; }
+  body.eink #pickBtn { border: 2px solid #000; color: #000; }
+  body.eink .btn { background: #fff; border: 2px solid #000; color: #000; }
+  body.eink .btn.primary { background: #000; color: #fff; }
+  body.eink #toast, body.eink #bubble { background: #000; color: #fff; }
+  body.eink #gallery { background: #fff; color: #000; }
+  body.eink .card .th { border: 2px solid #000; }
+  body.eink #cursor { border-color: #000; }
+  body.eink .tl { background: #fff; color: #000; }
+
   @media (max-width: 700px) {
     .tb { min-width: 36px; }
     .tb.txt { padding: 0 6px; font-size: 14px; }
     #wet span { display: none; }
     .vs { --sl: 110px; } .vs.short { --sl: 72px; }
     #brushCats { width: 104px; }
+    #galBtn { padding: 0 6px; }
+    #modeSeg button { padding: 7px 11px; }
+    .nib { min-width: 52px; font-size: 10.5px; padding: 5px 2px; }
+    .pc { width: 36px; height: 36px; }
+    body.penmode #side { top: calc(var(--barh) + (100vh - var(--barh) - 120px) / 2); }
   }
   @media (max-height: 560px) { .vs { --sl: 96px; } .vs.short { --sl: 60px; } }
 </style>
@@ -199,6 +245,11 @@
   <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></symbol>
   <symbol id="i-redo" viewBox="0 0 24 24"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></symbol>
   <symbol id="i-pick" viewBox="0 0 24 24"><path d="m14.5 6.5 3 3"/><path d="M19.4 4.6a2 2 0 0 0-2.8 0l-2.1 2.1 2.8 2.8 2.1-2.1a2 2 0 0 0 0-2.8z"/><path d="M15.9 8.1 6.5 17.5 5 21l3.5-1.5 9.4-9.4"/></symbol>
+  <symbol id="i-ballpoint" viewBox="0 0 24 24"><path d="M15.5 3.5l5 5L9 20H4v-5z"/><path d="M13 6l5 5"/></symbol>
+  <symbol id="i-fineliner" viewBox="0 0 24 24"><path d="M17 3l4 4-11 11-4 1 1-4z"/><path d="M5 19l-2 2"/></symbol>
+  <symbol id="i-brushpen" viewBox="0 0 24 24"><path d="M18 3l3 3-8 8-3-3z"/><path d="M10 11c-3 0-5 2-5.5 5L3 21l5-1.5c3-.5 5-2.5 5-5.5"/></symbol>
+  <symbol id="i-highlighter" viewBox="0 0 24 24"><path d="M14 4l6 6-7 7-6-6z"/><path d="M7 11l-2.5 5L3 20h5l2-1.5L13 17"/></symbol>
+  <symbol id="i-inkerase" viewBox="0 0 24 24"><path d="M8.5 20H20"/><path d="m4.6 15.4 9.9-9.9a2 2 0 0 1 2.8 0l2.2 2.2a2 2 0 0 1 0 2.8l-7.6 7.6a3 3 0 0 1-2.1.9H8.2a2 2 0 0 1-1.4-.6l-2.2-2.2a.6.6 0 0 1 0-.8z"/></symbol>
   <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
   <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
 </svg>
@@ -209,12 +260,16 @@
   <button class="tb" id="adjBtn" title="Water and drying"><svg class="i"><use href="#i-adjust"/></svg></button>
   <span id="wet"><i></i><span id="wetText">dry</span></span>
   <span class="grow"></span>
+  <div class="seg" id="modeSeg" title="Pen for notes, Paint for watercolour (P)"><button data-v="pen">Pen</button><button data-v="paint">Paint</button></div>
+  <span class="grow"></span>
   <button class="tb" data-tool="paint" title="Paint (B) — tap again for the brush library"><svg class="i"><use href="#i-brush"/></svg></button>
   <button class="tb" data-tool="smudge" title="Smudge (S)"><svg class="i"><use href="#i-smudge"/></svg></button>
   <button class="tb" data-tool="erase" title="Erase (E)"><svg class="i"><use href="#i-erase"/></svg></button>
   <button class="tb" id="layBtn" title="Layers (L)"><svg class="i"><use href="#i-layers"/></svg></button>
   <button class="tb" id="colBtn" title="Colours (C)"></button>
 </div>
+
+<div id="penBar"><div id="nibs"></div><div id="penCols"></div></div>
 
 <div id="side">
   <div class="vs" id="sSize" title="Brush size"><div class="track"><div class="fill"></div></div><div class="knob"></div></div>
@@ -236,14 +291,15 @@
   <div class="tabs" id="colTabs"><button data-t="disc" class="on">Disc</button><button data-t="pal">Palette</button></div>
   <div class="body">
     <div data-pane="disc"><canvas id="disc" width="300" height="300"></canvas>
-      <div class="row"><span>Opacity of picked colours<small style="display:block;color:var(--dim);font-size:11.5px">glassy … body colour</small></span><input type="range" id="colOpacity" class="slim" min="0" max="1" step="0.05"></div>
-      <div class="row"><span>Granulation</span><input type="range" id="colGran" class="slim" min="0" max="1" step="0.05"></div>
+      <div class="pane-paint"><div class="row"><span>Opacity of picked colours<small style="display:block;color:var(--dim);font-size:11.5px">glassy … body colour</small></span><input type="range" id="colOpacity" class="slim" min="0" max="1" step="0.05"></div>
+      <div class="row"><span>Granulation</span><input type="range" id="colGran" class="slim" min="0" max="1" step="0.05"></div></div>
+      <div id="penRecent"></div>
     </div>
     <div data-pane="pal" style="display:none">
       <div id="mixRow"><button class="seg" id="mixToggle" style="padding:6px 10px">+ Mix</button><span id="mixText">Tap a pigment to load it</span></div>
       <div id="wells"></div>
     </div>
-    <div class="h3">History</div><div id="history"></div>
+    <div class="pane-paint"><div class="h3">History</div><div id="history"></div></div>
   </div>
 </div>
 
@@ -264,6 +320,7 @@
     </div>
     <div data-pane="canvas" style="display:none">
       <div class="h3">Paper</div><div id="paperList"></div>
+      <div class="row"><span>Page ruling</span><div class="seg" id="patSeg"></div></div>
       <div class="row"><span>Show paper texture</span><input type="checkbox" id="optTexture"></div>
       <div class="row"><span>Paper colour</span><div id="tints" style="display:flex;gap:8px"></div></div>
       <div class="row"><span>Flip canvas horizontally</span><input type="checkbox" id="optFlip"></div>
@@ -275,6 +332,7 @@
       <button class="item" id="exportVid2"><span>Export time-lapse<small>30 seconds or full length, from the replay</small></span></button>
     </div>
     <div data-pane="prefs" style="display:none">
+      <div class="row"><span>E-paper display<small style="display:block;color:var(--dim);font-size:11.5px">light, high-contrast, no animation</small></span><input type="checkbox" id="optEink"></div>
       <div class="row"><span>Right-hand interface</span><input type="checkbox" id="optRight"></div>
       <div class="row"><span>Brush cursor</span><input type="checkbox" id="optCursor"></div>
       <div class="row"><span>Fingers once a pen is used</span><div class="seg" id="fingerSeg"><button data-v="auto">Navigate</button><button data-v="paint">Paint</button></div></div>
@@ -287,6 +345,8 @@
     <div data-pane="help" class="help" style="display:none">
       <p>Real watercolour: paint is pigment carried by water. It flows while wet, pools at the edges as it dries, settles into the paper's grain, and glazes over dried paint. While the dot by the drop button pulses, the sheet is wet.</p>
       <table>
+        <tr><td>Pen mode</td><td>Pen | Paint at the top. Pen writes ink straight onto the page, with no water: ballpoint, fineliner, brush pen, highlighter, eraser along the bottom, ink colours next to them, + for any colour. New → Notebook page gives lined or grid paper</td></tr>
+        <tr><td>Colours</td><td>Pen: tap a swatch in the bottom bar, or + / the round button top right for the colour disc (ring = hue, inside = shade), or touch and hold the page to pick a colour off it. Paint: the round button, then Disc or Palette</td></tr>
         <tr><td>Pencil / stylus</td><td>paints; pressure sets size and load, tilt lays the brush on its side</td></tr>
         <tr><td>Finger</td><td>paints until a pen is used, then navigates (Prefs)</td></tr>
         <tr><td>Two fingers</td><td>pan, pinch, twist to rotate; quick pinch in fits the canvas</td></tr>

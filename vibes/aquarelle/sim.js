@@ -313,7 +313,11 @@ const FS_SCREEN = HDR + `
 uniform sampler2D uComp, uLit; uniform float uPaperN, uLitAmt;
 uniform mat3 uInv; uniform vec2 uSheet, uCanvas; uniform float uDpr, uZoom;
 uniform vec3 uDesk; uniform int uExport; uniform float uExpScale;
+uniform int uPat; uniform float uPatSp; uniform vec3 uPatCol, uPatMargin;
 out vec4 o;
+// coverage of a line at distance d (sheet px): at least ~0.9 sheet px wide, and never thinner
+// than a screen pixel when zoomed out, so ruling stays visible and exports the same
+float rule(float d, float fw) { float hw = max(0.9, 0.6 * fw); return 1.0 - smoothstep(hw - 0.5 * fw, hw + 0.5 * fw, d); }
 vec3 toSrgb(vec3 c) { c = clamp(c, 0.0, 1.0); return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
 void main() {
   vec2 p = uExport == 1 ? gl_FragCoord.xy * uExpScale : (uInv * vec3(vec2(gl_FragCoord.x, uCanvas.y - gl_FragCoord.y) / uDpr, 1.0)).xy;
@@ -332,6 +336,15 @@ void main() {
     R = 0.25 * (texture(uComp, uv + vec2(-d.x, -d.y)).rgb + texture(uComp, uv + vec2(d.x, -d.y)).rgb + texture(uComp, uv + vec2(-d.x, d.y)).rgb + texture(uComp, uv + d).rgb);
   }
   if (uLitAmt > 0.0) R *= mix(1.0, texture(uLit, (p + 0.5) / uPaperN).r * 1.25, uLitAmt);
+  if (uPat > 0) {
+    // ruling multiplies like a printed line: ink and paint on top stay dark
+    vec2 fw = max(fwidth(p), vec2(1e-3)), g = p - floor(p / uPatSp + 0.5) * uPatSp;
+    float a = 0.0, m = 0.0;
+    if (uPat == 1) { a = p.y > uPatSp * 2.5 ? rule(abs(g.y), fw.y) : 0.0; m = rule(abs(p.x - uPatSp * 2.0), fw.x); }
+    else if (uPat == 2) a = max(rule(abs(g.x), fw.x), rule(abs(g.y), fw.y)) * 0.75;
+    else { float r = max(1.7, 0.9 * fw.x); a = 1.0 - smoothstep(r - 0.5 * fw.x, r + 0.5 * fw.x, length(g)); }
+    R = mix(R, R * uPatCol, a); R = mix(R, R * uPatMargin, m * 0.8);
+  }
   o = vec4(toSrgb(R), 1.0);
 }`;
 
@@ -356,6 +369,32 @@ const FS_DRIED = HDR + `
 uniform sampler2D uFK, uFS, uDK, uDS; uniform int uActive;
 layout(location = 0) out vec4 oK; layout(location = 1) out vec4 oS;
 void main() { ivec2 P = ivec2(gl_FragCoord.xy); float a = float(uActive); oK = texelFetch(uDK, P, 0) + a * texelFetch(uFK, P, 0); oS = texelFetch(uDS, P, 0) + a * texelFetch(uFS, P, 0); }`;
+
+// Pen mode: ink goes straight into the paper (no water), with a clean anti-aliased edge.
+// Mode 5 inks: within a stroke stamps converge on the ink amount instead of piling up, so a
+// line stays even; uCover = how much ink replaces what is under it (0 = transparent glaze,
+// as a highlighter). Mode 6 erases deposited pigment outright.
+const FS_INK = HDR + `
+uniform sampler2D uDK, uDS;
+uniform vec4 uSt[${MAX_ST}], uSt2[${MAX_ST}], uSt3[${MAX_ST}];
+uniform int uN, uMode; uniform vec4 uBK, uBS; uniform float uCover;
+layout(location = 0) out vec4 oDK; layout(location = 1) out vec4 oDS;
+void main() {
+  ivec2 P = ivec2(gl_FragCoord.xy); vec2 p = vec2(P);
+  vec4 dk = texelFetch(uDK, P, 0), ds = texelFetch(uDS, P, 0);
+  for (int i = 0; i < ${MAX_ST}; i++) {
+    if (i >= uN) break;
+    vec4 s = uSt[i], s3 = uSt3[i];
+    vec2 d = p - s.xy, ax = s3.xy;
+    vec2 e = vec2(dot(d, ax) / s3.z, dot(d, vec2(-ax.y, ax.x)));
+    float c = clamp(s.z - length(e) + 0.5, 0.0, 1.0) * s.w;
+    if (c <= 0.0) continue;
+    if (uMode == 6) { dk *= 1.0 - c; ds *= 1.0 - c; continue; }
+    dk = max(mix(dk, uBK, c * uCover), uBK * c);
+    ds = max(mix(ds, uBS, c * uCover), uBS * c);
+  }
+  oDK = dk; oDS = ds;
+}`;
 
 // a photo turned into pigment: each pixel becomes a unit layer of a transparent paint whose
 // masstone over white is that pixel (the Kubelka-Munk inversion km.js uses for pigments)
@@ -415,7 +454,8 @@ export class Sim {
     this.floatRead = !!gl.getExtension('EXT_color_buffer_float');
     if (!this.floatRead && !gl.getExtension('EXT_color_buffer_half_float')) throw new Error('This device cannot render to floating-point textures (EXT_color_buffer_float).');
     this.vao = gl.createVertexArray();
-    this.prog = { flux: compile(gl, FS_FLUX), water: compile(gl, FS_WATER), transfer: compile(gl, FS_TRANSFER), stamp: compile(gl, FS_STAMP), stampD: compile(gl, FS_STAMP_D), comp: compile(gl, FS_COMP), screen: compile(gl, FS_SCREEN), probe: compile(gl, FS_PROBE), dried: compile(gl, FS_DRIED), thumb: compile(gl, FS_THUMB), merge: compile(gl, FS_MERGE), import: compile(gl, FS_IMPORT) };
+    this.prog = { flux: compile(gl, FS_FLUX), water: compile(gl, FS_WATER), transfer: compile(gl, FS_TRANSFER), stamp: compile(gl, FS_STAMP), stampD: compile(gl, FS_STAMP_D), comp: compile(gl, FS_COMP), screen: compile(gl, FS_SCREEN), probe: compile(gl, FS_PROBE), dried: compile(gl, FS_DRIED), thumb: compile(gl, FS_THUMB), merge: compile(gl, FS_MERGE), import: compile(gl, FS_IMPORT), ink: compile(gl, FS_INK) };
+    this.pattern = { type: 0, sp: 56, col: [0.4, 0.5, 0.75], margin: [0.92, 0.5, 0.5] };
     // two sRGB colour buffers: layers composite into them alternately, the top one lands in comp
     this.comp = this.tex(W, H, 'SRGB8_ALPHA8'); this.comp2 = this.tex(W, H, 'SRGB8_ALPHA8');
     this.paperCol = [1, 1, 1]; this.litAmt = 0;
@@ -533,6 +573,26 @@ export class Sim {
     });
     return true;
   }
+  /**
+   * Pen mode: put ink stamps straight into the active layer, no water and no simulation
+   * steps, recomposited only under the stroke. b: {mode 5 ink | 6 erase, bK, bS, cover}.
+   */
+  ink(stamps, b) {
+    for (let i = 0; i < stamps.length; i += MAX_ST) {
+      const batch = { st: stamps.slice(i, i + MAX_ST), b: { ...b, shape: 0 } };
+      this.use('ink'); this.bind('uDK', this.s.DK.cur); this.bind('uDS', this.s.DS.cur);
+      const r = this.setStampUniforms(batch); this.f1('uCover', b.cover ?? 1);
+      if (r[2] <= r[0] || r[3] <= r[1]) continue;
+      const t = [r[0] - 2, r[1] - 2, r[2] + 2, r[3] + 2];
+      this.saveTiles(t);
+      this.use('ink'); this.bind('uDK', this.s.DK.cur); this.bind('uDS', this.s.DS.cur); this.setStampUniforms(batch); this.f1('uCover', b.cover ?? 1);
+      this.draw([this.s.DK.nxt, this.s.DS.nxt], r); this.keep(['DK', 'DS'], r);
+      this.compose(this.clampRect(t));
+    }
+  }
+  /** Ruled note paper drawn under the paint: 0 none, 1 lined, 2 grid, 3 dots. Spacing in sheet px. */
+  setPattern(type, sp, col) { this.pattern = { ...this.pattern, type, sp: sp ?? this.pattern.sp, col: col ?? this.pattern.col }; }
+
   /** Replace the active layer with an image (ImageBitmap / canvas) turned into pigment. */
   importImage(img) {
     const gl = this.gl, t = gl.createTexture();
@@ -979,6 +1039,7 @@ export class Sim {
     const u = this.use('screen');
     this.bind('uComp', opts.comp || this.comp); this.bind('uLit', this.litTex);
     this.f1('uPaperN', this.paperN); this.f1('uLitAmt', this.litAmt);
+    const P = this.pattern; this.i1('uPat', P.type); this.f1('uPatSp', P.sp); gl.uniform3fv(u.uPatCol, P.col); gl.uniform3fv(u.uPatMargin, P.margin);
     gl.uniformMatrix3fv(u.uInv, false, view.inv);
     gl.uniform2f(u.uSheet, this.W, this.H); gl.uniform2f(u.uCanvas, canvasW, canvasH);
     this.f1('uDpr', dpr); this.f1('uZoom', view.zoom * dpr);

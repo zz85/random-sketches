@@ -8,7 +8,7 @@
 import { Sim } from './sim.js';
 import { makePaper, PAPERS } from './paper.js';
 import { PIGMENTS, mix, swatch, rgbToHex, customPigment, mass, hexToRgb, srgbToLinear } from './km.js';
-import { strokeStamps, Smoother, BRUSHES, CATEGORIES, SHAPES, splatterDrops } from './brush.js';
+import { strokeStamps, Smoother, BRUSHES, CATEGORIES, SHAPES, splatterDrops, INKS, PEN_COLOURS, MARK_COLOURS } from './brush.js';
 import { Disc, hsvToRgb, rgbToHsv } from './colour.js';
 import * as store from './store.js';
 import { Recorder, openPlayer, exportVideo } from './timelapse.js';
@@ -31,6 +31,9 @@ const DEF = {
   pig: ['ultra'], weights: [1], customs: [], history: [], colOpacity: 0.15, colGran: 0.15,
   drying: 1, runDry: true, fingers: 'auto', smooth: 0.3, rotate: true, right: false, cursor: true, pressure: 1, quick: true, record: true,
   helpSeen: false, currentId: null,
+  // pen mode (notes): nib, ink colour, highlighter colour, size per nib
+  mode: 'paint', pen: { nib: 'ballpoint', col: '#141414', mark: '#ffe24a', size: Object.fromEntries(Object.entries(INKS).map(([k, v]) => [k, v.size])), customs: [] },
+  eink: null,
 };
 let S;
 try { S = { ...structuredClone(DEF), ...JSON.parse(localStorage.getItem('aquarelle:prefs') || '{}') }; } catch { S = structuredClone(DEF); }
@@ -38,15 +41,28 @@ if (qs.has('fresh')) S = structuredClone(DEF);
 for (const k in DEF.brush) S.brush[k] = { ...DEF.brush[k], ...(S.brush[k] || {}) };
 for (const k in DEF.tools) S.tools[k] = { ...DEF.tools[k], ...(S.tools?.[k] || {}) };
 S.sel = { ...DEF.sel, ...S.sel };
+S.pen = { ...DEF.pen, ...S.pen, size: { ...DEF.pen.size, ...(S.pen?.size || {}) } };
+// colour e-paper (Bigme, Boox, Kobo...): light high-contrast UI, no animation, sparse redraws.
+// Guessed from the user agent the first time, then a preference (Prefs → E-paper display).
+if (qs.has('eink')) S.eink = qs.get('eink') !== '0';
+S.eink ??= /bigme|boox|onyx|eink|e-ink|kobo|pocketbook|hisense a|meebook|b7 ?pro/i.test(navigator.userAgent);
 if (!['paint', 'smudge', 'erase'].includes(S.tool)) S.tool = 'paint';
 const savePrefs = () => { try { localStorage.setItem('aquarelle:prefs', JSON.stringify(S)); } catch { /* private mode */ } };
 document.body.classList.toggle('right', S.right);
+function applyTheme() {
+  document.body.classList.toggle('eink', !!S.eink);
+  document.body.classList.toggle('penmode', S.mode === 'pen');
+  document.querySelector('meta[name=theme-color]').content = S.eink ? '#ffffff' : '#1c1c1e';
+  if (sim) { applyPattern(); needsRender = true; }
+}
 
 const allPigments = () => [...PIGMENTS, ...S.customs.map((c) => customPigment(c.hex, c.op, c.gran))];
 const pigById = (id) => allPigments().find((p) => p.id === id) || (id?.startsWith('custom:') ? customPigment(id.split(':')[1], +id.split(':')[2] || 0.15) : PIGMENTS[0]);
 
 // ---------- GL ----------
-const gl = canvas.getContext('webgl2', { antialias: false, alpha: false, depth: false, stencil: false, premultipliedAlpha: false, preserveDrawingBuffer: false, powerPreference: 'high-performance', desynchronized: true });
+// low-latency (desynchronized) canvas on desktop only: on Android it can land on an overlay
+// plane, which e-paper drivers and the DOM above it do not always handle
+const gl = canvas.getContext('webgl2', { antialias: false, alpha: false, depth: false, stencil: false, premultipliedAlpha: false, preserveDrawingBuffer: false, powerPreference: 'high-performance', desynchronized: !/Android/i.test(navigator.userAgent) });
 if (!gl) fatal('WebGL2 is not available in this browser.');
 let sim = null;
 /** The open painting: its look lives with it, like Procreate's background colour. */
@@ -56,7 +72,13 @@ let dpr = Math.min(window.devicePixelRatio || 1, 2);
 const view = { x: 0, y: 0, z: 1, r: 0, f: 1 };
 let needsRender = true, userMovedView = false;
 
-function applyLook() { if (!sim) return; sim.setLook(TINTS[doc.tint].map(srgbToLinear), doc.texture ? 1 : 0); needsRender = true; }
+function applyLook() { if (!sim) return; sim.setLook(TINTS[doc.tint].map(srgbToLinear), doc.texture ? 1 : 0); applyPattern(); needsRender = true; }
+// ruled paper for notes: line spacing scales with the page (about 6.5 mm on a 7" page)
+const PATTERNS = ['None', 'Lined', 'Grid', 'Dots'];
+function applyPattern() {
+  sim.setPattern(doc.pattern || 0, Math.round(Math.max(sim.W, sim.H) / 22), S.eink ? [0.6, 0.6, 0.6] : [0.62, 0.72, 0.9]);
+  sim.pattern.margin = S.eink ? [0.7, 0.7, 0.7] : [0.95, 0.55, 0.55];
+}
 
 /** Open a painting on a fresh simulation. data = saved layers, or null for a blank sheet. */
 function openDoc(d, data) {
@@ -72,6 +94,7 @@ function openDoc(d, data) {
 }
 
 const SIZES = [
+  { name: 'Notebook page', note: true, get: () => [1264, 1680] },
   { name: 'Screen size', get: () => { const a = Math.max(innerWidth, innerHeight) / Math.min(innerWidth, innerHeight), L = 1800; return innerWidth >= innerHeight ? [L, Math.round(L / a)] : [Math.round(L / a), L]; } },
   { name: '4 : 3', get: () => [1600, 1200] },
   { name: 'Square', get: () => [1400, 1400] },
@@ -79,8 +102,8 @@ const SIZES = [
   { name: 'Postcard 3 : 2', get: () => [1800, 1200] },
   { name: 'Large 4 : 3', get: () => [2048, 1536] },
 ];
-function newDoc(W, H, name) {
-  return { id: store.newId(), name: name || 'Untitled', W, H, paper: 'cold', tint: 'white', texture: false, created: Date.now(), frames: 0 };
+function newDoc(W, H, name, pattern = 0) {
+  return { id: store.newId(), name: name || (pattern ? 'Notes' : 'Untitled'), W, H, paper: pattern ? 'hot' : 'cold', tint: 'white', texture: false, pattern, created: Date.now(), frames: 0 };
 }
 
 // ---------- view ----------
@@ -93,9 +116,10 @@ const barH = () => $('#bar').getBoundingClientRect().height;
 function fit() {
   if (!sim) return;
   const top = barH(), side = innerWidth < 700 ? 58 : 76, W = sim.W, H = sim.H;
-  const aw = innerWidth - side * 2, ah = innerHeight - top - (innerWidth < 700 ? 20 : 40);
+  const bottom = S.mode === 'pen' ? ($('#penBar').getBoundingClientRect().height || 110) + 16 : innerWidth < 700 ? 20 : 40;
+  const aw = innerWidth - side * 2, ah = innerHeight - top - bottom;
   const z = Math.min(aw / W, ah / H);
-  view.z = z; view.r = 0; view.x = (innerWidth - W * z) / 2; view.y = top + (innerHeight - top - H * z) / 2;
+  view.z = z; view.r = 0; view.x = side + (aw - W * z) / 2; view.y = top + (ah - H * z) / 2 + (S.mode === 'pen' ? 4 : (innerWidth < 700 ? 10 : 20));
   if (view.f < 0) view.x += W * z;
   needsRender = true;
 }
@@ -124,6 +148,10 @@ function brushVec(conc) {
 const concOf = (paint) => 0.1 + 4.5 * paint * paint;
 /** What the current tool paints with: preset, settings, mode (0 paint, 1 water, 2 lift, 3 erase, 4 smudge). */
 function current(tool = S.tool) {
+  if (tool === 'pen' || tool === 'inkerase' || (S.mode === 'pen' && tool !== 'inkerase')) {
+    const id = tool === 'inkerase' ? 'inkerase' : S.pen.nib, B = INKS[id];
+    return { id, B, cfg: { size: S.pen.size[id], sizePressure: B.sizePressure }, mode: id === 'inkerase' ? 6 : 5 };
+  }
   const id = S.sel[tool] || 'round', B = BRUSHES[id] || BRUSHES.round;
   if (tool === 'paint') return { id, B, cfg: S.brush[id], mode: B.mode || 0 };
   return { id, B, cfg: S.tools[tool], mode: tool === 'smudge' ? 4 : 3 };
@@ -146,8 +174,13 @@ function sampleOf(e) {
 }
 
 function beginStroke(e, tool = S.tool) {
+  // the stylus's eraser end (or its eraser button) erases in either mode
+  const eraser = e.pointerType === 'pen' && ((e.buttons & 32) || e.button === 5);
+  if (S.mode === 'pen') tool = eraser || S.pen.nib === 'inkerase' ? 'inkerase' : 'pen';
+  else if (eraser) tool = 'erase';
   sim.begin();
-  const smooth = S.sel.paint === 'detail' && tool === 'paint' ? Math.min(0.9, S.smooth + 0.2) : S.smooth;
+  // handwriting wants the line under the nib, so pen mode smooths less
+  const smooth = tool === 'pen' || tool === 'inkerase' ? S.smooth * 0.5 : S.sel.paint === 'detail' && tool === 'paint' ? Math.min(0.9, S.smooth + 0.2) : S.smooth;
   stroke = { tool, sm: new Smoother(smooth), last: null, rest: 0, load: 1, seed: seedCounter++, v: 0, len: 0, type: e.pointerType, raw: [], hold: null };
   stroke0 = performance.now();
   addSample(sampleOf(e));
@@ -165,7 +198,35 @@ function addSample(q) {
   emit(stroke.sm.push(q));
 }
 
+/** Pen mode: ink stamps go straight into the paper, no water. */
+function emitInk(s) {
+  const st = stroke, { id, B, cfg, mode } = current(st.tool);
+  const pr = s.p != null ? s.p : 0.6;
+  let r = Math.max(0.6, cfg.size * (1 - B.sizePressure + B.sizePressure * Math.pow(Math.max(pr, 0.05), 0.9) * 1.35));
+  let el = 1, ex = 1, ey = 0;
+  if (B.angle != null) { const a = B.angle * Math.PI / 180; ex = Math.cos(a); ey = Math.sin(a); el = B.flat; r = cfg.size / B.flat * 1.6; }
+  const point = { x: s.x, y: s.y, p: pr, t: s.t, r, el, ex, ey };
+  let pts;
+  if (!st.last) pts = [{ ...point, dx: 1, dy: 0 }];
+  else {
+    const { stamps, rest } = strokeStamps(st.last, point, Math.max(0.35, Math.min(r, cfg.size) * B.spacing), st.rest);
+    st.rest = rest; st.len += Math.hypot(point.x - st.last.x, point.y - st.last.y); pts = stamps;
+  }
+  st.last = point;
+  if (!pts.length) return;
+  const ink = st.inkVec || (st.inkVec = inkVec(id));
+  sim.ink(pts.map((q) => ({ x: q.x, y: q.y, r: q.r, a: 1, ex: q.ex, ey: q.ey, el: q.el })), { mode, ...ink });
+  needsRender = true; paintTick++;
+}
+/** Ink colour as pigment: a unit layer of it over white is exactly the chosen colour. */
+function inkVec(id) {
+  if (id === 'inkerase') return { bK: [0, 0, 0, 0], bS: [0, 0, 0, 0], cover: 1 };
+  const hl = id === 'highlighter', p = customPigment(hl ? S.pen.mark : S.pen.col, hl ? 0.03 : 0.6, 0), m = mass(p);
+  return { bK: [...p.K, 0], bS: [...p.S, 0.4 * m], cover: hl ? 0 : 1 };
+}
+
 function emit(s) {
+  if (stroke.tool === 'pen' || stroke.tool === 'inkerase') return emitInk(s);
   const st = stroke, { B, cfg } = current(st.tool);
   if (st.last) {
     const dt = Math.max(1, s.t - st.last.t), d = Math.hypot(s.x - st.last.x, s.y - st.last.y);
@@ -230,6 +291,7 @@ function endStroke() {
   clearTimeout(stroke.hold?.t);
   if (!stroke.snapped) for (const q of stroke.sm.finish()) emit(q);
   if (stroke.tool === 'paint' && current().mode === 0) pushHistory(S.pig.length === 1 ? S.pig[0] : null);
+  if (stroke.tool === 'pen' && S.pen.nib !== 'highlighter') S.pen.customs = [S.pen.col, ...S.pen.customs.filter((c) => c !== S.pen.col)].slice(0, 6);
   stroke = null;
   updateUndo(); scheduleSave(); thumbsDirty = true;
 }
@@ -279,6 +341,7 @@ function pickAt(cx, cy) {
   setPicking(false);
   if (Math.abs(r / 25 - pc[0]) + Math.abs(g / 25 - pc[1]) + Math.abs(b / 25 - pc[2]) < 24) { toast('That is bare paper'); return; }
   const hex = rgbToHex([r / 25 / 255, g / 25 / 255, b / 25 / 255]);
+  if (S.mode === 'pen') { setPenColour(hex); toast('Pen colour ' + hex); return; }
   useCustom(hex, Math.min(S.colOpacity, 0.15)); toast('Picked ' + hex);
 }
 function setPicking(on) { picking = on; $('#pickBtn').classList.toggle('on', on); updateCursor(); }
@@ -445,7 +508,8 @@ addEventListener('keydown', (e) => {
   if (k === 'l') { togglePop('layerPop'); return; }
   if (k === 'c') { togglePop('colPop'); return; }
   if (k === 'i') { setPicking(!picking); return; }
-  if (k === '[' || k === ']') { const { cfg } = current(); cfg.size = Math.max(1, Math.min(160, cfg.size * (k === ']' ? 1.15 : 1 / 1.15))); syncSliders(); updateCursor(); savePrefs(); return; }
+  if (k === '[' || k === ']') { const { cfg, id, mode } = current(); cfg.size = Math.max(0.6, Math.min(160, cfg.size * (k === ']' ? 1.15 : 1 / 1.15))); if (mode >= 5) S.pen.size[id] = cfg.size; syncSliders(); updateCursor(); savePrefs(); return; }
+  if (k === 'p') { setMode(S.mode === 'pen' ? 'paint' : 'pen'); return; }
   if (k === 'f') { dryNow(); return; }
   if (k === '0') { userMovedView = false; fit(); return; }
   if (k === 'tab') { e.preventDefault(); document.body.classList.toggle('ui-hidden'); return; }
@@ -466,9 +530,44 @@ $$('[data-tool]').forEach((b) => b.addEventListener('click', (e) => {
   if (S.tool === b.dataset.tool) togglePop('brushPop'); else { setTool(b.dataset.tool); closePops(); }
 }));
 
+// ---------- pen mode ----------
+function setMode(m) {
+  S.mode = m; savePrefs(); applyTheme();
+  $$('#modeSeg button').forEach((b) => b.classList.toggle('on', b.dataset.v === m));
+  closePops(); syncSliders(); updateCursor(); buildPenBar(); refreshColour(); if (!userMovedView) requestAnimationFrame(fit);
+  if (window.__ready) toast(m === 'pen' ? 'Pen: ink for writing notes' : 'Paint: watercolour', 900);
+}
+$$('#modeSeg button').forEach((b) => (b.onclick = (e) => { e.stopPropagation(); setMode(b.dataset.v); }));
+function setNib(id) { S.pen.nib = id; savePrefs(); syncSliders(); updateCursor(); buildPenBar(); refreshColour(); }
+function setPenColour(hex) {
+  if (S.pen.nib === 'highlighter') S.pen.mark = hex; else { S.pen.col = hex; if (S.pen.nib === 'inkerase') S.pen.nib = 'ballpoint'; }
+  savePrefs(); buildPenBar(); refreshColour();
+}
+function buildPenBar() {
+  const bar = $('#penBar'); if (!bar || S.mode !== 'pen') return;
+  const nibs = $('#nibs'); nibs.innerHTML = '';
+  for (const [id, B] of Object.entries(INKS)) {
+    const b = document.createElement('button'); b.className = 'nib' + (S.pen.nib === id ? ' on' : ''); b.title = B.name + ' — ' + B.note; b.dataset.nib = id;
+    b.innerHTML = `<svg class="i"><use href="#i-${id}"/></svg><span>${B.name}</span>`;
+    b.onclick = () => setNib(id);
+    nibs.appendChild(b);
+  }
+  const sw = $('#penCols'); sw.innerHTML = '';
+  const hl = S.pen.nib === 'highlighter', cur = hl ? S.pen.mark : S.pen.col;
+  const cols = hl ? MARK_COLOURS : [...PEN_COLOURS, ...S.pen.customs.filter((c) => !PEN_COLOURS.includes(c))].slice(0, 12);
+  for (const c of cols) {
+    const b = document.createElement('button'); b.className = 'pc' + (c.toLowerCase() === cur.toLowerCase() && S.pen.nib !== 'inkerase' ? ' on' : ''); b.style.background = c; b.title = c; b.dataset.col = c;
+    b.onclick = () => setPenColour(c);
+    sw.appendChild(b);
+  }
+  const more = document.createElement('button'); more.className = 'pc more'; more.title = 'Any colour…'; more.textContent = '+';
+  more.onclick = (e) => { e.stopPropagation(); togglePop('colPop'); };
+  sw.appendChild(more);
+}
+
 // ---------- sidebar sliders ----------
 const SLIDERS = {
-  sSize: { key: 'size', min: 1, max: 160, curve: 2.2, fmt: (v) => `Size ${Math.round(v)} px` },
+  sSize: { key: 'size', min: 0.6, max: 160, curve: 2.6, fmt: (v) => `Size ${v < 10 ? v.toFixed(1) : Math.round(v)} px` },
   sPaint: { key: 'paint', min: 0, max: 1, curve: 1, fmt: (v) => `${S.tool === 'paint' ? 'Paint' : 'Strength'} ${Math.round(v * 100)}%` },
   sWater: { key: 'water', min: 0, max: 1, curve: 1, fmt: (v) => `Water ${Math.round(v * 100)}%` },
 };
@@ -479,7 +578,7 @@ function syncSliders() {
     const t = Math.pow((v - sl.min) / (sl.max - sl.min), 1 / sl.curve);
     el.querySelector('.fill').style.height = t * 100 + '%';
     el.querySelector('.knob').style.top = `calc(4px + ${(1 - t)} * (100% - 8px))`;
-    const usable = sl.key === 'size' || (sl.key === 'paint' ? mode !== 1 : mode <= 1);
+    const usable = sl.key === 'size' || (mode < 5 && (sl.key === 'paint' ? mode !== 1 : mode <= 1));
     el.classList.toggle('off', !usable);
   }
   refreshColour();
@@ -500,8 +599,9 @@ for (const id in SLIDERS) {
     // relative drag (a touch does not jump the value); finer when dragging sideways, as in Procreate
     const fine = 1 / (1 + Math.abs(e.clientX - drag.x) / 50);
     const t = Math.min(1, Math.max(0, drag.t - (e.clientY - drag.y) / r.height * fine));
-    const { cfg } = current();
+    const { cfg, id, mode } = current();
     cfg[sl.key] = sl.min + Math.pow(t, sl.curve) * (sl.max - sl.min);
+    if (mode >= 5) S.pen.size[id] = cfg.size;
     syncSliders(); bubble(sl.fmt(cfg[sl.key]), el);
     if (sl.key === 'size') showSizePreview();
   };
@@ -619,6 +719,7 @@ let mixMode = false, disc = null, discTimer = 0;
 const wellColour = (p) => rgbToHex(swatch(p, 1.1, [1, 1, 1]));
 function refreshColour() {
   if (!loaded) return;
+  if (S.mode === 'pen') { const c = S.pen.nib === 'highlighter' ? S.pen.mark : S.pen.col; $('#colBtn').style.background = c; $('#colNew').style.background = c; buildPenBar(); return; }
   const hex = rgbToHex(swatch(loaded, 1.1, [1, 1, 1]));
   $('#colBtn').style.background = hex; $('#colNew').style.background = hex;
   const names = S.pig.map((p) => pigById(p).name);
@@ -632,11 +733,13 @@ function buildColour() {
     disc = new Disc($('#disc'), (hsv, done) => {
       const hex = rgbToHex(hsvToRgb(...hsv));
       $('#colNew').style.background = hex; $('#colBtn').style.background = hex;
+      if (S.mode === 'pen') { if (done) setPenColour(hex); return; }
       clearTimeout(discTimer); if (done) useCustom(hex); else discTimer = setTimeout(() => useCustom(hex), 250);
     });
     tabs('#colTabs', '#colPop');
   }
-  disc.set(rgbToHsv(swatch(loaded, 1, [1, 1, 1])));
+  disc.set(rgbToHsv(S.mode === 'pen' ? hexToRgb(S.pen.nib === 'highlighter' ? S.pen.mark : S.pen.col) : swatch(loaded, 1, [1, 1, 1])));
+  if (S.mode === 'pen') { $('#colTabs [data-t="disc"]').click(); $('#colName').textContent = S.pen.nib === 'highlighter' ? 'Highlighter colour' : 'Ink colour'; $('#colNote').textContent = 'drag the ring for the hue, inside for the shade'; }
   $('#colOpacity').value = S.colOpacity; $('#colGran').value = S.colGran;
   const upd = () => { S.colOpacity = +$('#colOpacity').value; S.colGran = +$('#colGran').value; const c = S.pig.length === 1 && S.pig[0].startsWith('custom:') ? S.pig[0].split(':')[1] : null; if (c) useCustom(c); savePrefs(); };
   $('#colOpacity').onchange = upd; $('#colGran').onchange = upd;
@@ -742,11 +845,14 @@ function buildActions() {
   }
   const tc = $('#tints'); tc.innerHTML = '';
   for (const [k, v] of Object.entries(TINTS)) { const b = document.createElement('button'); b.className = 'sw' + (doc.tint === k ? ' on' : ''); b.title = k; b.style.background = rgbToHex(v); b.onclick = () => { doc.tint = k; applyLook(); scheduleSave(); buildActions(); }; tc.appendChild(b); }
+  const ps = $('#patSeg'); ps.innerHTML = '';
+  PATTERNS.forEach((n, i) => { const b = document.createElement('button'); b.textContent = n; b.className = (doc.pattern || 0) === i ? 'on' : ''; b.onclick = () => { doc.pattern = i; applyPattern(); needsRender = true; scheduleSave(); buildActions(); }; ps.appendChild(b); });
   const chk = (id, get, set) => { const el = $(id); el.checked = get(); el.onchange = () => { set(el.checked); savePrefs(); }; };
   chk('#optTexture', () => doc.texture, (v) => { doc.texture = v; applyLook(); scheduleSave(); });
   chk('#optFlip', () => view.f < 0, (v) => { const c = toSheet(innerWidth / 2, innerHeight / 2); view.f = v ? -1 : 1; const q = toScreen(c.x, c.y); view.x += innerWidth / 2 - q.x; view.y += innerHeight / 2 - q.y; needsRender = true; });
   chk('#optRecord', () => S.record, (v) => (S.record = v));
   chk('#optRight', () => S.right, (v) => { S.right = v; document.body.classList.toggle('right', v); });
+  chk('#optEink', () => !!S.eink, (v) => { S.eink = v; applyTheme(); });
   chk('#optCursor', () => S.cursor, (v) => { S.cursor = v; updateCursor(); });
   chk('#optQuick', () => S.quick, (v) => (S.quick = v));
   chk('#optRotate', () => S.rotate, (v) => { S.rotate = v; if (!v) { view.r = 0; needsRender = true; } });
@@ -826,6 +932,13 @@ async function makeThumb() {
   const c = new OffscreenCanvas(w, h); c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(px.buffer), w, h), 0, 0);
   return c.convertToBlob({ type: 'image/jpeg', quality: 0.85 });
 }
+/** Before another painting replaces this one: wait for a save in flight, then save if needed. */
+async function flushSave() {
+  if (!doc || NOSAVE) return;
+  clearTimeout(saveT);
+  while (saving) await new Promise((r) => setTimeout(r, 30));
+  if (dirty) { sim.dryNow(); await save(true); }
+}
 async function save(force) {
   if (NOSAVE || !doc) return;
   if (saving) { scheduleSave(); return; }
@@ -836,7 +949,7 @@ async function save(force) {
     const data = await s.readAll();
     if (s !== sim) return; // another painting was opened meanwhile
     const frames = await rec.flush();
-    await store.savePainting(d.id, { id: d.id, name: d.name, W: d.W, H: d.H, created: d.created, frames, thumb: await makeThumb() }, { ...data, paper: d.paper, tint: d.tint, texture: d.texture });
+    await store.savePainting(d.id, { id: d.id, name: d.name, W: d.W, H: d.H, created: d.created, frames, thumb: await makeThumb() }, { ...data, paper: d.paper, tint: d.tint, texture: d.texture, pattern: d.pattern || 0 });
     d.frames = frames;
     dirty = false; window.__saved = (window.__saved || 0) + 1;
   } catch (e) { console.warn('save failed', e); }
@@ -846,7 +959,7 @@ addEventListener('visibilitychange', () => { if (document.visibilityState === 'h
 
 // ---------- gallery ----------
 async function openGallery() {
-  if (doc && dirty) { sim.dryNow(); await save(true); }
+  await flushSave();
   closePops();
   $('#gallery').classList.add('open');
   const grid = $('#ggrid'); grid.innerHTML = '';
@@ -885,35 +998,41 @@ function cardMenu(e, m) {
 }
 async function openById(id) {
   if (doc?.id === id) { $('#gallery').classList.remove('open'); return; }
+  await flushSave();
   const meta = await store.get('meta', id), data = await store.loadPainting(id);
   if (!meta || !data) { toast('Could not open that painting'); return; }
-  openDoc({ id, name: meta.name, W: data.W, H: data.H, paper: data.paper || 'cold', tint: data.tint || 'white', texture: !!data.texture, created: meta.created, frames: meta.frames || 0 }, data);
+  openDoc({ id, name: meta.name, W: data.W, H: data.H, paper: data.paper || 'cold', tint: data.tint || 'white', texture: !!data.texture, pattern: data.pattern || 0, created: meta.created, frames: meta.frames || 0 }, data);
   $('#gallery').classList.remove('open');
 }
-function createPainting(W, H, name) {
-  const d = newDoc(W, H, name);
+async function createPainting(W, H, name, pattern = 0) {
+  await flushSave();
+  const d = newDoc(W, H, name, pattern);
   openDoc(d, null);
   $('#gallery').classList.remove('open');
   dirty = true; save(true);
   return d;
 }
 $('#galBtn').onclick = openGallery;
-$('#newBtn').onclick = (e) => menu(e, SIZES.map((s) => { const [w, h] = s.get(); return [`${s.name}  ${w} × ${h}`, () => createPainting(w, h)]; }));
+$('#newBtn').onclick = (e) => menu(e, [
+  ['Notebook page, lined', async () => { await createPainting(1264, 1680, 'Notes', 1); setMode('pen'); }],
+  ['Notebook page, grid', async () => { await createPainting(1264, 1680, 'Notes', 2); setMode('pen'); }],
+  ...SIZES.filter((s) => !s.note).map((s) => { const [w, h] = s.get(); return [`${s.name}  ${w} × ${h}`, () => createPainting(w, h)]; }),
+]);
 $('#importBtn').onclick = () => $('#importFile').click();
 $('#importFile').onchange = async (e) => {
   const f = e.target.files[0]; if (!f) return; e.target.value = '';
   const bmp = await createImageBitmap(f);
   // canvas up to ~3 Mpx at the image's aspect
   const sc = Math.min(1, Math.sqrt(3.1e6 / (bmp.width * bmp.height)), 2400 / Math.max(bmp.width, bmp.height));
-  const d = createPainting(Math.round(bmp.width * sc), Math.round(bmp.height * sc), f.name.replace(/\.[^.]+$/, ''));
+  const d = await createPainting(Math.round(bmp.width * sc), Math.round(bmp.height * sc), f.name.replace(/\.[^.]+$/, ''));
   sim.importImage(bmp); bmp.close?.(); sim.layer.name = 'Photo'; sim.newLayerOp(); sim.undo.length = 0;
   needsRender = true; updateUndo(); scheduleSave(); toast('Imported as a glaze layer: paint on the layer above');
   return d;
 };
 
 // ---------- frame loop ----------
-let lastT = performance.now(), frameEma = 16, lastAdapt = 0, lastTick = -1, wasWet = null;
-function render() { sim.render({ inv: invMat(), zoom: view.z }, canvas.width, canvas.height, dpr, { desk: [0.025, 0.025, 0.028] }); }
+let lastRender = 0, lastT = performance.now(), frameEma = 16, lastAdapt = 0, lastTick = -1, wasWet = null;
+function render() { sim.render({ inv: invMat(), zoom: view.z }, canvas.width, canvas.height, dpr, { desk: S.eink ? [0.8, 0.8, 0.8] : [0.025, 0.025, 0.028] }); }
 // Adaptive load: if frames run long while the sheet is wet, take fewer simulation substeps per
 // frame (drying is scaled per substep, so it takes the same time); give them back with headroom.
 function adapt(t, ms) {
@@ -935,7 +1054,8 @@ function frame(t) {
     sim.dryBoost = dryHold ? 3 : 0;
     const stepped = sim.step(dt);
     if (stepped) { needsRender = true; paintTick++; }
-    if (needsRender) { render(); needsRender = false; }
+    // e-paper: a drying wash is redrawn a few times a second, not every frame (fewer flashes)
+    if (needsRender && (!S.eink || stroke || !sim.wet || t - lastRender > 150)) { render(); needsRender = false; lastRender = t; }
     markWet();
     if (S.record && rec.id && rec.due(paintTick !== lastTick)) { lastTick = paintTick; rec.capture(sim); }
     if (thumbsDirty && !sim.wet && $('#layerPop').classList.contains('open')) buildLayers();
@@ -944,7 +1064,7 @@ function frame(t) {
 }
 
 // ---------- start ----------
-setTool(S.tool); loadBrush(); syncSliders();
+setTool(S.tool); loadBrush(); applyTheme(); setMode(S.mode); syncSliders();
 let opened = false;
 if (!qs.has('fresh') && !NOSAVE) {
   try {
@@ -967,7 +1087,7 @@ if ('serviceWorker' in navigator && !qs.has('nosw') && location.protocol !== 'fi
 // test / debugging hook
 window.__aq = {
   get sim() { return sim; }, get doc() { return doc; }, view, S, get stroke() { return stroke; }, fit, setTool, selectBrush, choosePigment, useCustom, render,
-  redraw: () => { needsRender = true; }, exportImage, save, toSheet, toScreen, openGallery, openById, createPainting, rec, togglePop, dupLayer,
+  redraw: () => { needsRender = true; }, setMode, setNib, setPenColour, exportImage, save, toSheet, toScreen, openGallery, openById, createPainting, rec, togglePop, dupLayer,
   get penSeen() { return penSeen; },
 };
 window.__ready = true;

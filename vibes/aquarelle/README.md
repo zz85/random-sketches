@@ -12,7 +12,7 @@ ES modules and WebGL2. Installable PWA, works offline.
 ```
 python3 -m http.server      # any static server (the service worker needs https or localhost)
 bun test                    # pigment optics, mixing, stroke resampling, paper: 10 tests
-node smoke.js               # headless Chromium (SwiftShader), real pen/touch/mouse events through the UI: 42 checks + screenshots
+node smoke.js               # headless Chromium (SwiftShader), real pen/touch/mouse events through the UI: 53 checks + screenshots
                             # SKIP_SCENE=1 skips painting the landscape; PORT= / CDP= / CHROME= to override
 ```
 
@@ -43,7 +43,37 @@ Right-hand interface puts it on the other side.
 | Touch and hold | eyedropper (also the sidebar square, Alt-click or I) |
 | Hold at the end of a stroke | QuickShape: the stroke is taken back, with everything its water did, and painted again as a straight line or an ellipse (circle when nearly round) |
 | Mouse | left paints (speed stands in for pressure), middle/right or Space-drag pans, wheel zooms |
-| Keys | B paint, S smudge, E erase, L layers, C colours, I eyedropper, `[` `]` size, 1–9 pigments (Shift adds to the mix), F dry now, ⌘Z / ⇧⌘Z, 0 fit, Tab hide UI |
+| Keys | P pen / paint, B paint, S smudge, E erase, L layers, C colours, I eyedropper, `[` `]` size, 1–9 pigments (Shift adds to the mix), F dry now, ⌘Z / ⇧⌘Z, 0 fit, Tab hide UI |
+
+**Pen mode** (Pen | Paint at the top, or P) is for writing notes. Ink goes straight into
+the page with a crisp edge and no water, so it is dry the moment you lift the pen and
+never bleeds into wet paint. Nibs along the bottom: Ballpoint, Fineliner (constant width),
+Brush pen (hairline to bold with pressure), Highlighter (transparent chisel, writing under
+it stays readable) and Eraser; the sidebar keeps size, eyedropper, undo and redo. The
+stylus's eraser end erases in either mode. Gallery → + → Notebook page makes a 1264 × 1680
+page (the B7 Pro's own resolution) with lined or grid ruling; any canvas can take lined,
+grid or dotted ruling under Actions → Canvas → Page ruling. Ink and watercolour share
+layers and undo, so notes can be painted over and the other way round.
+
+**Choosing colours.** In pen mode, tap a swatch in the bottom bar (ten inks picked to stay
+distinct on colour e-paper, six highlighter colours when the highlighter is selected), or
+tap + or the round button at the top right for the colour disc: drag the outer ring for
+the hue, inside the disc for the shade (left greyer, right purer, up lighter, down
+darker). Colours you write with are added to the bar. Touch and hold the page (or the
+eyedropper square) to pick a colour off it. In paint mode the round button opens the
+disc too, plus Palette with the 19 pigments and + Mix.
+
+**E-paper screens** (Bigme B7 Pro: 7" Kaleido colour, 1264 × 1680 at 300 ppi black and
+white / 150 ppi colour, capacitive pen with pressure, Android 14) get a light, high-contrast
+theme: white bars, black 2 px outlines, black for "selected", no shadows, transitions or
+animated indicators, and a drying wash is redrawn a few times a second instead of every
+frame so the panel flashes less. It switches on by itself for Bigme / Boox / Kobo /
+PocketBook user agents and can be toggled in Actions → Prefs → E-paper display (or with
+`?eink=1`). The layout was checked at the B7 Pro's CSS size (632 × 840 at 2×): the page
+fits between the top bar and the pen bar and every control is at least 30 CSS px (about
+5 mm). On Android the low-latency canvas mode is off, because it can put the canvas on a
+hardware overlay plane that e-paper drivers handle badly. For the snappiest pen, set the
+B7 Pro's per-app refresh mode for the browser to its fast mode in the Bigme E-Ink centre.
 
 **Brush library**: Watercolour (Round, Wash, Flat with a chisel edge, Rigger, Dry brush),
 Water (Clear water to wet the paper or soften edges, Lift to blot paint back off),

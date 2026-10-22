@@ -56,6 +56,18 @@ export const BRUSHES = {
   splatter: { name: 'Splatter', cat: 'Effects', size: 40, water: 0.7, paint: 0.6, shape: 3, spacing: 0.6, sizePressure: 0.5, paintPressure: 0.3, note: 'flick drops off the brush' },
 };
 export const CATEGORIES = ['Watercolour', 'Water', 'Effects'];
+
+/** Pen mode nibs: ink with a crisp edge and no water. Sizes are radii in sheet px. */
+export const INKS = {
+  ballpoint: { name: 'Ballpoint', size: 2.4, sizePressure: 0.35, spacing: 0.15, note: 'even line, a little bolder when you press' },
+  fineliner: { name: 'Fineliner', size: 2.0, sizePressure: 0, spacing: 0.15, note: 'constant width' },
+  brushpen: { name: 'Brush pen', size: 6, sizePressure: 0.9, spacing: 0.12, note: 'hairline to bold with pressure' },
+  highlighter: { name: 'Highlighter', size: 14, sizePressure: 0, spacing: 0.1, angle: 80, flat: 3.2, note: 'transparent chisel marker' },
+  inkerase: { name: 'Eraser', size: 12, sizePressure: 0.3, spacing: 0.15, note: 'rubs out ink and paint' },
+};
+/** Ink colours chosen to stay distinct on colour e-paper (Kaleido): strong, darkish, few. */
+export const PEN_COLOURS = ['#141414', '#5a5a5a', '#1f4fbf', '#d02424', '#1e8a3a', '#e8730c', '#6b3fb5', '#7a4a22', '#0f8a8a', '#c2185b'];
+export const MARK_COLOURS = ['#ffe24a', '#9be37a', '#ff9ccf', '#8fd3ff', '#ffc06b', '#d4b3ff'];
 /** Brushes smudge and erase can borrow a shape from. */
 export const SHAPES = ['round', 'wash', 'flat', 'detail', 'dry'];
 
