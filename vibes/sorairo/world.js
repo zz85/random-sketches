@@ -107,6 +107,7 @@ export function makeTerrain(shared) {
         float dirtEdge = vnoise(vWp.xz * 0.9) * 0.5;
         float p = 1.0 - smoothstep(1.0 + dirtEdge * 0.5, 1.6 + dirtEdge, vPath);
         vec3 alb = mix(grass, uDirt * (0.9 + 0.2 * vnoise(vWp.xz * 3.0)), p);
+        alb = mix(alb, SNOW * (0.94 + 0.06 * fine), snowAt(vWp.xz));
         float ndl = dot(n, uSunDir);
         float sh = treeShadow(vWp, 0.002) * cloudShadowAt(vWp);
         vec3 col = celLight(alb, ndl, sh, 0.85, 0.12);
@@ -162,7 +163,9 @@ export function makeMountains(shared) {
           vec3 n = normalize(vN);
           if (dot(n, cameraPosition - vWp) < 0.0) n = -n;
           vec3 alb = uCol * (0.85 + 0.3 * vnoise(vWp.xz * 0.01));
-          float snow = uSnow * smoothstep(uTop * 0.55, uTop * 0.75, vWp.y + vnoise(vWp.xz * 0.02) * 60.0) * smoothstep(0.3, 0.7, n.y);
+          // winter brings the snow line down to the foothills
+          float line = mix(0.55, 0.05, uSnowCover);
+          float snow = max(uSnow, uSnowCover) * smoothstep(uTop * line, uTop * (line + 0.2), vWp.y + vnoise(vWp.xz * 0.02) * 60.0) * smoothstep(0.3, 0.7, n.y);
           alb = mix(alb, vec3(0.92, 0.95, 1.0), snow);
           vec3 col = celLight(alb, dot(n, uSunDir), cloudShadowAt(vWp * 0.3), 0.9, 0.2);
           gl_FragColor = vec4(applyFog(col, cameraPosition + (vWp - cameraPosition) * 0.55), 1.0);

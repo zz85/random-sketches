@@ -17,6 +17,10 @@ export function makeShared() {
     uShadowOn: { value: 1 },
     uCloudCover: { value: 0.5 },
     uCloudShadow: { value: 0.5 },
+    // cloud clock, separate from uTime so time-lapses can race the clouds
+    uCloudT: { value: 0 },
+    // 0 no snow … 1 snow everywhere (patchy in between, see snowAt)
+    uSnowCover: { value: 0 },
   };
 }
 
@@ -31,6 +35,8 @@ uniform float uFogDensity;
 uniform vec2 uWind;
 uniform float uCloudCover;
 uniform float uCloudShadow;
+uniform float uCloudT;
+uniform float uSnowCover;
 
 float hash12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * .1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 float vnoise(vec2 p) {
@@ -55,10 +61,17 @@ vec2 windBend(vec2 xz, float seed) {
 
 // Moving cloud shadows on the ground (1 = sunlit)
 float cloudShadowAt(vec3 wp) {
-  vec2 p = wp.xz * 0.0035 + uWind * uTime * 0.0012 + vec2(3.1, 1.7);
+  vec2 p = wp.xz * 0.0035 + uWind * uCloudT * 0.0012 + vec2(3.1, 1.7);
   float n = fbm3o(p);
   float c = smoothstep(1.0 - uCloudCover * 0.9, 1.15 - uCloudCover * 0.9, n);
   return 1.0 - c * uCloudShadow;
+}
+
+// Snow lying at xz, 0..1. Drifts form and melt in patches, hollows last.
+const vec3 SNOW = vec3(0.93, 0.95, 1.0);
+float snowAt(vec2 xz) {
+  float n = fbm3o(xz * 0.07) * 0.75 + vnoise(xz * 0.7) * 0.25;
+  return smoothstep(n - 0.06, n + 0.06, uSnowCover * 1.3 - 0.15);
 }
 
 // Aerial perspective: exponential haze tinted toward the sun

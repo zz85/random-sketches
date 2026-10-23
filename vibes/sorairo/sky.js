@@ -37,7 +37,7 @@ export function makeSky(shared) {
         gl_Position = p.xyww;
       }`,
     fragmentShader: /* glsl */ `
-      uniform float uTime; uniform vec3 uSunDir; uniform vec3 uSunColor; uniform vec2 uWind;
+      uniform float uTime, uCloudT; uniform vec3 uSunDir; uniform vec3 uSunColor; uniform vec2 uWind;
       uniform float uCloudCover;
       uniform vec3 uZenith, uMid, uHorizon, uCloudLit, uCloudShade, uCloudRim, uDiscColor;
       uniform float uDiscSize, uGlow, uStars, uTowers;
@@ -64,14 +64,14 @@ export function makeSky(shared) {
       // Towering cumulus standing on the horizon. q = (azimuth, elevation) in radians.
       // Returns density; .y of towerProfile is the local cloud-top elevation.
       float towerTop(float az) {
-        float t = uTime * 0.004;
+        float t = uCloudT * 0.004;
         float h = fbm(vec2(az * 1.1 + t, 4.0), 4);
         float lumps = fbm(vec2(az * 6.0 + t * 3.0, 9.0), 3);
         return 0.03 + (pow(smoothstep(0.3, 0.68, h), 1.3) * 0.5 + lumps * 0.06) * uTowers;
       }
       float towerDensity(vec2 q) {
         float az = q.x, el = q.y;
-        float t = uTime * 0.004;
+        float t = uCloudT * 0.004;
         float h = towerTop(az);
         float body = 1.0 - el / max(h, 1e-3);           // 1 at base, 0 at top
         vec2 p = vec2(az * 7.0 + t * 6.0, el * 11.0);
@@ -83,12 +83,12 @@ export function makeSky(shared) {
       float towerShape(vec2 q) {
         float h = towerTop(q.x);
         float body = 1.0 - q.y / max(h, 1e-3);
-        vec2 p = vec2(q.x * 7.0 + uTime * 0.024, q.y * 11.0);
+        vec2 p = vec2(q.x * 7.0 + uCloudT * 0.024, q.y * 11.0);
         return body * 0.95 + fbm(p * 0.45, 2) * 0.9 - 0.7;
       }
       // Overhead cumulus layer on a plane
       float layerDensity(vec2 p) {
-        p += uWind * uTime * 0.0015;
+        p += uWind * uCloudT * 0.0015;
         vec2 w = vec2(fbm(p * 0.6, 3), fbm(p * 0.6 + 5.2, 3));
         float b = billow(p + w * 1.4, 5);
         return b - (1.18 - uCloudCover * 0.55);
@@ -176,7 +176,7 @@ export function makeSky(shared) {
             occl = max(occl, a * (1.0 - rim * 0.6));
           }
           // cirrus streaks high up
-          vec2 cp = d.xz / (d.y + 0.05) * vec2(0.6, 2.5) + vec2(uTime * 0.002, 0.0);
+          vec2 cp = d.xz / (d.y + 0.05) * vec2(0.6, 2.5) + vec2(uCloudT * 0.002, 0.0);
           float ci = smoothstep(0.55, 0.95, fbm(cp, 5)) * smoothstep(0.05, 0.4, d.y) * (1.0 - occl);
           col = mix(col, uCloudLit * 0.95 + uCloudRim * 0.1, ci * 0.45);
         }

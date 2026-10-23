@@ -49,14 +49,18 @@ export function makeGrass(shared, { count = 160000, radius = 72, center = new TH
     ...shared,
     uBase: { value: new THREE.Color() }, uTip: { value: new THREE.Color() }, uTip2: { value: new THREE.Color() }, uSheen: { value: new THREE.Color() },
   };
+  const flowerU = { ...shared, uFlowers: { value: 1 } };
   const mat = new THREE.ShaderMaterial({
     uniforms,
     side: THREE.DoubleSide,
     vertexShader: COMMON + /* glsl */ `
       attribute vec3 iOff; attribute vec4 iPar; attribute vec3 iNrm;
-      varying float vT; varying vec3 vWp; varying vec3 vN; varying float vSeed; varying float vGust; varying float vH;
+      varying float vT; varying vec3 vWp; varying vec3 vN; varying float vSeed; varying float vGust; varying float vH; varying float vSnow;
       void main() {
         float ang = iPar.x, h = iPar.y, w = iPar.z, seed = iPar.w;
+        // under snow most blades are buried and the rest stick out short
+        vSnow = snowAt(iOff.xz);
+        h *= (1.0 - 0.55 * vSnow) * step(vSnow * 0.85, fract(seed * 7.31));
         float t = position.y;
         vec3 dir = vec3(cos(ang), 0.0, sin(ang));
         vec3 side = vec3(-dir.z, 0.0, dir.x);
@@ -75,19 +79,20 @@ export function makeGrass(shared, { count = 160000, radius = 72, center = new TH
       }`,
     fragmentShader: COMMON + SHADOW + /* glsl */ `
       uniform vec3 uBase, uTip, uTip2, uSheen;
-      varying float vT; varying vec3 vWp; varying vec3 vN; varying float vSeed; varying float vGust; varying float vH;
+      varying float vT; varying vec3 vWp; varying vec3 vN; varying float vSeed; varying float vGust; varying float vH; varying float vSnow;
       void main() {
         vec3 n = normalize(vN);
         float patchN = fbm3o(vWp.xz * 0.05);
         vec3 tip = mix(uTip, uTip2, smoothstep(0.35, 0.8, patchN + (vSeed - 0.5) * 0.3));
         vec3 alb = mix(uBase, tip, smoothstep(0.0, 0.9, vT));
+        alb = mix(alb, SNOW, vSnow * (1.0 - smoothstep(0.15, 0.6, vT)));
         float sh = treeShadow(vWp, 0.003) * cloudShadowAt(vWp);
         float ndl = dot(n, uSunDir);
         float ao = mix(0.55, 1.0, smoothstep(0.0, 0.7, vT));
         vec3 col = celLight(alb, ndl, sh, ao, 0.25);
         // gust sheen: the field lightens where the wind presses the blades flat
         vec3 vd = normalize(cameraPosition - vWp);
-        col += uSheen * uSunColor * vGust * smoothstep(0.4, 1.0, vT) * 0.22 * sh;
+        col += uSheen * uSunColor * vGust * smoothstep(0.4, 1.0, vT) * 0.22 * sh * (1.0 - vSnow);
         // backlit tips glow
         float back = pow(max(dot(-vd, uSunDir), 0.0), 5.0);
         col += uTip2 * uSunColor * back * smoothstep(0.5, 1.0, vT) * 0.4 * sh;
@@ -115,15 +120,18 @@ export function makeGrass(shared, { count = 160000, radius = 72, center = new TH
   fgeo.setAttribute('iPar', new THREE.InstancedBufferAttribute(new Float32Array(fp), 4));
   fgeo.instanceCount = fo.length / 3;
   const fmat = new THREE.ShaderMaterial({
-    uniforms: shared,
+    uniforms: flowerU,
     vertexShader: COMMON + /* glsl */ `
+      uniform float uFlowers;
       attribute vec3 iOff; attribute vec4 iPar;
       varying vec2 vUv; varying vec3 vWp; varying float vKind; varying float vSeed;
       void main() {
+        // uFlowers: the share of flowers in bloom (seasons)
+        float on = step(iPar.w, uFlowers) * (1.0 - snowAt(iOff.xz));
         vec3 p = iOff + vec3(0.0, iPar.x, 0.0);
         p.xz += windBend(iOff.xz, iPar.y) * iPar.x;
         vec4 mv = viewMatrix * vec4(p, 1.0);
-        mv.xy += position.xy * 0.045;
+        mv.xy += position.xy * 0.045 * on;
         vUv = position.xy; vWp = p; vKind = iPar.z; vSeed = iPar.w;
         gl_Position = projectionMatrix * mv;
       }`,
@@ -142,5 +150,5 @@ export function makeGrass(shared, { count = 160000, radius = 72, center = new TH
   const flowers = new THREE.Mesh(fgeo, fmat);
   flowers.frustumCulled = false;
 
-  return { mesh, flowers, uniforms, count: placed };
+  return { mesh, flowers, uniforms, flowerUniforms: flowerU, count: placed };
 }

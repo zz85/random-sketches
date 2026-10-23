@@ -93,7 +93,7 @@ export function makeTree(shared, groundY, seed = 7, opts = {}) {
     }
     branches.push({ pts, rad: rads });
     const end = pts[pts.length - 1];
-    if (depth >= 3 || rad < 0.05) { clumps.push({ c: end.clone(), r: mix(1.6, 1.15) + rnd() * mix(0.9, 0.65) }); return; }
+    if (depth >= 3 || rad < 0.05) { clumps.push({ c: end.clone(), r: mix(1.6, 1.15) + rnd() * mix(0.9, 0.65), d: d.clone(), base: end.clone() }); return; }
     const kids = depth === 0 ? 4 + Math.floor(rnd() * 2) : 2 + Math.floor(rnd() * 2);
     const ang0 = rnd() * Math.PI * 2;
     for (let k = 0; k < kids; k++) {
@@ -112,7 +112,7 @@ export function makeTree(shared, groundY, seed = 7, opts = {}) {
       const roll = rnd();
       const o = new THREE.Vector3(rnd() - 0.5, rnd() * 0.6, rnd() - 0.5).normalize().multiplyScalar(mix(0.9, 0.8));
       const r = mix(1.2, 0.85) + rnd() * mix(0.7, 0.45);
-      if (roll < mix(0.4, 0.3)) clumps.push({ c: pts[i].clone().add(o), r });
+      if (roll < mix(0.4, 0.3)) clumps.push({ c: pts[i].clone().add(o), r, d: o.clone().normalize(), base: pts[i].clone() });
     }
   }
   const base = new THREE.Vector3(0, groundY - 0.4, 0);
@@ -123,6 +123,29 @@ export function makeTree(shared, groundY, seed = 7, opts = {}) {
     const s = base.clone().add(new THREE.Vector3(0, 1.2, 0));
     const pts = [s, s.clone().add(new THREE.Vector3(Math.cos(a) * 0.6, -0.9, Math.sin(a) * 0.6)), s.clone().add(new THREE.Vector3(Math.cos(a) * 1.5, -1.5, Math.sin(a) * 1.5))];
     branches.push({ pts, rad: [0.35, 0.22, 0.08] });
+  }
+
+  // twigs: a fan of fine shoots at every clump. Hidden by leaves most of the year, they
+  // give the bare winter tree its crown. Own random stream so the foliage is unchanged.
+  const trnd = mulberry32(seed * 13 + 5);
+  // Shoots leave the limb along its last stretch and carry on roughly its way, each forking
+  // once, so the bare crown reads as fine branching rather than bursts.
+  const shoot = (s0, d, L, r0, forks) => {
+    const bend = new THREE.Vector3(trnd() - 0.5, 0.35, trnd() - 0.5).multiplyScalar(L * 0.3);
+    const mid = s0.clone().addScaledVector(d, L * 0.5).addScaledVector(bend, 0.35), tip = s0.clone().addScaledVector(d, L).add(bend);
+    branches.push({ pts: [s0, mid, tip], rad: [r0, r0 * 0.6, r0 * 0.25] });
+    for (let f = 0; f < forks; f++) {
+      const fd = d.clone().add(new THREE.Vector3(trnd() - 0.5, trnd() * 0.5, trnd() - 0.5).multiplyScalar(1.4)).normalize();
+      shoot(mid.clone().lerp(tip, trnd() * 0.5), fd, L * (0.45 + trnd() * 0.2), r0 * 0.5, 0);
+    }
+  };
+  for (const c of clumps) {
+    const n = 4 + Math.floor(trnd() * 3);
+    for (let k = 0; k < n; k++) {
+      const d = c.d.clone().add(new THREE.Vector3(trnd() - 0.5, trnd() * 0.6, trnd() - 0.5).multiplyScalar(1.3)).normalize();
+      const s0 = c.base.clone().addScaledVector(c.d, -c.r * trnd() * 0.5);
+      shoot(s0, d, c.r * (0.9 + trnd() * 0.6), 0.045, 1 + Math.floor(trnd() * 2));
+    }
   }
 
   // ---- trunk + branch tubes, merged
@@ -166,6 +189,8 @@ export function makeTree(shared, groundY, seed = 7, opts = {}) {
         vec3 n = normalize(vN);
         float streak = vnoise(vec2(vUv.x * 14.0, vUv.y * 1.2));
         vec3 alb = uBark * (0.75 + 0.5 * streak);
+        // snow settles on the tops of limbs
+        alb = mix(alb, SNOW, uSnowCover * 0.85 * smoothstep(0.55, 0.8, n.y + (streak - 0.5) * 0.3));
         float sh = treeShadow(vWp + n * 0.08, 0.004);
         float ao = mix(0.45, 1.0, smoothstep(0.0, 6.0, vWp.y - ${groundY.toFixed(2)}));
         vec3 col = celLight(alb, dot(n, uSunDir), sh, ao, 0.15);
@@ -218,6 +243,10 @@ export function makeTree(shared, groundY, seed = 7, opts = {}) {
   const quant = (f) => sorted[Math.min(N - 1, Math.floor(f * N))];
   const stageOf = (shares) => { const th = []; let acc = 0; for (let i = 0; i < shares.length - 1; i++) { acc += shares[i]; th.push(quant(acc)); } return turn.map((t) => th.filter((x) => t >= x).length); };
   const iStage = new Float32Array(N);
+  // Shedding order (seasons): the most turned leaves drop first, so iDrop is the card's
+  // rank by turn, 0 = first to fall. Leaf-out in spring runs the same order backwards.
+  const iDrop = new Float32Array(N);
+  turn.map((t, i) => [t, i]).sort((a, b) => b[0] - a[0]).forEach(([, i], r) => (iDrop[i] = (r + 0.5) / N));
   const qg = new THREE.InstancedBufferGeometry();
   qg.setAttribute('position', new THREE.Float32BufferAttribute([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0], 3));
   qg.setIndex([0, 1, 2, 0, 2, 3]);
@@ -236,6 +265,7 @@ export function makeTree(shared, groundY, seed = 7, opts = {}) {
   qg.setAttribute('iRnd', new THREE.InstancedBufferAttribute(iRnd, 4));
   const stageAttr = new THREE.InstancedBufferAttribute(iStage, 1);
   qg.setAttribute('iStage', stageAttr);
+  qg.setAttribute('iDrop', new THREE.InstancedBufferAttribute(iDrop, 1));
   qg.instanceCount = N;
 
   const clusterTex = { leaf: makeClusterTexture('leaf'), petal: makeClusterTexture('petal') };
@@ -245,12 +275,20 @@ export function makeTree(shared, groundY, seed = 7, opts = {}) {
     uLeafDark: { value: new THREE.Color() }, uLeafLight: { value: new THREE.Color() }, uRim: { value: new THREE.Color() },
     uCenter: { value: center },
     uPal: { value: [0, 1, 2, 3, 4, 5].map(() => new THREE.Color()) }, uPalOn: { value: 0 },
+    // palette shadow colour = tint * uDarkMul; uAmbDesat greys the sky fill (see below)
+    uDarkMul: { value: new THREE.Vector3(0.55, 0.42, 0.34) }, uAmbDesat: { value: 0.65 },
+    // seasons: share of the canopy shed (0 full … 1 bare) and share in blossom
+    uBare: { value: 0 }, uBloom: { value: 0 }, uTex2: { value: null },
+    uBloomLight: { value: new THREE.Color(1.0, 0.82, 0.88) }, uBloomDark: { value: new THREE.Color(0.95, 0.68, 0.76) },
   };
   const leafVS = /* glsl */ `
-    uniform float uTime; uniform vec2 uWind; uniform vec3 uPal[6];
-    attribute vec3 iPos; attribute vec3 iNrm; attribute vec4 iRnd; attribute float iStage;
-    varying vec2 vUv; varying vec3 vN; varying vec3 vWp; varying float vDepth; varying float vCell; varying vec3 vTint;
+    uniform float uTime; uniform vec2 uWind; uniform vec3 uPal[6]; uniform float uBare, uBloom;
+    attribute vec3 iPos; attribute vec3 iNrm; attribute vec4 iRnd; attribute float iStage; attribute float iDrop;
+    varying vec2 vUv; varying vec3 vN; varying vec3 vWp; varying float vDepth; varying float vCell; varying vec3 vTint; varying float vBloom;
     void main() {
+      // shed cards shrink away; at uBare 0 every card is full size, at 1 none are left
+      float vis = clamp((iDrop - (uBare * 1.08 - 0.08)) / 0.08, 0.0, 1.0);
+      vBloom = float(fract(iRnd.x * 3.71) < uBloom);
       int st = int(iStage + 0.5);
       vTint = st == 0 ? uPal[0] : st == 1 ? uPal[1] : st == 2 ? uPal[2] : st == 3 ? uPal[3] : st == 4 ? uPal[4] : uPal[5];
       vec3 wp = iPos;
@@ -258,7 +296,7 @@ export function makeTree(shared, groundY, seed = 7, opts = {}) {
       float sway = sin(uTime * 0.9 + iPos.x * 0.15) * 0.5 + sin(uTime * 1.7 + iPos.z * 0.3) * 0.25;
       wp.xz += uWind * sway * 0.08 * (1.0 - iRnd.w) + uWind * 0.12;
       float c = cos(iRnd.x), s = sin(iRnd.x);
-      vec2 corner = mat2(c, -s, s, c) * position.xy * iRnd.y;
+      vec2 corner = mat2(c, -s, s, c) * position.xy * iRnd.y * vis;
       vec4 mv = viewMatrix * vec4(wp, 1.0);
       mv.xy += corner;
       // card normal: blend the clump normal with the card's own bulge (sphere-normal billboard)
@@ -275,11 +313,11 @@ export function makeTree(shared, groundY, seed = 7, opts = {}) {
     side: THREE.DoubleSide,
     vertexShader: leafVS,
     fragmentShader: COMMON + SHADOW + /* glsl */ `
-      uniform sampler2D uTex; uniform vec3 uLeafDark, uLeafLight, uRim, uCenter; uniform float uPalOn;
-      varying vec2 vUv; varying vec3 vN; varying vec3 vWp; varying float vDepth; varying float vCell; varying vec3 vTint;
+      uniform sampler2D uTex, uTex2; uniform vec3 uLeafDark, uLeafLight, uRim, uCenter, uDarkMul, uBloomLight, uBloomDark; uniform float uPalOn, uAmbDesat;
+      varying vec2 vUv; varying vec3 vN; varying vec3 vWp; varying float vDepth; varying float vCell; varying vec3 vTint; varying float vBloom;
       void main() {
         vec2 cell = vec2(mod(vCell, 2.0), floor(vCell / 2.0)) * 0.5;
-        vec4 t = texture2D(uTex, cell + vUv * 0.5);
+        vec4 t = vBloom > 0.5 ? texture2D(uTex2, cell + vUv * 0.5) : texture2D(uTex, cell + vUv * 0.5);
         if (t.a < 0.35) discard;
         vec3 n = normalize(vN);
         vec3 vd = normalize(cameraPosition - vWp);
@@ -291,12 +329,15 @@ export function makeTree(shared, groundY, seed = 7, opts = {}) {
         float tone = t.r;
         // palette styles: each card's own light colour, its shadow side a deep version of it
         vec3 lightC = mix(uLeafLight, vTint, uPalOn);
-        vec3 darkC = mix(uLeafDark, vTint * vec3(0.55, 0.42, 0.34), uPalOn);
+        vec3 darkC = mix(uLeafDark, vTint * uDarkMul, uPalOn);
+        float desat = uAmbDesat * uPalOn;
+        float bloomAmb = 1.0;
+        if (vBloom > 0.5) { lightC = uBloomLight; darkC = uBloomDark; desat = 0.55; bloomAmb = 1.35; }
         vec3 alb = mix(darkC, lightC, clamp(tone * 0.9 + lit * 0.25, 0.0, 1.0));
         float ao = mix(1.0, 0.45, vDepth) * mix(0.75, 1.0, smoothstep(-3.0, 3.0, vWp.y - uCenter.y));
         // blue sky fill turns warm shadows olive, so turned leaves get a greyer fill
-        vec3 amb = mix(uAmbient, vec3(dot(uAmbient, vec3(0.3, 0.5, 0.2))), 0.65 * uPalOn);
-        vec3 col = alb * (amb * ao + uSunColor * lit);
+        vec3 amb = mix(uAmbient, vec3(dot(uAmbient, vec3(0.3, 0.5, 0.2))), desat);
+        vec3 col = alb * (amb * ao * bloomAmb + uSunColor * lit);
         // backlit translucency and rim toward the sun
         float back = pow(max(dot(-vd, uSunDir), 0.0), 4.0) * (1.0 - vDepth) * tsh * smoothstep(-0.3, 0.3, n.y);
         float rim = pow(1.0 - max(dot(n, vd), 0.0), 3.0) * smoothstep(0.0, 0.4, ndl + 0.2);
@@ -309,8 +350,8 @@ export function makeTree(shared, groundY, seed = 7, opts = {}) {
     side: THREE.DoubleSide,
     vertexShader: leafVS,
     fragmentShader: /* glsl */ `
-      uniform sampler2D uTex; varying vec2 vUv; varying float vCell;
-      void main() { vec2 cell = vec2(mod(vCell, 2.0), floor(vCell / 2.0)) * 0.5; if (texture2D(uTex, cell + vUv * 0.5).a < 0.5) discard; gl_FragColor = vec4(1.0); }`,
+      uniform sampler2D uTex, uTex2; varying vec2 vUv; varying float vCell; varying float vBloom;
+      void main() { vec2 cell = vec2(mod(vCell, 2.0), floor(vCell / 2.0)) * 0.5; vec4 t = vBloom > 0.5 ? texture2D(uTex2, cell + vUv * 0.5) : texture2D(uTex, cell + vUv * 0.5); if (t.a < 0.5) discard; gl_FragColor = vec4(1.0); }`,
   });
   const foliage = new THREE.Mesh(qg, leafMat);
   foliage.frustumCulled = false;
@@ -335,13 +376,13 @@ export function makeTree(shared, groundY, seed = 7, opts = {}) {
   fg.setAttribute('iSpawn', new THREE.InstancedBufferAttribute(fSpawn, 4));
   fg.setAttribute('iRnd', new THREE.InstancedBufferAttribute(fRnd, 4));
   fg.instanceCount = FALL;
-  const fallUniforms = { ...shared, uPal: leafUniforms.uPal, uPalOn: leafUniforms.uPalOn, uFallA: { value: new THREE.Color() }, uFallB: { value: new THREE.Color() }, uPetal: { value: 0 }, uGround: { value: groundY }, uFallRate: { value: 1 } };
+  const fallUniforms = { ...shared, uPal: leafUniforms.uPal, uPalOn: { value: 0 }, uFallDensity: { value: 1 }, uFallA: { value: new THREE.Color() }, uFallB: { value: new THREE.Color() }, uPetal: { value: 0 }, uGround: { value: groundY }, uFallRate: { value: 1 } };
   const fallMat = new THREE.ShaderMaterial({
     uniforms: fallUniforms,
     side: THREE.DoubleSide,
     alphaToCoverage: true,
     vertexShader: /* glsl */ `
-      uniform float uTime; uniform vec2 uWind; uniform float uGround; uniform float uPetal; uniform float uFallRate; uniform vec3 uPal[6];
+      uniform float uTime; uniform vec2 uWind; uniform float uGround; uniform float uPetal; uniform float uFallRate, uFallDensity; uniform vec3 uPal[6];
       attribute vec4 iSpawn; attribute vec4 iRnd;
       varying vec2 vUv; varying vec3 vWp; varying vec3 vN; varying float vSeed; varying float vFade; varying vec3 vTint;
       mat3 rotAxis(vec3 a, float ang) { float c = cos(ang), s = sin(ang), t = 1.0 - c;
@@ -371,7 +412,8 @@ export function makeTree(shared, groundY, seed = 7, opts = {}) {
         if (p.y < gy) { landed = 1.0; p.y = gy; }
         vec3 axis = normalize(vec3(sin(iRnd.x * 9.0), 0.6, cos(iRnd.y * 9.0)));
         mat3 R = rotAxis(axis, t * mix(2.0, 5.0, iRnd.z) * (1.0 - landed) + iRnd.w * 6.28);
-        float size = mix(0.07, 0.11, iRnd.x) * mix(1.0, 0.75, uPetal);
+        // uFallDensity thins the fall without retiming it (seasons)
+        float size = mix(0.07, 0.11, iRnd.x) * mix(1.0, 0.75, uPetal) * step(fract(iRnd.z * 7.77 + iRnd.x * 3.1), uFallDensity);
         vec3 local = R * vec3(position.x * size, position.y * size * mix(0.55, 0.85, uPetal), 0.0);
         vN = R * vec3(0.0, 0.0, 1.0);
         vWp = p + local; vUv = position.xy; vSeed = iRnd.w;
@@ -400,7 +442,8 @@ export function makeTree(shared, groundY, seed = 7, opts = {}) {
   falling.frustumCulled = false;
   group.add(falling);
 
-  let turned = opts.turned ?? 0.5, styleName = null;
+  leafUniforms.uTex2.value = clusterTex.petal;
+  let turned = opts.turned ?? 0.5, styleName = null, seasonKey = -1;
   function setTurned(t) {
     turned = t;
     if (TREE_STYLES[styleName]?.palette) { iStage.set(stageOf(autumnShares(turned))); stageAttr.needsUpdate = true; }
@@ -414,15 +457,31 @@ export function makeTree(shared, groundY, seed = 7, opts = {}) {
     fallUniforms.uFallA.value.setRGB(...s.fall);
     fallUniforms.uFallB.value.setRGB(...s.fall2);
     fallUniforms.uPetal.value = s.petals ? 1 : 0;
-    leafUniforms.uPalOn.value = s.palette ? 1 : 0;
+    leafUniforms.uPalOn.value = fallUniforms.uPalOn.value = s.palette ? 1 : 0;
+    leafUniforms.uDarkMul.value.set(0.55, 0.42, 0.34); leafUniforms.uAmbDesat.value = 0.65;
+    leafUniforms.uBare.value = 0; leafUniforms.uBloom.value = 0; fallUniforms.uFallDensity.value = 1; seasonKey = -1;
     if (s.palette) {
       s.palette.forEach((c, i) => leafUniforms.uPal.value[i].setRGB(...c));
       setTurned(turned);
     }
   }
+  // Seasons: drive the canopy directly instead of from a style. o = sampleSeason() output.
+  function setSeason(o) {
+    styleName = null;
+    leafUniforms.uTex.value = clusterTex.leaf; leafUniforms.uPalOn.value = 1;
+    o.pal.forEach((c, i) => leafUniforms.uPal.value[i].copy(c));
+    leafUniforms.uDarkMul.value.copy(o.darkMul); leafUniforms.uAmbDesat.value = o.ambDesat;
+    leafUniforms.uRim.value.copy(o.rim);
+    leafUniforms.uBare.value = o.bare; leafUniforms.uBloom.value = o.bloom;
+    const key = Math.round(o.turned * 500);
+    if (key !== seasonKey) { seasonKey = key; iStage.set(stageOf(autumnShares(o.turned))); stageAttr.needsUpdate = true; }
+    fallUniforms.uPetal.value = o.petalFall ? 1 : 0; fallUniforms.uPalOn.value = o.petalFall ? 0 : 1;
+    fallUniforms.uFallA.value.setRGB(1.0, 0.78, 0.85); fallUniforms.uFallB.value.setRGB(0.98, 0.9, 0.95);
+    fallUniforms.uFallDensity.value = o.fall;
+  }
   function dispose() {
     tg.dispose(); qg.dispose(); fg.dispose(); barkMat.dispose(); leafMat.dispose(); leafShadowMat.dispose(); fallMat.dispose();
     clusterTex.leaf.dispose(); clusterTex.petal.dispose();
   }
-  return { group, setStyle, setTurned, dispose, center, fallUniforms, cards: N, clumps: clumps.length };
+  return { group, setStyle, setTurned, setSeason, dispose, center, fallUniforms, cards: N, clumps: clumps.length };
 }

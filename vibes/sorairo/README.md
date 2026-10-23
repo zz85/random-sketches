@@ -2,7 +2,9 @@
 
 An anime / Makoto Shinkai-style hillside rendered in three.js: a lone tree dropping leaves or petals, wind-blown grass, towering cumulus, birds and contrails, and a painterly post-process. Open `index.html` from any static server (three.js comes from unpkg via an import map).
 
-Drag to orbit, scroll to zoom. **H** hides the panel, **P** saves a PNG.
+Drag to orbit, scroll to zoom. **H** hides the panel, **P** saves a PNG, **M** toggles sound.
+
+Two time-lapse animations are in the Animate folder: a **day cycle** (noon, afternoon, golden hour, magic hour, night) and **four seasons** (a year on the hill, from snow through cherry blossom, summer and the autumn turn to bare branches and snow again). Try `?anim=day` or `?anim=year`.
 
 ## How it works
 
@@ -85,6 +87,19 @@ Passes are wired by hand rather than through `EffectComposer`, because some read
    Areas flatten into brush-stroke patches that follow contours and keep edges crisp: the gouache / oil-paint look. Radius scales with pixel ratio; off by default on mobile.
 6. **Finish:** slight chromatic fringe, edge darkening like pooled paint, procedural canvas weave, vignette, grain.
 
+### Animations (`seasons.js`, `snow.js`)
+
+Both run a `progress` value from 0 to 1 over a loop length (50 s for a day, 80 s for a year by default) and loop. Playing either one speeds the clouds up 30× (the *cloud speed-up* slider) on their own clock, `uCloudT`, so the sky races like a time-lapse while grass and leaves still move in real time.
+
+- **Day cycle** sweeps the time-of-day slider from noon to night over 90% of the loop, holds the night, and fades through dark back to noon.
+- **Four seasons**: `sampleSeason(s)` maps the day of the year to everything seasonal. s = 0 is deep winter, so the loop opens with the thaw. Each "day" also gets its own cloud cover and light level, for the flicker of a time-lapse shot at the same hour every day.
+  - Snow melts in patches (`snowAt`, shared by the ground, grass and flowers: hollows hold it longest) and the mountain snow line climbs back up.
+  - The bare tree blossoms pink with the petal atlas (cards come back in reverse shedding order), drops petals, then leafs out spring green and deepens to summer green.
+  - Grass greens up, wildflowers come and go, and the ground turns gold in autumn and straw in winter.
+  - Autumn runs the `turned` slider from 0 to 1, then the canopy sheds: each card has a drop rank (`iDrop`, its order by turn, so the most turned fall first) and shrinks away as `uBare` passes it, while the falling leaves thicken (`uFallDensity` thins them without retiming).
+  - A fan of forking twigs on every branch tip, hidden by leaves the rest of the year, gives the bare crown its shape, and snow settles on the tops of the limbs.
+  - Snow falls from a camera-centred box of stateless points, the ground buries most grass blades and leaves straw tips poking out, winter skies are cloudier and a little greyer, and the birds and insects go quiet.
+
 ### Time of day and runtime
 
 - Five keyframes (noon, afternoon, golden hour, magic hour, night) set sun height, sky and cloud colours, fog, ambient, bloom and grade. One slider blends neighbouring keyframes.
@@ -99,8 +114,8 @@ Everything is synthesised with Web Audio; there are no sample files. Browsers on
 
 ## URL parameters
 
-`time` (0 noon … 4 night), `az` sun azimuth, `style` (summer, sakura, autumn, maple), `shot` (hillside, under, wide, path, sky), `paint` (Kuwahara radius, 0 = off), `wind`, `windDir`, `clouds`, `towers`, `leaves`, `seed`, `airy` (canopy gaps, 0 dense … 1 airy), `turned` (autumn progress, 0 early … 1 late), `sound=1`, `music` and `ambience` (volumes, 0 … 1), `birds=0`, `contrail=0`, `orbit=1`, `noui`, `pr` (pixel-ratio scale), `still=1` + `t` (render one frame at a fixed time and set `window.__ready`).
+`time` (0 noon … 4 night), `az` sun azimuth, `style` (summer, sakura, autumn, maple), `shot` (hillside, under, wide, path, sky), `paint` (Kuwahara radius, 0 = off), `wind`, `windDir`, `clouds`, `towers`, `leaves`, `seed`, `airy` (canopy gaps, 0 dense … 1 airy), `turned` (autumn progress, 0 early … 1 late), `anim` (day, year), `dur` (seconds per loop), `p` (start point, 0 … 1), `play=0`, `season` (a fixed day of the year, 0 … 1, paused), `lapse` (cloud speed-up), `sound=1`, `music` and `ambience` (volumes, 0 … 1), `birds=0`, `contrail=0`, `orbit=1`, `noui`, `pr` (pixel-ratio scale), `still=1` + `t` (render one frame at a fixed time and set `window.__ready`).
 
 ## Test
 
-`node smoke.js` has no dependencies. It starts a static server and headless Chromium with SwiftShader, drives it over the Chrome DevTools Protocol directly, and renders 12 still shots, then renders the sound graph offline for day, dusk and night (failing on silence, NaN or clipping) and checks that the ♪ button starts live audio without errors. A shot fails on any console or shader error, an exception, or a nearly flat frame (pixel read-back, brightness standard deviation). Shots are written to `shot_*.png` (git-ignored); the server sends `no-store` so they always reflect the current code. `ONLY=afternoon,night` runs a subset.
+`node smoke.js` has no dependencies. It starts a static server and headless Chromium with SwiftShader, drives it over the Chrome DevTools Protocol directly, and renders 16 still shots (including mid-day-cycle, blossom, shedding and winter frames), checks that both animations play live without errors, then renders the sound graph offline for day, dusk and night (failing on silence, NaN or clipping) and checks that the ♪ button starts live audio without errors. A shot fails on any console or shader error, an exception, or a nearly flat frame (pixel read-back, brightness standard deviation). Shots are written to `shot_*.png` (git-ignored); the server sends `no-store` so they always reflect the current code. `ONLY=afternoon,night` runs a subset.

@@ -97,7 +97,8 @@ export function makeAudio(ctx, seed = 11) {
   const higu = ctx.createGain(); higu.gain.value = 0; higu.connect(ambBus); higu.connect(verbIn);
 
   // ---------- scene state (smoothed toward targets in update)
-  const st = { day: 1, dusk: 0, night: 0, wind: 1.2, trail: 0, flock: 0, music: 0.6, amb: 0.8, on: false };
+  // birdsK and insects scale the wildlife by season (1 = summer)
+  const st = { day: 1, dusk: 0, night: 0, wind: 1.2, trail: 0, flock: 0, music: 0.6, amb: 0.8, birdsK: 1, insects: 1, on: false };
   const ramp = (p, v, tc = 0.4) => p.setTargetAtTime(v, now(), tc);
 
   // ---------- one-shot voices
@@ -170,12 +171,12 @@ export function makeAudio(ctx, seed = 11) {
       nextBar += BAR; bar++;
     }
     while (nextBird < until) {
-      if (st.on && st.day > 0.4 && rnd() < st.day) bird(nextBird);
+      if (st.on && st.day > 0.4 && rnd() < st.day * st.birdsK) bird(nextBird);
       // a flock overhead brings a burst of calls
       nextBird += st.flock > 0.5 ? 0.4 + rnd() * 0.6 : 2.5 + rnd() * 6;
     }
     while (nextHigu < until) {
-      if (st.dusk > 0.3) {
+      if (st.dusk > 0.3 && rnd() < st.insects) {
         const s = ctx.createBufferSource(), p = ctx.createStereoPanner();
         s.buffer = higuBuf; s.playbackRate.value = 0.95 + rnd() * 0.1; p.pan.value = rnd() * 1.4 - 0.7;
         s.connect(p); p.connect(higu); s.start(nextHigu);
@@ -197,8 +198,8 @@ export function makeAudio(ctx, seed = 11) {
     ramp(windHigh.frequency, 600 + 900 * gust * w);
     ramp(rustleG.gain, w * 0.09 * gust * gust * (s.leaves ?? 1));
     ramp(jetG.gain, 0.55 * st.trail * st.day);
-    ramp(crickets.gain, 0.5 * st.night);
-    ramp(higu.gain, Math.min(1, st.dusk * 1.4), 1);
+    ramp(crickets.gain, 0.5 * st.night * st.insects);
+    ramp(higu.gain, Math.min(1, st.dusk * 1.4) * st.insects, 1);
     ramp(musicBus.gain, st.music * (st.night > 0.5 ? 0.75 : 1), 0.8);
     ramp(ambBus.gain, st.amb);
   }

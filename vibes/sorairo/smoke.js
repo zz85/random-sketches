@@ -43,6 +43,10 @@ const SHOTS = [
   ['night', 'time=4&shot=path&t=20'],
   ['sky', 'time=0.75&az=55&shot=sky&t=20'],
   ['late', 'time=1&az=150&shot=hillside&t=20&style=autumn&turned=1'],
+  ['dayanim', 'anim=day&p=0.55&az=35&shot=hillside&t=20'],
+  ['blossom', 'season=0.15&time=1&az=150&shot=hillside&t=20'],
+  ['shedding', 'season=0.76&time=1.3&az=-60&shot=wide&t=20'],
+  ['winter', 'season=0.95&time=1&az=150&shot=hillside&t=20'],
   ['dense', 'time=0.75&az=55&shot=hillside&t=20&airy=0'],
   ['flyover', 'time=1.3&az=-60&shot=wide&t=20'],
   ['raw', 'time=0.75&az=55&shot=hillside&t=20&paint=0'],
@@ -72,6 +76,24 @@ try {
     if (!ok) failed++;
     console.log(`${ok ? 'ok  ' : 'FAIL'} ${name.padEnd(10)} ${((Date.now() - t0) / 1000).toFixed(1)}s mean ${st.mean?.toFixed(0)} sd ${st.sd?.toFixed(0)} grass ${st.grass} cards ${st.cards}`);
     for (const e of errs) console.log('     ', e);
+  }
+  // animations run live: progress advances, the season drives the scene, no errors
+  if (!process.env.ONLY || process.env.ONLY.split(',').includes('anims')) {
+    const t0 = Date.now(); const res = [];
+    for (const m of ['day', 'year']) {
+      c.events.length = 0;
+      await c.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/index.html?noui=1&pr=0.25&anim=${m}&dur=6&p=0.8` });
+      for (let i = 0; i < 120; i++) { await sleep(250); const r = await c.send('Runtime.evaluate', { expression: '!!window.__ready' }); if (r.result?.result?.value) break; }
+      await sleep(3500);
+      const v = (await c.send('Runtime.evaluate', { returnByValue: true, expression: '[window.__sorairo.AN.progress, window.__sorairo.S.time]' })).result?.result?.value;
+      const errs = c.events.filter((e) => e.method === 'Runtime.exceptionThrown' || (e.method === 'Runtime.consoleAPICalled' && e.params.type === 'error'));
+      // started at 0.8 with a 6 s loop: it must have moved on (and possibly wrapped)
+      res.push([m, v && Math.abs(v[0] - 0.8) > 0.005 && !errs.length, v, errs.map((e) => JSON.stringify(e.params).slice(0, 300))]);
+    }
+    const ok = res.every((r) => r[1]);
+    if (!ok) failed++;
+    console.log(`${ok ? 'ok  ' : 'FAIL'} ${'anims'.padEnd(10)} ${((Date.now() - t0) / 1000).toFixed(1)}s ` + res.map((r) => `${r[0]} p ${r[2]?.[0]?.toFixed(2)}`).join(', '));
+    for (const r of res) for (const e of r[3]) console.log('     ', e);
   }
   // sound: render the audio graph offline for day, dusk and night; fail on silence,
   // NaN or clipping

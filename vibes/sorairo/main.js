@@ -11,6 +11,8 @@ import { makePost } from './post.js';
 import { makeBirds } from './birds.js';
 import { mulberry32 } from './tree.js';
 import { makeLiveAudio } from './audio.js';
+import { sampleSeason, SEASON_MARKS } from './seasons.js';
+import { makeSnow } from './snow.js';
 
 const Q = new URLSearchParams(location.search);
 const num = (k, d) => (Q.has(k) ? parseFloat(Q.get(k)) : d);
@@ -66,10 +68,28 @@ scene.add(grass.mesh, grass.flowers);
 let tree = makeTree(shared, GROUND, S.seed, { fallCount: MOBILE ? 220 : 420, airy: S.airy, turned: S.turned });
 scene.add(tree.group); tree.setStyle(S.style);
 const birds = makeBirds(shared); scene.add(birds.mesh);
+const snow = makeSnow(shared, MOBILE ? 2500 : 6000); scene.add(snow.pts);
+
+// ---------- animations: a day (noon to night) or a year (four seasons), as time-lapses.
+// `progress` runs 0 … 1 over `length` seconds and loops; ?anim=day|year, ?dur=, ?p= (start),
+// ?season= (a fixed day of the year, paused), ?lapse= (cloud speed-up).
+const ANIMS = { off: 'off', 'day cycle': 'day', 'four seasons': 'year' };
+const AN = {
+  mode: Q.get('anim') || (Q.has('season') ? 'year' : 'off'),
+  playing: !Q.has('season') && Q.get('play') !== '0',
+  progress: Q.has('season') ? num('season', 0) : num('p', 0),
+  length: num('dur', Q.get('anim') === 'year' ? 80 : 50),
+  lapse: num('lapse', 30),
+};
 
 // grass and ground albedo stay fixed; light does the work
-grass.uniforms.uBase.value = C('#1f4a2a'); grass.uniforms.uTip.value = C('#4e9a3c'); grass.uniforms.uTip2.value = C('#98c54e'); grass.uniforms.uSheen.value = C('#f4ffc8');
-terrain.mat.uniforms.uGrassDark.value = C('#24502b'); terrain.mat.uniforms.uGrassLight.value = C('#4f8f34'); terrain.mat.uniforms.uDirt.value = C('#b49a74');
+const SUMMER_GROUND = ['#1f4a2a', '#4e9a3c', '#98c54e', '#24502b', '#4f8f34'].map((h) => C(h));
+function setGround(g) {
+  grass.uniforms.uBase.value.copy(g[0]); grass.uniforms.uTip.value.copy(g[1]); grass.uniforms.uTip2.value.copy(g[2]);
+  terrain.mat.uniforms.uGrassDark.value.copy(g[3]); terrain.mat.uniforms.uGrassLight.value.copy(g[4]);
+}
+grass.uniforms.uSheen.value = C('#f4ffc8'); terrain.mat.uniforms.uDirt.value = C('#b49a74');
+setGround(SUMMER_GROUND);
 
 // ---------- light motes / fireflies
 const motes = (() => {
@@ -136,7 +156,7 @@ function resize() {
   renderer.setSize(innerWidth, innerHeight);
   camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
   post.setSize(innerWidth, innerHeight, pixelRatio);
-  motes.m.uniforms.uPR.value = pixelRatio;
+  motes.m.uniforms.uPR.value = pixelRatio; snow.uniforms.uPR.value = pixelRatio;
 }
 addEventListener('resize', resize); resize();
 
@@ -211,7 +231,31 @@ function updateContrail(t, on) {
 
 // ---------- apply settings each frame
 const tmp = new THREE.Vector3();
+// time-lapse weather flicker: each 'day' of a year gets its own cloud and light
+const dayHash = (d, k) => { const x = Math.sin(d * 127.1 + k * 311.7) * 43758.5453; return x - Math.floor(x); };
+let SE = null, animFade = 1, lastMode = 'off';
+function applyAnim() {
+  if (AN.mode !== lastMode) {
+    if (lastMode === 'year') { tree.setStyle(S.style); setGround(SUMMER_GROUND); }
+    lastMode = AN.mode;
+  }
+  animFade = 1; SE = null;
+  if (AN.mode === 'day') {
+    // noon … night over 90% of the loop, hold the night, fade through dark back to noon
+    const p = AN.progress;
+    S.time = (PRESETS.length - 1) * Math.min(1, p / 0.9);
+    animFade = Math.min(THREE.MathUtils.smoothstep(p, 0, 0.025), 1 - THREE.MathUtils.smoothstep(p, 0.95, 0.995));
+  } else if (AN.mode === 'year') {
+    SE = sampleSeason(AN.progress);
+    tree.setSeason(SE);
+    setGround(SE.ground);
+    const day = Math.floor(AN.progress * 365);
+    SE.clouds += (dayHash(day, 1) - 0.5) * 0.3;
+    SE.light = 1 + (dayHash(day, 2) - 0.5) * 0.08;
+  }
+}
 function applyLook() {
+  applyAnim();
   const P = samplePreset(S.time);
   const el = THREE.MathUtils.degToRad(P.sunEl), az = THREE.MathUtils.degToRad(S.azimuth + (P.night > 0.5 ? 140 : 0));
   const sd = shared.uSunDir.value.set(Math.cos(el) * Math.sin(az), Math.sin(el), -Math.cos(el) * Math.cos(az));
@@ -221,7 +265,10 @@ function applyLook() {
   shared.uSunColor.value.copy(P.sun).multiplyScalar(lightK);
   shared.uAmbient.value.copy(P.ambient);
   shared.uFogColor.value.copy(P.fog); shared.uFogSunColor.value.copy(P.fogSun);
-  shared.uCloudCover.value = S.clouds;
+  shared.uCloudCover.value = THREE.MathUtils.clamp(S.clouds + (SE ? SE.clouds : 0), 0, 1);
+  shared.uSnowCover.value = SE ? SE.snowCover : 0;
+  snow.uniforms.uSnowFall.value = SE ? SE.snowFall : 0;
+  grass.flowerUniforms.uFlowers.value = SE ? SE.flowers : 1;
   shared.uCloudShadow.value = 0.55 * lightK * (1 - P.night * 0.6);
   const wa = THREE.MathUtils.degToRad(S.windDir);
   shared.uWind.value.set(Math.cos(wa), Math.sin(wa)).multiplyScalar(S.wind);
@@ -235,9 +282,9 @@ function applyLook() {
   birds.uniforms.uInk.value.copy(P.cloudShade).multiplyScalar(0.18);
   motes.m.uniforms.uNight.value = P.night;
   sound.update({ day: 1 - P.night, night: P.night, dusk: THREE.MathUtils.smoothstep(S.time, 1.6, 2.4) * (1 - THREE.MathUtils.smoothstep(S.time, 3.3, 3.8)),
-    wind: S.wind, leaves: Math.min(1, S.leaves), trail: sky.uniforms.uTrailOn.value, flock: birds.uniforms.uFlockOn.value, music: S.music, amb: S.ambience }, shared.uTime.value);
+    wind: S.wind, leaves: Math.min(1, S.leaves) * (SE ? SE.fall : 1), birdsK: SE ? SE.birds : 1, insects: SE ? SE.insects : 1, trail: sky.uniforms.uTrailOn.value, flock: birds.uniforms.uFlockOn.value, music: S.music, amb: S.ambience }, shared.uTime.value);
   tree.fallUniforms.uFallRate.value = S.leaves;
-  tree.group.children[2].visible = S.leaves > 0.01;
+  tree.group.children[2].visible = S.leaves > 0.01 && (!SE || SE.fall > 0.005);
 
   // sun on screen, for shafts and flare
   tmp.copy(sd).multiplyScalar(4000).add(camera.position).project(camera);
@@ -250,7 +297,7 @@ function applyLook() {
   const inside = Math.abs(tmp.x) < 1 && Math.abs(tmp.y) < 1 ? 1 : 0;
   post.grade.uniforms.uSun.value.copy(sunUv); post.grade.uniforms.uSunOn.value = sunOn * inside;
   post.grade.uniforms.uFlare.value = P.flare * S.flare; post.grade.uniforms.uFlareColor.value.copy(P.sun).multiplyScalar(0.35);
-  post.grade.uniforms.uExposure.value = P.exposure * S.exposure; post.grade.uniforms.uSat.value = P.sat * S.saturation;
+  post.grade.uniforms.uExposure.value = P.exposure * S.exposure * animFade * (SE ? SE.light : 1); post.grade.uniforms.uSat.value = P.sat * S.saturation * (SE ? SE.sat : 1);
   post.grade.uniforms.uLift.value.copy(P.lift); post.grade.uniforms.uGain.value.copy(P.gain);
   post.final.uniforms.uPaper.value = S.paper; post.final.uniforms.uVignette.value = S.vignette;
   return P;
@@ -261,6 +308,7 @@ const gui = new GUI({ title: 'Sorairo' });
 const names = Object.fromEntries(PRESETS.map((p, i) => [p.name, i]));
 const fScene = gui.addFolder('Scene');
 const timeCtl = fScene.add(S, 'time', 0, PRESETS.length - 1, 0.01).name('time of day');
+timeCtl.listen();
 fScene.add({ preset: '' }, 'preset', names).name('jump to').onChange((v) => { S.time = +v; timeCtl.updateDisplay(); });
 fScene.add(S, 'azimuth', -180, 180, 1).name('sun azimuth');
 fScene.add(S, 'clouds', 0, 1, 0.01).name('cloud cover');
@@ -275,6 +323,14 @@ fTree.add(S, 'turned', 0, 1, 0.01).name('autumn turned').onChange((v) => tree.se
 fTree.add(S, 'leaves', 0, 3, 0.01).name('falling leaves');
 fTree.add(S, 'airy', 0, 1, 0.05).name('canopy gaps').onFinishChange(() => rebuildTree());
 fTree.add({ grow: () => { S.seed = (S.seed * 7 + 13) % 1000; rebuildTree(); } }, 'grow').name('grow another tree');
+const fAnim = gui.addFolder('Animate');
+fAnim.add(AN, 'mode', ANIMS).name('animation').onChange((v) => { AN.progress = 0; AN.length = v === 'year' ? 80 : 50; lenCtl.updateDisplay(); });
+fAnim.add(AN, 'playing').name('play');
+fAnim.add(AN, 'progress', 0, 1, 0.001).name('progress').listen();
+fAnim.add({ jump: '' }, 'jump', SEASON_MARKS).name('jump to season').onChange((v) => { AN.mode = 'year'; AN.progress = +v; AN.playing = false; gui.controllersRecursive().forEach((c) => c.updateDisplay()); });
+const lenCtl = fAnim.add(AN, 'length', 10, 300, 1).name('seconds per loop');
+fAnim.add(AN, 'lapse', 1, 100, 1).name('cloud speed-up');
+if (AN.mode !== 'off') fAnim.open();
 const fSound = gui.addFolder('Sound');
 const soundCtl = fSound.add(S, 'sound').name('sound on (M)').onChange((v) => setSound(v));
 fSound.add(S, 'music', 0, 1, 0.01);
@@ -328,6 +384,10 @@ let frames = 0, acc = 0;
 const FIXED_T = Q.has('t') ? num('t', 0) : null;
 function frame(dt) {
   shared.uTime.value = FIXED_T ?? shared.uTime.value + dt;
+  // time-lapses race the clouds; a still frame keeps them where uTime puts them
+  const lapse = AN.mode !== 'off' && AN.playing ? AN.lapse : 1;
+  shared.uCloudT.value = FIXED_T !== null ? FIXED_T : shared.uCloudT.value + dt * lapse;
+  if (AN.mode !== 'off' && AN.playing && !Q.has('still')) AN.progress = (AN.progress + dt / AN.length) % 1;
   controls.autoRotate = S.orbit;
   controls.update();
   // keep the eye above the grass
@@ -351,4 +411,4 @@ function loop() {
 }
 if (Q.has('still')) { frame(0); window.__ready = true; }
 else { loop(); setTimeout(() => (window.__ready = true), 500); }
-window.__sorairo = { S, grass, tree, birds, frame, setShot };
+window.__sorairo = { S, AN, grass, tree, birds, frame, setShot };
