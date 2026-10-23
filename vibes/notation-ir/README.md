@@ -22,6 +22,11 @@ adapter contract, known gaps and next steps.
 | Anchors | `anchors.js` | References that survive edits. An anchor can name a moment, a note (`{ event }`), a printed barline (`{ barline }`), the n-th bar of the interpretation (`{ bar }`), a point on the page (`{ pos: { x, line } }`, read through the notes' source positions) or a fragment end. It resolves when used, so it follows the music. `positionAt` maps score time back to a page position for drawing markers and playheads. |
 | Playback | `playback.js` | Authored, non-linear playback. Clips are spans between anchors or a lasso of events. A program is built from `play`, `walk` (reads on and takes jump markers anchored on the page: repeats, D.S., arrows out to a sketched fragment and back), `seq`, `par` (each branch is its own cursor, e.g. canons or phasing loops), `loop`, seeded `choose` and `rest`. Per-node options set tempo, delay, transpose, gap handling (keep / compress / cap), a confidence floor, and cycling alternative readings per loop pass. Output is notes in seconds plus a trace for playheads. |
 
+`markers.js` draws playback markers on either app's page: clips as brackets (split at line
+breaks, stacked when they overlap), loop counts, jumps as arrows, and lost markers red and
+dashed. It covers layout, hit testing and drawing. Each app supplies its lines and a
+`place(anchor)` function.
+
 Events and directions belong to **fragments** (default `main`), each with its own local time, so an idea sketched off to the side doesn't need a place in the main timeline.
 
 `adapters/scoreshift.js` converts a recognised page (as written or transposed). Printed bars

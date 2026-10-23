@@ -55,6 +55,9 @@
   .chips button small { color: var(--muted); font-size: 11px; }
   .chips button.on { background: #e8eefc; border-color: var(--accent); color: var(--accent); }
   .chips .hint { width: 100%; font-size: 11px; color: var(--muted); padding: 0 4px; }
+  #markbar .hint, #progbar .hint, #rangebar .hint { align-self: center; font-size: 12px; }
+  #progbar { right: 10px; top: calc(56px + env(safe-area-inset-top)); padding: 3px; }
+  #progbar button { height: 30px; font-size: 12.5px; }
   dialog { border: 1px solid var(--line); border-radius: 14px; padding: 0; max-width: min(520px, 94vw); width: 100%; background: #fffdf9; color: var(--ink); box-shadow: 0 20px 60px rgba(0,0,0,.25); }
   dialog::backdrop { background: rgba(30,25,20,.3); }
   dialog h2 { font: italic 600 19px Georgia, serif; margin: 0; padding: 14px 18px 8px; }
@@ -98,6 +101,9 @@
 <div id="mode"></div>
 <div class="chips" id="alts" role="menu" aria-label="Recognition alternatives"></div>
 <div class="chips" id="selbar" role="toolbar" aria-label="Edit selected note"></div>
+<div class="chips" id="rangebar" role="toolbar" aria-label="Selection"></div>
+<div class="chips" id="markbar" role="toolbar" aria-label="Playback marker"></div>
+<div class="chips" id="progbar" role="toolbar" aria-label="Arrangement"></div>
 <div class="menu" id="exportMenu" role="menu">
   <button data-x="xml">MusicXML (.musicxml)</button>
   <button data-x="mid">MIDI (.mid)</button>
@@ -145,6 +151,7 @@
       <div style="font-size:22px">&lt; &gt;</div><div>Hairpins: a &lt; or &gt; under the notes, in one stroke or two lines. They shape playback toward the next dynamic.</div>
       <div>scribble</div><div>Scribble over symbols to erase them, or over unrecognised ink to cancel it. The stylus eraser end works too.</div>
       <div>tap</div><div>Tap a notehead to hear and edit it; drag it up or down to change pitch.</div>
+      <div>select</div><div>In <b>Select</b>, drag across notes with the pen or mouse to select them like text (with a finger: hold, then drag; <kbd>Shift</kbd>+click or <kbd>Shift ←→</kbd> extends). <b>Play</b> then plays just the selection, ⟳ Loop repeats it. <b>＋ Clip</b> keeps it as a marker you can repeat (×n), shift by octaves, delay and layer with the clip before it (⧉); <b>⤳ Jump</b> adds a jump from the end of the selection to a note you tap. With markers, Play plays the arrangement: the score taking its jumps, or the clips in order.</div>
       <div>wrong?</div><div>After each symbol the alternatives pop up. Tap the right one: it fixes this symbol and learns your handwriting.</div>
     </div>
     <p style="color:var(--muted);font-size:12.5px">Ledger lines and barlines are drawn for you. Bars grow as you write; an overfull bar turns red. Keys: <kbd>Ctrl Z</kbd> undo, <kbd>Space</kbd> play, <kbd>↑</kbd><kbd>↓</kbd> move a selected note, <kbd>1</kbd>–<kbd>6</kbd> duration, <kbd>.</kbd> dot, <kbd>Del</kbd> delete.</p>

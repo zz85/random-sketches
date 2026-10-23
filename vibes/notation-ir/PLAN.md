@@ -97,12 +97,15 @@ Every adapter is `from<App>(…) → IR` plus, where useful, `to<App>(IR) → { 
      `AnchorError` for one.
    - ScoreShift saves the page's program in the `.scoreshift` project (`programs`), and
      `playProgram()` with no argument replays it, reporting any markers that lost their note.
-3. **Program UI in both apps.**
-   - Put loop, jump and clip markers on the page as anchors (`{ event }` and `{ pos }` in
-     StaffInk; `{ barline }` and `{ pos }` in ScoreShift), drawn through `positionAt`, with
-     several playheads.
-   - Store the program with the score or project.
-   - *Done when* a repeat and a canon can be authored without the console.
+3. **Program UI.** Partly done.
+   - Done: StaffInk range selection like text, a playable selection (with loop), clip markers
+     (repeat, octave, delay, layer with the previous clip), jumps, and a Play mode switch
+     (score + jumps, or clips in order). Programs are stored in `score.program`
+     (`staffink/arrange.js`).
+   - Done: shared marker drawing (`markers.js`). ScoreShift draws the page's saved program on
+     the photo, with lost markers red and dashed.
+   - Still to do: authoring markers in ScoreShift, drawing playheads as lines (both apps
+     highlight the sounding notes today), and reordering clips.
 4. **Return trip StaffInk → ScoreShift.** Rewrite the page from corrected pitches by matching
    IR events back through `src` and changing `note.fix`.
    - *Done when* a pitch edited in StaffInk shows up moved on the photo.

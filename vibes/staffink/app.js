@@ -7,6 +7,8 @@ import { renderScore } from './render.js';
 import { interpret, detectGesture, removeEvent, isScribble, makeTuplet, articShapes, eraseHits, applyErase } from './parser.js';
 import { Player } from './audio.js';
 import { toMusicXML, toMidi } from './export.js';
+import { timeline, rangeOf, stepFocus, addClip, addJump, removeMarker, markerById, pruneProgram, compile, markers as programMarkers, hasMarkers, emptyProgram } from './arrange.js';
+import { layoutMarkers, drawMarkers, hitMarker } from '../notation-ir/markers.js';
 
 const $ = (id) => document.getElementById(id);
 const stage = $('stage'), cScore = $('score'), cInk = $('ink');
@@ -27,6 +29,8 @@ const S = {
   user: [], tool: 'write', penSeen: false, scrollY: 0, scale: 12, L: null, w: 0, h: 0,
   undo: [], redo: [], group: [], groupTimer: 0, ptrs: new Map(), fading: [], pending: [],
   selected: null, playing: new Set(), model: null, lastEdit: null, inkHistory: [], player: new Player(),
+  range: null, // text-editor-like selection: { a, b } event ids (anchor, focus)
+  marker: null, pickJump: null, loopSel: false, ML: null,
 };
 for (const u of load('staffink.user') || []) { try { S.user.push(makeUserTemplate(u.label, unpackStrokes(u.strokes))); } catch (e) { /* skip bad entry */ } }
 if (params.get('delay')) S.settings.delay = +params.get('delay');
@@ -53,7 +57,47 @@ function relayout() {
   ensureTrailingMeasure(S.score);
   S.L = layoutScore(S.score, { width: S.w / S.scale, font: S.settings.font });
   S.scrollY = clamp(S.scrollY, 0, maxScroll());
-  drawScore(); drawInk();
+  const gone = pruneProgram(S.score);
+  if (gone.length) toast(`marker${gone.length > 1 ? 's' : ''} ${gone.join(', ')} removed: ${gone.length > 1 ? 'their' : 'its'} note was erased`, 2400);
+  if (S.marker && !markerById(S.score, S.marker)) { S.marker = null; hideMarkBar(); }
+  if (S.range && !(findEvent(S.score, S.range.a) && findEvent(S.score, S.range.b))) { S.range = null; hideRangeBar(); }
+  layoutProgram();
+  drawScore(); drawInk(); progBar();
+}
+
+// ---------------------------------------------------------------- markers & range geometry
+const sysLines = () => S.L.systems.map((sys) => ({ x0: sys.x0, x1: sys.x1, top: sys.staffTops[0], bottom: sys.staffTops[sys.staffTops.length - 1] + 4 }));
+function placeAnchor(a, edge) {
+  const id = a.event && Number(String(a.event).replace(/^si/, ''));
+  const p = id && S.L.evPos.get(id);
+  if (!p) return null;
+  return { line: p.sys, x: edge === 'end' || a.edge === 'end' ? p.bbox.x1 + 0.35 : p.bbox.x0 - 0.25 };
+}
+function layoutProgram() { S.ML = hasMarkers(S.score.program) ? layoutMarkers(programMarkers(S.score), { lines: sysLines(), place: placeAnchor }) : null; }
+const markerView = () => ({ X: (x) => x * S.scale, Y: (y) => (y - S.scrollY) * S.scale, sp: S.scale });
+/** Bands of the range selection, one per system: { sys, x0, x1, y0, y1 } in page units. */
+function rangeBands() {
+  const r = S.range && rangeOf(S.score, S.range.a, S.range.b); if (!r) return [];
+  const by = new Map();
+  for (const id of r.ids) {
+    const p = S.L.evPos.get(id); if (!p) continue;
+    const b = by.get(p.sys) || { sys: p.sys, x0: Infinity, x1: -Infinity };
+    b.x0 = Math.min(b.x0, p.bbox.x0 - 0.35); b.x1 = Math.max(b.x1, p.bbox.x1 + 0.35); by.set(p.sys, b);
+  }
+  return [...by.values()].map((b) => { const sys = S.L.systems[b.sys]; return { ...b, y0: sys.staffTops[0] - 1.2, y1: sys.staffTops[sys.staffTops.length - 1] + 5.2 }; });
+}
+/** The event nearest a page point, for range selection: by system, then x. */
+function nearestEvent(p) {
+  let sys = null, sd = Infinity;
+  for (const s of S.L.systems) { const t = s.staffTops[0] - 3, b = s.staffTops[s.staffTops.length - 1] + 7; const d = p.y < t ? t - p.y : p.y > b ? p.y - b : 0; if (d < sd) { sd = d; sys = s; } }
+  if (!sys) return null;
+  let best = null, bd = Infinity;
+  for (const [id, e] of S.L.evPos) {
+    if (e.sys !== sys.index) continue;
+    const cx = (e.bbox.x0 + e.bbox.x1) / 2, d = Math.abs(cx - p.x) + 0.05 * Math.abs(e.top + 2 - p.y);
+    if (d < bd) { bd = d; best = id; }
+  }
+  return best;
 }
 const maxScroll = () => Math.max(0, S.L.height + 6 - S.h / S.scale);
 
@@ -63,6 +107,12 @@ function drawScore() {
   requestAnimationFrame(() => {
     scoreQueued = false;
     renderScore(gS, S.L, { scale: S.scale, scrollY: S.scrollY, width: S.w, height: S.h, title: S.score.title }, { selected: new Set(S.selected ? [S.selected.id] : []), playing: S.playing });
+    for (const b of rangeBands()) {
+      const x = b.x0 * S.scale, y = (b.y0 - S.scrollY) * S.scale, w = (b.x1 - b.x0) * S.scale, h = (b.y1 - b.y0) * S.scale;
+      gS.fillStyle = 'rgba(37,99,235,0.13)'; gS.fillRect(x, y, w, h);
+      gS.fillStyle = 'rgba(37,99,235,0.85)'; gS.fillRect(x - 1, y, 2, h); gS.fillRect(x + w - 1, y, 2, h);
+    }
+    if (S.ML) drawMarkers(gS, S.ML, markerView(), { selected: S.marker });
     if (S.settings.showInk) for (const st of S.inkHistory) drawStroke(gS, st, 'rgba(37,99,235,0.35)');
     for (const a of S.pending) for (const st of a.strokes) drawStroke(gS, st, 'rgba(29,28,26,0.45)');
   });
@@ -388,10 +438,22 @@ stage.addEventListener('pointerdown', (e) => {
   }
   const eraser = e.pointerType === 'pen' && ((e.buttons & 32) || e.button === 5);
   if (eraser || S.tool === 'erase') { rec.role = 'erase'; rec.before = JSON.stringify(S.score); rec.erased = 0; rec.pts.push(p); hideAlts(); return; }
+  const mk = S.ML && hitMarker(S.ML, markerView(), p.x * S.scale, (p.y - S.scrollY) * S.scale);
+  // a marker: its label anywhere, its bracket when not writing (writing near it stays writing)
+  if (mk && e.button === 0 && !S.pickJump && (mk.onLabel || S.tool !== 'write')) { rec.role = 'marker'; rec.marker = mk.id; return; }
+  if (e.shiftKey && e.button === 0) { // shift-click extends the selection, like text
+    const id = nearestEvent(p), a = S.range ? S.range.a : S.selected ? S.selected.id : null;
+    if (id != null && a != null) { setRange(a, id); rec.role = 'range'; rec.anchor = a; rec.moved = 1; return; }
+  }
   if (S.tool === 'select' || (e.pointerType === 'touch' && fingerNavigates()) || e.button === 1 || e.button === 2) {
     const hit = hitTest(p);
     if (hit && S.selected && hit.id === S.selected.id) { rec.role = 'drag'; rec.before = JSON.stringify(S.score); rec.dpos = 0; return; }
-    rec.role = 'nav'; rec.hit = hit; return;
+    // Select tool: a pen or mouse drag selects a range like text; a finger scrolls, or
+    // selects after holding still for a moment
+    if (S.tool === 'select' && e.pointerType !== 'touch' && e.button === 0) { rec.role = 'range'; rec.anchor = nearestEvent(p); rec.hit = hit; return; }
+    rec.role = 'nav'; rec.hit = hit;
+    if (S.tool === 'select' && e.pointerType === 'touch') rec.hold = setTimeout(() => { if (rec.role === 'nav' && rec.moved < 0.4) { rec.role = 'range'; rec.anchor = nearestEvent(p); rec.moved = 1; setRange(rec.anchor, rec.anchor); navigator.vibrate?.(10); } }, 450);
+    return;
   }
   rec.role = 'ink';
   rec.pts.push({ x: p.x, y: p.y, p: e.pointerType === 'pen' ? e.pressure : 0.5, t: e.timeStamp });
@@ -439,7 +501,15 @@ window.addEventListener('pointermove', (e) => {
       const now = performance.now();
       S.scrollY = clamp(S.scrollY - dy / S.scale, 0, maxScroll());
       rec.vy = -dy / S.scale / Math.max(1, now - rec.lastT) * 16; rec.lastT = now;
-      hideSel(); hideAlts(); drawScore(); drawInk();
+      hideSel(); hideAlts(); hideRangeBar(); hideMarkBar(); drawScore(); drawInk();
+    }
+  } else if (rec.role === 'range') {
+    if (rec.moved > 0.4 && rec.anchor != null) {
+      const id = nearestEvent(p);
+      if (id != null && (!S.range || S.range.b !== id || S.range.a !== rec.anchor)) setRange(rec.anchor, id);
+      // scroll when the pen reaches the top or bottom edge
+      const sy = (p.y - S.scrollY) * S.scale;
+      if (sy > S.h - 30) S.scrollY = clamp(S.scrollY + 0.4, 0, maxScroll()); else if (sy < 30) S.scrollY = clamp(S.scrollY - 0.4, 0, maxScroll());
     }
   } else if (rec.role === 'drag') {
     const dpos = Math.round(-(p.y - rec.start.y) * 2);
@@ -462,7 +532,7 @@ function endPointer(e) {
     const b = bbox([rec.pts]);
     if (dt < 300 && Math.max(b.w, b.h) < 0.35 && !S.group.length) {
       const hit = hitTest(p);
-      if (hit) { select(hit); drawInk(); return; }
+      if (hit || S.pickJump || S.range) { tapAt(p, hit); drawInk(); return; }
     }
     if (S.selected) { S.selected = null; hideSel(); drawScore(); }
     if (rec.pts.length) handleStroke({ pts: rec.pts, type: rec.type });
@@ -471,8 +541,14 @@ function endPointer(e) {
     if (rec.erased) { pushHistory(rec.before); save(); toast(`erased ${rec.erased}`, 900); }
     drawInk();
   } else if (rec.role === 'nav') {
-    if (rec.moved < 0.4) select(rec.hit);
+    clearTimeout(rec.hold);
+    if (rec.moved < 0.4) tapAt(p, rec.hit);
     else inertia(rec.vy);
+  } else if (rec.role === 'range') {
+    if (rec.moved < 0.4) tapAt(p, rec.hit);
+    else if (S.range) showRangeBar();
+  } else if (rec.role === 'marker') {
+    if (rec.moved < 0.4) selectMarker(rec.marker);
   } else if (rec.role === 'drag') {
     if (rec.dpos) { pushHistory(rec.before); save(); }
   }
@@ -494,7 +570,7 @@ stage.addEventListener('wheel', (e) => {
   e.preventDefault();
   if (e.ctrlKey) { S.settings.zoom = clamp(S.settings.zoom * Math.exp(-e.deltaY / 300), 0.6, 2); resize(); save(); return; }
   S.scrollY = clamp(S.scrollY + (e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY) / S.scale, 0, maxScroll());
-  hideAlts(); hideSel(); drawScore(); drawInk();
+  hideAlts(); hideSel(); hideRangeBar(); hideMarkBar(); drawScore(); drawInk();
 }, { passive: false });
 
 // ---------------------------------------------------------------- toolbar
@@ -515,6 +591,10 @@ function updateMode() {
 function togglePlay() {
   commitGroup();
   if (S.player.playing) { S.player.stop(); return; }
+  // a selection plays just itself; an arrangement plays its markers; otherwise the score
+  const r = S.range && rangeOf(S.score, S.range.a, S.range.b);
+  if (r) { playProgram(compile(S.score, { range: r, loop: S.loopSel ? 64 : 1 })); return; }
+  if (hasMarkers(S.score.program)) { playProgram(compile(S.score)); return; }
   $('playIc').textContent = '■'; $('playLbl').textContent = 'Stop';
   S.player.onStop = () => { S.playing = new Set(); $('playIc').textContent = '▶'; $('playLbl').textContent = 'Play'; drawScore(); };
   S.player.play(S.score, (on) => {
@@ -544,12 +624,132 @@ async function playProgram(program = {}) {
   commitGroup();
   const { fromStaffInk, perform, inkId } = await loadIR();
   const ir = fromStaffInk(S.score);
-  const p = perform(ir, { tempo: S.score.tempo, root: { walk: {} }, ...program });
+  let p;
+  try { p = perform(ir, { tempo: S.score.tempo, root: { walk: {} }, ...program }); } catch (e) { toast(`can't play: ${e.message}`, 3000); return null; }
+  if (!p.notes.length) { toast('nothing to play there', 1200); return p; }
   $('playIc').textContent = '■'; $('playLbl').textContent = 'Stop';
   S.player.onStop = () => { S.playing = new Set(); $('playIc').textContent = '▶'; $('playLbl').textContent = 'Play'; drawScore(); };
   S.player.playPerformance(p, (on) => { S.playing = on; drawScore(); }, inkId);
   return p;
 }
+
+// ---------------------------------------------------------------- range selection & markers
+function setRange(a, b) {
+  if (a == null || b == null) return;
+  S.range = { a, b }; S.selected = null; hideSel(); selectMarker(null, true);
+  drawScore(); showRangeBar();
+}
+function clearRange() { if (!S.range) return; S.range = null; hideRangeBar(); drawScore(); }
+/** A tap: completes a jump, selects a note, or clears the selection. */
+function tapAt(p, hit) {
+  if (S.pickJump != null) {
+    const to = hit ? hit.id : nearestEvent(p), from = S.pickJump;
+    S.pickJump = null;
+    if (to == null) { toast('jump cancelled', 900); return; }
+    scoreChange((s) => { const j = addJump(s, from, to); S.marker = j.id; });
+    toast('<b>jump added</b> · it is taken on Play (arrangement: score)', 2200); selectMarker(S.marker); return;
+  }
+  clearRange(); selectMarker(null); select(hit);
+}
+const bar = (id) => $(id);
+function placeBar(box, x0, x1, y0, y1) {
+  box.classList.add('show');
+  const bw = box.offsetWidth, bh = box.offsetHeight;
+  const x = clamp(((x0 + x1) / 2) * S.scale - bw / 2, 6, S.w - bw - 6);
+  let y = (y0 - S.scrollY) * S.scale + 48 - bh - 8;
+  if (y < 52) y = (y1 - S.scrollY) * S.scale + 48 + 8;
+  box.style.left = x + 'px'; box.style.top = y + 'px';
+}
+function showRangeBar() {
+  const r = S.range && rangeOf(S.score, S.range.a, S.range.b), bands = rangeBands();
+  if (!r || !bands.length) { hideRangeBar(); return; }
+  const box = bar('rangebar');
+  box.innerHTML = `<button data-r="play" title="Play the selection (Space)">▶ <small>${r.n}</small></button>`
+    + `<button data-r="loop" class="${S.loopSel ? 'on' : ''}" title="Loop the selection when playing">⟳ Loop</button>`
+    + '<button data-r="clip" title="Keep it as a clip marker: play it, loop it, layer it">＋ Clip</button>'
+    + '<button data-r="jump" title="Add a jump: after this selection, continue at a note you tap">⤳ Jump</button>'
+    + '<button data-r="x" title="Clear the selection (Esc)">✕</button>';
+  const b = bands[0];
+  placeBar(box, b.x0, b.x1, b.y0, b.y1);
+}
+function hideRangeBar() { bar('rangebar').classList.remove('show'); }
+bar('rangebar').addEventListener('pointerdown', (e) => e.stopPropagation());
+bar('rangebar').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-r]'); if (!b) return;
+  const r = S.range && rangeOf(S.score, S.range.a, S.range.b); if (!r) return;
+  const a = b.dataset.r;
+  if (a === 'play') { if (S.player.playing) S.player.stop(); togglePlay(); }
+  else if (a === 'loop') { S.loopSel = !S.loopSel; showRangeBar(); }
+  else if (a === 'clip') { let c; scoreChange((s) => { c = addClip(s, r); }); clearRange(); selectMarker(c.id); toast(`<b>clip ${c.name}</b> · tap its label to loop or layer it`, 2200); }
+  else if (a === 'jump') { S.pickJump = r.last; clearRange(); toast('<b>tap the note to jump to</b> (Esc cancels)', 3000); }
+  else if (a === 'x') clearRange();
+});
+
+function selectMarker(id, quiet) {
+  S.marker = id || null;
+  if (!id) { hideMarkBar(); if (!quiet) drawScore(); return; }
+  clearRange(); S.selected = null; hideSel(); showMarkBar(); drawScore();
+}
+function showMarkBar() {
+  const m = markerById(S.score, S.marker); if (!m) { hideMarkBar(); return; }
+  const g = S.ML && S.ML.items.find((x) => x.id === m.id), box = bar('markbar');
+  if (m.from && 'loop' in m) {
+    const first = S.score.program.clips[0] === m;
+    box.innerHTML = `<span class="hint" style="width:auto;padding:0 6px"><b>clip ${m.name}</b></span><button data-m="play" title="Play this clip">▶</button>`
+      + `<button data-m="loop-" title="Fewer repeats">−</button><span class="hint" style="width:auto">×${m.loop}</span><button data-m="loop+" title="More repeats">+</button>`
+      + (first ? '' : `<button data-m="with" class="${m.withPrev ? 'on' : ''}" title="Play together with the clip before it (arrangement: clips)">⧉ with previous</button>`)
+      + `<button data-m="tr-" title="Down an octave">8vb</button><span class="hint" style="width:auto">${m.transpose ? (m.transpose > 0 ? '+' : '') + m.transpose : '±0'}</span><button data-m="tr+" title="Up an octave">8va</button>`
+      + `<button data-m="dl-" title="Start earlier">◂</button><span class="hint" style="width:auto">delay ${m.delay || 0}</span><button data-m="dl+" title="Start a beat later">▸</button>`
+      + '<button data-m="del" title="Remove the marker">✕ Remove</button>';
+  } else {
+    box.innerHTML = `<span class="hint" style="width:auto;padding:0 6px"><b>jump</b></span><button data-m="times-">−</button><span class="hint" style="width:auto">×${m.times}</span><button data-m="times+">+</button><button data-m="del" title="Remove the jump">✕ Remove</button>`;
+  }
+  const seg = g && (g.pieces?.[0] || (g.from && { line: g.from.line, x0: g.from.x - 2, x1: g.from.x + 2 }));
+  const sys = seg && S.L.systems[seg.line];
+  if (!sys) { box.classList.add('show'); box.style.left = '10px'; box.style.top = '60px'; return; }
+  placeBar(box, seg.x0, seg.x1, sys.staffTops[0] - 4, sys.staffTops[sys.staffTops.length - 1] + 5);
+}
+function hideMarkBar() { bar('markbar').classList.remove('show'); }
+bar('markbar').addEventListener('pointerdown', (e) => e.stopPropagation());
+bar('markbar').addEventListener('click', (e) => { const b = e.target.closest('button[data-m]'); if (b) markerEdit(b.dataset.m); });
+function markerEdit(a) {
+  const id = S.marker; if (!markerById(S.score, id)) return;
+  if (a === 'play') {
+    const m = markerById(S.score, id);
+    if (S.player.playing) S.player.stop();
+    playProgram({ root: compile({ ...S.score, program: { mode: 'clips', clips: [{ ...m, withPrev: false }], jumps: [] } }).root }); return;
+  }
+  scoreChange((s) => {
+    const m = markerById(s, id);
+    if (a === 'del') removeMarker(s, id);
+    else if (a === 'loop-') m.loop = Math.max(1, m.loop - 1);
+    else if (a === 'loop+') m.loop = Math.min(32, m.loop + 1);
+    else if (a === 'with') m.withPrev = !m.withPrev;
+    else if (a === 'tr-') m.transpose = (m.transpose || 0) - 12;
+    else if (a === 'tr+') m.transpose = (m.transpose || 0) + 12;
+    else if (a === 'dl-') m.delay = Math.max(0, (m.delay || 0) - 1);
+    else if (a === 'dl+') m.delay = (m.delay || 0) + 1;
+    else if (a === 'times-') m.times = Math.max(1, m.times - 1);
+    else if (a === 'times+') m.times = Math.min(16, m.times + 1);
+    if (a === 'with' && m.withPrev) s.program.mode = 'clips';
+  });
+  if (a === 'del') { selectMarker(null); toast('marker removed', 900); } else showMarkBar();
+}
+
+/** The arrangement strip: what Play plays when there are markers. */
+function progBar() {
+  const box = bar('progbar'), p = S.score.program;
+  if (!hasMarkers(p)) { box.classList.remove('show'); return; }
+  box.innerHTML = '<span class="hint" style="width:auto;padding:0 4px">Play:</span>'
+    + `<button data-p="score" class="${p.mode !== 'clips' ? 'on' : ''}" title="Play through the score, taking the jumps">score${p.jumps.length ? ' + jumps' : ''}</button>`
+    + `<button data-p="clips" class="${p.mode === 'clips' ? 'on' : ''}" title="Play the clips in order (⧉ layers play together)">clips ${p.clips.map((c) => (c.withPrev ? '‖' : '') + c.name).join(' ')}</button>`;
+  box.classList.add('show');
+}
+bar('progbar').addEventListener('pointerdown', (e) => e.stopPropagation());
+bar('progbar').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-p]'); if (!b) return;
+  scoreChange((s) => { (s.program ||= emptyProgram()).mode = b.dataset.p; });
+});
 
 // export
 $('exportBtn').onclick = (e) => { const m = $('exportMenu'); const r = e.currentTarget.getBoundingClientRect(); m.style.left = Math.max(4, Math.min(r.left, innerWidth - 200)) + 'px'; m.style.top = r.bottom + 4 + 'px'; m.classList.toggle('show'); };
@@ -622,7 +822,13 @@ window.addEventListener('keydown', (e) => {
   if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
   if (mod && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); return; }
   if (e.key === ' ') { e.preventDefault(); togglePlay(); return; }
-  if (e.key === 'Escape') { select(null); hideAlts(); return; }
+  if (e.key === 'Escape') { if (S.pickJump) { S.pickJump = null; toast('jump cancelled', 900); } clearRange(); selectMarker(null); select(null); hideAlts(); return; }
+  if (e.shiftKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+    const from = S.range || (S.selected && { a: S.selected.id, b: S.selected.id });
+    if (from) { e.preventDefault(); setRange(from.a, stepFocus(S.score, from.b, e.key === 'ArrowLeft' ? -1 : 1)); showRangeBar(); }
+    return;
+  }
+  if (S.marker && (e.key === 'Delete' || e.key === 'Backspace')) { e.preventDefault(); markerEdit('del'); return; }
   if (!S.selected) return;
   if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); editSelected('del'); }
   else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); editSelected('move', (e.key === 'ArrowUp' ? 1 : -1) * (e.shiftKey ? 7 : 1)); }
@@ -667,4 +873,6 @@ window.StaffInk = {
   pageToClient(x, y) { const r = stage.getBoundingClientRect(); return { x: r.left + x * S.scale, y: r.top + (y - S.scrollY) * S.scale }; },
   togglePlay, undo, redo, commitGroup,
   playProgram, async ir() { return (await loadIR()).fromStaffInk(S.score); },
+  setRange, clearRange, get range() { return S.range && rangeOf(S.score, S.range.a, S.range.b); }, rangeBands, markerLayout: () => S.ML, selectMarker, markerEdit, tapAt,
+  pageToCanvas(x, y) { return { x: x * S.scale, y: (y - S.scrollY) * S.scale }; },
 };

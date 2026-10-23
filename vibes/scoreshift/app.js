@@ -7,6 +7,7 @@ import { Player } from './player.js';
 import { markOriginal, collectEdits, applyEdits, makeProject, readProject, fileKey } from './edits.js';
 import { interpret, yOfP, lineY, spaceAt } from './omr.js';
 import { Renderer, plan, describe, drawOverlay } from './render.js';
+import { layoutMarkers, markersOf, drawMarkers } from '../notation-ir/markers.js';
 
 const $ = (id) => document.getElementById(id);
 const cv = $('cv'), ov = $('ov'), ctx = cv.getContext('2d'), octx = ov.getContext('2d');
@@ -297,6 +298,8 @@ function update() {
   else if (S.labels) drawOverlay(octx, m, R.r, null, 'original', S.sel);
   if (S.view === 'interpreted') drawRhythm(octx, m, S.score, R.r, S.selM);
   drawPlayhead();
+  drawProgramMarkers();
+  refreshMarkers();
   if (!player.playing) showPos(S.startTick);
   chips();
   layoutStage();
@@ -413,6 +416,7 @@ function redrawPlay(on) {
   if (S.view === 'interpreted') { drawOverlay(octx, S.model, R.r, null, 'original', S.sel); drawRhythm(octx, S.model, S.score, R.r, S.selM); }
   else if (S.labels) drawOverlay(octx, S.model, R.r, S.view === 'transposed' ? S.plan : null, S.view === 'transposed' ? 'transposed' : 'original', S.sel);
   drawPlayhead();
+  drawProgramMarkers();
 }
 function startPlay(fromTick) {
   $('play').textContent = '■ Stop'; $('play').setAttribute('aria-pressed', 'true');
@@ -465,9 +469,14 @@ async function playProgram(program) {
   const { score, byId } = await toIR();
   if (program) (S.programs ||= new Map()).set(pageNo(), program);
   else program = S.programs?.get(pageNo()) || {};
+  refreshMarkers();
   const full = { tempo: S.tempo, root: { walk: {} }, ...program };
   const lost = checkProgram(score, full);
-  if (lost.length) { setStatus(`<b>${lost.length} playback marker${lost.length > 1 ? 's' : ''} lost ${lost.length > 1 ? 'their' : 'its'} note</b> (deleted or moved by a correction): ${lost.map((l) => l.path).join(', ')}`); return { lost }; }
+  if (lost.length) {
+    const { clips, jumps } = markersOf(full), names = [...new Set(lost.map((l) => [...clips, ...jumps].find((m) => l.path.startsWith(m.path || m.id) || l.path.startsWith(m.id))?.name || l.path))];
+    setStatus(`<b>${lost.length} playback marker${lost.length > 1 ? 's' : ''} lost ${lost.length > 1 ? 'their' : 'its'} note</b> (deleted by a correction; drawn red on the page): ${names.join(', ')}`);
+    return { lost };
+  }
   const p = perform(score, full);
   $('play').textContent = '■ Stop'; $('play').setAttribute('aria-pressed', 'true');
   player.speed = S.speed;
@@ -478,6 +487,34 @@ async function playProgram(program) {
   });
   return p;
 }
+// ---------- the page's playback program, drawn on the photo (shared notation-ir markers) ----------
+// Clips are brackets over the staff, jumps arrows; a marker whose note a correction deleted is
+// drawn red and dashed where the note was (its page-keyed id says where).
+let MK = null, mkSeq = 0;
+async function refreshMarkers() {
+  const prog = S.programs?.get(pageNo()), seq = ++mkSeq;
+  if (!prog || !S.model) { if (MK) { MK = null; redrawPlay(S.sounding); } return; }
+  const [{ resolveAnchor, positionAt, findById, parsePageId }, { score }] = await Promise.all([import('../notation-ir/anchors.js'), toIR()]);
+  if (seq !== mkSeq) return; // a newer refresh is on its way
+  const partOf = new Map(); S.score.parts.forEach((p, k) => p.staves.forEach((st) => partOf.set(st.index, k)));
+  const lines = []; for (const st of S.model.staves) { const xm = (st.x0 + st.x1) / 2; lines[st.index] = { x0: st.x0, x1: st.x1, top: lineY(st, 0, xm), bottom: lineY(st, 4, xm), group: partOf.get(st.index) ?? 0 }; }
+  const sp = S.model.space || 16;
+  const place = (a, edge) => {
+    if (a.event) { const e = findById(score, 'event', a.event); return e && { line: e.src.line, x: e.src.x + (edge === 'end' || a.edge === 'end' ? 0.9 : -0.7) * sp }; }
+    if (a.barline) { const d = findById(score, 'barline', a.barline); return d && { line: d.src.line, x: d.src.x }; }
+    try { const r = resolveAnchor(score, a); return positionAt(score, r.fragment, r.t); } catch (e) { return null; }
+  };
+  const lostAt = (a) => { const k = parsePageId(a.event || a.barline); return k && lines[k.line] ? { line: k.line, x: k.q * score.pageIds.unit } : null; };
+  MK = layoutMarkers(markersOf(prog), { lines, place, lostAt });
+  redrawPlay(S.sounding);
+  if (MK.lost.length && !/marker/.test($('status').textContent)) setStatus($('status').innerHTML + ` · <b class="bad">${MK.lost.length} playback marker${MK.lost.length > 1 ? 's' : ''} lost ${MK.lost.length > 1 ? 'their' : 'its'} note</b> (red)`);
+}
+function drawProgramMarkers() {
+  if (!MK || !S.rend) return;
+  const r = S.rend.r;
+  drawMarkers(octx, MK, { X: (x) => x * r, Y: (y) => y * r, sp: (S.model.space || 16) * r });
+}
+
 /** The music as shown (as written or transposed) into StaffInk, in a new tab. */
 async function editInStaffInk({ open = true } = {}) {
   if (!S.model) return null;
@@ -705,4 +742,4 @@ $('export').onclick = () => {
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
 // test hook
-window.__ss = { S, load, saveProject, idb, update, plan, openPage, exportPdf, player, setFix, eventOf, toMusicXML, toMidi, musicOpts, playProgram, editInStaffInk, toIR }; window.__yOfP = yOfP;
+window.__ss = { S, load, saveProject, idb, update, plan, openPage, exportPdf, player, setFix, eventOf, toMusicXML, toMidi, musicOpts, playProgram, editInStaffInk, toIR, markers: () => MK, refreshMarkers }; window.__yOfP = yOfP;

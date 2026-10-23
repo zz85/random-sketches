@@ -228,6 +228,13 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
       const ir2=(await __ss.toIR()).score;const got=again.notes?again.notes.map(n=>ir2.events.find(e=>e.id===n.event)).map(e=>e.heads.map(h=>h.d).join()):[];
       return {saved:JSON.parse(proj).programs?Object.keys(JSON.parse(proj).programs).length:0,notes:p.notes.length,again:again.notes?.length,same:JSON.stringify([...new Set(got)])===JSON.stringify(want),lost:again.lost?.length||0}})()`);
     check('a playback program saved in the project plays the same notes after reopening', prog.saved === 1 && prog.notes === 2 && prog.again === 2 && prog.same && !prog.lost, JSON.stringify(prog));
+    // the program is drawn on the photo; a correction deleting one of its notes turns that marker red, and Play says which
+    const mk = await b.evaluate(`(async()=>{await __ss.refreshMarkers();const m1=__ss.markers();const ir=(await __ss.toIR()).score,ev=ir.events.filter(e=>e.src.line===0);
+      const st=__ss.S.model.staves[0],n=st.notes.find(q=>Math.abs(q.x-ev[6].src.x)<1);st.notes.splice(st.notes.indexOf(n),1);__ss.S.model.notes.splice(__ss.S.model.notes.indexOf(n),1);
+      (await import('./omr.js')).interpret(st);__ss.update();await new Promise(r=>setTimeout(r,400));const m2=__ss.markers();const p=await __ss.playProgram();
+      return {before:m1&&m1.items.map(i=>i.label),after:m2&&m2.items.map(i=>i.label),lost:m2&&m2.lost.length,refused:!!(p&&p.lost),status:document.getElementById('status').textContent.slice(0,120)}})()`);
+    check('saved markers drawn on the page; a deleted note turns its marker red', mk.before?.join() === 'A' && mk.after?.join() === 'A ?' && mk.lost === 1 && mk.refused && /marker lost its note.*A/.test(mk.status), JSON.stringify(mk));
+    await shot('markers');
 
     // the CODA audition sheet, if present locally (not committed): every bar adds up
     if (fs.existsSync(path.join(DIR, 'fixtures/local/coda.pdf'))) {

@@ -240,6 +240,20 @@ const server = http.createServer((req, res) => {
       await new Promise((r) => setTimeout(r, 900));
       return { notes: p.notes.length, on: on.length, playing, after: StaffInk.S.player.playing, durs: (await StaffInk.ir()).events.length }; })()`);
     check('authored playback through the IR lights both cursors', prog.notes === 2 && prog.on === 2 && prog.playing && !prog.after, JSON.stringify(prog));
+    // range selection with the mouse in Select, played on its own; kept as a clip; a jump
+    await ev(`document.getElementById('tSelect').click(), StaffInk.clearRange(), true`);
+    const ctr = (id) => ev(`(() => { const p = StaffInk.layout.evPos.get(${id}); return StaffInk.pageToClient((p.bbox.x0 + p.bbox.x1) / 2, (p.bbox.y0 + p.bbox.y1) / 2); })()`);
+    const mouse = (type, q) => c.send('Input.dispatchMouseEvent', { type, x: q.x, y: q.y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1, pointerType: 'mouse' });
+    const ids = await ev('StaffInk.score.measures[0].staves[0].events.map((e) => e.id)');
+    const q0 = await ctr(ids[0]), q2 = await ctr(ids[2]);
+    await mouse('mousePressed', q0); for (let k = 1; k <= 6; k++) await mouse('mouseMoved', { x: q0.x + (q2.x - q0.x) * k / 6, y: q0.y + (q2.y - q0.y) * k / 6 }); await mouse('mouseReleased', q2); await sleep(150);
+    const rg = await ev(`(async () => { const r = StaffInk.range; const bar = document.getElementById('rangebar').classList.contains('show');
+      document.querySelector('#rangebar [data-r=play]').click(); await new Promise((q) => setTimeout(q, 150)); const playing = StaffInk.S.player.playing; StaffInk.S.player.stop();
+      document.querySelector('#rangebar [data-r=clip]').click(); await new Promise((q) => setTimeout(q, 100));
+      return { n: r && r.n, bar, playing, clips: StaffInk.score.program.clips.map((x) => [x.name, x.from, x.to]), label: StaffInk.markerLayout().items.map((x) => x.label) }; })()`);
+    check('Select: drag across notes selects them like text, plays them, keeps them as a clip', rg.n === 3 && rg.bar && rg.playing && rg.clips.length === 1 && rg.clips[0][1] === ids[0] && rg.clips[0][2] === ids[2] && rg.label[0] === 'A', JSON.stringify(rg));
+    fs.writeFileSync(path.join(DIR, 'smoke_markers.png'), Buffer.from((await c.send('Page.captureScreenshot', { format: 'png' })).result.data, 'base64'));
+    await ev('StaffInk.selectMarker(null), StaffInk.score.program = null, StaffInk.commitGroup(), document.getElementById("tWrite").click(), true');
 
     // ---------------------------------------------------------- scene 2d: offline
     await ev('navigator.serviceWorker.ready.then(() => new Promise((r) => { if (navigator.serviceWorker.controller) r(true); else navigator.serviceWorker.addEventListener("controllerchange", () => r(true)); setTimeout(() => r(!!navigator.serviceWorker.controller), 5000); }))');
