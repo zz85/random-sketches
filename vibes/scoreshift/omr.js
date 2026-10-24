@@ -614,12 +614,16 @@ export function analyze(norm, opts = {}) {
   // a half of a sharp or natural whose crossbars were erased with thick staff lines keeps
   // stubs of them, so it can be most of a space wide
   const isHalf = (g) => g.x1 - g.x0 + 1 <= 0.95 * S0 && g.y1 - g.y0 + 1 >= 1.8 * S0 && g.y1 - g.y0 + 1 <= 3.8 * S0;
+  // a flat's stem keeps the stub of its bowl's bottom when a ledger line cuts the bowl away, so
+  // it can be a little wider than a bare stroke (Sibelius 2 viola, p. 4: the B♭ above the staff
+  // read as a double sharp from the bowl alone)
+  const isFlatStem = (g) => g.x1 - g.x0 + 1 <= 0.6 * S0 && g.y1 - g.y0 + 1 >= 1.5 * S0;
   for (const g of groups.values()) {
     if (!(isStroke(g) || isHalf(g)) || g.merged) continue;
     for (const q of groups.values()) {
       if (q === g || q.merged || q.x0 - g.x1 < -1 || q.x0 - g.x1 > 0.6 * S0 || q.x1 - q.x0 > 1.4 * S0) continue;
       const ov = Math.min(g.y1, q.y1) - Math.max(g.y0, q.y0);
-      const bowl = isStroke(g) && q.y0 >= g.y0 + 0.4 * S0 && q.y1 <= g.y1 + 0.3 * S0 && q.x0 - g.x1 <= 0.5 * S0; // flat: bowl fragment
+      const bowl = isFlatStem(g) && q.y0 >= g.y0 + 0.4 * S0 && q.y1 <= g.y1 + 0.3 * S0 && q.x0 - g.x1 <= 0.5 * S0; // flat: bowl fragment
       const pair = (isStroke(q) || isHalf(q)) && ov > 0.6 * Math.min(g.y1 - g.y0, q.y1 - q.y0) && q.x1 - g.x0 <= 1.9 * S0; // sharp / natural halves
       if (!bowl && !pair) continue;
       const m = { ...g, ids: [...g.ids, ...q.ids], x1: Math.max(g.x1, q.x1), y0: Math.min(g.y0, q.y0), y1: Math.max(g.y1, q.y1), n: g.n + q.n, cx: (g.cx * g.n + q.cx * q.n) / (g.n + q.n), cy: (g.cy * g.n + q.cy * q.n) / (g.n + q.n) };

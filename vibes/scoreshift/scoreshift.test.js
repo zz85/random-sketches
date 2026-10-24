@@ -456,6 +456,19 @@ test('bold scanned sharp in a key signature (IMSLP #96616)', () => {
   expect(r.staves[0].key.detected).toBe(1);
 });
 
+// A flat above the staff whose bowl a ledger line cuts away from its stem (Sibelius, Symphony
+// No. 2, viola part, p. 4, first system; the score #046 in midiviz ships): the bowl alone read as
+// a double sharp, so B♭ came out as B𝄪. The stem keeps the stub of the bowl's bottom, a little
+// wider than a bare stroke, and must still be re-paired with its bowl.
+test('a flat cut by a ledger line is still a flat (Sibelius 2, viola)', () => {
+  const r = analyze(normalize(decodeGray(fs.readFileSync(new URL('./fixtures/scan_sibelius2_va_p4.png', import.meta.url)))));
+  const notes = r.staves[0].notes;
+  expect(notes.some((n) => n.accid?.type === 2)).toBe(false);
+  expect(notes.filter((n) => n.accid?.type === -1).length).toBeGreaterThanOrEqual(3);
+  expect(notes.filter((n) => n.name === 'B♭4').length).toBeGreaterThanOrEqual(4);
+  expect(notes.some((n) => n.name.startsWith('B♯'))).toBe(false);
+});
+
 // Opening key signatures that begin with naturals, and the key carried over from the previous
 // page (a part's next page, or a key change at the page turn). Fixtures spliced from the
 // Telemann crops above by tools/make_key_fixtures.mjs: the key change in each crop moved to the
