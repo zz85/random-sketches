@@ -44,6 +44,8 @@ const SHOTS = [
   ['autumn', 'time=1.3&az=-60&shot=wide&t=20&style=autumn'],
   ['autumn2', 'time=1&az=150&shot=hillside&t=20&style=autumn'],
   ['night', 'time=4&shot=path&t=20'],
+  ['dawn', 'time=5&az=40&shot=wide&t=20'],
+  ['morning', 'time=6&az=-30&shot=hillside&t=20'],
   ['sky', 'time=0.75&az=55&shot=sky&t=20'],
   ['late', 'time=1&az=150&shot=hillside&t=20&style=autumn&turned=1'],
   ['dayanim', 'anim=day&p=0.55&az=35&shot=hillside&t=20'],

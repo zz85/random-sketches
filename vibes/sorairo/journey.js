@@ -41,12 +41,17 @@ export function warpHour(h, lockHour, k) {
   return lockHour + 24 * (w + 1) / 2;
 }
 
-// Hour of the day to the time-of-day slider (0 noon … 4 night). There is no dawn
-// keyframe, so the morning mirrors the evening: magic hour before sunrise, golden after.
-const D = [0, 3, 5.3, 6.2, 7.2, 8], T = [0, 1, 2, 3, 3.5, 4];
+// Hour of the day to the time-of-day slider, which runs once round the clock: 0 noon,
+// 1 afternoon, 2 golden hour, 3 magic hour, 4 night, 5 dawn, 6 morning, 7 noon again.
+// [hour, slider] knots, piecewise linear: night holds from 20:00 to 04:00, the moon sets
+// by 04:40, dawn at 05:25, morning at 06:50.
+const KNOTS = [[0, 4], [4, 4], [4.7, 4.5], [5.4, 5], [6.8, 6], [12, 7], [15, 8], [17.3, 9], [18.2, 10], [19.2, 10.5], [20, 11], [24, 11]];
 export function hourToTime(h) {
-  const d = Math.abs((((h % 24) + 24) % 24) - 12);
-  for (let i = 1; i < D.length; i++) if (d < D[i]) return T[i - 1] + (T[i] - T[i - 1]) * (d - D[i - 1]) / (D[i] - D[i - 1]);
+  h = ((h % 24) + 24) % 24;
+  for (let i = 1; i < KNOTS.length; i++) {
+    const [h1, t1] = KNOTS[i], [h0, t0] = KNOTS[i - 1];
+    if (h <= h1) return (t0 + (t1 - t0) * (h - h0) / (h1 - h0)) % 7;
+  }
   return 4;
 }
 

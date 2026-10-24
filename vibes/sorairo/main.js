@@ -22,23 +22,34 @@ const MOBILE = matchMedia('(pointer: coarse)').matches || Math.min(screen.width,
 // ---------- time-of-day keyframes (colours in sRGB, converted to linear by THREE.Color)
 const C = (hex, k = 1) => new THREE.Color(hex).multiplyScalar(k);
 const PRESETS = [
-  { name: 'Noon', sunEl: 62, zenith: C('#1d5ad6'), mid: C('#4a92ee'), horizon: C('#c4e5ff'), sun: C('#fff3df', 3.1), ambient: C('#93b5ff', 0.62), fog: C('#b9d9fb'), fogSun: C('#fff1d8'), cloudLit: C('#ffffff', 1.25), cloudShade: C('#94a8da'), cloudRim: C('#fff6e0'), disc: C('#fffaf0', 30), discSize: 0.99985, glow: 1, stars: 0, exposure: 1.0, shafts: 0.45, flare: 0.55, lift: C('#0a1638'), gain: C('#fffaf2'), sat: 1.18 },
-  { name: 'Afternoon', sunEl: 30, zenith: C('#2056c8'), mid: C('#5799e8'), horizon: C('#d3e8f8'), sun: C('#fff0cf', 3.0), ambient: C('#88a9f2', 0.56), fog: C('#c6dcf1'), fogSun: C('#ffe8c0'), cloudLit: C('#fff9ee', 1.2), cloudShade: C('#8797cb'), cloudRim: C('#ffeccc'), disc: C('#fff6e0', 26), discSize: 0.99985, glow: 1, stars: 0, exposure: 1.0, shafts: 0.6, flare: 0.7, lift: C('#0c1434'), gain: C('#fff8ee'), sat: 1.18 },
-  { name: 'Golden hour', sunEl: 9, zenith: C('#2a4fa2'), mid: C('#7f92d4'), horizon: C('#ffd09a'), sun: C('#ffb26a', 2.8), ambient: C('#8187cc', 0.5), fog: C('#ebc6aa'), fogSun: C('#ffbf78'), cloudLit: C('#ffd8a6', 1.15), cloudShade: C('#7b70aa'), cloudRim: C('#ffb070'), disc: C('#fff0c0', 24), discSize: 0.9998, glow: 1.2, stars: 0, exposure: 1.0, shafts: 1.0, flare: 1.0, lift: C('#1c0f34'), gain: C('#fff2e2'), sat: 1.15 },
-  { name: 'Magic hour', sunEl: 1.8, zenith: C('#1b2368'), mid: C('#7b4e9f'), horizon: C('#ff906c'), sun: C('#ff7c4c', 1.7), ambient: C('#6c5cab', 0.5), fog: C('#c88ca2'), fogSun: C('#ff9a6a'), cloudLit: C('#ffa07c', 1.1), cloudShade: C('#4b3b82'), cloudRim: C('#ff8a50'), disc: C('#ffd0a0', 14), discSize: 0.9997, glow: 1.3, stars: 0.15, exposure: 1.05, shafts: 1.2, flare: 0.8, lift: C('#200c38'), gain: C('#fff0e8'), sat: 1.12 },
-  { name: 'Night', sunEl: 38, zenith: C('#040a25'), mid: C('#0c1a45'), horizon: C('#24375f'), sun: C('#a3b8ff', 0.4), ambient: C('#2c3f80', 0.3), fog: C('#1c2b52'), fogSun: C('#3b5082'), cloudLit: C('#3c4a7c'), cloudShade: C('#121a38'), cloudRim: C('#a0b2e2'), disc: C('#eef2ff', 7), discSize: 0.99975, glow: 0.35, stars: 1, exposure: 1.3, shafts: 0.3, flare: 0.25, lift: C('#040a20'), gain: C('#e6eeff'), sat: 0.85 },
+  { name: 'Noon', sunEl: 62, zenith: C('#1d5ad6'), mid: C('#4a92ee'), horizon: C('#c4e5ff'), sun: C('#fff3df', 3.1), ambient: C('#93b5ff', 0.62), fog: C('#b9d9fb'), fogSun: C('#fff1d8'), cloudLit: C('#ffffff', 1.25), cloudShade: C('#94a8da'), cloudRim: C('#fff6e0'), disc: C('#fffaf0', 30), discSize: 0.99985, glow: 1, stars: 0, exposure: 1.0, shafts: 0.45, flare: 0.55, lift: C('#0a1638'), gain: C('#fffaf2'), sat: 1.18 , fogK: 1 },
+  { name: 'Afternoon', sunEl: 30, zenith: C('#2056c8'), mid: C('#5799e8'), horizon: C('#d3e8f8'), sun: C('#fff0cf', 3.0), ambient: C('#88a9f2', 0.56), fog: C('#c6dcf1'), fogSun: C('#ffe8c0'), cloudLit: C('#fff9ee', 1.2), cloudShade: C('#8797cb'), cloudRim: C('#ffeccc'), disc: C('#fff6e0', 26), discSize: 0.99985, glow: 1, stars: 0, exposure: 1.0, shafts: 0.6, flare: 0.7, lift: C('#0c1434'), gain: C('#fff8ee'), sat: 1.18 , fogK: 1 },
+  { name: 'Golden hour', sunEl: 9, zenith: C('#2a4fa2'), mid: C('#7f92d4'), horizon: C('#ffd09a'), sun: C('#ffb26a', 2.8), ambient: C('#8187cc', 0.5), fog: C('#ebc6aa'), fogSun: C('#ffbf78'), cloudLit: C('#ffd8a6', 1.15), cloudShade: C('#7b70aa'), cloudRim: C('#ffb070'), disc: C('#fff0c0', 24), discSize: 0.9998, glow: 1.2, stars: 0, exposure: 1.0, shafts: 1.0, flare: 1.0, lift: C('#1c0f34'), gain: C('#fff2e2'), sat: 1.15 , fogK: 1 },
+  { name: 'Magic hour', sunEl: 1.8, zenith: C('#1b2368'), mid: C('#7b4e9f'), horizon: C('#ff906c'), sun: C('#ff7c4c', 1.7), ambient: C('#6c5cab', 0.5), fog: C('#c88ca2'), fogSun: C('#ff9a6a'), cloudLit: C('#ffa07c', 1.1), cloudShade: C('#4b3b82'), cloudRim: C('#ff8a50'), disc: C('#ffd0a0', 14), discSize: 0.9997, glow: 1.3, stars: 0.15, exposure: 1.05, shafts: 1.2, flare: 0.8, lift: C('#200c38'), gain: C('#fff0e8'), sat: 1.12 , fogK: 1.1 },
+  { name: 'Night', sunEl: 38, zenith: C('#040a25'), mid: C('#0c1a45'), horizon: C('#24375f'), sun: C('#a3b8ff', 0.4), ambient: C('#2c3f80', 0.3), fog: C('#1c2b52'), fogSun: C('#3b5082'), cloudLit: C('#3c4a7c'), cloudShade: C('#121a38'), cloudRim: C('#a0b2e2'), disc: C('#eef2ff', 7), discSize: 0.99975, glow: 0.35, stars: 1, exposure: 1.3, shafts: 0.3, flare: 0.25, lift: C('#040a20'), gain: C('#e6eeff'), sat: 0.85 , fogK: 1 },
+  // Dawn is not magic hour backwards: a cool blue-lilac sky with a pastel peach band at the
+  // horizon, rose-lit cloud bases, the last stars, and low mist (fogK) in the valleys.
+  { name: 'Dawn', sunEl: 1.5, zenith: C('#22306e'), mid: C('#7482c2'), horizon: C('#ffcab4'), sun: C('#ffb894', 1.6), ambient: C('#7c88cc', 0.52), fog: C('#bdb8da'), fogSun: C('#ffc4a6'), cloudLit: C('#ffc8bc', 1.1), cloudShade: C('#5e629e'), cloudRim: C('#ffb898'), disc: C('#ffe4c8', 16), discSize: 0.9997, glow: 1.1, stars: 0.12, exposure: 1.05, shafts: 1.1, flare: 0.8, lift: C('#141a42'), gain: C('#f4f2ff'), sat: 1.04, fogK: 2.4 },
+  // Morning: low clear light, cooler and fresher than the afternoon, mist burning off
+  { name: 'Morning', sunEl: 16, zenith: C('#2460d0'), mid: C('#6aa6ec'), horizon: C('#dbeefb'), sun: C('#fff3da', 2.9), ambient: C('#8fb4f2', 0.58), fog: C('#cde2f6'), fogSun: C('#fff0d8'), cloudLit: C('#ffffff', 1.2), cloudShade: C('#8ea3d6'), cloudRim: C('#fff2dc'), disc: C('#fffaf0', 26), discSize: 0.99985, glow: 1.05, stars: 0, exposure: 1.0, shafts: 0.75, flare: 0.75, lift: C('#0c1636'), gain: C('#f8fbff'), sat: 1.15, fogK: 1.5 },
 ];
+// The time-of-day slider runs once round the clock: 0 noon, 1 afternoon, 2 golden hour,
+// 3 magic hour, 4 night, 5 dawn, 6 morning, and 7 is noon again.
+const NIGHT_T = 4, DAY_T = PRESETS.length;
 function samplePreset(t) {
-  t = THREE.MathUtils.clamp(t, 0, PRESETS.length - 1);
-  const i = Math.min(Math.floor(t), PRESETS.length - 2), f = THREE.MathUtils.smoothstep(t - i, 0, 1);
-  const a = PRESETS[i], b = PRESETS[i + 1], o = {};
+  t = ((t % DAY_T) + DAY_T) % DAY_T;
+  const i = Math.floor(t), f = THREE.MathUtils.smoothstep(t - i, 0, 1);
+  const a = PRESETS[i], b = PRESETS[(i + 1) % DAY_T], o = {};
   for (const k in a) {
     if (k === 'name') continue;
     o[k] = a[k].isColor ? a[k].clone().lerp(b[k], f) : a[k] + (b[k] - a[k]) * f;
   }
   // night: the moon rises from elsewhere, don't sweep the sun over the sky
-  if (t > 3) o.sunEl = t < 3.5 ? THREE.MathUtils.lerp(1.8, -6, (t - 3) * 2) : THREE.MathUtils.lerp(-6, 38, (t - 3.5) * 2);
-  o.night = THREE.MathUtils.smoothstep(t, 3.2, 3.9);
+  // the sun sets below the horizon and the moon rises (3 … 4); the moon sets and the sun
+  // comes up for dawn (4 … 5)
+  if (t > 3 && t <= 4) o.sunEl = t < 3.5 ? THREE.MathUtils.lerp(1.8, -6, (t - 3) * 2) : THREE.MathUtils.lerp(-6, 38, (t - 3.5) * 2);
+  else if (t > 4 && t < 5) o.sunEl = t < 4.5 ? THREE.MathUtils.lerp(38, -6, (t - 4) * 2) : THREE.MathUtils.lerp(-6, PRESETS[5].sunEl, (t - 4.5) * 2);
+  o.night = THREE.MathUtils.smoothstep(t, 3.2, 3.9) * (1 - THREE.MathUtils.smoothstep(t, 4.1, 4.8));
   return o;
 }
 
@@ -260,7 +271,7 @@ function applyAnim() {
   if (AN.mode === 'day') {
     // noon … night over 90% of the loop, hold the night, fade through dark back to noon
     const p = AN.progress;
-    S.time = (PRESETS.length - 1) * Math.min(1, p / 0.9);
+    S.time = NIGHT_T * Math.min(1, p / 0.9);
     animFade = Math.min(THREE.MathUtils.smoothstep(p, 0, 0.025), 1 - THREE.MathUtils.smoothstep(p, 0.95, 0.995));
   } else if (AN.mode === 'year') {
     SE = sampleSeason(AN.progress);
@@ -277,7 +288,7 @@ function applyAnim() {
     // the sun crosses the sky, east in the morning to west in the evening; the moon stays
     // put, so the swing fades out through the night and never jumps at midnight
     const hs = ((((h - 12) % 24) + 36) % 24) - 12;
-    animAz = hs * 9 * (1 - THREE.MathUtils.smoothstep(S.time, 3.2, 3.9));
+    animAz = hs * 9;
     SE = sampleSeason(J.seasonOfDate(now));
     tree.setSeason(SE); setGround(SE.ground);
     const day = Math.floor(ZM.sim / 86400);
@@ -291,7 +302,7 @@ function applyAnim() {
 function applyLook() {
   applyAnim();
   const P = samplePreset(S.time);
-  const el = THREE.MathUtils.degToRad(P.sunEl), az = THREE.MathUtils.degToRad(S.azimuth + animAz + (P.night > 0.5 ? 140 : 0));
+  const el = THREE.MathUtils.degToRad(P.sunEl), az = THREE.MathUtils.degToRad(S.azimuth + animAz * (1 - P.night) + (P.night > 0.5 ? 140 : 0));
   const sd = shared.uSunDir.value.set(Math.cos(el) * Math.sin(az), Math.sin(el), -Math.cos(el) * Math.cos(az));
   // light fades out as the sun sets, then the moon takes over
   const lightK = THREE.MathUtils.smoothstep(P.sunEl, -4, 2);
@@ -299,6 +310,7 @@ function applyLook() {
   shared.uSunColor.value.copy(P.sun).multiplyScalar(lightK);
   shared.uAmbient.value.copy(P.ambient);
   shared.uFogColor.value.copy(P.fog); shared.uFogSunColor.value.copy(P.fogSun);
+  shared.uFogDensity.value = 0.0009 * P.fogK;
   shared.uCloudCover.value = THREE.MathUtils.clamp(S.clouds + (SE ? SE.clouds : 0), 0, 1);
   shared.uSnowCover.value = SE ? SE.snowCover : 0;
   snow.uniforms.uSnowFall.value = SE ? SE.snowFall : 0;
@@ -315,7 +327,8 @@ function applyLook() {
   updateContrail(shared.uTime.value, S.contrail && P.night < 0.5);
   birds.uniforms.uInk.value.copy(P.cloudShade).multiplyScalar(0.18);
   motes.m.uniforms.uNight.value = P.night;
-  sound.update({ day: 1 - P.night, night: P.night, dusk: THREE.MathUtils.smoothstep(S.time, 1.6, 2.4) * (1 - THREE.MathUtils.smoothstep(S.time, 3.3, 3.8)),
+  sound.update({ day: 1 - P.night, night: P.night, dusk: Math.max(THREE.MathUtils.smoothstep(S.time, 1.6, 2.4) * (1 - THREE.MathUtils.smoothstep(S.time, 3.3, 3.8)), // higurashi call at dusk and again at dawn
+      THREE.MathUtils.smoothstep(S.time, 4.6, 4.95) * (1 - THREE.MathUtils.smoothstep(S.time, 5.4, 5.9))),
     wind: S.wind, leaves: Math.min(1, S.leaves) * (SE ? SE.fall : 1), birdsK: SE ? SE.birds : 1, insects: SE ? SE.insects : 1, trail: sky.uniforms.uTrailOn.value, flock: birds.uniforms.uFlockOn.value, music: S.music, amb: S.ambience }, shared.uTime.value);
   tree.fallUniforms.uFallRate.value = S.leaves;
   tree.group.children[2].visible = S.leaves > 0.01 && (!SE || SE.fall > 0.005);
@@ -341,7 +354,7 @@ function applyLook() {
 const gui = new GUI({ title: 'Sorairo' });
 const names = Object.fromEntries(PRESETS.map((p, i) => [p.name, i]));
 const fScene = gui.addFolder('Scene');
-const timeCtl = fScene.add(S, 'time', 0, PRESETS.length - 1, 0.01).name('time of day');
+const timeCtl = fScene.add(S, 'time', 0, DAY_T, 0.01).name('time of day');
 timeCtl.listen();
 fScene.add({ preset: '' }, 'preset', names).name('jump to').onChange((v) => { S.time = +v; timeCtl.updateDisplay(); });
 fScene.add(S, 'azimuth', -180, 180, 1).name('sun azimuth');
