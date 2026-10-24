@@ -38,6 +38,7 @@ bun debug.js <tune> [cond] [x0 y0 x1 y1]   # colour overlay of what was recognis
 node tools/make_fixtures.mjs        # rebuild fixtures + glyphs.js from Verovio (dev-only dependency)
 node tools/make_sample.mjs          # rebuild sample.jpg
 node tools/make_pdf_fixture.mjs     # rebuild fixtures/parts.pdf (title page + 2 music pages)
+node tools/make_key_fixtures.mjs    # rebuild fixtures/key_*.png (opening naturals, missed / keyless keys) from the Telemann crops
 node tools/compare.mjs truth fixtures/<tune>.json a.musicxml [b.mxl ...]   # score MusicXML (ours, Audiveris) against ground truth
 node tools/compare.mjs pair a.musicxml b.mxl                               # or two outputs against each other
 bun tools/oemer_heads.mjs <dir>     # score oemer notehead masks (json + mask png per fixture image) against the truth
@@ -152,6 +153,22 @@ transposition needs. All of it is in `omr.js` / `imgproc.js`, about 900 lines.
    another number. A sharp/flat contradiction is never overruled (orchestral scores mix keys;
    horns often have none). Inferred keys are marked. Local accidentals attach to the nearest head to
    their right at the same position and carry through the bar.
+
+   A page that starts after a key change at the page turn prints naturals first: naturals alone
+   are a cancellation (`key.cancellation`, C / a minor, never overruled by the page's other
+   staves), naturals then sharps or flats are the new key, and each key glyph keeps its own type
+   (the transposed page samples a natural from it, not a sharp). A natural is only part of the
+   signature with 3 spaces clear of a head at its pitch; closer, it is that note's. In a part, two
+   staves in a row with no key and no sharp- or flat-like ink after the clef are a C / a-minor
+   section (`key.keylessSection`), not a missed key.
+
+   **The previous page's key.** `analyzeAfter(norm, fifths)` reads a page that follows one ending
+   in `fifths` (a part's next page): if some staves print no key and every printed key agrees, the
+   page is read again with `fifths` as the default for the unsigned staves (`analyze(norm,
+   { fifths })`), so key changes inside a staff count from the right key, and those staves are
+   marked `documentInferred`. A signature, a cancellation, a keyless section, or a printed key
+   that differs (the part changed key at the turn) always keeps the page's own reading.
+   `needsPriorKey` and `applyPriorKey` are the two steps on their own.
 8. **Barlines** are thin components spanning a staff (or a whole system, counted for every staff
    they cross); staves joined by the same barlines form a system.
 9. **Pitch**: staff position + clef + key + bar-scoped accidentals (`theory.js`).
@@ -662,12 +679,12 @@ segmentation net would be the natural upgrade for heads and accidentals in poor 
 | `snapshot.js`, `snapshots/` | readable per-bar snapshots of a page's reading, and their diff, for regression tests |
 | `export.js`, `player.js` | MusicXML 4.0, MIDI, the note list for playback; Web Audio player |
 | `app.js`, `index.html`, `worker.js` | UI, corrections, export, PDF paging; recognition (and the page probe) in a worker |
-| `pdfsource.js` | pdf.js loading and page rendering; a ~40-line PDF writer for the transposed export |
+| `pdfsource.js` | pdf.js loading and page rendering (cancellable with an `AbortSignal`; a pool that fails to open closes the readers it opened); a ~40-line PDF writer for the transposed export |
 | `vendor/pdfjs/` | pdf.js 6.3.289 legacy build + JBIG2 / OpenJPEG / QCMS wasm decoders (Apache-2.0 and listed licences) |
 | `glyphs.js` | SMuFL outlines (noteheads, accidentals, clefs, rests, flags, digits, C / cut C) from 5 fonts, extracted from Verovio |
 | `degrade.js` | deterministic photo simulator with exact point mapping for ground truth |
 | `eval.js`, `debug.js`, `scoreshift.test.js`, `smoke.js`, `cdp.js`, `png.js` | evaluation, tests, tiny CDP driver and PNG codec |
 | `tools/` | fixture / glyph / sample builders (Verovio 6.3, dev-only) |
-| `fixtures/` | `scan_haydn_p*.png` (one system each from a real 1920s scan, regression test), `parts.pdf` (PDF smoke test), 10 clean engravings + ground truth (every head's box, pitch, accidental and value; every bar's events; staves, clefs, keys, meter); `local/` (gitignored) for pages that cannot be committed |
+| `fixtures/` | `scan_haydn_p*.png` (one system each from a real 1920s scan, regression test), `key_*.png` (opening naturals, a missed and a keyless key, spliced from the Telemann crops by `tools/make_key_fixtures.mjs`), `parts.pdf` (PDF smoke test), 10 clean engravings + ground truth (every head's box, pitch, accidental and value; every bar's events; staves, clefs, keys, meter); `local/` (gitignored) for pages that cannot be committed |
 
 Fonts: glyph outlines from Leipzig, Bravura, Leland, Gootville and Petaluma (SIL OFL 1.1).

@@ -27,16 +27,26 @@ export async function openPdf(blob) {
 // Render a page so its long side is about `px` pixels (scans are typically 300-600 dpi; 3000 px
 // on a Letter/A4 page is ~270 dpi, plenty for staff spaces of 15+ px). White background.
 // keep: leave the page's decoded images in the pdf.js worker (re-rendering is then ~20x faster).
-export async function renderPage(doc, n, px = 3000, keep = false) {
+export async function renderPage(doc, n, px = 3000, keep = false, signal = null) {
+  if (signal?.aborted) throw new Error('PDF render cancelled');
   const page = await doc.getPage(n);
+  if (signal?.aborted) { page.cleanup(); throw new Error('PDF render cancelled'); }
   const vp1 = page.getViewport({ scale: 1 });
   const scale = px / Math.max(vp1.width, vp1.height), vp = page.getViewport({ scale });
   const c = document.createElement('canvas');
   c.width = Math.round(vp.width); c.height = Math.round(vp.height);
   const ctx = c.getContext('2d');
   ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
-  await page.render({ canvasContext: ctx, canvas: c, viewport: vp, background: 'white' }).promise;
-  if (!keep) page.cleanup();
+  const task = page.render({ canvasContext: ctx, canvas: c, viewport: vp, background: 'white' });
+  const cancel = () => task.cancel();
+  if (signal?.aborted) task.cancel();
+  else signal?.addEventListener('abort', cancel, { once: true });
+  let complete = false;
+  try { await task.promise; complete = true; }
+  finally {
+    signal?.removeEventListener('abort', cancel);
+    if (!keep || !complete) page.cleanup();
+  }
   return { canvas: c, widthPt: vp1.width, heightPt: vp1.height, page };
 }
 
@@ -53,8 +63,14 @@ export class PdfPool {
     n = Math.max(1, Math.min(n ?? 4, bytes.length > 60e6 ? 1 : bytes.length > 20e6 ? 2 : 4));
     const open = () => getDocument({ data: bytes.slice(), wasmUrl: new URL('wasm/', BASE).href, isEvalSupported: false, enableXfa: false }).promise;
     const first = await open(); // fail fast on a bad file before spawning more workers
-    const rest = await Promise.all(Array.from({ length: n - 1 }, open));
-    return new PdfPool([first, ...rest]);
+    const settled = await Promise.allSettled(Array.from({ length: n - 1 }, () => Promise.resolve().then(open)));
+    const failed = settled.find((result) => result.status === 'rejected');
+    if (failed) {
+      const opened = [first, ...settled.filter((result) => result.status === 'fulfilled').map((result) => result.value)];
+      await Promise.allSettled(opened.map((doc) => doc.loadingTask.destroy()));
+      throw failed.reason;
+    }
+    return new PdfPool([first, ...settled.map((result) => result.value)]);
   }
   constructor(docs) {
     this.readers = docs.map((doc) => ({ doc, busy: false, hot: null }));
@@ -73,11 +89,11 @@ export class PdfPool {
     const i = Math.max(0, this.waiting.findIndex((w) => r.hot && w.k === r.hot.n)), w = this.waiting.splice(i, 1)[0];
     r.busy = true; w.res(r);
   }
-  async render(k, px) {
+  async render(k, px, signal = null) {
     const r = await this.acquire(k);
     try {
       if (r.hot && r.hot.n !== k) { r.hot.page.cleanup(); r.hot = null; }
-      const out = await renderPage(r.doc, k, px, true);
+      const out = await renderPage(r.doc, k, px, true, signal);
       r.hot = { n: k, page: out.page };
       return out;
     } finally { this.release(r); }

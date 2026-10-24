@@ -11,7 +11,8 @@ import { rasterGlyph } from './raster.js';
 import { GLYPHS } from './glyphs.js';
 import { plan } from './render.js';
 import { CONDITIONS } from './degrade.js';
-import { normalize, analyze, interpret, findText } from './omr.js';
+import { normalize, analyze, analyzeAfter, needsPriorKey, applyPriorKey, interpret, findText } from './omr.js';
+import { Renderer } from './render.js';
 import fs from 'fs';
 
 describe('theory', () => {
@@ -453,6 +454,92 @@ test('bold scanned sharp in a key signature (IMSLP #96616)', () => {
   const r = analyze(normalize(decodeGray(fs.readFileSync(new URL('./fixtures/scan_telemann_boldsharp.png', import.meta.url)))));
   expect(r.staves.length).toBe(1);
   expect(r.staves[0].key.detected).toBe(1);
+});
+
+// Opening key signatures that begin with naturals, and the key carried over from the previous
+// page (a part's next page, or a key change at the page turn). Fixtures spliced from the
+// Telemann crops above by tools/make_key_fixtures.mjs: the key change in each crop moved to the
+// start of the staff, so the glyphs are the scan's own.
+describe('opening naturals and the previous page\'s key', () => {
+  const page = (n) => normalize(decodeGray(fs.readFileSync(new URL(`./fixtures/${n}.png`, import.meta.url))));
+  const key = (st) => ({ fifths: st.key.fifths, detected: st.key.detected, cancellation: st.key.cancellation, types: st.key.glyphs.map((g) => g.type) });
+  test('naturals then sharps or flats replace the key; naturals alone cancel it', () => {
+    expect(key(analyze(page('key_open_naturals_sharp')).staves[0])).toEqual({ fifths: 1, detected: 1, cancellation: false, types: [0, 0, 1] });
+    expect(key(analyze(page('key_open_naturals_flats')).staves[0])).toEqual({ fifths: -2, detected: -2, cancellation: false, types: [0, -1, -1] });
+    expect(key(analyze(page('key_open_cancel')).staves[0])).toEqual({ fifths: 0, detected: 0, cancellation: true, types: [0, 0] });
+  });
+  test('printed keys win over the previous page; staves with none take it', () => {
+    // the part was in D major: a printed G major or g minor or C (cancelled) is the new key
+    expect(analyzeAfter(page('key_open_naturals_sharp'), 2).staves[0].key.fifths).toBe(1);
+    expect(analyzeAfter(page('key_open_naturals_flats'), 2).staves[0].key.fifths).toBe(-2);
+    expect(analyzeAfter(page('key_open_cancel'), 2).staves[0].key.fifths).toBe(0);
+    // a staff whose signature was not found reads in the previous page's key, and its pitches
+    // follow (re-read after the key is applied)
+    const missed = analyzeAfter(page('key_missing'), 2), st = missed.staves[0];
+    expect([st.key.fifths, st.key.documentInferred]).toEqual([2, true]);
+    const cs = st.notes.filter((n) => n.pitch.d % 7 === 0 && !n.accid);
+    expect(cs.length).toBeGreaterThan(0);
+    expect(cs.every((n) => n.pitch.alter === 1)).toBe(true); // C♯
+    expect(analyze(page('key_missing')).staves[0].key.fifths).toBe(0); // (without it: C)
+    const keyless = analyzeAfter(page('key_keyless_pair'), 2);
+    // two keyless staves in a row are a C / a-minor section, not a missed key: kept at 0
+    expect(keyless.staves.map((s) => [s.key.fifths, !!s.key.keylessSection])).toEqual([[0, true], [0, true]]);
+  });
+  test('needsPriorKey / applyPriorKey', () => {
+    const st = (key) => ({ key, notes: [], clef: { type: 'treble' } });
+    const missing = st({ fifths: 0, detected: 0, glyphs: [] }), keyless = st({ fifths: 0, detected: 0, glyphs: [], keylessSection: true });
+    const printed = st({ fifths: 2, detected: 2, glyphs: [{}, {}] }), cancelled = st({ fifths: 0, detected: 0, cancellation: true, glyphs: [{ type: 0 }] });
+    expect(needsPriorKey([keyless], 2)).toBe(false);
+    expect(needsPriorKey([missing, keyless, printed], 2)).toBe(true);
+    expect(needsPriorKey([missing, cancelled], 2)).toBe(false); // the page cancels the old key
+    expect(needsPriorKey([missing], null)).toBe(false);
+    expect(applyPriorKey([missing, keyless, printed], 2)).toBe(1);
+    expect([missing, keyless, printed].map((s) => s.key.fifths)).toEqual([2, 0, 2]);
+    expect(missing.key.documentInferred).toBe(true);
+    const other = st({ fifths: 0, detected: 0, glyphs: [] });
+    expect(applyPriorKey([other, st({ fifths: 1, detected: 1, glyphs: [{}] })], 2)).toBe(0);
+    expect(other.key.fifths).toBe(0);
+  });
+  test('a cancelling signature gives the renderer natural samples, not sharps', () => {
+    const m = analyze(page('key_open_naturals_sharp'));
+    const fake = { m, maskCrop: () => null, cropCanvas: () => null };
+    Renderer.prototype.collectSamples.call(fake);
+    expect(Object.keys(fake.samples).sort()).toEqual(['natural', 'sharp']);
+  });
+});
+
+// Page rendering can be cancelled (opening another page while one decodes), and its pdf.js
+// page is cleaned up whatever happens.
+describe('PDF page rendering', () => {
+  const fakeDoc = (opts = {}) => {
+    const log = { cleanup: 0, cancel: 0 };
+    let finish;
+    const page = {
+      getViewport: ({ scale }) => ({ width: 600 * scale, height: 800 * scale }),
+      cleanup: () => log.cleanup++,
+      render: () => ({ promise: new Promise((res, rej) => { finish = { res, rej }; if (opts.instant) res(); }), cancel: () => { log.cancel++; finish.rej(new Error('Rendering cancelled')); } }),
+    };
+    return { log, doc: { getPage: async () => page } };
+  };
+  globalThis.document ??= { createElement: () => ({ getContext: () => ({ fillRect() {} }) }) };
+  test('completes, keeping the page when asked', async () => {
+    const { renderPage } = await import('./pdfsource.js');
+    const { log, doc } = fakeDoc({ instant: true });
+    const out = await renderPage(doc, 1, 800, true);
+    expect([out.widthPt, out.heightPt, log.cleanup]).toEqual([600, 800, 0]);
+    await renderPage(doc, 1, 800, false);
+    expect(log.cleanup).toBe(1);
+  });
+  test('an abort cancels the render and cleans up', async () => {
+    const { renderPage } = await import('./pdfsource.js');
+    const before = fakeDoc(), ac0 = new AbortController(); ac0.abort();
+    await expect(renderPage(before.doc, 1, 800, true, ac0.signal)).rejects.toThrow(/cancelled/);
+    const during = fakeDoc(), ac = new AbortController();
+    const p = renderPage(during.doc, 1, 800, true, ac.signal);
+    await new Promise((r) => setTimeout(r, 0)); ac.abort();
+    await expect(p).rejects.toThrow(/cancelled/i);
+    expect(during.log).toEqual({ cleanup: 1, cancel: 1 }); // kept pages too: a half-rendered page is not reused
+  });
 });
 
 // Leopold Auer's edition of Bach's Partita No. 1, BWV 1002 (Carl Fischer, 1917; IMSLP #921334,

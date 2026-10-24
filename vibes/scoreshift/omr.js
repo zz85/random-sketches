@@ -729,37 +729,52 @@ export function analyze(norm, opts = {}) {
     for (const b of st.bars) if (!b.double && b.x1 - b.x0 + 1 > 2.2 * t + 2) b.double = true; // a thick (final) bar
   }
 
-  // key signature: accidentals right after the clef, same type, closely spaced
+  // key signature: accidentals right after the clef, same type, closely spaced. A page that
+  // starts with a key change (the part continues from a page in another key) prints naturals
+  // first: only naturals cancel the old key (C / a minor), naturals then sharps or flats replace it.
   for (const st of staves) {
     const S = spaceAt(st, st.x0 + 4 * S0);
     const firstNote = Math.min(...notes.filter((n) => n.st === st).map((n) => n.box[0]), st.x1);
     let x = st.clef.box ? st.clef.box[2] : st.x0 + 2 * S;
-    const mine = accs.filter((a) => a.st === st && a.c.x0 > x - 0.3 * S && a.c.x1 < firstNote && (a.type === 1 || a.type === -1) && a.p >= -2 && a.p <= 10).sort((a, b) => a.c.x0 - b.c.x0);
+    const mine = accs.filter((a) => a.st === st && a.c.x0 > x - 0.3 * S && a.c.x1 < firstNote && (a.type === 1 || a.type === -1 || a.type === 0) && a.p >= -2 && a.p <= 10).sort((a, b) => a.c.x0 - b.c.x0);
     const key = [];
     for (const a of mine) {
-      if (a.c.x0 - x > 2.0 * S || key.length >= 7) break;
+      if (a.c.x0 - x > 2.0 * S || key.length >= 14) break;
       // a local accidental hugs its note (~0.2-0.3 spaces); a key signature keeps a full space
       // or more before the music, so an accidental with a head at its pitch right after it ends the key
+      // (a natural in front of the first note can stand up to ~2 spaces off and is still that
+      // note's: naturals need 3 spaces of clearance to count as a cancellation)
       // (a stemless "whole note" there, once the key has begun, is the loop of a time-signature
       // digit touching the key: tight engravings)
-      if (notes.some((n) => n.st === st && Math.abs(n.p - a.p) <= 0 && n.box[0] - a.c.x1 > -0.3 * S && n.box[0] - a.c.x1 < 0.55 * S && !(key.length && n.kind === 'whole'))) break;
-      if (key.length && a.type !== key[0].type) break;
-      // glyphs of one signature are one size (a C or cut-C time signature can read as a sharp)
-      if (key.length && (a.c.x1 - a.c.x0) > 1.35 * (key[0].c.x1 - key[0].c.x0) + 1) break;
+      const localGap = a.type === 0 ? 3.0 * S : 0.55 * S;
+      if (notes.some((n) => n.st === st && Math.abs(n.p - a.p) <= 0 && n.box[0] - a.c.x1 > -0.3 * S && n.box[0] - a.c.x1 < localGap && !(key.length && n.kind === 'whole'))) break;
+      // naturals come first; after them, sharps or flats of one kind
+      const replacementType = key.find((k) => k.type !== 0)?.type;
+      if (a.type === 0 ? replacementType != null : replacementType != null && a.type !== replacementType) break;
+      // glyphs of one signature are one size (a C or cut-C time signature can read as a sharp);
+      // compared within a kind (a sharp is wider than a natural)
+      const sameType = key.find((k) => k.type === a.type);
+      if (sameType && (a.c.x1 - a.c.x0) > 1.35 * (sameType.c.x1 - sameType.c.x0) + 1) break;
       // key signature glyphs are evenly spaced; a wider jump is the time signature or the music
       if (key.length >= 2) { const d = (key[key.length - 1].c.x0 - key[0].c.x0) / (key.length - 1); if (a.c.x0 - key[key.length - 1].c.x0 > 1.4 * d) break; }
       key.push(a); x = a.c.x1;
     }
-    // keep the prefix whose glyphs sit where a key signature puts them
+    // keep the replacement prefix whose glyphs sit where a key signature puts them
     const clef = CLEFS[st.clef.type];
-    if (key.length) {
-      const exp = keySigPositions(clef, key[0].type * key.length);
-      let n = 0; while (n < key.length && Math.abs(key[n].p - exp[n]) <= 1) n++;
-      key.length = n;
+    let naturals = key.findIndex((a) => a.type !== 0); if (naturals < 0) naturals = key.length;
+    if (naturals < key.length) {
+      const rep = key.slice(naturals), exp = keySigPositions(clef, rep[0].type * rep.length);
+      let n = 0; while (n < rep.length && Math.abs(rep[n].p - exp[n]) <= 1) n++;
+      key.length = naturals + n;
     }
+    const replacement = key.slice(naturals);
+    const cancellation = key.length > 0 && !replacement.length;
+    const detected = replacement.length ? replacement[0].type * replacement.length : 0;
     key.forEach((a) => (a.isKey = true));
-    st.key = { fifths: opts.fifths ?? (key.length ? key[0].type * key.length : 0), detected: key.length ? key[0].type * key.length : 0,
-      ids: key.flatMap((a) => a.c.ids), idsPer: key.map((a) => a.c.ids), glyphs: key.map((a) => ({ p: a.p, box: [a.c.x0, a.c.y0, a.c.x1, a.c.y1] })), x0: st.clef.box ? st.clef.box[2] + 1 : st.x0 + 2 * S, x1: key.length ? key[key.length - 1].c.x1 : (st.clef.box ? st.clef.box[2] + 1 : st.x0 + 2 * S) };
+    // opts.fifths: the key the part was in before this page; it applies to staves that print
+    // none (an explicit signature or a cancellation always wins)
+    st.key = { fifths: cancellation ? 0 : detected || (opts.fifths ?? 0), detected, cancellation,
+      ids: key.flatMap((a) => a.c.ids), idsPer: key.map((a) => a.c.ids), glyphs: key.map((a) => ({ p: a.p, type: a.type, box: [a.c.x0, a.c.y0, a.c.x1, a.c.y1] })), x0: st.clef.box ? st.clef.box[2] + 1 : st.x0 + 2 * S, x1: key.length ? key[key.length - 1].c.x1 : (st.clef.box ? st.clef.box[2] + 1 : st.x0 + 2 * S) };
   }
 
   // a double flat engraved as two flat glyphs side by side: two separate components
@@ -788,7 +803,8 @@ export function analyze(norm, opts = {}) {
   for (const st of staves) {
     st.keyChanges = [];
     const clef = CLEFS[st.clef.type];
-    let cur = st.key.detected;
+    // (from the key in effect: a staff that inherited the previous page's key cancels that one)
+    let cur = st.key.fifths;
     for (const b of st.bars) {
       const S = spaceAt(st, b.x), xs = b.x1;
       const run = [];
@@ -880,7 +896,24 @@ export function analyze(norm, opts = {}) {
     for (let d = 1; d < staves.length; d++) for (const o of [staves[st.index + d], staves[st.index - d]]) if (o && ok(o.key.detected)) return o.key.detected;
     return 0;
   };
-  if (opts.fifths == null) for (const st of staves) {
+  // in a part, two staves in a row with no key signature and nothing key-like after the clef
+  // are a section in C / a minor (a page can end one movement and start another): no key is
+  // inferred for them. (On old scans a signature is often missed on two staves in a row; its
+  // glyphs are still there as ink, so those staves still get the page's key.)
+  const keyInk = (o) => {
+    const S = spaceAt(o, o.key.x0), first = Math.min(o.x1, ...notes.filter((q) => q.st === o).map((q) => q.box[0]));
+    const ya = lineY(o, 0, o.key.x0), yb = lineY(o, 4, o.key.x0);
+    return cc.comps.some((c) => {
+      if (!c || c.x0 < o.key.x0 - 0.2 * S || c.x1 > Math.min(first, o.key.x0 + 3 * S) || c.y1 - c.y0 < 1.2 * S || c.x1 - c.x0 > 1.6 * S || c.y1 <= ya || c.y0 >= yb) return false;
+      if (opts.glyphnet === false) return true;
+      const pr = classify(bin, [c.x0, c.y0, c.x1, c.y1]); // (time-signature digits are not sharps or flats)
+      return pr.sharp + pr.flat > 0.5;
+    });
+  };
+  // (also with opts.fifths: a staff that prints no key starts from the previous page's, and the
+  // page's own readings still correct it)
+  for (const st of staves) {
+    if (st.key.cancellation) continue; // printed naturals are a key: C / a minor
     const sys = sysOf(st);
     let k = sys.length >= 3 && plural(sys);
     // in a part, a key change inside the previous staff carries into this one (its signature is
@@ -889,21 +922,11 @@ export function analyze(norm, opts = {}) {
     if (!k && endK != null && st.key.detected !== endK && (!st.key.detected || (Math.sign(st.key.detected) === Math.sign(endK) && Math.abs(st.key.detected) < Math.abs(endK)))) k = endK;
     const fromPrev = k === endK && k != null;
     if (!k && st.key.detected && confirmed.includes(st.key.detected)) continue;
-    // in a part, two staves in a row with no key signature and nothing key-like after the clef
-    // are a section in C / a minor (a page can end one movement and start another): no key is
-    // inferred for them. (On old scans a signature is often missed on two staves in a row; its
-    // glyphs are still there as ink, so those staves still get the page's key.)
-    const keyInk = (o) => {
-      const S = spaceAt(o, o.key.x0), first = Math.min(o.x1, ...notes.filter((q) => q.st === o).map((q) => q.box[0]));
-      const ya = lineY(o, 0, o.key.x0), yb = lineY(o, 4, o.key.x0);
-      return cc.comps.some((c) => {
-        if (!c || c.x0 < o.key.x0 - 0.2 * S || c.x1 > Math.min(first, o.key.x0 + 3 * S) || c.y1 - c.y0 < 1.2 * S || c.x1 - c.x0 > 1.6 * S || c.y1 <= ya || c.y0 >= yb) return false;
-        if (opts.glyphnet === false) return true;
-        const pr = classify(bin, [c.x0, c.y0, c.x1, c.y1]); // (time-signature digits are not sharps or flats)
-        return pr.sharp + pr.flat > 0.5;
-      });
-    };
-    if (!k && sys.length < 2 && !st.key.detected && !keyInk(st) && [staves[st.index - 1], staves[st.index + 1]].some((o) => o && sysOf(o).length < 2 && !o.key.detected && !o.keyChanges?.length && !keyInk(o))) continue;
+    // keylessSection marks the reading as evidence (zero, not "none found"), so a key carried
+    // over from the previous page does not fill it in
+    if (!k && sys.length < 2 && !st.key.detected && !keyInk(st) && [staves[st.index - 1], staves[st.index + 1]].some((o) => o && sysOf(o).length < 2 && !o.key.detected && !o.keyChanges?.length && !keyInk(o))) {
+      st.key.fifths = 0; st.key.keylessSection = true; continue;
+    }
     if (!k && st.key.detected) {
       const same = confirmed.filter((c) => Math.sign(c) === Math.sign(st.key.detected));
       const best = Math.min(...same.map((c) => Math.abs(Math.abs(c) - Math.abs(st.key.detected))));
@@ -915,8 +938,10 @@ export function analyze(norm, opts = {}) {
     if (Math.sign(st.key.detected) === Math.sign(k)) {
       st.key.fifths = k; st.key.inferred = true;
       // one glyph too many read: it is something else (a time signature), not part of the key
+      // (leading naturals are a cancellation, not counted)
       const n = Math.abs(k), K = st.key;
-      if (K.glyphs.length > n) { K.idsPer = K.idsPer.slice(0, n); K.glyphs = K.glyphs.slice(0, n); K.ids = K.idsPer.flat(); K.x1 = K.glyphs[n - 1].box[2]; }
+      let nat = K.glyphs.findIndex((g) => g.type !== 0); if (nat < 0) nat = K.glyphs.length;
+      if (K.glyphs.length - nat > n) { const keep = nat + n; K.idsPer = K.idsPer.slice(0, keep); K.glyphs = K.glyphs.slice(0, keep); K.ids = K.idsPer.flat(); K.x1 = K.glyphs[keep - 1].box[2]; }
       continue;
     }
     if (st.key.detected) continue;
@@ -1029,6 +1054,45 @@ export function keyAt(st, x) {
   let f = st.key.fifths;
   for (const k of st.keyChanges || []) if (k.x0 <= x) f = k.fifths;
   return f;
+}
+
+// ---------- the key from the previous page ----------
+// A part's key signature is printed on every staff, but OMR misses some (faint scans, a sharp
+// touching the clef), and a page whose staves read none at all would be read in C. When the
+// previous page of the same part ended in a known key, `analyzeAfter` reads the page again with
+// it as the default for staves that print nothing. Printed evidence always wins: a signature, a
+// cancellation (naturals alone), a keyless section (`keylessSection`), or any printed key that
+// disagrees with the previous page (the part changed key at the page turn) all keep the page's
+// own reading.
+const printedKey = (k) => !!(k?.cancellation || k?.detected || k?.glyphs?.length);
+/** Whether a page's reading should be redone with `fifths` as the previous page's key. */
+export function needsPriorKey(staves, fifths) {
+  if (!Array.isArray(staves) || !Number.isInteger(fifths)) return false;
+  const missing = staves.some((st) => st.key && !st.key.keylessSection && !printedKey(st.key));
+  return missing && staves.filter((st) => printedKey(st.key)).every((st) => st.key.fifths === fifths);
+}
+/**
+ * Give staves that print no key the previous page's key, then re-read pitches from the first
+ * staff changed on (ties carry pitches across system breaks). Returns the staves changed.
+ */
+export function applyPriorKey(staves, fifths) {
+  if (!Array.isArray(staves) || !Number.isInteger(fifths)) return 0;
+  if (staves.some((st) => printedKey(st.key) && st.key.fifths !== fifths)) return 0;
+  let changed = 0, first = staves.length;
+  staves.forEach((st, i) => {
+    if (!st.key || st.key.keylessSection || printedKey(st.key)) return;
+    st.key.fifths = fifths; st.key.documentInferred = true; changed++; first = Math.min(first, i);
+  });
+  for (let i = first; i < staves.length; i++) interpret(staves[i]);
+  return changed;
+}
+/** analyze() for a page that follows one ending in `fifths` (null: unknown, a plain analyze). */
+export function analyzeAfter(norm, fifths, opts = {}) {
+  let model = analyze(norm, opts);
+  if (!Number.isInteger(fifths)) return model;
+  if (needsPriorKey(model.staves, fifths)) model = analyze(norm, { ...opts, fifths });
+  applyPriorKey(model.staves, fifths);
+  return model;
 }
 // Pitches from clef + key + accidentals (re-run after a manual correction).
 // A tied note keeps the pitch it is tied from, also across a barline or a system break where the
