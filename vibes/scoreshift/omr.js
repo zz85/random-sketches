@@ -675,7 +675,7 @@ export function analyze(norm, opts = {}) {
     // (a stem cut off its hollow head by staff removal is not a barline)
     const stemOf = notes.some((n) => n.stem && n.st === st && Math.abs(n.stem.x - c.cx) <= 0.4 * S && Math.min(n.y, n.stem.tip) <= c.y0 + 0.5 * S && Math.max(n.y, n.stem.tip) >= c.y1 - 1.0 * S);
     if (!stemOf && cw <= 0.75 * S && c.y0 <= ya + 0.4 * S && c.y1 >= yb - 0.4 * S && (c.n / chh <= Math.max(0.35 * S, 2.5 * t) || (c.n / (cw * chh) > 0.7 && c.n / chh <= 0.65 * S)) && c.n / chh >= 0.6 * t && // (or a thick, solid final / repeat bar)
-      
+
       (chh <= (yb - ya) + 1.2 * S || staves.some((o) => o !== st && (c.y1 >= lineY(o, 0, c.cx) || c.y0 <= lineY(o, 4, c.cx)) && Math.abs(lineY(o, 2, c.cx) - lineY(st, 2, c.cx)) < 20 * S))) { // thin; may span a whole system
       for (const o of staves) { // a system barline counts for every staff it crosses
         if (c.cx < o.x0 - S || c.cx > o.x1 + S) continue;
