@@ -13,6 +13,7 @@ import { mulberry32 } from './tree.js';
 import { makeLiveAudio } from './audio.js';
 import { sampleSeason, SEASON_MARKS } from './seasons.js';
 import { makeSnow } from './snow.js';
+import * as J from './journey.js';
 
 const Q = new URLSearchParams(location.search);
 const num = (k, d) => (Q.has(k) ? parseFloat(Q.get(k)) : d);
@@ -70,15 +71,20 @@ scene.add(tree.group); tree.setStyle(S.style);
 const birds = makeBirds(shared); scene.add(birds.mesh);
 const snow = makeSnow(shared, MOBILE ? 2500 : 6000); scene.add(snow.pts);
 
-// ---------- animations: a day (noon to night) or a year (four seasons), as time-lapses.
-// `progress` runs 0 … 1 over `length` seconds and loops; ?anim=day|year, ?dur=, ?p= (start),
-// ?season= (a fixed day of the year, paused), ?lapse= (cloud speed-up).
-const ANIMS = { off: 'off', 'day cycle': 'day', 'four seasons': 'year' };
+// ---------- animations: a day (noon to night), a year (four seasons), or a time zoom
+// (real time, speeding up to days, then months), as time-lapses.
+// `progress` runs 0 … 1 over `length` seconds and loops (the time zoom: 0 … 1 is its
+// ramp, after which it holds month by month); ?anim=day|year|zoom, ?dur=, ?p= (start),
+// ?season= (a fixed day of the year, paused; the time zoom's start date), ?hour= (the time
+// zoom's start time, default now), ?lapse= (cloud speed-up).
+const ANIMS = { off: 'off', 'day cycle': 'day', 'four seasons': 'year', 'time zoom': 'zoom' };
+const ANIM_LEN = { day: 50, year: 80, zoom: 44, off: 50 };
 const AN = {
   mode: Q.get('anim') || (Q.has('season') ? 'year' : 'off'),
-  playing: !Q.has('season') && Q.get('play') !== '0',
-  progress: Q.has('season') ? num('season', 0) : num('p', 0),
-  length: num('dur', Q.get('anim') === 'year' ? 80 : 50),
+  playing: !(Q.has('season') && Q.get('anim') !== 'zoom') && Q.get('play') !== '0',
+  progress: Q.has('season') && Q.get('anim') !== 'zoom' ? num('season', 0) : num('p', 0),
+  length: num('dur', ANIM_LEN[Q.get('anim')] || 50),
+  lockHour: num('lock', 15), // the time zoom's same-time-every-day hour
   lapse: num('lapse', 30),
   drift: num('drift', 1), // camera drift while playing, 0 = off
 };
@@ -234,13 +240,23 @@ function updateContrail(t, on) {
 const tmp = new THREE.Vector3();
 // time-lapse weather flicker: each 'day' of a year gets its own cloud and light
 const dayHash = (d, k) => { const x = Math.sin(d * 127.1 + k * 311.7) * 43758.5453; return x - Math.floor(x); };
-let SE = null, animFade = 1, lastMode = 'off';
+let SE = null, animFade = 1, lastMode = 'off', animAz = 0;
+// time zoom state: tau = real seconds since its start, sim = simulated seconds elapsed
+const ZM = { tau: 0, sim: 0, start: new Date(), rate: 1, k: 0, now: new Date() };
+function zoomStart() {
+  const now = new Date(), h = Q.has('hour') ? num('hour', 12) : now.getHours() + now.getMinutes() / 60;
+  ZM.start = Q.has('season') ? J.dateOfSeason(num('season', 0), now.getFullYear(), h) : (Q.has('hour') ? J.dateOfSeason(J.seasonOfDate(now), now.getFullYear(), h) : now);
+}
+function zoomSeek(progress) { ZM.tau = progress * AN.length; ZM.sim = J.simSecondsAt(ZM.tau, AN.length); }
+zoomStart(); if (AN.mode === 'zoom') zoomSeek(AN.progress);
+const clockEl = document.getElementById('clock');
 function applyAnim() {
   if (AN.mode !== lastMode) {
-    if (lastMode === 'year') { tree.setStyle(S.style); setGround(SUMMER_GROUND); }
+    if (lastMode === 'year' || lastMode === 'zoom') { tree.setStyle(S.style); setGround(SUMMER_GROUND); }
     lastMode = AN.mode;
   }
-  animFade = 1; SE = null;
+  animFade = 1; SE = null; animAz = 0;
+  clockEl.hidden = AN.mode !== 'zoom';
   if (AN.mode === 'day') {
     // noon … night over 90% of the loop, hold the night, fade through dark back to noon
     const p = AN.progress;
@@ -253,12 +269,29 @@ function applyAnim() {
     const day = Math.floor(AN.progress * 365);
     SE.clouds += (dayHash(day, 1) - 0.5) * 0.3;
     SE.light = 1 + (dayHash(day, 2) - 0.5) * 0.08;
+  } else if (AN.mode === 'zoom') {
+    const now = ZM.now = new Date(ZM.start.getTime() + ZM.sim * 1000);
+    ZM.rate = J.rate(ZM.tau, AN.length); ZM.k = J.dayLock(ZM.tau, AN.length);
+    const h = J.warpHour(now.getHours() + now.getMinutes() / 60 + now.getSeconds() / 3600, AN.lockHour, ZM.k);
+    S.time = J.hourToTime(h);
+    // the sun crosses the sky, east in the morning to west in the evening; the moon stays
+    // put, so the swing fades out through the night and never jumps at midnight
+    const hs = ((((h - 12) % 24) + 36) % 24) - 12;
+    animAz = hs * 9 * (1 - THREE.MathUtils.smoothstep(S.time, 3.2, 3.9));
+    SE = sampleSeason(J.seasonOfDate(now));
+    tree.setSeason(SE); setGround(SE.ground);
+    const day = Math.floor(ZM.sim / 86400);
+    SE.clouds += (dayHash(day, 1) - 0.5) * 0.3 * ZM.k;
+    SE.light = 1 + (dayHash(day, 2) - 0.5) * 0.08 * ZM.k;
+    const date = now.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+    const time = ZM.k < 0.5 ? ' · ' + now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '';
+    clockEl.textContent = `${date}${time} · ${J.formatSpeed(ZM.rate)}`;
   }
 }
 function applyLook() {
   applyAnim();
   const P = samplePreset(S.time);
-  const el = THREE.MathUtils.degToRad(P.sunEl), az = THREE.MathUtils.degToRad(S.azimuth + (P.night > 0.5 ? 140 : 0));
+  const el = THREE.MathUtils.degToRad(P.sunEl), az = THREE.MathUtils.degToRad(S.azimuth + animAz + (P.night > 0.5 ? 140 : 0));
   const sd = shared.uSunDir.value.set(Math.cos(el) * Math.sin(az), Math.sin(el), -Math.cos(el) * Math.cos(az));
   // light fades out as the sun sets, then the moon takes over
   const lightK = THREE.MathUtils.smoothstep(P.sunEl, -4, 2);
@@ -325,11 +358,13 @@ fTree.add(S, 'leaves', 0, 3, 0.01).name('falling leaves');
 fTree.add(S, 'airy', 0, 1, 0.05).name('canopy gaps').onFinishChange(() => rebuildTree());
 fTree.add({ grow: () => { S.seed = (S.seed * 7 + 13) % 1000; rebuildTree(); } }, 'grow').name('grow another tree');
 const fAnim = gui.addFolder('Animate');
-fAnim.add(AN, 'mode', ANIMS).name('animation').onChange((v) => { AN.progress = 0; AN.length = v === 'year' ? 80 : 50; lenCtl.updateDisplay(); });
+fAnim.add(AN, 'mode', ANIMS).name('animation').onChange((v) => { AN.progress = 0; AN.length = ANIM_LEN[v]; lenCtl.updateDisplay(); if (v === 'zoom') { zoomStart(); zoomSeek(0); } });
 fAnim.add(AN, 'playing').name('play');
-fAnim.add(AN, 'progress', 0, 1, 0.001).name('progress').listen();
+fAnim.add(AN, 'progress', 0, 1, 0.001).name('progress').listen().onChange((v) => AN.mode === 'zoom' && zoomSeek(v));
 fAnim.add({ jump: '' }, 'jump', SEASON_MARKS).name('jump to season').onChange((v) => { AN.mode = 'year'; AN.progress = +v; AN.playing = false; gui.controllersRecursive().forEach((c) => c.updateDisplay()); });
-const lenCtl = fAnim.add(AN, 'length', 10, 300, 1).name('seconds per loop');
+const lenCtl = fAnim.add(AN, 'length', 10, 300, 1).name('seconds per loop').onFinishChange(() => AN.mode === 'zoom' && zoomSeek(Math.min(1, AN.progress)));
+fAnim.add(AN, 'lockHour', 6, 18, 0.25).name('time zoom: hour kept');
+fAnim.add({ restart: () => { AN.mode = 'zoom'; AN.length = ANIM_LEN.zoom; AN.playing = true; zoomStart(); zoomSeek(0); AN.progress = 0; gui.controllersRecursive().forEach((c) => c.updateDisplay()); } }, 'restart').name('start time zoom from now');
 fAnim.add(AN, 'lapse', 1, 100, 1).name('cloud speed-up');
 fAnim.add(AN, 'drift', 0, 2, 0.05).name('camera drift');
 if (AN.mode !== 'off') fAnim.open();
@@ -373,10 +408,11 @@ function setSound(on) {
 soundBtn.addEventListener('click', () => setSound(!S.sound));
 if (Q.get('sound') === '1') { const arm = () => { setSound(true); removeEventListener('pointerdown', arm); removeEventListener('keydown', arm); }; addEventListener('pointerdown', arm); addEventListener('keydown', arm); }
 if (Q.has('noui')) soundBtn.style.display = 'none';
+if (Q.has('noui') && !Q.has('clock')) clockEl.style.display = 'none';
 addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') return;
   if (e.key === 'm' || e.key === 'M') setSound(!S.sound);
-  if (e.key === 'h' || e.key === 'H') { gui._hidden ? gui.show() : gui.hide(); document.getElementById('title').classList.toggle('gone'); soundBtn.classList.toggle('gone'); }
+  if (e.key === 'h' || e.key === 'H') { gui._hidden ? gui.show() : gui.hide(); document.getElementById('title').classList.toggle('gone'); soundBtn.classList.toggle('gone'); clockEl.classList.toggle('gone'); }
   if (e.key === 'p' || e.key === 'P') savePNG();
 });
 
@@ -413,9 +449,13 @@ const FIXED_T = Q.has('t') ? num('t', 0) : null;
 function frame(dt) {
   shared.uTime.value = FIXED_T ?? shared.uTime.value + dt;
   // time-lapses race the clouds; a still frame keeps them where uTime puts them
-  const lapse = AN.mode !== 'off' && AN.playing ? AN.lapse : 1;
+  // the time zoom starts in real time, so its clouds speed up with it
+  const lapse = AN.mode !== 'off' && AN.playing ? (AN.mode === 'zoom' ? Math.min(AN.lapse, ZM.rate) : AN.lapse) : 1;
   shared.uCloudT.value = FIXED_T !== null ? FIXED_T : shared.uCloudT.value + dt * lapse;
-  if (AN.mode !== 'off' && AN.playing && !Q.has('still')) AN.progress = (AN.progress + dt / AN.length) % 1;
+  if (AN.mode === 'zoom') {
+    if (AN.playing && !Q.has('still')) { ZM.sim += J.rate(ZM.tau, AN.length) * dt; ZM.tau += dt; }
+    AN.progress = Math.min(1, ZM.tau / AN.length);
+  } else if (AN.mode !== 'off' && AN.playing && !Q.has('still')) AN.progress = (AN.progress + dt / AN.length) % 1;
   driftCamera(dt);
   controls.autoRotate = S.orbit;
   controls.update();
@@ -440,4 +480,4 @@ function loop() {
 }
 if (Q.has('still')) { frame(0); window.__ready = true; }
 else { loop(); setTimeout(() => (window.__ready = true), 500); }
-window.__sorairo = { S, AN, camera, grass, tree, birds, frame, setShot };
+window.__sorairo = { S, AN, ZM, camera, grass, tree, birds, frame, setShot };

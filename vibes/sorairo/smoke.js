@@ -9,10 +9,13 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
-// newest Playwright Chromium unless CHROME is set (the version folder changes when Playwright updates)
-const PW = path.join(process.env.HOME, '.cache/ms-playwright');
-const CHROME = process.env.CHROME || (fs.existsSync(PW) && fs.readdirSync(PW).filter((d) => /^chromium-\d+$/.test(d)).sort((a, b) => +b.split('-')[1] - +a.split('-')[1])
-  .flatMap((d) => ['chrome-linux', 'chrome-linux64', 'chrome-linux-arm64'].map((p) => path.join(PW, d, p, 'chrome'))).find((f) => fs.existsSync(f))) || 'chromium';
+// newest Playwright Chromium found in any of the usual browser folders, unless CHROME is set
+// (version folders change when Playwright updates, and an install elsewhere can delete
+// the ones it doesn't use, so every folder is searched)
+const PWS = [process.env.PLAYWRIGHT_BROWSERS_PATH, path.join(process.env.HOME, '.cache/ms-playwright'), path.join(process.env.HOME, '.local/share/ms-playwright')].filter((d) => d && fs.existsSync(d));
+const CHROME = process.env.CHROME || PWS.flatMap((pw) => fs.readdirSync(pw).filter((d) => /^chromium-\d+$/.test(d)).map((d) => [+d.split('-')[1], pw, d]))
+  .sort((a, b) => b[0] - a[0]).flatMap(([, pw, d]) => ['chrome-linux', 'chrome-linux64', 'chrome-linux-arm64'].map((p) => path.join(pw, d, p, 'chrome')))
+  .find((f) => fs.existsSync(f)) || 'chromium';
 const PORT = 8811, CDP = 9351;
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.png': 'image/png' };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -47,6 +50,8 @@ const SHOTS = [
   ['blossom', 'season=0.15&time=1&az=150&shot=hillside&t=20'],
   ['shedding', 'season=0.76&time=1.3&az=-60&shot=wide&t=20'],
   ['winter', 'season=0.95&time=1&az=150&shot=hillside&t=20'],
+  ['zoomday', 'anim=zoom&p=0.42&hour=7&season=0.77&clock=1&az=55&shot=hillside&t=20'],
+  ['zoommonth', 'anim=zoom&p=1&hour=7&season=0.77&clock=1&az=55&shot=hillside&t=20'],
   ['dense', 'time=0.75&az=55&shot=hillside&t=20&airy=0'],
   ['flyover', 'time=1.3&az=-60&shot=wide&t=20'],
   ['raw', 'time=0.75&az=55&shot=hillside&t=20&paint=0'],
@@ -80,7 +85,7 @@ try {
   // animations run live: progress advances, the season drives the scene, no errors
   if (!process.env.ONLY || process.env.ONLY.split(',').includes('anims')) {
     const t0 = Date.now(); const res = [];
-    for (const m of ['day', 'year']) {
+    for (const m of ['day', 'year', 'zoom']) {
       c.events.length = 0;
       await c.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/index.html?noui=1&pr=0.25&anim=${m}&dur=6&p=0.8` });
       for (let i = 0; i < 120; i++) { await sleep(250); const r = await c.send('Runtime.evaluate', { expression: '!!window.__ready' }); if (r.result?.result?.value) break; }

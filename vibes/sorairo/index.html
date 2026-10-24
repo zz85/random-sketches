@@ -10,7 +10,9 @@
   #title { position: fixed; left: 22px; bottom: 18px; color: #fff; font: 300 15px/1.3 "Hiragino Mincho ProN", "Yu Mincho", Georgia, serif;
     letter-spacing: 0.2em; text-shadow: 0 1px 8px rgba(0, 20, 60, 0.45); opacity: 0.85; pointer-events: none; transition: opacity 0.6s; }
   #title small { display: block; font-size: 11px; letter-spacing: 0.08em; opacity: 0.75; margin-top: 4px; }
-  #title.gone, #sound.gone { opacity: 0; pointer-events: none; }
+  #title.gone, #sound.gone, #clock.gone { opacity: 0; pointer-events: none; }
+  #clock { position: fixed; left: 22px; top: 16px; color: #fff; font: 300 14px/1.3 "Hiragino Mincho ProN", "Yu Mincho", Georgia, serif; letter-spacing: 0.12em;
+    text-shadow: 0 1px 8px rgba(0, 20, 60, 0.5); opacity: 0.85; pointer-events: none; transition: opacity 0.6s; font-variant-numeric: tabular-nums; }
   #sound { position: fixed; right: 18px; bottom: 16px; padding: 6px 12px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.35); background: rgba(18, 28, 56, 0.45);
     color: #fff; font: 12px Georgia, serif; letter-spacing: 0.08em; cursor: pointer; backdrop-filter: blur(6px); opacity: 0.8; transition: opacity 0.6s; }
   #sound:hover, #sound:focus-visible { opacity: 1; outline: 2px solid rgba(255,255,255,0.6); }
@@ -27,7 +29,8 @@
 </head>
 <body>
 <div id="loading">空色</div>
-<div id="title">空色 sorairo<small>drag to look around · H hides the panel · P saves a picture · M sound · Animate folder for day / seasons time-lapses</small></div>
+<div id="title">空色 sorairo<small>drag to look around · H hides the panel · P saves a picture · M sound · Animate folder for time-lapses</small></div>
+<div id="clock" hidden aria-live="off"></div>
 <button id="sound" type="button" aria-label="Toggle sound">♪ sound off</button>
 <script type="module">
   import './main.js';
