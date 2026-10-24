@@ -688,7 +688,7 @@ export function analyze(norm, opts = {}) {
       continue;
     }
     const a = readAccidental(c, S, st);
-    if (a) { accs.push({ st, c, ...a, p: Math.round(pOfY(st, a.ref, c.cx)) }); continue; }
+    if (a) { const pf = pOfY(st, a.ref, c.cx); accs.push({ st, c, ...a, p: Math.round(pf), pf }); continue; }
     if (cw >= 0.2 * S && cw <= 0.75 * S && chh >= 0.2 * S && chh <= 0.75 * S && c.n / (cw * chh) > 0.5 && cw / chh > 0.55 && cw / chh < 1.8) {
       // a dot stands alone; pieces of a tie or slur cut up by staff-line removal have neighbours
       // just across the removed line
@@ -862,6 +862,14 @@ export function analyze(norm, opts = {}) {
       if (n.st !== a.st || Math.abs(n.p - a.p) > 0) continue;
       const dx = n.box[0] - a.c.x1;
       if (dx > -0.4 * S && dx < bd) { bd = dx; best = n; }
+    }
+    // An accidental read half a step off: a flat whose bowl's bottom is lost to the stem of the
+    // note it touches (Sibelius 2 viola, p. 4: E♭ before a half note read a step low, so it found
+    // no head). Only for one hugging its note, the position within 0.7 of a step of the head's.
+    if (!best) for (const n of notes) {
+      if (n.st !== a.st || Math.abs(n.p - a.p) !== 1 || Math.abs(n.p - (a.pf ?? a.p)) > 0.7) continue;
+      const dx = n.box[0] - a.c.x1;
+      if (dx > -0.4 * S && dx < 1.0 * S && (!best || dx < bd)) { bd = dx; best = n; }
     }
     if (best && (!best.accid || bd < best.accidDx)) { best.accid = { type: a.type, ids: a.c.ids, box: [a.c.x0, a.c.y0, a.c.x1, a.c.y1] }; best.accidDx = bd; }
   }

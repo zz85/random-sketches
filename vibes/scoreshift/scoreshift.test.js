@@ -469,6 +469,15 @@ test('a flat cut by a ledger line is still a flat (Sibelius 2, viola)', () => {
   expect(notes.some((n) => n.name.startsWith('B♯'))).toBe(false);
 });
 
+// A flat touching the hollow head it belongs to loses the bottom of its bowl to that note's stem,
+// so its position reads half a step low and it found no head at its pitch: bar 198's E♭5 half
+// note read as E5 (same page, the first three systems).
+test('a flat touching its half note is still that note\'s (Sibelius 2, viola, bar 198)', () => {
+  const r = analyze(normalize(decodeGray(fs.readFileSync(new URL('./fixtures/scan_sibelius2_va_p4_top.png', import.meta.url)))));
+  const bar = (k) => r.staves[0].notes.filter((n) => n.bar === k).map((n) => n.name);
+  expect(bar(2)).toEqual(['A4', 'B♭4', 'C5', 'D5', 'E♭5', 'D5']);
+});
+
 // Opening key signatures that begin with naturals, and the key carried over from the previous
 // page (a part's next page, or a key change at the page turn). Fixtures spliced from the
 // Telemann crops above by tools/make_key_fixtures.mjs: the key change in each crop moved to the
