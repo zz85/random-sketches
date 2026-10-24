@@ -61,6 +61,22 @@ export function makeAudio(ctx, seed = 11) {
   const rustleG = ctx.createGain(); rustleG.gain.value = 0;
   const rustlePan = ctx.createStereoPanner(); rustlePan.pan.value = -0.25;
   noise(1.3).connect(rustle); rustle.connect(rustleG); rustleG.connect(rustlePan); rustlePan.connect(ambBus);
+  // rain: a broad hiss of drops on grass, a duller patter close by, and drips off the tree
+  const rainHi = ctx.createBiquadFilter(); rainHi.type = 'bandpass'; rainHi.frequency.value = 5200; rainHi.Q.value = 0.45;
+  const rainLo = ctx.createBiquadFilter(); rainLo.type = 'bandpass'; rainLo.frequency.value = 1300; rainLo.Q.value = 0.7;
+  const rainHiG = ctx.createGain(); rainHiG.gain.value = 0;
+  const rainLoG = ctx.createGain(); rainLoG.gain.value = 0;
+  noise(1.1).connect(rainHi); rainHi.connect(rainHiG); rainHiG.connect(ambBus); rainHiG.connect(verbIn);
+  noise(0.8).connect(rainLo); rainLo.connect(rainLoG); rainLoG.connect(ambBus);
+  function drip(t) {
+    const o = ctx.createOscillator(), g = ctx.createGain(), pan = ctx.createStereoPanner();
+    const f = 1400 + rnd() * 2200;
+    o.frequency.setValueAtTime(f, t); o.frequency.exponentialRampToValueAtTime(f * 0.55, t + 0.04);
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.05 + rnd() * 0.05, t + 0.002); g.gain.exponentialRampToValueAtTime(0.0005, t + 0.06);
+    pan.pan.value = rnd() * 1.4 - 0.7;
+    o.connect(g); g.connect(pan); pan.connect(ambBus); pan.connect(verbIn);
+    o.start(t); o.stop(t + 0.08);
+  }
   // airliner: a far rumble that comes and goes with the contrail
   const jet = ctx.createBiquadFilter(); jet.type = 'lowpass'; jet.frequency.value = 160;
   const jetG = ctx.createGain(); jetG.gain.value = 0;
@@ -98,7 +114,7 @@ export function makeAudio(ctx, seed = 11) {
 
   // ---------- scene state (smoothed toward targets in update)
   // birdsK and insects scale the wildlife by season (1 = summer)
-  const st = { day: 1, dusk: 0, night: 0, wind: 1.2, trail: 0, flock: 0, music: 0.6, amb: 0.8, birdsK: 1, insects: 1, on: false };
+  const st = { day: 1, dusk: 0, night: 0, wind: 1.2, trail: 0, flock: 0, music: 0.6, amb: 0.8, birdsK: 1, insects: 1, rain: 0, on: false };
   const ramp = (p, v, tc = 0.4) => p.setTargetAtTime(v, now(), tc);
 
   // ---------- one-shot voices
@@ -149,9 +165,9 @@ export function makeAudio(ctx, seed = 11) {
 
   // ---------- scheduler: one chord per bar at 64 bpm, melody on an eighth-note grid
   const BEAT = 60 / 64, BAR = BEAT * 4;
-  let nextBar = 0, bar = 0, mel = 3, nextBird = 0, nextHigu = 0;
+  let nextBar = 0, bar = 0, mel = 3, nextBird = 0, nextHigu = 0, nextDrip = 0;
   function schedule(until) {
-    if (!nextBar) { nextBar = now() + 0.3; nextBird = now() + 1; nextHigu = now() + 3; }
+    if (!nextBar) { nextBar = now() + 0.3; nextBird = now() + 1; nextHigu = now() + 3; nextDrip = now() + 0.5; }
     while (nextBar < until) {
       const t = nextBar, [bass, notes] = CHORDS[bar % CHORDS.length], quiet = st.night > 0.5;
       pad(notes, bass, t, BAR, quiet);
@@ -174,6 +190,10 @@ export function makeAudio(ctx, seed = 11) {
       if (st.on && st.day > 0.4 && rnd() < st.day * st.birdsK) bird(nextBird);
       // a flock overhead brings a burst of calls
       nextBird += st.flock > 0.5 ? 0.4 + rnd() * 0.6 : 2.5 + rnd() * 6;
+    }
+    while (nextDrip < until) {
+      if (st.on && st.rain > 0.05) drip(nextDrip);
+      nextDrip += st.rain > 0.05 ? (0.04 + rnd() * 0.5) / st.rain : 0.5;
     }
     while (nextHigu < until) {
       if (st.dusk > 0.3 && rnd() < st.insects) {
@@ -198,6 +218,8 @@ export function makeAudio(ctx, seed = 11) {
     ramp(windHigh.frequency, 600 + 900 * gust * w);
     ramp(rustleG.gain, w * 0.09 * gust * gust * (s.leaves ?? 1));
     ramp(jetG.gain, 0.55 * st.trail * st.day);
+    ramp(rainHiG.gain, 0.5 * st.rain * (0.85 + 0.15 * gust));
+    ramp(rainLoG.gain, 0.22 * st.rain);
     ramp(crickets.gain, 0.5 * st.night * st.insects);
     ramp(higu.gain, Math.min(1, st.dusk * 1.4) * st.insects, 1);
     ramp(musicBus.gain, st.music * (st.night > 0.5 ? 0.75 : 1), 0.8);

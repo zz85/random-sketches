@@ -17,6 +17,7 @@ export function makeSky(shared) {
     uGlow: { value: 1 },
     uStars: { value: 0 },
     uTowers: { value: 1 },
+    uRain: { value: 0 }, // overcast: a low grey stratus deck with darker rain bands
     // contrail: a great circle (axis = its normal, ref = angle 0), the plane's angle along it,
     // how much trail is behind it, and an overall fade
     uTrailAxis: { value: new THREE.Vector3(0, 0, 1) },
@@ -40,7 +41,7 @@ export function makeSky(shared) {
       uniform float uTime, uCloudT; uniform vec3 uSunDir; uniform vec3 uSunColor; uniform vec2 uWind;
       uniform float uCloudCover;
       uniform vec3 uZenith, uMid, uHorizon, uCloudLit, uCloudShade, uCloudRim, uDiscColor;
-      uniform float uDiscSize, uGlow, uStars, uTowers;
+      uniform float uDiscSize, uGlow, uStars, uTowers, uRain;
       uniform vec3 uTrailAxis, uTrailRef; uniform float uTrailHead, uTrailLen, uTrailOn;
       varying vec3 vDir;
       #define PI 3.14159265
@@ -203,6 +204,19 @@ export function makeSky(shared) {
             col = mix(col, cc, a);
             occl = max(occl, a * (1.0 - rim * 0.5));
           }
+        }
+        // --- rain: a low stratus deck over everything, soft and lumpy, with darker bands of
+        // heavier rain drifting through it and a paler gap low in the distance
+        if (uRain > 0.001) {
+          vec2 rp = d.xz / (max(d.y, 0.0) + 0.08) * 0.9 + uWind * uCloudT * 0.002;
+          float body = fbm(rp * 0.7, 5);
+          float band = smoothstep(0.35, 0.75, fbm(rp * 0.22 + vec2(uCloudT * 0.0015, 0.0), 3));
+          vec3 st = mix(uCloudShade, uCloudLit, smoothstep(0.25, 0.8, body));
+          st = mix(st, uCloudShade * 0.8, band * 0.55);
+          st = mix(st, uHorizon, (1.0 - smoothstep(0.0, 0.25, d.y)) * 0.6);    // hazy toward the horizon
+          float a = uRain * smoothstep(-0.05, 0.06, d.y) * mix(0.8, 1.0, smoothstep(0.2, 0.6, body));
+          col = mix(col, st, a);
+          occl = max(occl, a);
         }
         gl_FragColor = vec4(col, occl);
       }`,

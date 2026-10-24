@@ -13,6 +13,7 @@ import { mulberry32 } from './tree.js';
 import { makeLiveAudio } from './audio.js';
 import { sampleSeason, SEASON_MARKS } from './seasons.js';
 import { makeSnow } from './snow.js';
+import { makeRain } from './rain.js';
 import * as J from './journey.js';
 
 const Q = new URLSearchParams(location.search);
@@ -56,6 +57,7 @@ function samplePreset(t) {
 // ---------- settings
 const S = {
   time: num('time', 0.75), azimuth: num('az', 55), clouds: num('clouds', 0.5), towers: num('towers', 1),
+  rain: num('rain', Q.get('weather') === 'rain' ? 1 : 0),
   style: Q.get('style') || 'summer', leaves: num('leaves', 1), wind: num('wind', 1.2), windDir: num('windDir', 30),
   birds: Q.get('birds') !== '0', contrail: Q.get('contrail') !== '0',
   painterly: Q.has('paint') ? num('paint', 2.5) : (MOBILE ? 0 : 2.5), shafts: 1, bloom: 0.55, flare: 1, paper: 1, vignette: 1, saturation: 1, exposure: 1,
@@ -81,6 +83,7 @@ let tree = makeTree(shared, GROUND, S.seed, { fallCount: MOBILE ? 220 : 420, air
 scene.add(tree.group); tree.setStyle(S.style);
 const birds = makeBirds(shared); scene.add(birds.mesh);
 const snow = makeSnow(shared, MOBILE ? 2500 : 6000); scene.add(snow.pts);
+const rain = makeRain(shared, MOBILE ? 4000 : 9000); scene.add(rain.lines);
 
 // ---------- animations: a day (noon to night), a year (four seasons), or a time zoom
 // (real time, speeding up to days, then months), as time-lapses.
@@ -89,7 +92,7 @@ const snow = makeSnow(shared, MOBILE ? 2500 : 6000); scene.add(snow.pts);
 // ?season= (a fixed day of the year, paused; the time zoom's start date), ?hour= (the time
 // zoom's start time, default now), ?lapse= (cloud speed-up).
 const ANIMS = { off: 'off', 'day cycle': 'day', 'four seasons': 'year', 'time zoom': 'zoom' };
-const ANIM_LEN = { day: 50, year: 80, zoom: 44, off: 50 };
+const ANIM_LEN = { day: 60, year: 80, zoom: 44, off: 50 };
 const AN = {
   mode: Q.get('anim') || (Q.has('season') ? 'year' : 'off'),
   playing: !(Q.has('season') && Q.get('anim') !== 'zoom') && Q.get('play') !== '0',
@@ -102,11 +105,14 @@ const AN = {
 
 // grass and ground albedo stay fixed; light does the work
 const SUMMER_GROUND = ['#1f4a2a', '#4e9a3c', '#98c54e', '#24502b', '#4f8f34'].map((h) => C(h));
-function setGround(g) {
-  grass.uniforms.uBase.value.copy(g[0]); grass.uniforms.uTip.value.copy(g[1]); grass.uniforms.uTip2.value.copy(g[2]);
-  terrain.mat.uniforms.uGrassDark.value.copy(g[3]); terrain.mat.uniforms.uGrassLight.value.copy(g[4]);
+// k darkens it (wet ground in the rain)
+function setGround(g, k = 1) {
+  grass.uniforms.uBase.value.copy(g[0]).multiplyScalar(k); grass.uniforms.uTip.value.copy(g[1]).multiplyScalar(k); grass.uniforms.uTip2.value.copy(g[2]).multiplyScalar(k);
+  terrain.mat.uniforms.uGrassDark.value.copy(g[3]).multiplyScalar(k); terrain.mat.uniforms.uGrassLight.value.copy(g[4]).multiplyScalar(k);
+  terrain.mat.uniforms.uDirt.value.copy(DIRT).multiplyScalar(k * k);
 }
-grass.uniforms.uSheen.value = C('#f4ffc8'); terrain.mat.uniforms.uDirt.value = C('#b49a74');
+const DIRT = C('#b49a74');
+grass.uniforms.uSheen.value = C('#f4ffc8'); terrain.mat.uniforms.uDirt.value = DIRT.clone();
 setGround(SUMMER_GROUND);
 
 // ---------- light motes / fireflies
@@ -261,6 +267,35 @@ function zoomStart() {
 function zoomSeek(progress) { ZM.tau = progress * AN.length; ZM.sim = J.simSecondsAt(ZM.tau, AN.length); }
 zoomStart(); if (AN.mode === 'zoom') zoomSeek(AN.progress);
 const clockEl = document.getElementById('clock');
+const DAY_KNOTS = [[0, 0], [0.5, NIGHT_T], [0.6, NIGHT_T], [1, DAY_T]];
+function dayCycleTime(p) {
+  p = ((p % 1) + 1) % 1;
+  for (let i = 1; i < DAY_KNOTS.length; i++) {
+    const [p1, t1] = DAY_KNOTS[i], [p0, t0] = DAY_KNOTS[i - 1];
+    if (p <= p1) return t0 + (t1 - t0) * (p - p0) / (p1 - p0);
+  }
+  return 0;
+}
+// Rain (0 … 1) turns any time of day overcast: colours drain toward a cool grey at about the
+// same brightness, the direct sun goes, ambient light rises to make up for it, and a hazy
+// distance closes in.
+const GREY = new THREE.Color(), WARM = new THREE.Color(0.9, 0.96, 1.08);
+function grey(c, k, r) {
+  const l = c.r * 0.3 + c.g * 0.59 + c.b * 0.11;
+  return c.lerp(GREY.copy(WARM).multiplyScalar(l * k), r);
+}
+function wetPreset(P, r) {
+  if (r <= 0) return P;
+  grey(P.zenith, 0.85, r); grey(P.mid, 0.95, r); grey(P.horizon, 0.9, r);
+  grey(P.cloudLit, 0.6, r); grey(P.cloudShade, 0.8, r); P.cloudRim.multiplyScalar(1 - r * 0.9);
+  const sky = (P.ambient.r + P.ambient.g + P.ambient.b) / 3 + (P.sun.r + P.sun.g + P.sun.b) / 3 * 0.08;
+  P.ambient.lerp(GREY.copy(WARM).multiplyScalar(sky * 1.05), r);
+  P.sun.multiplyScalar(1 - r * 0.85);
+  grey(P.fog, 0.85, r); P.fogSun.lerp(P.fog, r);
+  P.fogK *= 1 + r * 3; P.disc.multiplyScalar(1 - r); P.glow *= 1 - r * 0.8; P.stars *= 1 - r;
+  P.shafts *= 1 - r; P.flare *= 1 - r; P.sat *= 1 - r * 0.22;
+  return P;
+}
 function applyAnim() {
   if (AN.mode !== lastMode) {
     if (lastMode === 'year' || lastMode === 'zoom') { tree.setStyle(S.style); setGround(SUMMER_GROUND); }
@@ -269,10 +304,9 @@ function applyAnim() {
   animFade = 1; SE = null; animAz = 0;
   clockEl.hidden = AN.mode !== 'zoom';
   if (AN.mode === 'day') {
-    // noon … night over 90% of the loop, hold the night, fade through dark back to noon
-    const p = AN.progress;
-    S.time = NIGHT_T * Math.min(1, p / 0.9);
-    animFade = Math.min(THREE.MathUtils.smoothstep(p, 0, 0.025), 1 - THREE.MathUtils.smoothstep(p, 0.95, 0.995));
+    // once round the clock and back to noon, so it loops without a cut: noon … magic hour
+    // over the first half, a short hold in the night, then dawn and morning
+    S.time = dayCycleTime(AN.progress);
   } else if (AN.mode === 'year') {
     SE = sampleSeason(AN.progress);
     tree.setSeason(SE);
@@ -299,9 +333,13 @@ function applyAnim() {
     clockEl.textContent = `${date}${time} · ${J.formatSpeed(ZM.rate)}`;
   }
 }
+let wasWet = false;
 function applyLook() {
   applyAnim();
-  const P = samplePreset(S.time);
+  const R = S.rain;
+  if (R > 0 || wasWet) setGround(SE ? SE.ground : SUMMER_GROUND, 1 - 0.32 * R);
+  wasWet = R > 0;
+  const P = wetPreset(samplePreset(S.time), R);
   const el = THREE.MathUtils.degToRad(P.sunEl), az = THREE.MathUtils.degToRad(S.azimuth + animAz * (1 - P.night) + (P.night > 0.5 ? 140 : 0));
   const sd = shared.uSunDir.value.set(Math.cos(el) * Math.sin(az), Math.sin(el), -Math.cos(el) * Math.cos(az));
   // light fades out as the sun sets, then the moon takes over
@@ -311,11 +349,12 @@ function applyLook() {
   shared.uAmbient.value.copy(P.ambient);
   shared.uFogColor.value.copy(P.fog); shared.uFogSunColor.value.copy(P.fogSun);
   shared.uFogDensity.value = 0.0009 * P.fogK;
-  shared.uCloudCover.value = THREE.MathUtils.clamp(S.clouds + (SE ? SE.clouds : 0), 0, 1);
+  shared.uCloudCover.value = THREE.MathUtils.clamp(S.clouds + (SE ? SE.clouds : 0) + R, 0, 1);
+  sky.uniforms.uRain.value = R; rain.uniforms.uRain.value = R * (SE ? 1 - Math.min(1, SE.snowFall * 2) : 1);
   shared.uSnowCover.value = SE ? SE.snowCover : 0;
   snow.uniforms.uSnowFall.value = SE ? SE.snowFall : 0;
   grass.flowerUniforms.uFlowers.value = SE ? SE.flowers : 1;
-  shared.uCloudShadow.value = 0.55 * lightK * (1 - P.night * 0.6);
+  shared.uCloudShadow.value = 0.55 * lightK * (1 - P.night * 0.6) * (1 - R);
   const wa = THREE.MathUtils.degToRad(S.windDir);
   shared.uWind.value.set(Math.cos(wa), Math.sin(wa)).multiplyScalar(S.wind);
   const u = sky.uniforms;
@@ -323,13 +362,13 @@ function applyLook() {
   u.uCloudLit.value.copy(P.cloudLit); u.uCloudShade.value.copy(P.cloudShade); u.uCloudRim.value.copy(P.cloudRim);
   u.uDiscColor.value.copy(P.disc).multiplyScalar(lightK); u.uDiscSize.value = P.discSize; u.uGlow.value = P.glow * lightK; u.uStars.value = P.stars;
   u.uTowers.value = S.towers;
-  updateBirds(shared.uTime.value, S.birds && P.night < 0.5 && lightK > 0.3);
-  updateContrail(shared.uTime.value, S.contrail && P.night < 0.5);
+  updateBirds(shared.uTime.value, S.birds && P.night < 0.5 && lightK > 0.3 && R < 0.35);
+  updateContrail(shared.uTime.value, S.contrail && P.night < 0.5 && R < 0.2);
   birds.uniforms.uInk.value.copy(P.cloudShade).multiplyScalar(0.18);
-  motes.m.uniforms.uNight.value = P.night;
+  motes.m.uniforms.uNight.value = P.night; motes.m.visible = R < 0.5;
   sound.update({ day: 1 - P.night, night: P.night, dusk: Math.max(THREE.MathUtils.smoothstep(S.time, 1.6, 2.4) * (1 - THREE.MathUtils.smoothstep(S.time, 3.3, 3.8)), // higurashi call at dusk and again at dawn
       THREE.MathUtils.smoothstep(S.time, 4.6, 4.95) * (1 - THREE.MathUtils.smoothstep(S.time, 5.4, 5.9))),
-    wind: S.wind, leaves: Math.min(1, S.leaves) * (SE ? SE.fall : 1), birdsK: SE ? SE.birds : 1, insects: SE ? SE.insects : 1, trail: sky.uniforms.uTrailOn.value, flock: birds.uniforms.uFlockOn.value, music: S.music, amb: S.ambience }, shared.uTime.value);
+    wind: S.wind, leaves: Math.min(1, S.leaves) * (SE ? SE.fall : 1), birdsK: (SE ? SE.birds : 1) * (1 - R), insects: (SE ? SE.insects : 1) * (1 - R * 0.85), rain: R, trail: sky.uniforms.uTrailOn.value, flock: birds.uniforms.uFlockOn.value, music: S.music, amb: S.ambience }, shared.uTime.value);
   tree.fallUniforms.uFallRate.value = S.leaves;
   tree.group.children[2].visible = S.leaves > 0.01 && (!SE || SE.fall > 0.005);
 
@@ -337,7 +376,7 @@ function applyLook() {
   tmp.copy(sd).multiplyScalar(4000).add(camera.position).project(camera);
   const onScreen = tmp.z < 1 && Math.abs(tmp.x) < 1.3 && Math.abs(tmp.y) < 1.3 ? 1 : 0;
   const edge = THREE.MathUtils.smoothstep(1.3 - Math.max(Math.abs(tmp.x), Math.abs(tmp.y)), 0, 0.4);
-  const sunOn = onScreen * edge * lightK;
+  const sunOn = onScreen * edge * lightK * (1 - R);
   const sunUv = new THREE.Vector2(tmp.x * 0.5 + 0.5, tmp.y * 0.5 + 0.5);
   post.light.uniforms.uSun.value.copy(sunUv); post.light.uniforms.uSunOn.value = sunOn * S.shafts;
   post.light.uniforms.uColor.value.copy(P.sun).multiplyScalar(0.25 * lightK); post.light.uniforms.uStrength.value = P.shafts;
@@ -360,6 +399,7 @@ fScene.add({ preset: '' }, 'preset', names).name('jump to').onChange((v) => { S.
 fScene.add(S, 'azimuth', -180, 180, 1).name('sun azimuth');
 fScene.add(S, 'clouds', 0, 1, 0.01).name('cloud cover');
 fScene.add(S, 'towers', 0, 1.6, 0.01).name('cumulus towers');
+fScene.add(S, 'rain', 0, 1, 0.01).name('rain');
 fScene.add(S, 'wind', 0, 3, 0.01);
 fScene.add(S, 'windDir', 0, 360, 1).name('wind direction');
 fScene.add(S, 'birds');

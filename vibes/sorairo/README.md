@@ -4,7 +4,7 @@ An anime / Makoto Shinkai-style hillside rendered in three.js: a lone tree dropp
 
 Drag to orbit, scroll to zoom. **H** hides the panel, **P** saves a PNG, **M** toggles sound.
 
-Two time-lapse animations are in the Animate folder: a **day cycle** (noon, afternoon, golden hour, magic hour, night) and **four seasons** (a year on the hill, from snow through cherry blossom, summer and the autumn turn to bare branches and snow again). A third, **time zoom**, starts at your real clock and date in real time, then speeds up through a few whole days and nights to month-by-month seasons. Try `?anim=day`, `?anim=year` or `?anim=zoom`.
+Two time-lapse animations are in the Animate folder: a **day cycle** (round the clock: noon, afternoon, golden hour, magic hour, night, dawn, morning and noon again) and **four seasons** (a year on the hill, from snow through cherry blossom, summer and the autumn turn to bare branches and snow again). A third, **time zoom**, starts at your real clock and date in real time, then speeds up through a few whole days and nights to month-by-month seasons. Try `?anim=day`, `?anim=year` or `?anim=zoom`.
 
 ## How it works
 
@@ -96,7 +96,7 @@ Both run a `progress` value from 0 to 1 over a loop length (50 s for a day, 80 s
   - The hour drives the time-of-day slider once round the clock: night from 20:00 to 04:00, the moon sets, dawn about 05:25, morning about 06:50, noon, afternoon, golden hour, magic hour. The sun swings across the sky from east to west (the moon stays put, so the swing fades out through the night).
   - Past about one day per second the days lock to one hour (*time zoom: hour kept*, `lock`, 15:00 by default), like a time-lapse shot at the same time every day. The lock tightens gradually: each day lingers near that hour and rushes through the rest, so the nights shrink to a blink and vanish. From then on each day gets its own cloud cover and light, as in four seasons.
   - The date sets the season (northern hemisphere): blossom about 1 April, summer in early July, late autumn at the end of October, first snow in mid December. *Start time zoom from now* restarts it from the current clock.
-- **Day cycle** sweeps the time-of-day slider from noon to night over 90% of the loop, holds the night, and fades through dark back to noon.
+- **Day cycle** runs the time-of-day slider once round the clock over 60 s: noon to magic hour over the first half, a short hold in the night, then the moon sets, dawn, morning and noon again, so it loops without a cut.
 - **Four seasons**: `sampleSeason(s)` maps the day of the year to everything seasonal. s = 0 is deep winter, so the loop opens with the thaw. Each "day" also gets its own cloud cover and light level, for the flicker of a time-lapse shot at the same hour every day.
   - Snow melts in patches (`snowAt`, shared by the ground, grass and flowers: hollows hold it longest) and the mountain snow line climbs back up.
   - The bare tree blossoms pink with the petal atlas (cards come back in reverse shedding order), drops petals, then leafs out spring green and deepens to summer green.
@@ -110,6 +110,15 @@ Both run a `progress` value from 0 to 1 over a loop length (50 s for a day, 80 s
 - Seven keyframes round the clock (noon, afternoon, golden hour, magic hour, night, dawn, morning) set sun height, sky and cloud colours, fog colour and density, ambient, bloom and grade. One slider blends neighbouring keyframes and wraps from morning back to noon. Dawn is not magic hour backwards: a cool lilac sky over a pastel peach horizon, rose cloud edges, the last stars and low mist, then a crisp, cooler morning as the mist burns off. The higurashi call at dusk and again at dawn.
 - Pixel ratio is capped at 1.5 (1.25 on mobile) and drops automatically below about 40 fps.
 
+### Rain (`rain.js`)
+
+The *rain* slider in Scene (`?rain=0…1`, or `?weather=rain`) works at any time of day and in every animation:
+- The sky closes over with a low, lumpy stratus deck with darker bands of heavier rain drifting through it, hazy toward the horizon.
+- The time of day's colours drain toward a cool grey at about the same brightness. The direct sun, sun disc, light shafts, lens flare and cloud shadows go, the ambient light rises to make up for it, and the haze closes in (fog four times as dense at full rain).
+- Rain streaks: line segments in a box that travels with the camera, each as long as the drop falls in 45 ms, slanted by the wind. Stateless like the snow, and thinned by the slider. They give way to the snow when it snows.
+- The ground and the path darken as they get wet. Birds, the airliner and the fireflies stay away; the insects mostly fall quiet.
+- Sound: a broad hiss of rain on grass, a duller patter close by, and drips off the tree.
+
 ### Sound (`audio.js`)
 
 Everything is synthesised with Web Audio; there are no sample files. Browsers only allow audio after a gesture, so it starts from the ♪ button, the M key or the Sound folder (`?sound=1` starts it on the first click or key press anywhere). Music and ambience each have a volume slider.
@@ -119,8 +128,8 @@ Everything is synthesised with Web Audio; there are no sample files. Browsers on
 
 ## URL parameters
 
-`time` (0 noon, 1 afternoon, 2 golden, 3 magic hour, 4 night, 5 dawn, 6 morning, 7 noon), `az` sun azimuth, `style` (summer, sakura, autumn, maple), `shot` (hillside, under, wide, path, sky), `paint` (Kuwahara radius, 0 = off), `wind`, `windDir`, `clouds`, `towers`, `leaves`, `seed`, `airy` (canopy gaps, 0 dense … 1 airy), `turned` (autumn progress, 0 early … 1 late), `anim` (day, year), `dur` (seconds per loop), `p` (start point, 0 … 1), `play=0`, `season` (a fixed day of the year, 0 … 1, paused), `lapse` (cloud speed-up), `hour` (time zoom start hour, default now; with `season` it sets the start date), `lock` (time zoom hour kept), `clock=1` (show the clock with `noui`), `drift` (camera drift, 0 off … 2), `sound=1`, `music` and `ambience` (volumes, 0 … 1), `birds=0`, `contrail=0`, `orbit=1`, `noui`, `pr` (pixel-ratio scale), `still=1` + `t` (render one frame at a fixed time and set `window.__ready`).
+`time` (0 noon, 1 afternoon, 2 golden, 3 magic hour, 4 night, 5 dawn, 6 morning, 7 noon), `az` sun azimuth, `style` (summer, sakura, autumn, maple), `shot` (hillside, under, wide, path, sky), `paint` (Kuwahara radius, 0 = off), `wind`, `windDir`, `clouds`, `towers`, `rain` (0 … 1; `weather=rain` is 1), `leaves`, `seed`, `airy` (canopy gaps, 0 dense … 1 airy), `turned` (autumn progress, 0 early … 1 late), `anim` (day, year), `dur` (seconds per loop), `p` (start point, 0 … 1), `play=0`, `season` (a fixed day of the year, 0 … 1, paused), `lapse` (cloud speed-up), `hour` (time zoom start hour, default now; with `season` it sets the start date), `lock` (time zoom hour kept), `clock=1` (show the clock with `noui`), `drift` (camera drift, 0 off … 2), `sound=1`, `music` and `ambience` (volumes, 0 … 1), `birds=0`, `contrail=0`, `orbit=1`, `noui`, `pr` (pixel-ratio scale), `still=1` + `t` (render one frame at a fixed time and set `window.__ready`).
 
 ## Test
 
-`node smoke.js` has no dependencies. It starts a static server and headless Chromium with SwiftShader, drives it over the Chrome DevTools Protocol directly, and renders 20 still shots (including dawn, morning, mid-day-cycle, blossom, shedding, winter and two time-zoom frames), checks that all three animations play live without errors and that the camera drifts, then renders the sound graph offline for day, dusk and night (failing on silence, NaN or clipping) and checks that the ♪ button starts live audio without errors. A shot fails on any console or shader error, an exception, or a nearly flat frame (pixel read-back, brightness standard deviation). Shots are written to `shot_*.png` (git-ignored); the server sends `no-store` so they always reflect the current code. `ONLY=afternoon,night` runs a subset.
+`node smoke.js` has no dependencies. It starts a static server and headless Chromium with SwiftShader, drives it over the Chrome DevTools Protocol directly, and renders 23 still shots (including dawn, morning, two rain frames, mid-day-cycle and day-cycle dawn, blossom, shedding, winter and two time-zoom frames), checks that all three animations play live without errors and that the camera drifts, then renders the sound graph offline for day, dusk and night (failing on silence, NaN or clipping) and checks that the ♪ button starts live audio without errors. A shot fails on any console or shader error, an exception, or a nearly flat frame (pixel read-back, brightness standard deviation). Shots are written to `shot_*.png` (git-ignored); the server sends `no-store` so they always reflect the current code. `ONLY=afternoon,night` runs a subset.
