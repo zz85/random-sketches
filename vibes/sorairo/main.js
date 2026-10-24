@@ -80,6 +80,7 @@ const AN = {
   progress: Q.has('season') ? num('season', 0) : num('p', 0),
   length: num('dur', Q.get('anim') === 'year' ? 80 : 50),
   lapse: num('lapse', 30),
+  drift: num('drift', 1), // camera drift while playing, 0 = off
 };
 
 // grass and ground albedo stay fixed; light does the work
@@ -330,6 +331,7 @@ fAnim.add(AN, 'progress', 0, 1, 0.001).name('progress').listen();
 fAnim.add({ jump: '' }, 'jump', SEASON_MARKS).name('jump to season').onChange((v) => { AN.mode = 'year'; AN.progress = +v; AN.playing = false; gui.controllersRecursive().forEach((c) => c.updateDisplay()); });
 const lenCtl = fAnim.add(AN, 'length', 10, 300, 1).name('seconds per loop');
 fAnim.add(AN, 'lapse', 1, 100, 1).name('cloud speed-up');
+fAnim.add(AN, 'drift', 0, 2, 0.05).name('camera drift');
 if (AN.mode !== 'off') fAnim.open();
 const fSound = gui.addFolder('Sound');
 const soundCtl = fSound.add(S, 'sound').name('sound on (M)').onChange((v) => setSound(v));
@@ -378,6 +380,32 @@ addEventListener('keydown', (e) => {
   if (e.key === 'p' || e.key === 'P') savePNG();
 });
 
+// ---------- camera drift: while a time-lapse plays the camera moves like a motion-control
+// slider shot, swinging slowly around the tree and back with a slight push in and rise.
+// The swing is relative (applied as frame-to-frame increments), so it carries on from
+// wherever you leave the view; it pauses while you drag and for 2 s after.
+const sph = new THREE.Spherical(), off3 = new THREE.Vector3();
+let driftT = 0, driftPrev = null, userHold = 0;
+controls.addEventListener('start', () => (userHold = Infinity));
+controls.addEventListener('end', () => (userHold = 2));
+function driftCamera(dt) {
+  if (AN.mode === 'off' || !AN.playing || AN.drift <= 0 || S.orbit || dt === 0) { driftPrev = null; return; }
+  if (userHold > 0) { userHold -= dt; driftPrev = null; return; }
+  driftT += dt;
+  // one full swing per two loops, with the push and rise on slower, offset cycles so the
+  // path doesn't repeat exactly
+  const w = (2 * Math.PI) / (AN.length * 2), k = AN.drift;
+  const cur = { a: Math.sin(driftT * w) * 0.4 * k, r: Math.sin(driftT * w * 0.63 + 1.3) * 0.12 * k, e: Math.sin(driftT * w * 0.41 + 0.4) * 0.05 * k };
+  if (driftPrev) {
+    sph.setFromVector3(off3.copy(camera.position).sub(controls.target));
+    sph.theta += cur.a - driftPrev.a;
+    sph.radius = THREE.MathUtils.clamp(sph.radius * Math.exp(driftPrev.r - cur.r), controls.minDistance, controls.maxDistance);
+    sph.phi = THREE.MathUtils.clamp(sph.phi - (cur.e - driftPrev.e), 0.35, 1.7);
+    camera.position.copy(controls.target).add(off3.setFromSpherical(sph));
+  }
+  driftPrev = cur;
+}
+
 // ---------- loop
 const clock = new THREE.Clock();
 let frames = 0, acc = 0;
@@ -388,6 +416,7 @@ function frame(dt) {
   const lapse = AN.mode !== 'off' && AN.playing ? AN.lapse : 1;
   shared.uCloudT.value = FIXED_T !== null ? FIXED_T : shared.uCloudT.value + dt * lapse;
   if (AN.mode !== 'off' && AN.playing && !Q.has('still')) AN.progress = (AN.progress + dt / AN.length) % 1;
+  driftCamera(dt);
   controls.autoRotate = S.orbit;
   controls.update();
   // keep the eye above the grass
@@ -411,4 +440,4 @@ function loop() {
 }
 if (Q.has('still')) { frame(0); window.__ready = true; }
 else { loop(); setTimeout(() => (window.__ready = true), 500); }
-window.__sorairo = { S, AN, grass, tree, birds, frame, setShot };
+window.__sorairo = { S, AN, camera, grass, tree, birds, frame, setShot };

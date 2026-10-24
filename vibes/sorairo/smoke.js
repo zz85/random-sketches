@@ -12,7 +12,7 @@ const DIR = path.dirname(fileURLToPath(import.meta.url));
 // newest Playwright Chromium unless CHROME is set (the version folder changes when Playwright updates)
 const PW = path.join(process.env.HOME, '.cache/ms-playwright');
 const CHROME = process.env.CHROME || (fs.existsSync(PW) && fs.readdirSync(PW).filter((d) => /^chromium-\d+$/.test(d)).sort((a, b) => +b.split('-')[1] - +a.split('-')[1])
-  .map((d) => path.join(PW, d, 'chrome-linux/chrome')).find((f) => fs.existsSync(f))) || 'chromium';
+  .flatMap((d) => ['chrome-linux', 'chrome-linux64', 'chrome-linux-arm64'].map((p) => path.join(PW, d, p, 'chrome'))).find((f) => fs.existsSync(f))) || 'chromium';
 const PORT = 8811, CDP = 9351;
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.png': 'image/png' };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -84,16 +84,19 @@ try {
       c.events.length = 0;
       await c.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/index.html?noui=1&pr=0.25&anim=${m}&dur=6&p=0.8` });
       for (let i = 0; i < 120; i++) { await sleep(250); const r = await c.send('Runtime.evaluate', { expression: '!!window.__ready' }); if (r.result?.result?.value) break; }
+      const camAt = "window.__sorairo.camera.position.toArray()";
+      const p0 = (await c.send('Runtime.evaluate', { returnByValue: true, expression: camAt })).result?.result?.value;
       await sleep(3500);
-      const v = (await c.send('Runtime.evaluate', { returnByValue: true, expression: '[window.__sorairo.AN.progress, window.__sorairo.S.time]' })).result?.result?.value;
+      const v = (await c.send('Runtime.evaluate', { returnByValue: true, expression: `[window.__sorairo.AN.progress, window.__sorairo.S.time, ${camAt}]` })).result?.result?.value;
+      const moved = v && p0 ? Math.hypot(...v[2].map((x, i) => x - p0[i])) : 0;
       const errs = c.events.filter((e) => e.method === 'Runtime.exceptionThrown' || (e.method === 'Runtime.consoleAPICalled' && e.params.type === 'error'));
       // started at 0.8 with a 6 s loop: it must have moved on (and possibly wrapped)
-      res.push([m, v && Math.abs(v[0] - 0.8) > 0.005 && !errs.length, v, errs.map((e) => JSON.stringify(e.params).slice(0, 300))]);
+      res.push([m, v && Math.abs(v[0] - 0.8) > 0.005 && moved > 0.001 && !errs.length, v, moved, errs.map((e) => JSON.stringify(e.params).slice(0, 300))]);
     }
     const ok = res.every((r) => r[1]);
     if (!ok) failed++;
-    console.log(`${ok ? 'ok  ' : 'FAIL'} ${'anims'.padEnd(10)} ${((Date.now() - t0) / 1000).toFixed(1)}s ` + res.map((r) => `${r[0]} p ${r[2]?.[0]?.toFixed(2)}`).join(', '));
-    for (const r of res) for (const e of r[3]) console.log('     ', e);
+    console.log(`${ok ? 'ok  ' : 'FAIL'} ${'anims'.padEnd(10)} ${((Date.now() - t0) / 1000).toFixed(1)}s ` + res.map((r) => `${r[0]} p ${r[2]?.[0]?.toFixed(2)} cam moved ${r[3].toFixed(3)} m`).join(', '));
+    for (const r of res) for (const e of r[4]) console.log('     ', e);
   }
   // sound: render the audio graph offline for day, dusk and night; fail on silence,
   // NaN or clipping
