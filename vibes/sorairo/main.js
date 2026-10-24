@@ -11,7 +11,7 @@ import { makePost } from './post.js';
 import { makeBirds } from './birds.js';
 import { mulberry32 } from './tree.js';
 import { makeLiveAudio } from './audio.js';
-import { sampleSeason, SEASON_MARKS } from './seasons.js';
+import { sampleSeason, SEASON_MARKS, rainOnDay } from './seasons.js';
 import { makeSnow } from './snow.js';
 import { makeRain } from './rain.js';
 import * as J from './journey.js';
@@ -101,6 +101,7 @@ const AN = {
   lockHour: num('lock', 15), // the time zoom's same-time-every-day hour
   lapse: num('lapse', 30),
   drift: num('drift', 1), // camera drift while playing, 0 = off
+  weather: Q.get('weather') !== 'clear', // random rainy spells in the seasons and the time zoom
 };
 
 // grass and ground albedo stay fixed; light does the work
@@ -314,6 +315,7 @@ function applyAnim() {
     const day = Math.floor(AN.progress * 365);
     SE.clouds += (dayHash(day, 1) - 0.5) * 0.3;
     SE.light = 1 + (dayHash(day, 2) - 0.5) * 0.08;
+    SE.rain = AN.weather ? rainOnDay(AN.progress * 365, SE.wet) * (1 - SE.snowFall) : 0;
   } else if (AN.mode === 'zoom') {
     const now = ZM.now = new Date(ZM.start.getTime() + ZM.sim * 1000);
     ZM.rate = J.rate(ZM.tau, AN.length); ZM.k = J.dayLock(ZM.tau, AN.length);
@@ -328,6 +330,8 @@ function applyAnim() {
     const day = Math.floor(ZM.sim / 86400);
     SE.clouds += (dayHash(day, 1) - 0.5) * 0.3 * ZM.k;
     SE.light = 1 + (dayHash(day, 2) - 0.5) * 0.08 * ZM.k;
+    // rainy spells come in once it's past real time (the start shows the sky as it is)
+    SE.rain = AN.weather ? rainOnDay(ZM.sim / 86400, SE.wet) * (1 - SE.snowFall) * THREE.MathUtils.smoothstep(ZM.tau / AN.length, 0.14, 0.32) : 0;
     const date = now.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
     const time = ZM.k < 0.5 ? ' · ' + now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '';
     clockEl.textContent = `${date}${time} · ${J.formatSpeed(ZM.rate)}`;
@@ -336,7 +340,7 @@ function applyAnim() {
 let wasWet = false;
 function applyLook() {
   applyAnim();
-  const R = S.rain;
+  const R = Math.max(S.rain, SE && SE.rain ? SE.rain : 0);
   if (R > 0 || wasWet) setGround(SE ? SE.ground : SUMMER_GROUND, 1 - 0.32 * R);
   wasWet = R > 0;
   const P = wetPreset(samplePreset(S.time), R);
@@ -351,6 +355,7 @@ function applyLook() {
   shared.uFogDensity.value = 0.0009 * P.fogK;
   shared.uCloudCover.value = THREE.MathUtils.clamp(S.clouds + (SE ? SE.clouds : 0) + R, 0, 1);
   sky.uniforms.uRain.value = R; rain.uniforms.uRain.value = R * (SE ? 1 - Math.min(1, SE.snowFall * 2) : 1);
+  terrain.mat.uniforms.uRain.value = rain.uniforms.uRain.value;
   shared.uSnowCover.value = SE ? SE.snowCover : 0;
   snow.uniforms.uSnowFall.value = SE ? SE.snowFall : 0;
   grass.flowerUniforms.uFlowers.value = SE ? SE.flowers : 1;
@@ -368,7 +373,7 @@ function applyLook() {
   motes.m.uniforms.uNight.value = P.night; motes.m.visible = R < 0.5;
   sound.update({ day: 1 - P.night, night: P.night, dusk: Math.max(THREE.MathUtils.smoothstep(S.time, 1.6, 2.4) * (1 - THREE.MathUtils.smoothstep(S.time, 3.3, 3.8)), // higurashi call at dusk and again at dawn
       THREE.MathUtils.smoothstep(S.time, 4.6, 4.95) * (1 - THREE.MathUtils.smoothstep(S.time, 5.4, 5.9))),
-    wind: S.wind, leaves: Math.min(1, S.leaves) * (SE ? SE.fall : 1), birdsK: (SE ? SE.birds : 1) * (1 - R), insects: (SE ? SE.insects : 1) * (1 - R * 0.85), rain: R, trail: sky.uniforms.uTrailOn.value, flock: birds.uniforms.uFlockOn.value, music: S.music, amb: S.ambience }, shared.uTime.value);
+    wind: S.wind, leaves: Math.min(1, S.leaves) * (SE ? SE.fall : 1), birdsK: (SE ? SE.birds : 1) * (1 - R), insects: (SE ? SE.insects : 1) * (1 - R * 0.85), rain: rain.uniforms.uRain.value, trail: sky.uniforms.uTrailOn.value, flock: birds.uniforms.uFlockOn.value, music: S.music, amb: S.ambience }, shared.uTime.value);
   tree.fallUniforms.uFallRate.value = S.leaves;
   tree.group.children[2].visible = S.leaves > 0.01 && (!SE || SE.fall > 0.005);
 
@@ -420,6 +425,7 @@ fAnim.add(AN, 'lockHour', 6, 18, 0.25).name('time zoom: hour kept');
 fAnim.add({ restart: () => { AN.mode = 'zoom'; AN.length = ANIM_LEN.zoom; AN.playing = true; zoomStart(); zoomSeek(0); AN.progress = 0; gui.controllersRecursive().forEach((c) => c.updateDisplay()); } }, 'restart').name('start time zoom from now');
 fAnim.add(AN, 'lapse', 1, 100, 1).name('cloud speed-up');
 fAnim.add(AN, 'drift', 0, 2, 0.05).name('camera drift');
+fAnim.add(AN, 'weather').name('rainy days');
 if (AN.mode !== 'off') fAnim.open();
 const fSound = gui.addFolder('Sound');
 const soundCtl = fSound.add(S, 'sound').name('sound on (M)').onChange((v) => setSound(v));

@@ -65,5 +65,20 @@ export function sampleSeason(s) {
   // sound: birds go quiet under snow, insects only in the warm months
   o.birds = 1 - 0.85 * winter;
   o.insects = bump(s, 0.26, 0.34, 0.66, 0.76);
+  // how likely a rainy spell is: April showers, the tsuyu rainy season through June into
+  // early July (s ≈ 0.3 … 0.42), a dry high summer, then the autumn rains of September
+  o.wet = 0.18 + 0.1 * bump(s, 0.12, 0.16, 0.2, 0.24) + 0.42 * bump(s, 0.29, 0.32, 0.4, 0.44) + 0.2 * bump(s, 0.55, 0.59, 0.66, 0.7);
   return o;
+}
+
+// Rainy spells: a smooth random signal over days (a spell lasts a day or three, with dry
+// runs between) thresholded by the season's wetness. Deterministic in the day number, so
+// scrubbing back and forth replays the same weather. 0 dry … 1 raining hard.
+function hash1(n) { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); }
+function noise1(x) { const i = Math.floor(x), f = x - i, u = f * f * (3 - 2 * f); return hash1(i) * (1 - u) + hash1(i + 1) * u; }
+export function rainOnDay(day, wet) {
+  const n = noise1(day / 1.7) * 0.7 + noise1(day / 0.6 + 40) * 0.3;
+  const k = 0.68 - 0.42 * wet; // noise sits mostly near 0.5: map wetness to a threshold so wet ≈ share of rainy days
+  // snow takes over in the winter, see main.js
+  return ss(n, k, k + 0.12);
 }

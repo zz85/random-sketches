@@ -87,7 +87,7 @@ export function makeTerrain(shared) {
   geo.computeVertexNormals();
 
   const mat = new THREE.ShaderMaterial({
-    uniforms: { ...shared, uGrassDark: { value: new THREE.Color() }, uGrassLight: { value: new THREE.Color() }, uDirt: { value: new THREE.Color() } },
+    uniforms: { ...shared, uGrassDark: { value: new THREE.Color() }, uGrassLight: { value: new THREE.Color() }, uDirt: { value: new THREE.Color() }, uRain: { value: 0 } },
     vertexShader: /* glsl */ `
       attribute float pathDist;
       varying vec3 vWp; varying vec3 vN; varying float vPath;
@@ -97,8 +97,22 @@ export function makeTerrain(shared) {
         gl_Position = projectionMatrix * viewMatrix * wp;
       }`,
     fragmentShader: COMMON + SHADOW + /* glsl */ `
-      uniform vec3 uGrassDark, uGrassLight, uDirt;
+      uniform vec3 uGrassDark, uGrassLight, uDirt; uniform float uRain;
       varying vec3 vWp; varying vec3 vN; varying float vPath;
+      // raindrop rings: one drop per 0.4 m cell per ~0.8 s at a random spot and phase,
+      // a thin ring that spreads to ~15 cm and fades
+      float ripples(vec2 p, float t) {
+        p /= 0.4; vec2 c = floor(p); float s = 0.0;
+        for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
+          vec2 q = c + vec2(x, y);
+          // each drop lands somewhere new: its spot is hashed from the cell and the drop number
+          float h = hash12(q), tt = t * (0.9 + h * 0.6) + h * 7.0, ph = fract(tt), n = floor(tt);
+          vec2 o = q + vec2(hash12(q + n * 1.37), hash12(q.yx + 3.0 + n * 2.11));
+          float r = length(p - o) * 0.4, R = ph * 0.15;
+          s += exp(-pow((r - R) * 90.0, 2.0)) * (1.0 - ph) * (1.0 - ph);
+        }
+        return s;
+      }
       void main() {
         vec3 n = normalize(vN);
         float patches = fbm3o(vWp.xz * 0.05);
@@ -111,6 +125,22 @@ export function makeTerrain(shared) {
         float ndl = dot(n, uSunDir);
         float sh = treeShadow(vWp, 0.002) * cloudShadowAt(vWp);
         vec3 col = celLight(alb, ndl, sh, 0.85, 0.12);
+        // puddles in the hollows of the path: flat, still, reflecting the grey sky, more of
+        // them the harder it rains, rippled by the drops
+        if (uRain > 0.001 && p > 0.01) {
+          float hollow = fbm3o(vWp.xz * 0.45 + 3.1) * 0.75 + vnoise(vWp.xz * 2.2) * 0.25;
+          float rim = smoothstep(0.6 - uRain * 0.06, 0.66 - uRain * 0.06, hollow);
+          float pud = smoothstep(0.68 - uRain * 0.06, 0.7 - uRain * 0.06, hollow) * smoothstep(0.4, 0.9, p) * smoothstep(0.0, 0.4, uRain);
+          if (rim > 0.001) {
+            vec3 v = normalize(vWp - cameraPosition);
+            float fres = 0.12 + 0.55 * pow(1.0 - abs(v.y), 5.0);
+            vec3 refl = mix(uFogColor, uAmbient, 0.35) * 0.95;
+            float ring = ripples(vWp.xz, uTime) * uRain;
+            vec3 pc = mix(col * 0.55, refl, fres) * (1.0 - ring * 0.25) + refl * ring * 0.6;
+            col *= 1.0 - rim * 0.25 * smoothstep(0.4, 0.9, p);   // darker wet mud round the edge
+            col = mix(col, pc, pud);
+          }
+        }
         gl_FragColor = vec4(applyFog(col, vWp), 1.0);
       }`,
   });
