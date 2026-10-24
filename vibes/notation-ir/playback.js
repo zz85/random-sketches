@@ -275,3 +275,31 @@ export function checkProgram(score, program) {
   walk(program.root, 'root');
   return out;
 }
+
+/**
+ * Metronome clicks for a performance: [{ t (seconds), accent }], the beats of the bars each
+ * cursor actually played (a looped bar clicks every time round; compound meters click dotted
+ * values; a pickup counts back from its barline). Clicks of cursors playing together merge.
+ */
+export function clicksFor(score, perf, interpOpts = {}) {
+  const cache = new Map(), out = [];
+  const interpOf = (f) => { if (!cache.has(f)) cache.set(f, interpret(score, { ...(interpOpts[f] || {}), fragment: f })); return cache.get(f); };
+  for (const seg of perf.trace) {
+    const ms = interpOf(seg.fragment).measures, s0 = toFloat(seg.s0), s1 = toFloat(seg.s1), k = (seg.t1 - seg.t0) / Math.max(1e-9, s1 - s0);
+    for (const m of ms) {
+      if (!m.meter) continue;
+      const a = toFloat(m.start), b = toFloat(m.end);
+      if (b <= s0 || a >= s1) continue;
+      const compound = m.meter.beats % 3 === 0 && m.meter.beats > 3;
+      const beat = (compound ? 3 : 1) / m.meter.unit, cap = toFloat(m.cap);
+      const shift = m.status === 'pickup' ? cap - (b - a) : 0;
+      for (let i = 0; i * beat < cap - 1e-9; i++) {
+        const s = a + i * beat - shift;
+        if (s < a - 1e-9 || s < s0 - 1e-9 || s >= Math.min(b, s1) - 1e-9) continue;
+        out.push({ t: seg.t0 + (s - s0) * k, accent: i === 0 });
+      }
+    }
+  }
+  out.sort((x, y) => x.t - y.t || y.accent - x.accent);
+  return out.filter((c, i) => i === 0 || c.t - out[i - 1].t > 0.03);
+}

@@ -3,14 +3,15 @@
  * install, serve stale-while-revalidate so it starts offline and updates quietly.
  * Bump VERSION when the file list changes.
  */
-const VERSION = 'scoreshift-v10';
+const VERSION = 'scoreshift-v11';
 const SHELL = ['./', './index.html', './app.js', './worker.js', './omr.js', './imgproc.js', './theory.js', './render.js', './glyphs.js', './sample.jpg', './manifest.webmanifest', './icon.svg',
   './pdfsource.js', './rhythm.js', './raster.js', './score.js', './export.js', './player.js', './edits.js', './glyphnet.js', './glyphnet-weights.js', './dynamics.js', './vendor/pdfjs/pdf.min.mjs', './vendor/pdfjs/pdf.worker.min.mjs',
   './vendor/pdfjs/wasm/jbig2.wasm', './vendor/pdfjs/wasm/openjpeg.wasm', './vendor/pdfjs/wasm/qcms_bg.wasm',
   // shared with StaffInk: pitch, duration and the audio player
-  '../notation-ir/rational.js', '../notation-ir/pitch.js', '../notation-ir/duration.js', '../notation-ir/player.js', '../notation-ir/markers.js'];
+  '../notation-ir/rational.js', '../notation-ir/pitch.js', '../notation-ir/duration.js', '../notation-ir/player.js', '../notation-ir/markers.js',
+  '../notation-ir/arrangement.js', '../notation-ir/anchors.js', '../notation-ir/ir.js'];
 // The timeline IR (authored playback, Edit in StaffInk), loaded on demand: best-effort.
-const OPTIONAL = ['../notation-ir/ir.js', '../notation-ir/interpret.js', '../notation-ir/anchors.js', '../notation-ir/playback.js',
+const OPTIONAL = ['../notation-ir/interpret.js', '../notation-ir/playback.js',
   '../notation-ir/adapters/scoreshift.js', '../notation-ir/adapters/staffink.js',
   '../staffink/theory.js', '../staffink/export.js', '../staffink/layout.js', '../staffink/smufl.js'];
 

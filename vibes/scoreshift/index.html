@@ -92,6 +92,8 @@
   <label>Tempo <input type="number" id="tempo" min="20" max="320" value="100" style="width:4.2rem" aria-label="Tempo in quarter notes per minute"> ♩/min</label>
   <label>Speed <input type="range" id="speed" min="0.25" max="2" step="0.05" value="1" aria-label="Playback speed"> <span id="speedText">×1.00</span></label>
   <label><input type="checkbox" id="metro"> metronome</label>
+  <button id="markMode" disabled aria-pressed="false" title="Select bars to play or loop them, keep them as clips, add jumps">✂ Markers</button>
+  <span id="arrMode" class="seg" role="group" aria-label="What Play plays" hidden><button data-am="page" title="Play the page as written">page</button><button data-am="score" title="Play the page, taking the jump markers">page + jumps</button><button data-am="clips" title="Play the clips in order (‖ = together with the one before)">clips</button></span>
 </div>
 <nav id="pages" hidden aria-label="PDF pages">
   <button id="prevPage" aria-label="Previous page">◀</button><span id="pageNo" aria-live="polite"></span><button id="nextPage" aria-label="Next page">▶</button>

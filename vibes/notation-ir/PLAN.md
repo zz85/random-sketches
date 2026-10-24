@@ -104,8 +104,13 @@ Every adapter is `from<App>(…) → IR` plus, where useful, `to<App>(IR) → { 
      (`staffink/arrange.js`).
    - Done: shared marker drawing (`markers.js`). ScoreShift draws the page's saved program on
      the photo, with lost markers red and dashed.
-   - Still to do: authoring markers in ScoreShift, drawing playheads as lines (both apps
-     highlight the sounding notes today), and reordering clips.
+   - Done: authoring in ScoreShift (✂ Markers). Tap a bar to select it, Shift+tap or Extend to
+     grow the selection, or drag across notes with a mouse. Then play or loop the passage
+     (speed and metronome apply), keep it as a clip, or add a jump. Lost markers can be
+     re-attached to the nearest note or to a tapped note. The arrangement logic is shared
+     (`arrangement.js`), and programs autosave per page as well as going into the project.
+   - Still to do: drawing playheads as lines (both apps highlight the sounding notes today),
+     reordering clips, and drag-selecting with a finger in ScoreShift (it scrolls the page).
 4. **Return trip StaffInk → ScoreShift.** Rewrite the page from corrected pitches by matching
    IR events back through `src` and changing `note.fix`.
    - *Done when* a pitch edited in StaffInk shows up moved on the photo.

@@ -3,9 +3,10 @@
 // arrows, and markers whose note is gone drawn red and dashed where it used to be.
 //
 // The apps describe their page and this module does the rest:
-//   lines   [{ x0, x1, top, bottom, group? }] in reading order, in the app's own units
+//   lines   [{ x0, x1, top, bottom, group?, topAt? }] in reading order, in the app's own units
 //           (StaffInk: systems in staff spaces; ScoreShift: staves in page pixels). A clip
 //           that runs past the end of a line continues on the next line of the same group.
+//           topAt(x) gives the top line's y at x, for a staff that is not quite level.
 //   place(anchor, edge) -> { line, x } | null    where a notation-ir anchor is on the page
 //   lostAt(anchor)      -> { line, x } | null    (optional) where a lost anchor used to be
 //   view    { X(x), Y(y), sp }  app units -> canvas pixels, sp = one staff space in pixels
@@ -98,16 +99,17 @@ const ROW = 1.35, BASE = 1.6; // staff spaces above the staff: first row, distan
 /** Pixel shapes of every marker for one view: shared by drawing and hit testing. */
 export function geometry(layout, view) {
   const { X, Y, sp } = view, L = layout.lines, out = [];
-  const yRow = (line, row) => Y(L[line].top) - (BASE + row * ROW) * sp;
+  const topAt = (line, x) => (L[line].topAt ? L[line].topAt(x) : L[line].top);
+  const yRow = (line, row, x) => Y(topAt(line, x)) - (BASE + row * ROW) * sp;
   const fontPx = Math.max(10, 0.95 * sp);
   const labelBox = (x, y, text) => ({ x, y: y - fontPx * 1.15, w: text.length * fontPx * 0.58 + fontPx * 0.8, h: fontPx * 1.3, text, fontPx });
   for (const it of layout.items) {
     if (it.kind === 'clip') {
-      const segs = it.pieces.filter((p) => L[p.line]).map((p) => ({ x0: X(p.x0), x1: X(p.x1), y: yRow(p.line, p.row), cutL: p.cutL, cutR: p.cutR, tick: 0.55 * sp }));
+      const segs = it.pieces.filter((p) => L[p.line]).map((p) => ({ x0: X(p.x0), x1: X(p.x1), y: yRow(p.line, p.row, p.x0), y1: yRow(p.line, p.row, p.x1), cutL: p.cutL, cutR: p.cutR, tick: 0.55 * sp }));
       if (!segs.length) continue;
       out.push({ ...it, segs, label: labelBox(segs[0].x0, segs[0].y - 0.15 * sp, it.label) });
     } else {
-      const pt = (p, row) => p && L[p.line] && { x: X(p.x), y: yRow(p.line, row) };
+      const pt = (p, row) => p && L[p.line] && { x: X(p.x), y: yRow(p.line, row, p.x) };
       const a = pt(it.from, it.rowFrom), b = pt(it.to, it.rowTo);
       if (!a && !b) continue;
       const same = a && b && it.from.line === it.to.line;
@@ -128,7 +130,7 @@ export function hitMarker(layout, view, px, py) {
     const l = g.label;
     if (px >= l.x - 2 && px <= l.x + l.w + 2 && py >= l.y - 2 && py <= l.y + l.h + 2) return { ...g, onLabel: true };
     let d = Infinity;
-    if (g.kind === 'clip') for (const s of g.segs) d = Math.min(d, dist2Seg(px, py, s.x0, s.y, s.x1, s.y), dist2Seg(px, py, s.x0, s.y, s.x0, s.y + s.tick), dist2Seg(px, py, s.x1, s.y, s.x1, s.y + s.tick));
+    if (g.kind === 'clip') for (const s of g.segs) d = Math.min(d, dist2Seg(px, py, s.x0, s.y, s.x1, s.y1), dist2Seg(px, py, s.x0, s.y, s.x0, s.y + s.tick), dist2Seg(px, py, s.x1, s.y1, s.x1, s.y1 + s.tick));
     else for (const p of [g.a, g.b]) if (p) d = Math.min(d, Math.hypot(px - p.x, py - p.y));
     if (d < tol && d < bd) { bd = d; best = g; }
   }
@@ -158,10 +160,10 @@ export function drawMarkers(g, layout, view, opts = {}) {
       for (const s of it.segs) {
         g.beginPath();
         if (!s.cutL) { g.moveTo(s.x0, s.y + s.tick); g.lineTo(s.x0, s.y); } else g.moveTo(s.x0, s.y);
-        g.lineTo(s.x1, s.y);
-        if (!s.cutR) g.lineTo(s.x1, s.y + s.tick);
+        g.lineTo(s.x1, s.y1);
+        if (!s.cutR) g.lineTo(s.x1, s.y1 + s.tick);
         g.stroke();
-        if (s.cutR) arrowHead(g, s.x1 + 0.3 * sp, s.y, 0, 0.45 * sp); // continues on the next line
+        if (s.cutR) arrowHead(g, s.x1 + 0.3 * sp, s.y1, 0, 0.45 * sp); // continues on the next line
       }
     } else {
       const { a, b } = it;

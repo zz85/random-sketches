@@ -7,7 +7,9 @@ import { Player } from './player.js';
 import { markOriginal, collectEdits, applyEdits, makeProject, readProject, fileKey } from './edits.js';
 import { interpret, yOfP, lineY, spaceAt } from './omr.js';
 import { Renderer, plan, describe, drawOverlay } from './render.js';
-import { layoutMarkers, markersOf, drawMarkers } from '../notation-ir/markers.js';
+import { layoutMarkers, markersOf, drawMarkers, hitMarker } from '../notation-ir/markers.js';
+import { emptyArrangement, hasMarkers, addClip, addJump, removeMarker, markerById, compileArrangement, arrangementMarkers, rangeOfIR } from '../notation-ir/arrangement.js';
+import { findById, parsePageId } from '../notation-ir/anchors.js';
 
 const $ = (id) => document.getElementById(id);
 const cv = $('cv'), ov = $('ov'), ctx = cv.getContext('2d'), octx = ov.getContext('2d');
@@ -78,7 +80,7 @@ function probe(src) {
 function show(model, img, name) {
   S.model = model; S.rend = new Renderer(img, model); S.name = name; S.octave = S.octave ?? 'auto';
   $('empty').hidden = true; $('stage').hidden = false; $('export').disabled = false;
-  for (const id of ['play', 'xml', 'midi', 'editInk']) $(id).disabled = false;
+  for (const id of ['play', 'xml', 'midi', 'editInk', 'markMode']) $(id).disabled = false;
   $('transport').hidden = false;
   player.stop(); S.selM = null; S.startTick = 0;
   fitZoom(); update();
@@ -116,6 +118,8 @@ async function load(blob, name, fromProject = null) {
   S.edits = new Map(fromProject ? Object.entries(fromProject.pages).map(([k, v]) => [+k, v]) : []);
   S.programs = new Map(fromProject ? Object.entries(fromProject.programs || {}).map(([k, v]) => [+k, v]) : []);
   if (fromProject) for (const [k, v] of S.edits) idb.put(editKey(k), v ? { edits: v, name: S.source.name, saved: Date.now() } : null);
+  if (fromProject) for (const [k, v] of S.programs) idb.put(`${editKey(k)}:prog`, v ? { program: v, saved: Date.now() } : null);
+  MKS.range = null; MKS.sel = null; MKS.pick = null;
   $('saveProject').disabled = false;
   if (await isPdf(blob)) return loadPdf(blob, name);
   closePdf();
@@ -199,6 +203,7 @@ const markEdited = () => {
 // a freshly read page: remember what was read, then put back any corrections saved for it
 async function restoreEdits(model, k = pageNo()) {
   markOriginal(model);
+  if (!S.programs.has(k) && S.source) { const pr = await idb.get(`${editKey(k)}:prog`); if (pr?.program) S.programs.set(k, pr.program); }
   const saved = S.edits.get(k) ?? (S.source ? (await idb.get(editKey(k)))?.edits : null);
   if (!saved) return 0;
   const r = applyEdits(model, saved, { interpret, yOfP });
@@ -431,6 +436,11 @@ function startPlay(fromTick) {
 $('play').onclick = () => {
   if (!S.model) return;
   if (player.playing) { player.stop(); return; }
+  // a selection plays just itself; an arrangement plays its markers; otherwise the page
+  if (rangeNow()) { playRange(); return; }
+  const arr = arrOf();
+  if (hasMarkers(arr) && arr.mode && arr.mode !== 'page' && (arr.mode === 'clips' ? arr.clips.length : arr.jumps.length)) { playProgram(); return; }
+  if (S.programs.get(pageNo()) && !arr) { playProgram(); return; }
   const total = barStarts(S.score).total;
   startPlay(S.startTick >= total - 1 ? 0 : S.startTick);
 };
@@ -459,45 +469,77 @@ async function loadIR() {
 }
 async function toIR() { const { fromScoreShift } = await loadIR(); return fromScoreShift(S.model, S.score, { ...musicOpts(), title: S.name }); }
 /**
- * Play a program over this page and keep it as the page's program (saved with the project).
- * With no argument, plays the page's saved program. Markers whose note was deleted by a
- * correction are reported and nothing plays.
+ * Play a program over this page. keep (default) makes it the page's program, saved with the
+ * project; with no program, plays the page's own (its markers, see below). Markers whose note
+ * was deleted by a correction are reported and nothing plays. The metronome and speed work as
+ * for ordinary playback.
  */
-async function playProgram(program) {
+async function playProgram(program, { keep = true } = {}) {
   if (!S.model) return null;
-  const { perform, checkProgram } = await loadIR();
+  const { perform, checkProgram, clicksFor } = await loadIR();
   const { score, byId } = await toIR();
-  if (program) (S.programs ||= new Map()).set(pageNo(), program);
-  else program = S.programs?.get(pageNo()) || {};
-  refreshMarkers();
+  if (program && keep) { S.programs.set(pageNo(), program); saveProgram(); }
+  if (!program) program = S.programs.get(pageNo()) || {};
+  if (program.arrangement) program = compileArrangement(program.arrangement, { beat: beatUnit(score) });
+  if (keep) refreshMarkers();
   const full = { tempo: S.tempo, root: { walk: {} }, ...program };
   const lost = checkProgram(score, full);
   if (lost.length) {
-    const { clips, jumps } = markersOf(full), names = [...new Set(lost.map((l) => [...clips, ...jumps].find((m) => l.path.startsWith(m.path || m.id) || l.path.startsWith(m.id))?.name || l.path))];
-    setStatus(`<b>${lost.length} playback marker${lost.length > 1 ? 's' : ''} lost ${lost.length > 1 ? 'their' : 'its'} note</b> (deleted by a correction; drawn red on the page): ${names.join(', ')}`);
+    const names = lostNames(full, lost);
+    setStatus(`<b>${lost.length} playback marker${lost.length > 1 ? 's' : ''} lost ${lost.length > 1 ? 'their' : 'its'} note</b> (deleted by a correction; drawn red on the page, tap it to fix): ${names.join(', ')}`);
     return { lost };
   }
   const p = perform(score, full);
+  if (!p.notes.length) { setStatus('<b>Nothing to play there</b>'); return p; }
   $('play').textContent = '■ Stop'; $('play').setAttribute('aria-pressed', 'true');
-  player.speed = S.speed;
+  player.speed = S.speed; player.metronome = S.metro;
   let last = '';
   player.playPerformance(p, (on) => {
     const key = [...on].join();
     if (key !== last) { last = key; redrawPlay([...on].map((id) => byId.get(id)).filter(Boolean)); }
-  });
+  }, undefined, { clicks: clicksFor(score, p) });
   return p;
 }
-// ---------- the page's playback program, drawn on the photo (shared notation-ir markers) ----------
-// Clips are brackets over the staff, jumps arrows; a marker whose note a correction deleted is
-// drawn red and dashed where the note was (its page-keyed id says where).
+function lostNames(full, lost) {
+  const arr = S.programs.get(pageNo())?.arrangement;
+  if (arr) {
+    const ids = (l) => (l.anchor.events || [l.anchor.event]).filter(Boolean);
+    return [...new Set(lost.map((l) => { const m = [...arr.clips, ...arr.jumps].find((x) => ids(l).some((id) => id === x.from || id === x.to)); return m ? m.name || 'a jump' : l.path; }))];
+  }
+  const { clips, jumps } = markersOf(full);
+  return [...new Set(lost.map((l) => [...clips, ...jumps].find((m) => l.path.startsWith(m.path || m.id) || l.path.startsWith(m.id))?.name || l.path))];
+}
+const beatUnit = (score) => score.directions.find((d) => d.kind === 'meter')?.unit || 4;
+
+// ---------- playback markers on the photo (shared notation-ir markers + arrangement) ----------
+// The page's program is either an arrangement the user built here (clips, jumps; stored as
+// { arrangement }) or a program set from code. Clips are brackets over the staff, jumps
+// arrows; a marker whose note a correction deleted is drawn red and dashed where the note was
+// (its page-keyed id says where), and tapping it offers to re-attach it.
+//
+// ✂ Markers mode: tap a bar to select it, Shift+tap or "Extend" to grow the selection, drag
+// across notes with a mouse; then play or loop just that passage (speed and metronome apply),
+// keep it as a clip, or add a jump from its end to a note you tap.
+const MKS = { on: false, range: null, loop: false, sel: null, pick: null, extend: false, irc: null, drag: null, swallow: false };
 let MK = null, mkSeq = 0;
+const arrOf = () => S.programs.get(pageNo())?.arrangement || null;
+function ensureArr() {
+  let p = S.programs.get(pageNo());
+  if (!p?.arrangement) { p = { arrangement: { ...emptyArrangement(), mode: 'page' } }; S.programs.set(pageNo(), p); }
+  return p.arrangement;
+}
+function saveProgram() { if (S.source) idb.put(`${editKey()}:prog`, S.programs.get(pageNo()) ? { program: S.programs.get(pageNo()), saved: Date.now() } : null); }
+function changed() { saveProgram(); arrUi(); refreshMarkers(); }
+
 async function refreshMarkers() {
-  const prog = S.programs?.get(pageNo()), seq = ++mkSeq;
-  if (!prog || !S.model) { if (MK) { MK = null; redrawPlay(S.sounding); } return; }
-  const [{ resolveAnchor, positionAt, findById, parsePageId }, { score }] = await Promise.all([import('../notation-ir/anchors.js'), toIR()]);
+  const prog = S.programs.get(pageNo()), seq = ++mkSeq;
+  if ((!prog && !MKS.on) || !S.model) { MKS.irc = null; if (MK) { MK = null; redrawPlay(S.sounding); } arrUi(); return; }
+  const [{ resolveAnchor, positionAt }, irc] = await Promise.all([import('../notation-ir/anchors.js'), toIR()]);
   if (seq !== mkSeq) return; // a newer refresh is on its way
+  MKS.irc = irc;
+  const score = irc.score;
   const partOf = new Map(); S.score.parts.forEach((p, k) => p.staves.forEach((st) => partOf.set(st.index, k)));
-  const lines = []; for (const st of S.model.staves) { const xm = (st.x0 + st.x1) / 2; lines[st.index] = { x0: st.x0, x1: st.x1, top: lineY(st, 0, xm), bottom: lineY(st, 4, xm), group: partOf.get(st.index) ?? 0 }; }
+  const lines = []; for (const st of S.model.staves) { const xm = (st.x0 + st.x1) / 2; lines[st.index] = { x0: st.x0, x1: st.x1, top: lineY(st, 0, xm), bottom: lineY(st, 4, xm), group: partOf.get(st.index) ?? 0, topAt: (x) => lineY(st, 0, x) }; }
   const sp = S.model.space || 16;
   const place = (a, edge) => {
     if (a.event) { const e = findById(score, 'event', a.event); return e && { line: e.src.line, x: e.src.x + (edge === 'end' || a.edge === 'end' ? 0.9 : -0.7) * sp }; }
@@ -505,14 +547,189 @@ async function refreshMarkers() {
     try { const r = resolveAnchor(score, a); return positionAt(score, r.fragment, r.t); } catch (e) { return null; }
   };
   const lostAt = (a) => { const k = parsePageId(a.event || a.barline); return k && lines[k.line] ? { line: k.line, x: k.q * score.pageIds.unit } : null; };
-  MK = layoutMarkers(markersOf(prog), { lines, place, lostAt });
+  MK = prog ? layoutMarkers(prog.arrangement ? arrangementMarkers(prog.arrangement) : markersOf(prog), { lines, place, lostAt }) : null;
+  if (MK && !MK.items.length) MK = null;
+  if (MKS.range && !rangeNow()) MKS.range = null;
   redrawPlay(S.sounding);
-  if (MK.lost.length && !/marker/.test($('status').textContent)) setStatus($('status').innerHTML + ` · <b class="bad">${MK.lost.length} playback marker${MK.lost.length > 1 ? 's' : ''} lost ${MK.lost.length > 1 ? 'their' : 'its'} note</b> (red)`);
+  arrUi();
+  if (MK?.lost.length && !/marker/.test($('status').textContent)) setStatus($('status').innerHTML + ` · <b class="bad">${MK.lost.length} playback marker${MK.lost.length > 1 ? 's' : ''} lost ${MK.lost.length > 1 ? 'their' : 'its'} note</b> (red: tap it to fix)`);
 }
+// markers are sized by the staff space, but never smaller on screen than ~15 CSS px a space
+const mkView = () => { const r = S.rend.r; return { X: (x) => x * r, Y: (y) => y * r, sp: Math.max((S.model.space || 16) * r, (15 * devicePixelRatio) / S.zoom) }; };
 function drawProgramMarkers() {
-  if (!MK || !S.rend) return;
-  const r = S.rend.r;
-  drawMarkers(octx, MK, { X: (x) => x * r, Y: (y) => y * r, sp: (S.model.space || 16) * r });
+  if (!S.rend || !S.model) return;
+  const r = S.rend.r, sp = S.model.space || 16, R = rangeNow();
+  if (R) { // the selection: a band over each staff it covers, following the staff's tilt
+    const by = new Map();
+    for (const e of R.events) { const b = by.get(e.src.line) || [Infinity, -Infinity]; b[0] = Math.min(b[0], e.src.x - 0.9 * sp); b[1] = Math.max(b[1], e.src.x + 1.1 * sp); by.set(e.src.line, b); }
+    octx.save(); octx.scale(r, r);
+    for (const [line, [x0, x1]] of by) {
+      const st = S.model.staves[line]; if (!st) continue;
+      const y = (x, k) => lineY(st, k, x) + (k ? 1.6 : -1.6) * sp;
+      octx.fillStyle = 'rgba(37,99,235,0.16)'; octx.beginPath(); octx.moveTo(x0, y(x0, 0)); octx.lineTo(x1, y(x1, 0)); octx.lineTo(x1, y(x1, 4)); octx.lineTo(x0, y(x0, 4)); octx.closePath(); octx.fill();
+      octx.strokeStyle = 'rgba(37,99,235,0.9)'; octx.lineWidth = 2 / r * devicePixelRatio;
+      octx.beginPath(); octx.moveTo(x0, y(x0, 0)); octx.lineTo(x0, y(x0, 4)); octx.moveTo(x1, y(x1, 0)); octx.lineTo(x1, y(x1, 4)); octx.stroke();
+    }
+    octx.restore();
+  }
+  if (MK) drawMarkers(octx, MK, mkView(), { selected: MKS.sel });
+}
+
+// --- picking things on the photo
+function imgAt(e) { const rect = cv.getBoundingClientRect(), k = (S.rend.r / devicePixelRatio) * S.zoom; return { x: (e.clientX - rect.left) / k, y: (e.clientY - rect.top) / k }; }
+function staffAt({ x, y }, reach = 3) {
+  let best = null, bd = Infinity;
+  for (const st of S.model.staves) { const sp = spaceAt(st, x), t = lineY(st, 0, x) - reach * sp, b = lineY(st, 4, x) + reach * sp, d = y < t ? t - y : y > b ? y - b : 0; if (d < bd) { bd = d; best = st; } }
+  return bd === 0 ? best : null;
+}
+/** The IR event nearest a photo point: on the staff under it, by x. */
+function eventAt(pt, reach = 3) {
+  const st = MKS.irc && staffAt(pt, reach); if (!st) return null;
+  let best = null, bd = Infinity;
+  for (const e of MKS.irc.score.events) if (e.src.line === st.index) { const d = Math.abs(e.src.x - pt.x); if (d < bd) { bd = d; best = e; } }
+  return best;
+}
+/** { first, last } IR events of the printed bar under a photo point. */
+function barAt(pt) {
+  const st = MKS.irc && staffAt(pt); if (!st) return null;
+  const m = S.score.measures.find((q) => q.st === st && pt.x >= q.x0 && pt.x < q.x1); if (!m) return null;
+  const evs = MKS.irc.score.events.filter((e) => e.src.line === st.index && e.src.x >= m.x0 && e.src.x < m.x1);
+  if (!evs.length) return null;
+  const end = (e) => e.onset.n / e.onset.d + e.dur.n / e.dur.d, on = (e) => e.onset.n / e.onset.d;
+  return { first: evs.reduce((a, e) => (on(e) < on(a) ? e : a)).id, last: evs.reduce((a, e) => (end(e) > end(a) ? e : a)).id, m };
+}
+const rangeNow = () => (MKS.range && MKS.irc ? rangeOfIR(MKS.irc.score, MKS.range.a, MKS.range.b) : null);
+function setRange(a, b) { MKS.range = { a, b }; MKS.sel = null; redrawPlay(S.sounding); }
+/** Grow the selection to include ids too (like Shift+click in a text editor). */
+function extendRange(ids) {
+  const sc = MKS.irc.score, R = rangeNow(), all = [...ids, ...(R ? [R.first, R.last] : [])].map((id) => findById(sc, 'event', id)).filter(Boolean);
+  const on = (e) => e.onset.n / e.onset.d, end = (e) => on(e) + e.dur.n / e.dur.d;
+  setRange(all.reduce((a, e) => (on(e) < on(a) ? e : a)).id, all.reduce((a, e) => (end(e) > end(a) ? e : a)).id);
+}
+function clearRange() { if (!MKS.range) return; MKS.range = null; MKS.extend = false; redrawPlay(S.sounding); }
+
+// --- popups
+function rangePop(e) {
+  const R = rangeNow(); if (!R) { hidePop(); return; }
+  const bar = (id) => MKS.irc.byId.get(id)?.m.number, b0 = bar(R.first), b1 = bar(R.last);
+  showPop(`<h3>${b0 === b1 ? `Bar ${b0}` : `Bars ${b0}–${b1}`} · ${R.n} note${R.n === 1 ? '' : 's'}</h3>
+    <div class="row"><button id="rPlay">▶ Play</button><button id="rLoop" aria-pressed="${MKS.loop}">⟳ Loop</button><button id="rExt" aria-pressed="${MKS.extend}" title="Tap another bar to extend the selection to it">⇢ Extend</button></div>
+    <div class="row"><button id="rClip" title="Keep this passage as a clip marker">＋ Clip</button><button id="rJump" title="After this passage, continue at a note you tap">⤳ Jump</button><button id="rX">✕</button></div>
+    <p class="hint">Speed and metronome apply. Shift+tap a bar (or Extend) grows the selection; with a mouse, drag across notes.</p>`, e);
+  $('rPlay').onclick = () => { playRange(); };
+  $('rLoop').onclick = () => { MKS.loop = !MKS.loop; $('rLoop').setAttribute('aria-pressed', MKS.loop); };
+  $('rExt').onclick = () => { MKS.extend = !MKS.extend; $('rExt').setAttribute('aria-pressed', MKS.extend); };
+  $('rClip').onclick = () => { const c = addClip(ensureArr(), rangeNow()); MKS.sel = c.id; clearRange(); hidePop(); changed(); setStatus(`<b>Clip ${c.name}</b> kept · tap its label to loop or layer it`); };
+  $('rJump').onclick = () => { MKS.pick = { kind: 'jump', from: rangeNow().last }; clearRange(); hidePop(); setStatus('<b>Tap the note to jump to</b> (Esc cancels)'); };
+  $('rX').onclick = () => { clearRange(); hidePop(); };
+}
+function playRange() {
+  const R = rangeNow(); if (!R) return;
+  if (player.playing) player.stop();
+  playProgram(compileArrangement(null, { range: R, loop: MKS.loop ? 64 : 1 }), { keep: false });
+}
+function markerPop(id, e) {
+  MKS.sel = id; redrawPlay(S.sounding);
+  const arr = arrOf(), m = markerById(arr, id), item = MK?.items.find((x) => x.id === id);
+  if (!m) { // a marker from a program set in code: show what it is, offer to remove the program
+    showPop(`<h3>${item?.label || 'Marker'}</h3><p class="hint">Set from a program; remove the page's program to clear it.</p><div class="row"><button id="mClear">Remove the program</button><button id="mX">Close</button></div>`, e);
+    $('mClear').onclick = () => { S.programs.delete(pageNo()); MKS.sel = null; hidePop(); changed(); };
+    $('mX').onclick = () => { MKS.sel = null; hidePop(); redrawPlay(S.sounding); };
+    return;
+  }
+  const isClip = 'loop' in m, lost = item?.lost, name = isClip ? `Clip ${m.name}` : 'Jump';
+  const lostRows = lost ? `<p class="hint" style="color:#c92a2a"><b>${name} lost ${isClip ? 'a note' : 'its note'}</b>: a correction deleted it.</p>
+    <div class="row"><button id="mNear">Attach to the nearest note</button><button id="mPick">Pick a note…</button></div>` : '';
+  const body = isClip
+    ? `<div class="row"><button id="mPlay">▶</button><span>repeat</span><button id="mL-">−</button><b>×${m.loop}</b><button id="mL+">+</button></div>
+       <div class="row"><span>octave</span><button id="mT-">8vb</button><b>${m.transpose ? (m.transpose > 0 ? '+' : '') + m.transpose : '±0'}</b><button id="mT+">8va</button>
+       <span>delay</span><button id="mD-">−</button><b>${m.delay || 0}</b><button id="mD+">+</button></div>
+       ${arr.clips[0] === m ? '' : `<div class="row"><button id="mW" aria-pressed="${!!m.withPrev}" title="Play together with the clip before it">⧉ with previous</button></div>`}`
+    : `<div class="row"><span>taken</span><button id="mJ-">−</button><b>×${m.times}</b><button id="mJ+">+</button></div>`;
+  showPop(`<h3>${name}</h3>${lostRows}${body}<div class="row"><button id="mDel">✕ Remove</button><button id="mX">Close</button></div>`, e);
+  const edit = (fn) => () => { fn(markerById(arrOf(), id)); changed(); markerPop(id, e); };
+  const on = (bid, fn) => { const b = $(bid); if (b) b.onclick = fn; };
+  on('mL-', edit((x) => { x.loop = Math.max(1, x.loop - 1); }));
+  on('mL+', edit((x) => { x.loop = Math.min(64, x.loop + 1); }));
+  on('mT-', edit((x) => { x.transpose = (x.transpose || 0) - 12; }));
+  on('mT+', edit((x) => { x.transpose = (x.transpose || 0) + 12; }));
+  on('mD-', edit((x) => { x.delay = Math.max(0, (x.delay || 0) - 1); }));
+  on('mD+', edit((x) => { x.delay = (x.delay || 0) + 1; }));
+  on('mJ-', edit((x) => { x.times = Math.max(1, x.times - 1); }));
+  on('mJ+', edit((x) => { x.times = Math.min(16, x.times + 1); }));
+  on('mW', edit((x) => { x.withPrev = !x.withPrev; if (x.withPrev) arrOf().mode = 'clips'; }));
+  on('mPlay', () => { if (player.playing) player.stop(); playProgram(compileArrangement({ ...emptyArrangement(), mode: 'clips', clips: [{ ...m, withPrev: false }] }, { beat: beatUnit(MKS.irc.score) }), { keep: false }); });
+  on('mNear', edit((x) => { reattach(x, null); }));
+  on('mPick', () => { MKS.pick = { kind: 'repair', id }; hidePop(); setStatus(`<b>Tap the note ${name} should use</b> (Esc cancels)`); });
+  on('mDel', () => { removeMarker(arrOf(), id); MKS.sel = null; hidePop(); changed(); });
+  on('mX', () => { MKS.sel = null; hidePop(); redrawPlay(S.sounding); });
+}
+/** Re-attach a marker's lost ends: to `to` (an IR event id), or each to the nearest note on its staff. */
+function reattach(m, to) {
+  const sc = MKS.irc.score;
+  for (const k of ['from', 'to']) {
+    if (findById(sc, 'event', m[k])) continue;
+    if (to) { m[k] = to; continue; }
+    const pk = parsePageId(m[k]); if (!pk) continue;
+    let best = null, bd = Infinity;
+    for (const e of sc.events) if (e.src.line === pk.line) { const d = Math.abs(e.src.x - pk.q * sc.pageIds.unit); if (d < bd) { bd = d; best = e; } }
+    if (best) m[k] = best.id;
+  }
+}
+
+// --- arrangement switch in the transport: what Play plays when the page has markers
+function arrUi() {
+  const arr = arrOf(), box = $('arrMode');
+  $('markMode').setAttribute('aria-pressed', MKS.on);
+  if (!hasMarkers(arr)) { box.hidden = true; return; }
+  box.hidden = false;
+  box.querySelectorAll('[data-am]').forEach((b) => b.setAttribute('aria-pressed', b.dataset.am === (arr.mode || 'page')));
+  box.querySelector('[data-am=clips]').textContent = `clips ${arr.clips.map((c) => (c.withPrev ? '‖' : '') + c.name).join(' ') || '–'}`;
+  box.querySelector('[data-am=score]').textContent = `page + jumps${arr.jumps.length ? ` (${arr.jumps.length})` : ''}`;
+}
+$('arrMode').addEventListener('click', (e) => { const b = e.target.closest('[data-am]'); if (!b || !arrOf()) return; arrOf().mode = b.dataset.am; changed(); });
+$('markMode').onclick = () => {
+  MKS.on = !MKS.on; MKS.pick = null; MKS.extend = false; if (!MKS.on) clearRange();
+  hidePop(); refreshMarkers();
+  setStatus(MKS.on ? '<b>Markers</b>: tap a bar to select it (Shift+tap or Extend grows it; drag across notes with a mouse), then play or loop it, keep it as a clip or add a jump. Tap a marker to change it.' : 'Markers off: tap notes to correct them');
+};
+
+// --- pointer: mouse drag selects across notes in Markers mode
+$('stage').addEventListener('pointerdown', (e) => {
+  if (!MKS.on || !S.model || e.pointerType === 'touch' || e.button !== 0 || MKS.pick) return;
+  const pt = imgAt(e), r = S.rend.r;
+  if (MK && hitMarker(MK, mkView(), pt.x * r, pt.y * r)) return;
+  const ev = eventAt(pt); if (ev) MKS.drag = { a: ev.id, x: e.clientX, y: e.clientY, moved: false };
+});
+window.addEventListener('pointermove', (e) => {
+  const d = MKS.drag; if (!d) return;
+  if (!d.moved && Math.hypot(e.clientX - d.x, e.clientY - d.y) < 8) return;
+  d.moved = true;
+  const ev = eventAt(imgAt(e), 6); if (ev && (!MKS.range || MKS.range.b !== ev.id || MKS.range.a !== d.a)) { setRange(d.a, ev.id); hidePop(); }
+});
+window.addEventListener('pointerup', (e) => {
+  const d = MKS.drag; MKS.drag = null;
+  if (d?.moved) { MKS.swallow = true; rangePop(e); }
+});
+/** Taps in Markers mode, and on markers / pending picks in any mode. true = handled. */
+function markerTap(e) {
+  if (MKS.swallow) { MKS.swallow = false; return true; }
+  const pt = imgAt(e), r = S.rend.r;
+  if (MKS.pick) {
+    const ev = eventAt(pt, 5), pick = MKS.pick; MKS.pick = null;
+    if (!ev) { setStatus('Cancelled: no note there'); return true; }
+    if (pick.kind === 'jump') { const j = addJump(ensureArr(), pick.from, ev.id); if ((arrOf().mode || 'page') === 'page') arrOf().mode = 'score'; MKS.sel = j.id; changed(); setStatus('<b>Jump added</b> · Play now takes it (page + jumps)'); }
+    else { const m = markerById(arrOf(), pick.id); if (m) { reattach(m, ev.id); changed(); setStatus('<b>Marker re-attached</b>'); } }
+    return true;
+  }
+  const mk = MK && hitMarker(MK, mkView(), pt.x * r, pt.y * r);
+  if (mk) { markerPop(mk.id, e); return true; }
+  if (!MKS.on) return false;
+  const bar = barAt(pt);
+  if (!bar) { clearRange(); hidePop(); return true; }
+  if ((e.shiftKey || MKS.extend) && MKS.range) extendRange([bar.first, bar.last]); else setRange(bar.first, bar.last);
+  MKS.extend = false; rangePop(e);
+  return true;
 }
 
 /** The music as shown (as written or transposed) into StaffInk, in a new tab. */
@@ -713,6 +930,7 @@ function notePop(n, e) {
 }
 $('stage').addEventListener('click', (e) => {
   if (!S.model) return;
+  if (markerTap(e)) return;
   const rect = cv.getBoundingClientRect(), k = (S.rend.r / devicePixelRatio) * S.zoom;
   const x = (e.clientX - rect.left) / k, y = (e.clientY - rect.top) / k;
   let best = null, bd = 14;
@@ -731,7 +949,10 @@ $('stage').addEventListener('click', (e) => {
   }
   else hidePop();
 });
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { hidePop(); update(); } });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { MKS.pick = null; MKS.sel = null; clearRange(); hidePop(); update(); }
+  if (e.key === ' ' && e.target === document.body && S.model) { e.preventDefault(); $('play').click(); }
+});
 window.addEventListener('resize', () => S.rend && layoutStage());
 
 $('export').onclick = () => {
@@ -742,4 +963,4 @@ $('export').onclick = () => {
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
 // test hook
-window.__ss = { S, load, saveProject, idb, update, plan, openPage, exportPdf, player, setFix, eventOf, toMusicXML, toMidi, musicOpts, playProgram, editInStaffInk, toIR, markers: () => MK, refreshMarkers }; window.__yOfP = yOfP;
+window.__ss = { S, load, saveProject, idb, update, plan, openPage, exportPdf, player, setFix, eventOf, toMusicXML, toMidi, musicOpts, playProgram, editInStaffInk, toIR, markers: () => MK, refreshMarkers, MKS, rangeNow, markerTap, arrOf }; window.__yOfP = yOfP;

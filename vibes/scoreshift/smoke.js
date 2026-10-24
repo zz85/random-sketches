@@ -235,6 +235,25 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
       return {before:m1&&m1.items.map(i=>i.label),after:m2&&m2.items.map(i=>i.label),lost:m2&&m2.lost.length,refused:!!(p&&p.lost),status:document.getElementById('status').textContent.slice(0,120)}})()`);
     check('saved markers drawn on the page; a deleted note turns its marker red', mk.before?.join() === 'A' && mk.after?.join() === 'A ?' && mk.lost === 1 && mk.refused && /marker lost its note.*A/.test(mk.status), JSON.stringify(mk));
     await shot('markers');
+    // authoring on the photo with real clicks: Markers mode, tap bar 3, Shift+tap bar 4, loop it, keep it as a clip, a jump
+    await b.evaluate(`(()=>{__ss.S.programs.clear();__ss.MKS.on=false;__ss.update();return 1})()`); await sleep(300);
+    const tap = async (x, y, modifiers = 0) => { for (const type of ['mousePressed', 'mouseReleased']) await b.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1, modifiers }); await sleep(150); };
+    const at = (sel) => b.evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(sel)});e.scrollIntoView({block:'center'});const q=e.getBoundingClientRect();return {x:q.left+q.width/2,y:q.top+q.height/2}})()`);
+    const press = async (sel) => { const q = await at(sel); await tap(q.x, q.y); };
+    const barXY = (n) => b.evaluate(`(()=>{const m=__ss.S.score.measures[${n - 1}],S=__ss.S,k=(S.rend.r/devicePixelRatio)*S.zoom;document.getElementById('stage').scrollIntoView({block:'start'});
+      const r=document.getElementById('cv').getBoundingClientRect(),x=(m.x0+m.x1)/2;return {x:r.left+x*k,y:r.top+__yOfP(m.st,4,x)*k}})()`);
+    await press('#markMode'); await sleep(300);
+    let q = await barXY(3); await tap(q.x, q.y); q = await barXY(4); await tap(q.x, q.y, 8);
+    const sel = await b.evaluate(`({h:document.querySelector('#pop h3')?.textContent,n:__ss.rangeNow()?.n})`);
+    await press('#rLoop'); await press('#rPlay'); await sleep(400);
+    const looping = await b.evaluate(`({playing:__ss.player.playing,bars:[...new Set((__ss.S.sounding||[]).map(o=>o.m.number))]})`);
+    await press('#play'); await sleep(100);
+    q = await barXY(3); await tap(q.x, q.y); await press('#rClip'); await sleep(300);
+    q = await barXY(6); await tap(q.x, q.y); await press('#rJump'); q = await barXY(2); await tap(q.x - 20, q.y); await sleep(300);
+    const au = await b.evaluate(`(async()=>{const a=__ss.arrOf();const p=await __ss.playProgram();__ss.player.stop();const ir=await __ss.toIR();
+      return {clips:a.clips.map(c=>c.name),jumps:a.jumps.length,mode:a.mode,labels:__ss.markers().items.map(i=>i.label),bars:p.notes.map(n=>ir.byId.get(n.event).m.number).filter((v,i,x)=>i===0||v!==x[i-1]).slice(0,9).join()}})()`);
+    check('authoring on the photo: select bars, loop them, keep a clip, add a jump that Play takes', sel.h === 'Bars 3–4 · 8 notes' && looping.playing && looping.bars.every((n) => n === 3 || n === 4) && au.clips.join() === 'A' && au.jumps === 1 && au.mode === 'score' && au.bars === '1,2,3,4,5,6,2,3,4', JSON.stringify({ sel, looping, au }));
+    await press('#markMode'); await b.evaluate(`(()=>{__ss.S.programs.clear();__ss.update();return 1})()`);
 
     // the CODA audition sheet, if present locally (not committed): every bar adds up
     if (fs.existsSync(path.join(DIR, 'fixtures/local/coda.pdf'))) {

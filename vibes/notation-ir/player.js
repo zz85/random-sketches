@@ -100,11 +100,13 @@ export class Player {
   /**
    * Play a performance from playback.js perform(): notes in seconds, any number of cursors.
    * onTick(set of sounding ids, seconds, notes sounding now) every frame; idOf maps an IR
-   * event id to the app's own id (null = not shown).
+   * event id to the app's own id (null = not shown). clicks (playback.js clicksFor) sound
+   * when this.metronome is on.
    */
-  playPerformance(p, onTick, idOf = (id) => id) {
+  playPerformance(p, onTick, idOf = (id) => id, { clicks = [] } = {}) {
     this.schedule({
       notes: p.notes.map((n) => ({ at: n.t, dur: n.dur, midi: n.midi, vel: n.vel })), rate: 1, end: p.duration + 0.25,
+      clicks: clicks.map((c) => ({ at: c.t, accent: c.accent })),
       onFrame: (now) => {
         const on = p.notes.filter((n) => n.t <= now && now < n.t + Math.max(n.dur, 0.08));
         onTick && onTick(new Set(on.map((n) => idOf(n.event)).filter((id) => id != null)), now, on);

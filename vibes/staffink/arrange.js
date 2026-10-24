@@ -10,7 +10,13 @@
 // }
 // Markers point at StaffInk event ids, which never change, so they follow every edit; a marker
 // whose note is erased is removed (and comes back with undo).
+// The arrangement itself (clips, jumps, compiling to a program) is shared with ScoreShift:
+// ../notation-ir/arrangement.js. This file adds StaffInk's side: its timeline and selection.
 import { resolveAttrs, measureCapacity, evTicks, findEvent } from './theory.js';
+import {
+  emptyArrangement, hasMarkers, addClip as sharedAddClip, addJump as sharedAddJump, removeMarker as sharedRemove,
+  markerById as sharedById, compileArrangement, arrangementMarkers,
+} from '../notation-ir/arrangement.js';
 
 export const siId = (id) => `si${id}`;
 
@@ -53,31 +59,14 @@ export function stepFocus(score, focus, dir, tl = timeline(score)) {
   return tl.find((q) => q.onset === onsets[k] && q.si === cur.si)?.id ?? tl.find((q) => q.onset === onsets[k]).id;
 }
 
-export const emptyProgram = () => ({ mode: 'score', clips: [], jumps: [], next: 1 });
-export const hasMarkers = (p) => !!p && (p.clips.length > 0 || p.jumps.length > 0);
-const ensure = (score) => (score.program ||= emptyProgram());
-const LETTER = (i) => String.fromCharCode(65 + (i % 26)) + (i >= 26 ? Math.floor(i / 26) : '');
+export const emptyProgram = emptyArrangement;
+export { hasMarkers };
+const ensure = (score) => (score.program ||= emptyArrangement());
 
-export function addClip(score, range) {
-  const p = ensure(score), used = new Set(p.clips.map((c) => c.name));
-  let k = 0; while (used.has(LETTER(k))) k++;
-  const c = { id: `c${p.next++}`, name: LETTER(k), from: range.first, to: range.last, loop: 1, withPrev: false, delay: 0, transpose: 0 };
-  p.clips.push(c);
-  return c;
-}
-export function addJump(score, from, to) {
-  const p = ensure(score);
-  const j = { id: `j${p.next++}`, from, to, times: 1 };
-  p.jumps.push(j);
-  return j;
-}
-export function removeMarker(score, id) {
-  const p = score.program; if (!p) return false;
-  const n = p.clips.length + p.jumps.length;
-  p.clips = p.clips.filter((c) => c.id !== id); p.jumps = p.jumps.filter((j) => j.id !== id);
-  return p.clips.length + p.jumps.length < n;
-}
-export const markerById = (score, id) => score.program && (score.program.clips.find((c) => c.id === id) || score.program.jumps.find((j) => j.id === id));
+export const addClip = (score, range) => sharedAddClip(ensure(score), range);
+export const addJump = (score, from, to) => sharedAddJump(ensure(score), from, to);
+export const removeMarker = (score, id) => sharedRemove(score.program, id);
+export const markerById = (score, id) => sharedById(score.program, id);
 
 /** Drop markers whose notes are gone; returns their names. */
 export function pruneProgram(score) {
@@ -88,38 +77,11 @@ export function pruneProgram(score) {
   return gone;
 }
 
-const clipNode = (c, beat) => {
-  const play = { play: { from: { event: siId(c.from) }, to: { event: siId(c.to), edge: 'end' } }, marker: c.id, name: c.name };
-  const n = (c.loop || 1) > 1 ? { loop: c.loop, body: play } : play;
-  if (c.transpose) n.transpose = c.transpose;
-  if (c.delay) n.delay = `${c.delay}/${beat}`;
-  return n;
-};
-
 /**
  * The notation-ir playback program for the arrangement. With `range`, just that selection
- * (looping when loop > 1). beat = the time signature's unit, for clip delays in beats.
+ * (looping when loop > 1). Clip delays are in beats of the time signature's unit.
  */
-export function compile(score, { range = null, loop = 1 } = {}) {
-  const p = score.program || emptyProgram(), beat = score.time?.[1] || 4;
-  const jumps = p.jumps.map((j) => ({ at: { event: siId(j.from), edge: 'end' }, to: { event: siId(j.to) }, times: j.times || 1, marker: j.id }));
-  if (range) {
-    const play = { play: { from: { event: siId(range.first) }, to: { event: siId(range.last), edge: 'end' } } };
-    return { root: loop > 1 ? { loop, body: play } : play };
-  }
-  if (p.mode === 'clips' && p.clips.length) {
-    const steps = [];
-    for (const c of p.clips) { if (c.withPrev && steps.length) steps[steps.length - 1].push(c); else steps.push([c]); }
-    return { root: { seq: steps.map((s) => (s.length > 1 ? { par: s.map((c) => clipNode(c, beat)) } : clipNode(s[0], beat))) } };
-  }
-  return { root: { walk: {} }, jumps };
-}
+export const compile = (score, { range = null, loop = 1 } = {}) => compileArrangement(score.program, { range, loop, beat: score.time?.[1] || 4, idOf: siId });
 
 /** Markers for drawing (notation-ir markers.js format): every clip and jump, in either mode. */
-export function markers(score) {
-  const p = score.program || emptyProgram();
-  return {
-    clips: p.clips.map((c) => ({ id: c.id, name: c.name, loop: c.loop, transpose: c.transpose, from: { event: siId(c.from) }, to: { event: siId(c.to), edge: 'end' }, withPrev: c.withPrev })),
-    jumps: p.jumps.map((j, k) => ({ id: j.id, name: `J${k + 1}`, at: { event: siId(j.from), edge: 'end' }, to: { event: siId(j.to) }, times: j.times })),
-  };
-}
+export const markers = (score) => arrangementMarkers(score.program, { idOf: siId });
