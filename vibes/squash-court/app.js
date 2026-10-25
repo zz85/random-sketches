@@ -29,7 +29,7 @@ const S = {
   srcW: 0, srcH: 0,
   cam: null, // fitted camera in source pixels
   quality: null, ms: null, busy: false, fails: 0, frames: 0, trackMs: [],
-  tin: 0.48, picks: [], showLines: true, showFrustum: true, orbit: { yaw: -0.5, pitch: 0.45, dist: 19 },
+  tin: 0.48, picks: [], showLines: true, showFrustum: true, showPredict: true, orbit: { yaw: -0.5, pitch: 0.45, dist: 19 },
   live: false, procFrame: null, sound: true,
   // players and ball (rally.js in the worker): players [{ id, X, seen, occluded, box }], the live
   // ball pixel, and fitted flights { t0, t1, pts: [{ t, X }], uv, impacts, labels, speed }
@@ -408,13 +408,15 @@ function drawRallyStage(map, dpr) {
     sctx.stroke();
     for (const m of f.impacts) { const u = c.project(m.X); if (!(u[2] > 0)) continue; const [x, y] = map(u); sctx.fillStyle = '#ff8a00'; sctx.beginPath(); sctx.arc(x, y, 4 * dpr, 0, 7); sctx.fill(); }
   }
-  // where the latest flight goes next, dashed (as in the 3D view)
-  const P = predicted(recentFlights());
+  // where the latest flight goes next, dashed (as in the 3D view); the part the ball has already
+  // passed is faint, and the whole prediction fades once the ball is past its end
+  const P = S.showPredict && predicted(recentFlights());
   if (P) {
-    sctx.strokeStyle = '#ff8a00'; sctx.lineWidth = 2 * dpr; sctx.setLineDash([6 * dpr, 5 * dpr]); sctx.beginPath(); let first = true;
-    for (const q of P.pts) { const u = c.project(q.X); if (!(u[2] > 0)) { first = true; continue; } const [x, y] = map(u); first ? sctx.moveTo(x, y) : sctx.lineTo(x, y); first = false; }
-    sctx.stroke(); sctx.setLineDash([]);
-    for (const m of P.hits) { const u = c.project(m.X); if (!(u[2] > 0)) continue; const [x, y] = map(u); sctx.strokeStyle = m.out ? '#ff3b30' : '#ff8a00'; sctx.lineWidth = 2 * dpr; sctx.beginPath(); sctx.arc(x, y, (m.out ? 6 : 4.5) * dpr, 0, 7); sctx.stroke(); }
+    const pp = predParts(P), line = (pts) => { sctx.beginPath(); let first = true; for (const q of pts) { const u = c.project(q.X); if (!(u[2] > 0)) { first = true; continue; } const [x, y] = map(u); first ? sctx.moveTo(x, y) : sctx.lineTo(x, y); first = false; } sctx.stroke(); };
+    sctx.save(); sctx.strokeStyle = '#ff8a00'; sctx.lineWidth = 2 * dpr; sctx.setLineDash([6 * dpr, 5 * dpr]);
+    sctx.globalAlpha = pp.alpha * PASSED; line(pp.past); sctx.globalAlpha = pp.alpha; line(pp.ahead); sctx.setLineDash([]);
+    for (const m of P.hits) { const u = c.project(m.X); if (!(u[2] > 0)) continue; const [x, y] = map(u); sctx.globalAlpha = pp.alpha * (m.t < pp.now ? PASSED : 1); sctx.strokeStyle = m.out ? '#ff3b30' : '#ff8a00'; sctx.beginPath(); sctx.arc(x, y, (m.out ? 6 : 4.5) * dpr, 0, 7); sctx.stroke(); }
+    sctx.restore();
   }
   const bn = ballNow(); if (bn) { const u = c.project(bn.X); if (u[2] > 0) { const [x, y] = map(u); sctx.font = `${12 * dpr}px system-ui`; sctx.fillStyle = '#ffe600'; sctx.fillText(`${(bn.speed * 3.6).toFixed(0)} km/h`, x + 9 * dpr, y - 9 * dpr); sctx.beginPath(); sctx.arc(x, y, 4 * dpr, 0, 7); sctx.fill(); } }
   sctx.strokeStyle = '#39ff6a'; sctx.lineWidth = 1.5 * dpr;
@@ -605,18 +607,32 @@ function draw3d() {
     const fl = recentFlights();
     vctx.lineWidth = 1.5;
     for (const f of fl) { vctx.strokeStyle = 'rgba(255,230,0,0.25)'; path(f.pts.map((q) => [q.X[0], q.X[1], 0])); vctx.strokeStyle = '#ffe600'; path(f.pts.map((q) => q.X)); }
-    const P = predicted(fl);
+    const P = S.showPredict && predicted(fl);
     if (P) {
-      vctx.setLineDash([5, 4]); vctx.lineWidth = 2;
-      vctx.strokeStyle = 'rgba(255,138,0,0.3)'; path(P.pts.map((q) => [q.X[0], q.X[1], 0]));
-      vctx.strokeStyle = '#ff8a00'; path(P.pts.map((q) => q.X));
+      const pp = predParts(P);
+      vctx.save(); vctx.setLineDash([5, 4]); vctx.lineWidth = 2;
+      for (const [pts, a] of [[pp.past, PASSED], [pp.ahead, 1]]) {
+        vctx.globalAlpha = pp.alpha * a;
+        vctx.strokeStyle = 'rgba(255,138,0,0.3)'; path(pts.map((q) => [q.X[0], q.X[1], 0]));
+        vctx.strokeStyle = '#ff8a00'; path(pts.map((q) => q.X));
+      }
       vctx.setLineDash([]);
-      for (const m of P.hits) dot(m.X, m.out ? 5 : 3.5, m.out ? '#ff3b30' : '#ff8a00');
+      for (const m of P.hits) { vctx.globalAlpha = pp.alpha * (m.t < pp.now ? PASSED : 1); dot(m.X, m.out ? 5 : 3.5, m.out ? '#ff3b30' : '#ff8a00'); }
+      vctx.restore();
     }
     const bn = ballNow();
     if (bn) { vctx.strokeStyle = 'rgba(255,255,255,0.5)'; vctx.lineWidth = 1; path([bn.X, [bn.X[0], bn.X[1], 0]]); dot(bn.X, 4, '#fff'); }
     vctx.lineWidth = 1;
   }
+}
+// The prediction split at the video's current time: the part the ball has passed, the part still
+// ahead, and an overall opacity that falls to zero over FADE s once the ball is past its end. A
+// still image (no time) shows it all ahead.
+const PASSED = 0.2, FADE = 0.6;
+function predParts(P) {
+  const now = S.live && S.src?.currentTime != null ? S.src.currentTime : -Infinity, end = P.pts[P.pts.length - 1].t;
+  const k = P.pts.findIndex((q) => q.t > now), i = k < 0 ? P.pts.length : k;
+  return { now, past: P.pts.slice(0, Math.min(P.pts.length, i + 1)), ahead: P.pts.slice(Math.max(0, i - 1)), alpha: now > end ? Math.max(0, 1 - (now - end) / FADE) : 1 };
 }
 // The latest flight carried on past its last fitted point (cached per flight object: the worker
 // sends new objects when it refits)
@@ -693,6 +709,7 @@ $('camera').onclick = useCamera;
 $('demo').onclick = demo;
 $('redetect').onclick = () => { S.fails = 9; if (!S.live) analyse('detect'); };
 $('lines').onchange = (e) => { S.showLines = e.target.checked; draw(); };
+$('predict').onchange = (e) => { S.showPredict = e.target.checked; draw(); };
 $('frustum').onchange = (e) => { S.showFrustum = e.target.checked; draw3d(); };
 $('bounces').onchange = (e) => { S.showBounces = e.target.checked; draw(); };
 $('heat').onchange = (e) => { S.showHeat = e.target.checked; draw(); };
