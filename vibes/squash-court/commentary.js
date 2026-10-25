@@ -84,11 +84,22 @@ function shotAt(c, flights, bounces, playersAt, next) {
   let player = bounce?.player ?? null;
   if (!player && from) { const p = playersAt(inPts[0].t, from); if (p && p.dist < 2.5 && (p.other == null || p.dist < 0.7 * p.other)) player = p.id; }
   const quality = (c.measured ? 2 : 1) + (inPts.length >= 3 ? 1 : 0) + (outPts.length >= 3 ? 1 : 0) + (bounce && !bounce.inferred ? 1 : 0);
-  const s = { t: c.t, front: c.X, measured: c.measured, speed, from, apex, bounce: bounce ? { t: bounce.t, X: bounce.X } : null, tight, boast, sideAfter: sideHit?.plane ?? null, player, quality };
+  const s = { t: c.t, front: c.X, measured: c.measured, speed, from, apex, bounce: bounce ? { t: bounce.t, X: bounce.X, inferred: !!bounce.inferred } : null, struck: struckPoint(inPts, flights), tight, boast, sideAfter: sideHit?.plane ?? null, player, quality };
   s.kind = classify(s);
   return s;
 }
 
+// The ball just off the racket: the first point of the last stretch of flight heading for the
+// front wall, after any back or side wall it came off (a ball coming forward off the back wall
+// has not been hit yet). Racket hits end a fitted flight, so the stretch is within one flight.
+function struckPoint(inPts, flights) {
+  if (!inPts.length) return null;
+  const last = inPts[inPts.length - 1], f = flights.find((g) => g.pts.includes(last));
+  const wall = Math.max(-Infinity, ...(f?.impacts ?? []).filter((m) => m.plane !== 'front' && m.plane !== 'floor' && m.t < last.t).map((m) => m.t));
+  const run = inPts.filter((q) => f.pts.includes(q) && q.t > wall);
+  const q = run[0] ?? last;
+  return { t: q.t, X: q.X, V: q.V, wall: wall > -Infinity };
+}
 // Name the shot. Thresholds are from the court (tin 0.43-0.48 m, service line 1.78 m, short line
 // 5.44 m) and typical professional pace (drives 35-50 m/s off the racket, drops under 20).
 export function classify(s) {

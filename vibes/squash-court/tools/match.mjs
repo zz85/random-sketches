@@ -20,6 +20,7 @@ import { onsets, audioOffset } from '../audio.js';
 import { Bounces, heatGrid, impactsOf } from '../bounces.js';
 import { Commentary, describe, mainView } from '../commentary.js';
 import { TControl } from '../tcontrol.js';
+import { coachStats, posAtFromLogs } from '../coaching.js';
 import { W as CW, L as CL, courtModel } from '../court.js';
 import { writeImage, line } from './nodeimg.js';
 
@@ -48,6 +49,8 @@ async function main() {
   const fl = M.bounces.filter((m) => m.plane === 'floor');
   console.log(`${fl.length} floor bounces (${fl.filter((m) => m.sound).length} by ear), ${M.bounces.filter((m) => m.plane === 'front').length} front-wall hits; hitter known for ${M.bounces.filter((m) => m.player).length}; audio ${M.audio.sure ? `${Math.round(M.audio.offset * 1000)} ms after picture (${M.audio.matched} impacts matched, ${M.audio.chance} by chance)` : `delay not determined (best ${M.audio.matched}, ${M.audio.chance} by chance)`}, ${M.audio.heard} heard`);
   const kinds = {}; for (const s of M.shots) { const k = s.kind.type + (s.kind.direction ? ' ' + s.kind.direction : ''); kinds[k] = (kinds[k] || 0) + 1; }
+  const pc = (v) => (v == null ? '-' : `${Math.round(v * 100)}%`);
+  console.log(`coaching: hitter for ${M.coach.attributed}/${M.coach.total} shots; ` + [1, 2].map((id) => { const c = M.coach.players[id]; return `P${id} on the T at opponent's hit ${pc(c.tAtOppHit.share)} of ${c.tAtOppHit.n} (median ${c.tAtOppHit.medianDistance?.toFixed(1) ?? '-'} m), volleys ${c.volleys.n}/${c.volleys.of}, first bounces ${c.firstBounces.n} (drives deep ${c.firstBounces.drivesDeep}/${c.firstBounces.drives})`; }).join('; '));
   console.log(`${M.shots.length} shots: ${Object.entries(kinds).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join(', ')}; ${M.flightsOtherViews} flights from other cameras left out`);
   console.log(`wrote ${out}/match.json, ${out}/match.png in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
 }
@@ -150,11 +153,14 @@ function merge(parts, meta) {
   // per stretch of flights (the window logic wants nearby flights only)
   const CM = new Commentary();
   for (let i = 0; i < flights.length;) { let j = i + 1; while (j < flights.length && flights[j].t0 - flights[j - 1].t1 < 3) j++; B.update(flights.slice(i, j), { onsets: on, players: playersAt }); CM.update(flights.slice(i, j), B.list, playersAt); i = j; }
+  // coaching: T at the opponent's hit, volleys, first bounces (coaching.js)
+  const coach = coachStats(CM.shots, posAtFromLogs(byId));
   return {
     ...meta, courtSeconds: parts.reduce((s, p) => s + p.courtSeconds, 0),
     audio: { heard: heard.length, offset: shift, matched: off.matched, chance: off.chance, sure: off.sure },
     players, flights: flights.length, flightsOtherViews: allFlights.length - flights.length,
-    shots: CM.shots.map((s) => ({ t: +s.t.toFixed(3), player: s.player, kind: s.kind, front: s.front.map((v) => +v.toFixed(3)), bounce: s.bounce && s.bounce.X.map((v) => +v.toFixed(3)), speed: s.speed && +s.speed.toFixed(1), apex: +s.apex.toFixed(2), tight: s.tight, measured: s.measured, quality: s.quality, text: describe(s) })),
+    shots: CM.shots.map((s) => ({ t: +s.t.toFixed(3), player: s.player, kind: s.kind, front: s.front.map((v) => +v.toFixed(3)), bounce: s.bounce && s.bounce.X.map((v) => +v.toFixed(3)), bounceT: s.bounce ? +s.bounce.t.toFixed(3) : null, bounceInferred: !!s.bounce?.inferred, struck: s.struck && { t: +s.struck.t.toFixed(3), X: s.struck.X.map((v) => +v.toFixed(3)), V: s.struck.V.map((v) => +v.toFixed(2)) }, speed: s.speed && +s.speed.toFixed(1), apex: +s.apex.toFixed(2), tight: s.tight, measured: s.measured, quality: s.quality, text: describe(s) })),
+    coach,
     bounces: B.list.map((m) => ({ t: +m.t.toFixed(3), plane: m.plane, x: +m.X[0].toFixed(3), y: +m.X[1].toFixed(3), z: +m.X[2].toFixed(3), inferred: !!m.inferred, sound: !!m.sound, player: m.player ?? null })),
   };
 }

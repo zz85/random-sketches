@@ -22,6 +22,9 @@
   #grip { cursor: col-resize; background: #222630; touch-action: none; }
   #grip:hover, #grip.drag { background: var(--acc); }
   .heat2 { aspect-ratio: 6.4 / 9.75; }
+  pre.coach { margin: 0 0 6px; font: 11px/1.45 ui-monospace, monospace; white-space: pre-wrap; color: #ddd; }
+  .coachMaps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .coachMaps h3 { font: 600 11px system-ui; margin: 0 0 3px; color: #bbb; }
   #feed { font: 13px system-ui; margin: 0; padding: 0; list-style: none; max-height: 240px; overflow: auto; display: flex; flex-direction: column; gap: 4px; }
   #feed li { padding: 4px 6px; border-left: 3px solid #555; background: #1e2128; border-radius: 3px; }
   #feed li.new { animation: flash 1.2s ease-out; }
@@ -89,6 +92,13 @@
   <figure><h2>Floor, rectified (front wall at the top)</h2><canvas id="plan" class="panel" width="256" height="390"></canvas></figure>
   <figure><h2>Front wall: ball contacts (last in green)</h2><canvas id="wall" class="panel" width="256" height="200"></canvas>
     <h2>Player speed</h2><canvas id="speed" class="panel" width="320" height="110"></canvas></figure>
+  <figure class="wide"><h2>Coaching <label class="chk3">show <select id="coachWho" aria-label="Whose numbers the coaching maps show"><option value="0">both</option><option value="1">player 1</option><option value="2">player 2</option></select></label></h2>
+    <pre id="coachText" class="coach"></pre>
+    <div class="coachMaps">
+      <div><h3 title="Where each player stood at the moment the opponent struck the ball; the ring is 1 m round the T">On the T when the opponent hits</h3><canvas id="coachT" class="panel heat2" width="200" height="305"></canvas></div>
+      <div><h3 title="Where each volley was taken (filled) and where the opponent was at that moment (ring), joined">Volleys, and the opponent then</h3><canvas id="coachV" class="panel heat2" width="200" height="305"></canvas></div>
+      <div><h3 title="The ball's first floor bounce after the front wall, one per shot. ● drive, ▲ drop / kill, ■ lob, ◆ boast; hollow: carried on from the flight, not seen">First bounces</h3><canvas id="coachB" class="panel heat2" width="200" height="305"></canvas></div>
+    </div></figure>
   <figure><h2 id="heat1t">Player 1 heatmap</h2><canvas id="heat1" class="panel heat2" width="256" height="390"></canvas></figure>
   <figure><h2 id="heat2t">Player 2 heatmap</h2><canvas id="heat2" class="panel heat2" width="256" height="390"></canvas></figure>
   <figure class="wide"><h2>3D (drag to orbit, wheel to zoom) <label class="chk3"><input id="frustum" type="checkbox" checked> camera view</label></h2><canvas id="view3d" class="panel" width="480" height="300"></canvas>

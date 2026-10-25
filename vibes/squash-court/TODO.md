@@ -34,6 +34,9 @@ Things we found worth doing but haven't done yet. The first item in each section
 
 ## Stats
 
+- **More shots with a known hitter, for the coaching numbers.** On a full game only 115 of 415 shots have one (`coaching.js`), and volleys could be decided on 21. Racket sounds near a player give hit moments without a fitted flight, and so do the players' own swings, so the T-at-hit number would not depend on the ball fit. Check volleys and the hit times against frames.
+- **First-bounce accuracy per shot type.** The first-bounce map is there; add each player's spread per shot type (straight drives along the wall, crosscourts past the opponent), compared with a target zone.
+
 - **Check T domination against results.** Run `match.mjs` on single full matches with a known winner, and see whether T control (share of the time each player is the nearer to the T) predicts it, as SquashAI set out to measure. On the Rehman v Hosny semifinal it is 56% / 44%; that result hasn't been looked up.
 - **T over time.** Each player's T share per rally or per minute, next to the speed chart.
 

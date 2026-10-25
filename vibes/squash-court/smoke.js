@@ -104,6 +104,9 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
     const M = { source: 'test.mp4', duration: 600, courtSeconds: 500, audio: { heard: 10, offset: 0.03, matched: 5 }, flights: 2,
       players: [1, 2].map((id) => ({ id, colour: [200, 50, 90], distance: 900 + id, seconds: 400, topSpeed: 4.5, tControl: { seconds: 400, zoneSeconds: id === 1 ? 160 : 90, zoneShare: id === 1 ? 0.4 : 0.225, controlSeconds: id === 1 ? 180 : 120, controlShare: id === 1 ? 0.6 : 0.4, meanDistance: 1.2 + id / 10, radius: 1 }, speed: [[1, 2], [2, 3], [3, null], [5, 1]], heatmap: { cell: 0.25, nx: 26, ny: 39, seconds: Array.from({ length: 26 * 39 }, (_, i) => (i === 22 * 26 + 13 ? 50 : 0)) } })),
       shots: [{ t: 2.5, player: 1, kind: { type: 'drive', direction: 'straight', length: 'deep' }, front: [5.9, 0, 1.4], bounce: [6, 8.5, 0], speed: 40, quality: 4, text: 'P1 plays a hard straight drive (144 km/h), dying in the back corner.' }],
+      coach: { radius: 1, total: 3, attributed: 2, shots: [], players: {
+        1: { shots: 2, tAtOppHit: { n: 4, onT: 3, share: 0.75, medianDistance: 0.8, points: [[3.2, 5.6], [3.0, 6.0], [2.9, 5.2], [1.2, 8]] }, volleys: { n: 1, of: 2, share: 0.5, kinds: { drive: 1 }, points: [{ X: [3, 6], opp: [5, 8.5], kind: 'drive' }] }, firstBounces: { n: 2, zones: { front: 0, middle: 0, back: 2 }, byKind: { drive: 2 }, points: [{ X: [0.4, 8.5], kind: 'drive', inferred: false }, { X: [1.5, 7.5], kind: 'drive', inferred: true }], drives: 2, drivesDeep: 2, drivesTight: 1 } },
+        2: { shots: 1, tAtOppHit: { n: 2, onT: 0, share: 0, medianDistance: 2.1, points: [[5, 8.5], [4.8, 8]] }, volleys: { n: 0, of: 1, share: 0, kinds: {}, points: [] }, firstBounces: { n: 1, zones: { front: 1, middle: 0, back: 0 }, byKind: { drop: 1 }, points: [{ X: [5.8, 1.2], kind: 'drop', inferred: false }], drives: 0, drivesDeep: 0, drivesTight: 0 } } } },
       bounces: [{ t: 3, plane: 'floor', x: 1, y: 8, z: 0, inferred: false, sound: false, player: 1 }, { t: 4, plane: 'front', x: 2, y: 0, z: 1, inferred: false, sound: true, player: 2 }] };
     fs.writeFileSync('/tmp/squash-smoke/match.json', JSON.stringify(M));
     await b.send('DOM.setFileInputFiles', { nodeId: node.result.nodeId, files: ['/tmp/squash-smoke/match.json'] });
@@ -115,8 +118,11 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
     const sp = await b.evaluate(`(()=>{const c=document.getElementById('speed'),d=c.getContext('2d').getImageData(0,0,c.width,c.height).data;let n=0;for(let i=0;i<d.length;i+=4)if((d[i]>200&&d[i+1]<120)||(d[i+2]>200&&d[i]<120))n++;return n})()`);
     const tt = await b.evaluate(`[document.getElementById('heat1t').textContent, document.getElementById('heat2t').textContent, document.getElementById('readout').textContent]`);
     check('T domination per player (heatmap titles, readout)', /T 60%/.test(tt[0]) && /T 40%/.test(tt[1]) && /on the T 40% of the time/.test(tt[2]), `${tt[0]} | ${tt[1]}`);
+    const ch = await b.evaluate(`(()=>{const n=(id)=>{const c=document.getElementById(id),d=c.getContext('2d').getImageData(0,0,c.width,c.height).data;let k=0;for(let i=0;i<d.length;i+=4)if((d[i]>200&&d[i+1]<120)||(d[i+2]>200&&d[i]<120))k++;return k};return {t:n('coachT'),v:n('coachV'),b:n('coachB'),txt:document.getElementById('coachText').textContent}})()`);
+    check('coaching: T at opponent\'s hit, volleys, first bounces', ch.t > 20 && ch.v > 10 && ch.b > 20 && /on the T at 75% of the opponent's hits/.test(ch.txt) && /volleys 1 of 2/.test(ch.txt) && /drives deep 2\/2/.test(ch.txt), ch.txt.split('\n')[1]);
     check('speed chart drawn per player', sp > 50, `${sp} px in the players' colours`);
     await shot('match');
+    await b.evaluate(`document.getElementById('coachText').closest('figure').scrollIntoView();1`); await new Promise((r) => setTimeout(r, 200)); await shot('coach');
     const errors = [];
     for (const e of b.events) if (e.method === 'Runtime.exceptionThrown') errors.push(e.params.exceptionDetails.exception?.description || e.params.exceptionDetails.text);
     for (const e of b.events) if (e.method === 'Runtime.consoleAPICalled' && e.params.type === 'error') errors.push(e.params.args.map((a) => a.value || a.description).join(' '));

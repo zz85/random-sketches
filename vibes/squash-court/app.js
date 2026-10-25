@@ -9,7 +9,8 @@ import { Bounces, heatGrid } from './bounces.js';
 import { predictPath } from './ball.js';
 import { onsets as findOnsets, audioOffset, decodeAudio } from './audio.js';
 import { Commentary, describe, movement, mainView } from './commentary.js';
-import { TControl, tLabel } from './tcontrol.js';
+import { TControl, tLabel, T_POINT } from './tcontrol.js';
+import { coachStats, posAtFromLogs } from './coaching.js';
 
 const $ = (id) => document.getElementById(id);
 const stage = $('stage'), sctx = stage.getContext('2d');
@@ -105,6 +106,7 @@ function comment() {
   }
   S.feed.sort((a, b) => b.t - a.t); if (S.feed.length > 200) S.feed.length = 200;
   renderFeed();
+  S.coach = coachStats(S.comm.shots, posAtFromLogs(Object.fromEntries(Object.entries(S.stats).map(([id, st]) => [id, st.log]))));
 }
 function commentMoves() {
   const t = S.src?.currentTime ?? 0;
@@ -166,7 +168,7 @@ function ballNow() {
   return null;
 }
 const kmh = (v) => `${v.toFixed(1)} m/s (${(v * 3.6).toFixed(0)} km/h)`;
-const clearRally = () => { S.stats = newStats(); S.tctl = new TControl(); S.bounces.clear(); S.comm.clear(); S.feed = []; S.moveSaid = {}; renderFeed(); S.players = []; S.ball = null; S.ballTrail = []; S.flights = []; S.rallyMs = {}; for (const R of rallyW) R.reset = true; };
+const clearRally = () => { S.coach = null; S.stats = newStats(); S.tctl = new TControl(); S.bounces.clear(); S.comm.clear(); S.feed = []; S.moveSaid = {}; renderFeed(); S.players = []; S.ball = null; S.ballTrail = []; S.flights = []; S.rallyMs = {}; for (const R of rallyW) R.reset = true; };
 window.__sq = S;
 
 // ---------- worker ----------
@@ -369,7 +371,7 @@ function seg3(ctx, cam, a, b, map, n = 24) {
 }
 function draw() {
   sctx.setTransform(1, 0, 0, 1, 0, 0); sctx.fillStyle = '#111'; sctx.fillRect(0, 0, stage.width, stage.height);
-  if (!S.src) { if (S.match) { drawPlan(); drawWall(); drawSpeed(); drawPlayerHeat($('heat1'), 1); drawPlayerHeat($('heat2'), 2); readout(); } return; }
+  if (!S.src) { if (S.match) { drawPlan(); drawWall(); drawSpeed(); drawPlayerHeat($('heat1'), 1); drawPlayerHeat($('heat2'), 2); drawCoach(); readout(); } return; }
   sctx.drawImage(S.src, disp.ox, disp.oy, S.srcW * disp.k, S.srcH * disp.k);
   const map = (u) => [disp.ox + u[0] * disp.k, disp.oy + u[1] * disp.k];
   const dpr = devicePixelRatio || 1;
@@ -386,7 +388,7 @@ function draw() {
     sctx.fillStyle = '#ff2d7a'; sctx.beginPath(); sctx.arc(x, y, 5 * dpr, 0, 7); sctx.fill();
     sctx.font = `${12 * dpr}px system-ui`; sctx.fillStyle = '#fff'; sctx.fillText(fmtX(p), x + 8 * dpr, y - 6 * dpr);
   }
-  drawPlan(); drawWall(); draw3d(); drawSpeed(); drawPlayerHeat($('heat1'), 1); drawPlayerHeat($('heat2'), 2); readout();
+  drawPlan(); drawWall(); draw3d(); drawSpeed(); drawPlayerHeat($('heat1'), 1); drawPlayerHeat($('heat2'), 2); drawCoach(); readout();
 }
 // players: a ring on the floor round the feet (dashed when the feet are hidden behind a graphic and
 // placed from the head), the position in metres; the ball: its fitted flights and the live blob
@@ -536,6 +538,7 @@ function useMatch(M, name) {
   S.bounces.list = M.bounces.map((m) => ({ t: m.t, X: [m.x, m.y, m.z], plane: m.plane, inferred: m.inferred, sound: m.sound, player: m.player }));
   S.comm.shots = (M.shots ?? []).map((s, i) => ({ ...s, id: i + 1, measured: s.quality >= 4 }));
   S.feed = (M.shots ?? []).filter((s) => s.quality >= 2).map((s, i) => ({ id: i + 1, t: s.t, text: s.text, shot: s.kind && s.front ? s : null, player: s.player, sure: s.quality >= 3 })).reverse();
+  S.coach = M.coach ?? null;
   S.srcName = 'match:' + M.source; loadNames(); renderFeed();
   status(`${name}: ${(M.duration / 60).toFixed(1)} min, ${M.bounces.length} impacts, ${M.players.length} players`); draw();
 }
@@ -561,6 +564,52 @@ function drawPlayerHeat(cnv, id) {
 function blurHeat(a, nx, ny) { let g = Float32Array.from(a); for (let p = 0; p < 2; p++) { const o = new Float32Array(g.length); for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) { let v = 0, w = 0; for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) { const X = x + i, Y = y + j; if (X < 0 || Y < 0 || X >= nx || Y >= ny) continue; const k = (i ? 0.5 : 1) * (j ? 0.5 : 1); v += g[Y * nx + X] * k; w += k; } o[y * nx + x] = v / w; } g = o; } return g; }
 // the most recent mark of a list, ringed in green with its time
 function ringLast(ctx, m, px, py) {
+// ---------- coaching panel (coaching.js) ----------
+// Three floor plans, both players or one (the selector): where each stood when the other struck
+// the ball, with the 1 m ring round the T; volleys (filled, the hitter's colour) joined to where the
+// opponent was then (ring); every first bounce (shape by shot type, hollow when carried on).
+function courtBase(cnv) {
+  const g = cnv.getContext('2d'), s = cnv.width / CW;
+  g.fillStyle = '#3a342c'; g.fillRect(0, 0, cnv.width, cnv.height);
+  g.strokeStyle = 'rgba(0,240,255,0.6)'; g.lineWidth = 1;
+  for (const l of MODEL.lines) if (l.kind === 'floor') { g.beginPath(); g.moveTo((CW - l.a[0]) * s, l.a[1] * s); g.lineTo((CW - l.b[0]) * s, l.b[1] * s); g.stroke(); }
+  g.strokeRect(0.5, 0.5, cnv.width - 1, cnv.height - 1);
+  return { g, s, P: (X) => [(CW - X[0]) * s, X[1] * s] };
+}
+function mark(g, [x, y], kind, fill, hollow, r = 3.2) {
+  g.beginPath();
+  if (kind === 'drop' || kind === 'kill') { g.moveTo(x, y - r * 1.2); g.lineTo(x + r, y + r * 0.8); g.lineTo(x - r, y + r * 0.8); g.closePath(); }
+  else if (kind === 'lob') g.rect(x - r * 0.9, y - r * 0.9, r * 1.8, r * 1.8);
+  else if (kind === 'boast') { g.moveTo(x, y - r * 1.2); g.lineTo(x + r, y); g.lineTo(x, y + r * 1.2); g.lineTo(x - r, y); g.closePath(); }
+  else g.arc(x, y, r, 0, 7);
+  if (hollow) { g.strokeStyle = fill; g.lineWidth = 1.4; g.stroke(); } else { g.fillStyle = fill; g.fill(); g.strokeStyle = '#000'; g.lineWidth = 0.8; g.stroke(); }
+}
+const pct = (v) => (v == null ? '–' : `${Math.round(v * 100)}%`);
+function drawCoach() {
+  const C = S.coach, who = +$('coachWho').value, ids = who ? [who] : [1, 2], col = (id) => PCOL[(id - 1) % PCOL.length];
+  const T = courtBase($('coachT')), V = courtBase($('coachV')), B = courtBase($('coachB'));
+  // the T zone
+  const r = (C?.radius ?? 1) * T.s, [tx, ty] = T.P(T_POINT);
+  T.g.strokeStyle = 'rgba(255,255,255,0.7)'; T.g.setLineDash([3, 3]); T.g.beginPath(); T.g.arc(tx, ty, r, 0, 7); T.g.stroke(); T.g.setLineDash([]);
+  if (!C) { $('coachText').textContent = 'Builds up as shots are recognised: who hit each one, from where, and where the other player was.'; return; }
+  for (const id of ids) {
+    const p = C.players[id]; if (!p) continue;
+    for (const X of p.tAtOppHit.points) { const q = T.P(X), on = Math.hypot(X[0] - T_POINT[0], X[1] - T_POINT[1]) < C.radius; mark(T.g, q, 'drive', col(id), !on); }
+    for (const v of p.volleys.points) {
+      const a = V.P(v.X); if (v.opp) { const b = V.P(v.opp); V.g.strokeStyle = 'rgba(255,255,255,0.45)'; V.g.lineWidth = 1; V.g.beginPath(); V.g.moveTo(...a); V.g.lineTo(...b); V.g.stroke(); mark(V.g, b, 'drive', col(3 - id), true); }
+      mark(V.g, a, v.kind, col(id), false);
+    }
+    for (const f of p.firstBounces.points) mark(B.g, B.P(f.X), f.kind, col(id), f.inferred);
+  }
+  const L = [`Hitter known for ${C.attributed} of ${C.total} shots; only those count.`];
+  for (const id of ids) {
+    const p = C.players[id]; if (!p) continue; const t = p.tAtOppHit, v = p.volleys, f = p.firstBounces;
+    L.push(`${nameOf(id)}: on the T at ${pct(t.share)} of the opponent's hits (${t.n} seen, typically ${t.medianDistance != null ? t.medianDistance.toFixed(1) + ' m' : '–'} from it)`);
+    L.push(`  volleys ${v.n} of ${v.of} shots where it could be told${v.of ? ` (${pct(v.share)})` : ''}${v.n ? `: ${Object.entries(v.kinds).map(([k, n]) => `${n} ${k}`).join(', ')}` : ''}`);
+    L.push(`  first bounces ${f.n}: front ${f.zones.front}, middle ${f.zones.middle}, back ${f.zones.back}${f.drives ? `; drives deep ${f.drivesDeep}/${f.drives}, tight ${f.drivesTight}/${f.drives}` : ''}`);
+  }
+  $('coachText').textContent = L.join('\n');
+}
   ctx.strokeStyle = '#39ff6a'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(px, py, 7, 0, 7); ctx.stroke();
   ctx.fillStyle = '#39ff6a'; ctx.beginPath(); ctx.arc(px, py, 3.5, 0, 7); ctx.fill();
   ctx.font = '10px system-ui'; ctx.fillText(clock(m.t), Math.min(ctx.canvas.width - 40, px + 9), Math.max(10, py - 6));
@@ -696,7 +745,7 @@ function exportJSON() {
     time: S.src?.currentTime ?? null,
     players: S.players.map((p) => ({ id: p.id, x: p.X[0], y: p.X[1], seen: p.seen, feetHidden: p.occluded, speed: S.stats[p.id]?.speed ?? null })),
     bounces: S.bounces.list.map((m) => ({ t: m.t, plane: m.plane, x: m.X[0], y: m.X[1], z: m.X[2], inferred: m.inferred })),
-    playerStats: Object.fromEntries(Object.entries(S.stats).map(([id, st]) => [id, { distance: st.dist, seconds: st.time, topSpeed: st.top, tControl: S.tctl.summary(id), heatmap: { cell: HM, nx: HX, ny: HY, note: 'seconds per cell, row-major from x = 0, y = 0', seconds: Array.from(st.heat, (v) => +v.toFixed(3)) } }])),
+    coach: S.coach, playerStats: Object.fromEntries(Object.entries(S.stats).map(([id, st]) => [id, { distance: st.dist, seconds: st.time, topSpeed: st.top, tControl: S.tctl.summary(id), heatmap: { cell: HM, nx: HX, ny: HY, note: 'seconds per cell, row-major from x = 0, y = 0', seconds: Array.from(st.heat, (v) => +v.toFixed(3)) } }])),
     ball: S.flights.map((f) => ({ t0: f.t0, t1: f.t1, speed: f.speed, impacts: f.impacts, points: f.pts })),
   };
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })); a.download = 'squash-court.json'; a.click();
@@ -725,6 +774,7 @@ $('cap').onchange = (e) => { S.captions = e.target.checked; if (!S.captions) $('
 for (const i of [1, 2]) $(`name${i}`).addEventListener('input', (e) => { S.names[i] = e.target.value; setNames(S.names, ''); });
 $('swapNames').onclick = () => setNames({ 1: S.names[2], 2: S.names[1] }, 'swapped');
 $('speak').onchange = (e) => { S.speak = e.target.checked; if (!S.speak && 'speechSynthesis' in window) speechSynthesis.cancel(); };
+$('coachWho').onchange = () => draw();
 { // drag the side panel's edge to resize it (kept across reloads)
   const grip = $('grip'), set = (w) => { w = Math.max(300, Math.min(innerWidth - 320, w)); document.body.style.setProperty('--side', `${w}px`); localStorage.setItem('squashSide', w); };
   const saved = +localStorage.getItem('squashSide'); if (saved) set(saved);
