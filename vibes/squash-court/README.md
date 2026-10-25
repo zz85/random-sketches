@@ -2,7 +2,7 @@
 
 Finds a squash court in a photo, a video or the live camera from its painted lines, and recovers the camera that took it: position in metres, view direction, focal length and lens distortion. From that every pixel on the floor or walls maps to court coordinates, and the floor and front wall can be shown rectified. With the camera known, it also places the players and the ball in metres. Plain JS, no dependencies, runs in a worker.
 
-Open `index.html` from any static http server (module worker), then Open… a photo or video, drop or paste one, use Camera, or press Demo frame for a synthetic frame with a known camera. Click the frame to measure a point; Export JSON writes K, R, C, the 3×4 matrix, the floor / front wall homographies, the players' positions and the ball's fitted flights. Players & ball switches the player rings (x, y in metres), the ball's flights and their wall and floor impacts on the frame, the floor plan, the front wall and the 3D view.
+Open `index.html` from any static http server (module worker), then Open… a photo or video, drop or paste one, use Camera, or press Demo frame for a synthetic frame with a known camera. Click the frame to measure a point; Export JSON writes K, R, C, the 3×4 matrix, the floor / front wall homographies, the players' positions and the ball's fitted flights. A video plays with its sound (Sound on / off). Players & ball switches the player rings (x, y in metres), the ball's flights and their wall and floor impacts on the frame, the floor plan, the front wall and the 3D view.
 
 ## How it works
 

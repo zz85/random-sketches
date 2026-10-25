@@ -25,7 +25,7 @@ const S = {
   cam: null, // fitted camera in source pixels
   quality: null, ms: null, busy: false, fails: 0, frames: 0, trackMs: [],
   tin: 0.48, picks: [], showLines: true, orbit: { yaw: -0.5, pitch: 0.45, dist: 19 },
-  live: false, procFrame: null,
+  live: false, procFrame: null, sound: true,
   // players and ball (rally.js in the worker): players [{ id, X, seen, occluded, box }], the live
   // ball pixel, and fitted flights { t0, t1, pts: [{ t, X }], uv, impacts, labels, speed }
   showRally: true, players: [], ball: null, ballTrail: [], flights: [], rallyMs: {},
@@ -126,15 +126,17 @@ function useImage(el, w, h) {
 function loadFile(file) {
   const url = URL.createObjectURL(file);
   if (file.type.startsWith('video/')) {
-    const v = document.createElement('video'); v.src = url; v.muted = true; v.playsInline = true; v.loop = true;
+    const v = document.createElement('video'); v.src = url; v.muted = !S.sound; v.playsInline = true; v.loop = true;
     v.onloadeddata = () => useVideo(v); return;
   }
   const im = new Image(); im.onload = () => useImage(im, im.naturalWidth, im.naturalHeight); im.src = url;
 }
 function useVideo(v) {
   stopLive(); S.src = v; S.srcW = v.videoWidth; S.srcH = v.videoHeight; S.cam = null; S.picks = []; clearRally(); S.live = true; fitStage();
-  v.play().catch(() => {});
+  // with sound if wanted; a browser that refuses unmuted playback without a fresh gesture gets it muted
+  v.play().catch(() => { v.muted = true; soundLabel(); v.play().catch(() => {}); });
   $('play').hidden = false; $('play').textContent = 'Pause';
+  $('sound').hidden = !!v.srcObject; soundLabel();
   loop();
 }
 async function useCamera() {
@@ -145,7 +147,7 @@ async function useCamera() {
   } catch (e) { status(`camera: ${e.message}`); }
 }
 function stopLive() {
-  S.live = false; $('play').hidden = true;
+  S.live = false; $('play').hidden = true; $('sound').hidden = true;
   if (S.src instanceof HTMLVideoElement) { S.src.pause(); S.src.srcObject?.getTracks().forEach((t) => t.stop()); }
 }
 function loop() {
@@ -368,6 +370,8 @@ $('lines').onchange = (e) => { S.showLines = e.target.checked; draw(); };
 $('rally').onchange = (e) => { S.showRally = e.target.checked; clearRally(); if (S.showRally && !S.live && S.cam && S.procFrame) runRally(S.procFrame, scaleCam(S.cam, S.procFrame.k, S.procFrame.img.width, S.procFrame.img.height), 0, false); draw(); };
 $('export').onclick = exportJSON;
 $('clear').onclick = () => { S.picks = []; draw(); };
+function soundLabel() { const v = S.src; $('sound').textContent = v instanceof HTMLVideoElement && !v.muted ? 'Sound on' : 'Sound off'; }
+$('sound').onclick = () => { const v = S.src; if (!(v instanceof HTMLVideoElement)) return; v.muted = !v.muted; S.sound = !v.muted; soundLabel(); };
 $('play').onclick = () => { const v = S.src; if (!(v instanceof HTMLVideoElement)) return; v.paused ? v.play() : v.pause(); $('play').textContent = v.paused ? 'Play' : 'Pause'; };
 addEventListener('resize', () => { fitStage(); draw(); });
 addEventListener('paste', (e) => { const f = [...(e.clipboardData?.files || [])][0]; f && loadFile(f); });
