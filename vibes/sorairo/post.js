@@ -219,7 +219,10 @@ export function makePost(renderer) {
       }`,
   });
 
-  const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.6, 0.6, 0.92);
+  // threshold above the bright sky (HDR ~1-1.2) so only the sun, backlit cloud rims and
+  // sunlit leaf edges glow; at 0.92 the whole sky bled over anything dark in front of it,
+  // washing out the trunk when looking up into the light
+  const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.6, 0.4, 1.35);
 
   function setSize(w, h, pr) {
     const W = Math.round(w * pr), H = Math.round(h * pr);

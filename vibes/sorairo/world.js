@@ -87,7 +87,13 @@ export function makeTerrain(shared) {
   geo.computeVertexNormals();
 
   const mat = new THREE.ShaderMaterial({
-    uniforms: { ...shared, uGrassDark: { value: new THREE.Color() }, uGrassLight: { value: new THREE.Color() }, uDirt: { value: new THREE.Color() }, uRain: { value: 0 } },
+    uniforms: { ...shared, uGrassDark: { value: new THREE.Color() }, uGrassLight: { value: new THREE.Color() }, uDirt: { value: new THREE.Color() }, uRain: { value: 0 },
+      // stand-ins for what the puddles reflect, set by main.js: poles (x, z, base y, height)
+      // with their crossbar direction, the trunk (x, z, base y, height), the canopy (centre,
+      // radius) with its vertical squash, colour and how bare it is
+      uPoles: { value: Array.from({ length: 14 }, () => new THREE.Vector4(0, 0, -999, 0)) }, uPoleBars: { value: Array.from({ length: 14 }, () => new THREE.Vector2(1, 0)) },
+      uTrunk: { value: new THREE.Vector4(0, 0, -999, 0) }, uCanopy: { value: new THREE.Vector4(0, -999, 0, 1) }, uCanopyY: { value: 0.7 },
+      uCanopyCol: { value: new THREE.Color() }, uCanopyBare: { value: 0 }, uPoleCol: { value: new THREE.Color(0.22, 0.2, 0.22) }, uBarkCol: { value: new THREE.Color(0.13, 0.085, 0.07) } },
     vertexShader: /* glsl */ `
       attribute float pathDist;
       varying vec3 vWp; varying vec3 vN; varying float vPath;
@@ -112,6 +118,60 @@ export function makeTerrain(shared) {
           s += exp(-pow((r - R) * 70.0, 2.0)) * (1.0 - ph) * (1.0 - ph) * 1.4;
         }
         return s;
+      }
+      uniform vec4 uPoles[14]; uniform vec2 uPoleBars[14];
+      uniform vec4 uTrunk, uCanopy; uniform float uCanopyY, uCanopyBare; uniform vec3 uCanopyCol, uPoleCol, uBarkCol;
+      // What a still puddle at p mirrors along the reflected view ray r (going up): the
+      // nearest of the poles, their crossbars, the trunk and the canopy. Returns the colour
+      // in .rgb and coverage in .a, soft at the edges.
+      vec4 mirrored(vec3 p, vec3 r) {
+        vec4 hit = vec4(0.0); float best = 1e9;
+        vec2 o = p.xz, dir = r.xz; float dd = max(dot(dir, dir), 1e-6), sl = sqrt(dd + r.y * r.y);
+        for (int i = 0; i < 14; i++) {
+          vec4 P = uPoles[i];
+          if (P.w <= 0.0) continue;
+          // the pole: a thin vertical cylinder
+          float t = dot(P.xy - o, dir) / dd;
+          if (t > 0.0) {
+            float y = p.y + r.y * t, dist = length(o + dir * t - P.xy);
+            float a = (1.0 - smoothstep(0.14, 0.24, dist)) * step(P.z, y) * (1.0 - smoothstep(P.z + P.w - 0.05, P.z + P.w, y));
+            if (a > 0.01 && t * sl < best) { best = t * sl; hit = vec4(uPoleCol, a); }
+          }
+          // the upper crossbar, 2.2 m along uPoleBars[i], 0.6 m below the top
+          float th = (P.z + P.w - 0.6 - p.y) / max(r.y, 1e-4);
+          if (th > 0.0) {
+            vec2 q = o + dir * th - P.xy, ax = uPoleBars[i];
+            float along = abs(dot(q, ax)), across = abs(q.x * ax.y - q.y * ax.x);
+            float a = (1.0 - smoothstep(0.9, 1.1, along)) * (1.0 - smoothstep(0.06, 0.12, across * min(1.0, r.y * 3.0 + 0.2)));
+            if (a > 0.01 && th * sl < best) { best = th * sl; hit = vec4(uPoleCol, a); }
+          }
+        }
+        // the trunk, tapering from 0.62 m to 0.25 m
+        float t = dot(uTrunk.xy - o, dir) / dd;
+        if (t > 0.0 && uTrunk.w > 0.0) {
+          float y = p.y + r.y * t, f = clamp((y - uTrunk.z) / uTrunk.w, 0.0, 1.0);
+          float rad = mix(0.62, 0.25, f), dist = length(o + dir * t - uTrunk.xy);
+          float a = (1.0 - smoothstep(rad * 0.85, rad, dist)) * step(uTrunk.z, y) * (1.0 - smoothstep(uTrunk.z + uTrunk.w - 0.3, uTrunk.z + uTrunk.w, y));
+          if (a > 0.01 && t * sl < best) { best = t * sl; hit = vec4(uBarkCol, a); }
+        }
+        // the canopy: an ellipsoid with a ragged edge, thinning as the tree goes bare
+        vec3 e = vec3(1.0, 1.0 / uCanopyY, 1.0) / uCanopy.w;
+        vec3 ro = (p - uCanopy.xyz) * e, rd = r * e;
+        float b = dot(ro, rd), c = dot(ro, ro) - 1.0, A = dot(rd, rd), disc = b * b - A * c;
+        if (disc > 0.0) {
+          float tc = (-b - sqrt(disc)) / A;
+          if (tc > 0.0) {
+            // lobed like the clumps (noise over the direction from the centre), with sky
+            // gaps through it, rather than a smooth oval
+            vec3 hd = normalize(ro + rd * tc);
+            float edge = sqrt(disc / A);                 // ~1 through the middle, 0 at the rim
+            float lobes = fbm3o(hd.xz * 2.6 + hd.y * 1.7 + 4.0) - 0.5;
+            float gaps = smoothstep(0.3, 0.42, fbm3o(hd.xz * 5.0 - hd.y * 3.0 + 9.0));
+            float a = smoothstep(0.02, 0.12, edge + lobes * 0.9) * mix(0.55, 1.0, gaps) * (1.0 - uCanopyBare * 0.9);
+            if (a > 0.01 && tc * length(r) < best) { best = tc * length(r); hit = vec4(uCanopyCol, a); }
+          }
+        }
+        return hit;
       }
       void main() {
         vec3 n = normalize(vN);
@@ -139,7 +199,15 @@ export function makeTerrain(shared) {
             float sk = fbm3o(vWp.xz * vec2(0.12, 0.3) + uCloudT * 0.004);
             vec3 refl = mix(uFogColor, uAmbient, 0.35) * mix(0.62, 0.92, sk);
             float ring = ripples(vWp.xz, uTime) * uRain;
-            vec3 pc = mix(col * 0.55, refl, fres) * (1.0 - ring * 0.25) + refl * ring * 0.6;
+            // the hill's own things in the water, lit by the overcast sky, wobbled by the drops
+            // and veiled by a little of the haze
+            vec3 rv = vec3(v.x, -v.y, v.z);
+            rv.xz += (vec2(vnoise(vWp.xz * 3.0 + uTime * 0.7), vnoise(vWp.zx * 3.0 - uTime * 0.6)) - 0.5) * 0.03 * uRain + ring * 0.02;
+            vec4 m = mirrored(vWp, normalize(rv));
+            // darker than the sky they stand against, as reflections of an overcast-lit object are
+            vec3 mc = m.rgb * (uAmbient * 0.6 + uSunColor * 0.05);
+            refl = mix(refl, mix(mc, uFogColor, 0.12), m.a);
+            vec3 pc = mix(col * 0.55, refl, max(fres, m.a * 0.95)) * (1.0 - ring * 0.25) + refl * ring * 0.6;
             col *= 1.0 - rim * 0.25 * smoothstep(0.4, 0.9, p);   // darker wet mud round the edge
             col = mix(col, pc, pud);
           }
@@ -225,7 +293,7 @@ export function makePoles(shared) {
         gl_FragColor = vec4(applyFog(col, vWp), 1.0);
       }`,
   });
-  const tops = [];
+  const tops = [], proxies = [];
   const N = 14, poleH = 9.5;
   const pole = new THREE.CylinderGeometry(0.11, 0.16, poleH, 8); pole.translate(0, poleH / 2, 0);
   const bar = new THREE.BoxGeometry(2.2, 0.12, 0.12);
@@ -251,6 +319,8 @@ export function makePoles(shared) {
     }
     g.updateMatrixWorld(true);
     tops.push(ends.map((e) => e.applyMatrix4(g.matrixWorld)));
+    const ax = new THREE.Vector3(1, 0, 0).applyQuaternion(g.quaternion);
+    proxies.push([new THREE.Vector4(base.x, base.z, base.y, poleH), new THREE.Vector2(ax.x, ax.z).normalize()]);
     group.add(g);
   }
   // wires: catenary-ish sag between consecutive poles
@@ -265,7 +335,7 @@ export function makePoles(shared) {
   const wireGeo = mergeTubes(wirePts, 0.022);
   group.add(new THREE.Mesh(wireGeo, mat));
   group.traverse((o) => { if (o.isMesh) o.userData.castShadow = true; });
-  return { group, mat };
+  return { group, mat, proxies };
 }
 
 function mergeTubes(lines, r) {

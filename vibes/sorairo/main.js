@@ -77,6 +77,7 @@ const sky = makeSky(shared); scene.add(sky.mesh);
 const terrain = makeTerrain(shared); scene.add(terrain.mesh);
 const mountains = makeMountains(shared); scene.add(mountains.group);
 const poles = makePoles(shared); scene.add(poles.group);
+poles.proxies.forEach(([p, ax], i) => { terrain.mat.uniforms.uPoles.value[i].copy(p); terrain.mat.uniforms.uPoleBars.value[i].copy(ax); });
 const GROUND = heightAt(0, 0);
 const grass = makeGrass(shared, { count: S.quality === 'high' ? 170000 : 60000 });
 scene.add(grass.mesh, grass.flowers);
@@ -339,6 +340,12 @@ function applyAnim() {
     clockEl.textContent = `${date}${time} · ${J.formatSpeed(ZM.rate)}`;
   }
 }
+// the puddles' stand-in for the tree (see world.js), rebuilt with it
+function setTreeProxy() {
+  const u = terrain.mat.uniforms;
+  u.uTrunk.value.copy(tree.proxy.trunk); u.uCanopy.value.copy(tree.proxy.canopy); u.uCanopyY.value = tree.proxy.canopyY;
+}
+setTreeProxy();
 let wasWet = false;
 // Rainbow after rain: rainMem follows the rain up at once and lets go slowly, so the bow
 // shows while it is clearing and just after, then fades. It lasts about 8 s, or a day and
@@ -368,6 +375,7 @@ function applyLook() {
   shared.uCloudCover.value = THREE.MathUtils.clamp(S.clouds + (SE ? SE.clouds : 0) + R, 0, 1);
   sky.uniforms.uRain.value = R; rain.uniforms.uRain.value = R * (SE ? 1 - Math.min(1, SE.snowFall * 2) : 1);
   terrain.mat.uniforms.uRain.value = rain.uniforms.uRain.value;
+  if (R > 0) { tree.reflectTone(terrain.mat.uniforms.uCanopyCol.value); terrain.mat.uniforms.uCanopyBare.value = tree.leafUniforms.uBare.value; }
   shared.uSnowCover.value = SE ? SE.snowCover : 0;
   snow.uniforms.uSnowFall.value = SE ? SE.snowFall : 0;
   grass.flowerUniforms.uFlowers.value = SE ? SE.flowers : 1;
@@ -468,6 +476,7 @@ function rebuildTree() {
   scene.remove(tree.group); tree.dispose();
   tree = makeTree(shared, GROUND, S.seed, { fallCount: MOBILE ? 220 : 420, airy: S.airy, turned: S.turned });
   tree.setStyle(S.style); scene.add(tree.group);
+  setTreeProxy();
 }
 function savePNG() {
   frame(0);
@@ -557,4 +566,4 @@ function loop() {
 }
 if (Q.has('still')) { frame(0); window.__ready = true; }
 else { loop(); setTimeout(() => (window.__ready = true), 500); }
-window.__sorairo = { S, AN, ZM, camera, grass, tree, birds, frame, setShot };
+window.__sorairo = { S, AN, ZM, camera, grass, tree, birds, frame, setShot, post };

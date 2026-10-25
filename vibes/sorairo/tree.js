@@ -170,7 +170,9 @@ export function makeTree(shared, groundY, seed = 7, opts = {}) {
     }
     for (let i = 0; i < b.pts.length - 1; i++) for (let k = 0; k < RS; k++) {
       const a = baseI + i * (RS + 1) + k, bb = a + 1, c = a + RS + 1, d = c + 1;
-      idx.push(a, c, bb, bb, c, d);
+      // counter-clockwise seen from outside (t × v points outward), so back-face culling
+      // keeps the near wall; the old order showed the sunlit inside of the far wall
+      idx.push(a, bb, c, bb, d, c);
     }
   }
   const tg = new THREE.BufferGeometry();
@@ -483,5 +485,17 @@ export function makeTree(shared, groundY, seed = 7, opts = {}) {
     tg.dispose(); qg.dispose(); fg.dispose(); barkMat.dispose(); leafMat.dispose(); leafShadowMat.dispose(); fallMat.dispose();
     clusterTex.leaf.dispose(); clusterTex.petal.dispose();
   }
-  return { group, setStyle, setTurned, setSeason, dispose, center, fallUniforms, cards: N, clumps: clumps.length };
+  // a rough stand-in for the tree for the puddle reflections: the trunk as a tapered
+  // cylinder, the canopy as an ellipsoid, and its shadow-side colour
+  const ext = new THREE.Vector3();
+  for (const c of clumps) { const d = c.c.clone().sub(center); ext.set(Math.max(ext.x, Math.abs(d.x) + c.r), Math.max(ext.y, Math.abs(d.y) + c.r), Math.max(ext.z, Math.abs(d.z) + c.r)); }
+  const canopyR = Math.max(ext.x, ext.z) * 0.85;
+  const proxy = { trunk: new THREE.Vector4(base.x, base.z, base.y, 7.0), canopy: new THREE.Vector4(center.x, center.y, center.z, canopyR), canopyY: ext.y * 0.85 / canopyR };
+  function reflectTone(out) {
+    // the canopy seen from below: the palette's middle stop or the style's colours, in shade
+    if (leafUniforms.uPalOn.value) out.copy(leafUniforms.uPal.value[2]).lerp(leafUniforms.uPal.value[0], 0.4).multiplyScalar(0.55);
+    else out.copy(leafUniforms.uLeafDark.value).lerp(leafUniforms.uLeafLight.value, 0.35);
+    return out;
+  }
+  return { group, setStyle, setTurned, setSeason, dispose, center, fallUniforms, cards: N, clumps: clumps.length, proxy, reflectTone, leafUniforms };
 }
