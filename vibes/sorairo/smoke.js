@@ -53,6 +53,8 @@ const SHOTS = [
   ['rain', 'rain=1&time=0.75&shot=hillside&t=20'],
   ['rainpath', 'weather=rain&time=2&az=20&shot=path&t=20'],
   ['puddles', 'rain=1&time=0.6&az=-20&shot=path&t=20'],
+  ['puddleclose', 'rain=1&time=0.6&shot=puddle&t=20'],
+  ['rainbow', 'rainbow=1&rain=0.25&time=1.7&az=-130&shot=hillside&t=20'],
   ['tsuyu', 'anim=year&season=0.329&shot=hillside&t=20'],
   ['blossom', 'season=0.15&time=1&az=150&shot=hillside&t=20'],
   ['shedding', 'season=0.76&time=1.3&az=-60&shot=wide&t=20'],

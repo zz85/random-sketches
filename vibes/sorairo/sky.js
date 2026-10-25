@@ -17,7 +17,8 @@ export function makeSky(shared) {
     uGlow: { value: 1 },
     uStars: { value: 0 },
     uTowers: { value: 1 },
-    uRain: { value: 0 }, // overcast: a low grey stratus deck with darker rain bands
+    uRain: { value: 0 },
+    uRainbow: { value: 0 }, // overcast: a low grey stratus deck with darker rain bands
     // contrail: a great circle (axis = its normal, ref = angle 0), the plane's angle along it,
     // how much trail is behind it, and an overall fade
     uTrailAxis: { value: new THREE.Vector3(0, 0, 1) },
@@ -41,7 +42,7 @@ export function makeSky(shared) {
       uniform float uTime, uCloudT; uniform vec3 uSunDir; uniform vec3 uSunColor; uniform vec2 uWind;
       uniform float uCloudCover;
       uniform vec3 uZenith, uMid, uHorizon, uCloudLit, uCloudShade, uCloudRim, uDiscColor;
-      uniform float uDiscSize, uGlow, uStars, uTowers, uRain;
+      uniform float uDiscSize, uGlow, uStars, uTowers, uRain, uRainbow;
       uniform vec3 uTrailAxis, uTrailRef; uniform float uTrailHead, uTrailLen, uTrailOn;
       varying vec3 vDir;
       #define PI 3.14159265
@@ -95,6 +96,12 @@ export function makeSky(shared) {
         return b - (1.18 - uCloudCover * 0.55);
       }
 
+      // a rainbow band, t = 0 inner (violet) … 1 outer (red), soft at both edges
+      vec3 rainbowColor(float t) {
+        vec3 c = clamp(vec3(abs(t * 6.0 - 4.0) - 1.0, 2.0 - abs(t * 6.0 - 3.6), 2.0 - abs(t * 6.0 - 1.6)), 0.0, 1.0);
+        c = mix(vec3(dot(c, vec3(0.33))), c, 0.8);                   // a little pastel
+        return c * smoothstep(-0.2, 0.15, t) * (1.0 - smoothstep(0.85, 1.2, t));
+      }
       void main() {
         vec3 d = normalize(vDir);
         float el = asin(clamp(d.y, -1., 1.));
@@ -155,6 +162,24 @@ export function makeSky(shared) {
           vec3 hd = uTrailRef * cos(uTrailHead) + b2 * sin(uTrailHead);
           float pd = length(d - hd);
           col += uCloudLit * exp(-pd * pd / (0.0006 * 0.0006)) * uTrailOn * 1.2;
+        }
+
+        // --- rainbow, round the antisolar point: the primary at 40.7° (violet) … 42.3° (red),
+        // the fainter secondary at 50 … 53° with the colours reversed, the sky brighter inside
+        // the primary and darker in Alexander's band between the two. Painted soft, like a
+        // background artist would: wide pastel bands, fading out toward the horizon ends.
+        if (uRainbow > 0.001 && d.y > -0.01) {
+          float a = degrees(acos(clamp(dot(d, -s), -1.0, 1.0)));
+          float t1 = (a - 40.4) / 2.2, t2 = (53.2 - a) / 3.2;
+          vec3 bow = vec3(0.0);
+          if (t1 > -0.2 && t1 < 1.2) bow += rainbowColor(t1);
+          if (t2 > -0.2 && t2 < 1.2) bow += rainbowColor(t2) * 0.38;
+          float inside = (1.0 - smoothstep(37.0, 40.6, a)) * smoothstep(0.0, 38.0, a);
+          float band = smoothstep(42.4, 43.5, a) * (1.0 - smoothstep(49.0, 50.2, a));
+          // stronger high in the arc, thinning where it meets the haze at the horizon
+          float fade = smoothstep(-0.01, 0.12, d.y) * (0.75 + 0.25 * fbm(vec2(az * 3.0, el * 8.0) + uCloudT * 0.002, 2));
+          col += bow * uRainbow * fade * 0.42 * (0.4 + 0.6 * length(uSunColor) / 3.0);
+          col *= 1.0 + (inside * 0.07 - band * 0.06) * uRainbow * fade;
         }
 
         float occl = 0.0;

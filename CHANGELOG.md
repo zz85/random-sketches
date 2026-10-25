@@ -1,6 +1,7 @@
 # Logs
 
 25 Oct 2026
+- Sorairo rainbow after the rain: as rain clears with the sun out and below about 40°, a soft painted bow round the antisolar point (primary 40.7–42.3° violet to red, fainter reversed secondary at 50–53°, brighter sky inside, darker Alexander's band), fading over about 8 s or a day and a half of a time-lapse; rainbow slider / `?rainbow=`. Puddles reflect a varied overcast sky with drifting lighter and darker masses, stronger ripples, and a low `puddle` camera shot to see them up close. Smoke: 27 shots.
 - StaffInk ink A/B toggle: Settings → Ink (Auto / Low latency / Standard) swaps the ink canvas between a desynchronized and a standard 2D context (a context's options are fixed at creation, so a fresh canvas element replaces the old one) and shows which one the browser actually granted. The mode chip names the active ink while comparing; `?lowlatency=1/0` still overrides. Auto stays standard on Android. Smoke: 32 (toggle, writing after a swap, Android UA picks standard); the offline check now finds the current cache instead of a hard-coded version.
 
 24 Oct 2026

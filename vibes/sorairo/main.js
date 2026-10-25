@@ -58,6 +58,7 @@ function samplePreset(t) {
 const S = {
   time: num('time', 0.75), azimuth: num('az', 55), clouds: num('clouds', 0.5), towers: num('towers', 1),
   rain: num('rain', Q.get('weather') === 'rain' ? 1 : 0),
+  rainbow: num('rainbow', 0), // a rainbow by hand; one also comes out by itself as rain clears
   style: Q.get('style') || 'summer', leaves: num('leaves', 1), wind: num('wind', 1.2), windDir: num('windDir', 30),
   birds: Q.get('birds') !== '0', contrail: Q.get('contrail') !== '0',
   painterly: Q.has('paint') ? num('paint', 2.5) : (MOBILE ? 0 : 2.5), shafts: 1, bloom: 0.55, flare: 1, paper: 1, vignette: 1, saturation: 1, exposure: 1,
@@ -195,6 +196,7 @@ const SHOTS = {
   wide: { pos: [-48, 3.5, 62], tgt: [0, 6, 0], fov: 40 },
   path: { pos: [-33, 1.5, 47], tgt: [8, 4, -6], fov: 42 },
   sky: { pos: [-10, 0.6, 16], tgt: [6, 14, -12], fov: 58 },
+  puddle: { pos: [-29, 0.75, 40], tgt: [-21, 0.4, 29], fov: 48 }, // low on the path, looking up it
 };
 function setShot(name) {
   const s = SHOTS[name] || SHOTS.hillside;
@@ -338,11 +340,21 @@ function applyAnim() {
   }
 }
 let wasWet = false;
+// Rainbow after rain: rainMem follows the rain up at once and lets go slowly, so the bow
+// shows while it is clearing and just after, then fades. It lasts about 8 s, or a day and
+// a half of a time-lapse when that is shorter (but never under a second and a bit).
+let rainMem = 0, lookDt = 0;
+function simDaysPerSecond() {
+  if (!AN.playing) return 0;
+  return AN.mode === 'year' ? 365 / AN.length : AN.mode === 'zoom' ? ZM.rate / 86400 : AN.mode === 'day' ? 1 / AN.length : 0;
+}
 function applyLook() {
   applyAnim();
   const R = Math.max(S.rain, SE && SE.rain ? SE.rain : 0);
   if (R > 0 || wasWet) setGround(SE ? SE.ground : SUMMER_GROUND, 1 - 0.32 * R);
   wasWet = R > 0;
+  const life = Math.min(8, Math.max(1.2, 1.5 / Math.max(simDaysPerSecond(), 1e-6)));
+  rainMem = Math.max(R, rainMem - lookDt / life);
   const P = wetPreset(samplePreset(S.time), R);
   const el = THREE.MathUtils.degToRad(P.sunEl), az = THREE.MathUtils.degToRad(S.azimuth + animAz * (1 - P.night) + (P.night > 0.5 ? 140 : 0));
   const sd = shared.uSunDir.value.set(Math.cos(el) * Math.sin(az), Math.sin(el), -Math.cos(el) * Math.cos(az));
@@ -367,6 +379,10 @@ function applyLook() {
   u.uCloudLit.value.copy(P.cloudLit); u.uCloudShade.value.copy(P.cloudShade); u.uCloudRim.value.copy(P.cloudRim);
   u.uDiscColor.value.copy(P.disc).multiplyScalar(lightK); u.uDiscSize.value = P.discSize; u.uGlow.value = P.glow * lightK; u.uStars.value = P.stars;
   u.uTowers.value = S.towers;
+  // a rainbow needs the sun out, behind you and below 42° (the bow sits 42° from the point
+  // opposite the sun, so a high sun puts it under the horizon)
+  const lowSun = 1 - THREE.MathUtils.smoothstep(P.sunEl, 30, 42);
+  u.uRainbow.value = Math.max(S.rainbow, THREE.MathUtils.clamp((rainMem - R) * 2.5, 0, 1)) * lightK * lowSun * (1 - P.night) * (1 - Math.min(1, R * 1.4) * 0.6);
   updateBirds(shared.uTime.value, S.birds && P.night < 0.5 && lightK > 0.3 && R < 0.35);
   updateContrail(shared.uTime.value, S.contrail && P.night < 0.5 && R < 0.2);
   birds.uniforms.uInk.value.copy(P.cloudShade).multiplyScalar(0.18);
@@ -405,6 +421,7 @@ fScene.add(S, 'azimuth', -180, 180, 1).name('sun azimuth');
 fScene.add(S, 'clouds', 0, 1, 0.01).name('cloud cover');
 fScene.add(S, 'towers', 0, 1.6, 0.01).name('cumulus towers');
 fScene.add(S, 'rain', 0, 1, 0.01).name('rain');
+fScene.add(S, 'rainbow', 0, 1, 0.01).name('rainbow');
 fScene.add(S, 'wind', 0, 3, 0.01);
 fScene.add(S, 'windDir', 0, 360, 1).name('wind direction');
 fScene.add(S, 'birds');
@@ -506,6 +523,7 @@ const clock = new THREE.Clock();
 let frames = 0, acc = 0;
 const FIXED_T = Q.has('t') ? num('t', 0) : null;
 function frame(dt) {
+  lookDt = Q.has('still') ? 0 : dt;
   shared.uTime.value = FIXED_T ?? shared.uTime.value + dt;
   // time-lapses race the clouds; a still frame keeps them where uTime puts them
   // the time zoom starts in real time, so its clouds speed up with it

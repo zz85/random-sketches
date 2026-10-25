@@ -109,7 +109,7 @@ export function makeTerrain(shared) {
           float h = hash12(q), tt = t * (0.9 + h * 0.6) + h * 7.0, ph = fract(tt), n = floor(tt);
           vec2 o = q + vec2(hash12(q + n * 1.37), hash12(q.yx + 3.0 + n * 2.11));
           float r = length(p - o) * 0.4, R = ph * 0.15;
-          s += exp(-pow((r - R) * 90.0, 2.0)) * (1.0 - ph) * (1.0 - ph);
+          s += exp(-pow((r - R) * 70.0, 2.0)) * (1.0 - ph) * (1.0 - ph) * 1.4;
         }
         return s;
       }
@@ -134,7 +134,10 @@ export function makeTerrain(shared) {
           if (rim > 0.001) {
             vec3 v = normalize(vWp - cameraPosition);
             float fres = 0.12 + 0.55 * pow(1.0 - abs(v.y), 5.0);
-            vec3 refl = mix(uFogColor, uAmbient, 0.35) * 0.95;
+            // the overcast sky mirrored: soft lighter and darker cloud masses, a little darker
+            // than the sky itself, which keeps them reading as water rather than holes
+            float sk = fbm3o(vWp.xz * vec2(0.12, 0.3) + uCloudT * 0.004);
+            vec3 refl = mix(uFogColor, uAmbient, 0.35) * mix(0.62, 0.92, sk);
             float ring = ripples(vWp.xz, uTime) * uRain;
             vec3 pc = mix(col * 0.55, refl, fres) * (1.0 - ring * 0.25) + refl * ring * 0.6;
             col *= 1.0 - rim * 0.25 * smoothstep(0.4, 0.9, p);   // darker wet mud round the edge
