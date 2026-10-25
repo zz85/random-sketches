@@ -143,10 +143,13 @@ export function detectPlayers(rgba, W, H, cam, opt = {}) {
   // width plus the pixel's own footprint
   // broadcast graphics are not the court: masked, a little larger than found (a caption tab often
   // sits on top of the score bug)
-  const hidden = new Uint8Array(w * h), rects = opt.overlays ?? findOverlays(rgba, W, H);
+  // a "rectangle" whose top and bottom edges both run along court lines or wall junctions is the
+  // court (the tin band seen dead level, a service box seen square-on), not a graphic
+  const onLine = (x0, x1, y) => { let n = 0, m = 0; for (let k = 0; k <= 20; k++) { const gx = Math.floor((x0 + (x1 - x0) * k / 20) / S.k), gy = Math.floor(y / S.k); if (gx < 0 || gy < 0 || gx >= w || gy >= h) continue; const i = gy * w + gx; m++; if (S.surf[i] >= 0 && nearLine(S.surf[i], S.su[i], S.sv[i]) < 0.08 + 4 * S.dist[i] * S.k / cam.f) n++; } return m && n / m > 0.4; };
+  const hidden = new Uint8Array(w * h), rects = (opt.overlays ?? findOverlays(rgba, W, H)).filter(([x0, y0, x1, y1]) => !(onLine(x0, x1, y0) && onLine(x0, x1, y1 - 1)));
   for (const [x0, y0, x1, y1] of rects) {
-    const mx = 0.012 * W, my = 0.2 * (y1 - y0);
-    for (let y = Math.max(0, Math.floor((y0 - my) / S.k)); y < Math.min(h, Math.ceil((y1 + 0.01 * H) / S.k)); y++) for (let x = Math.max(0, Math.floor((x0 - mx) / S.k)); x < Math.min(w, Math.ceil((x1 + mx) / S.k)); x++) hidden[y * w + x] = 1;
+    const mx = 0.012 * W, my = 0.2 * (y1 - y0); // and the score bars under a bug, below
+    for (let y = Math.max(0, Math.floor((y0 - my) / S.k)); y < Math.min(h, Math.ceil((y1 + 0.3 * (y1 - y0)) / S.k)); y++) for (let x = Math.max(0, Math.floor((x0 - mx) / S.k)); x < Math.min(w, Math.ceil((x1 + mx) / S.k)); x++) hidden[y * w + x] = 1;
   }
   if (opt.staticMask) for (let i = 0; i < w * h; i++) if (opt.staticMask(i)) hidden[i] = 1;
   const ok = new Uint8Array(w * h);
@@ -176,6 +179,13 @@ export function detectPlayers(rgba, W, H, cam, opt = {}) {
   const out = findPeople(clean, S, cam, w, h, hidden, opt);
   // inside the court (with a margin for a lunge into the corner)
   const players = out.filter((p) => p.X[0] > -0.15 && p.X[0] < CW + 0.15 && p.X[1] > 0.05 && p.X[1] < CL + 0.15);
+  // the shirt: mean colour of the person's own (foreground) pixels across the chest, for telling
+  // the two players apart across camera cuts
+  for (const p of players) {
+    const B = p.B, Hh = B.y1 - B.y0, s = [0, 0, 0]; let n = 0;
+    for (let y = Math.max(0, Math.round(B.y0 + 0.15 * Hh)); y < Math.min(h, B.y0 + 0.42 * Hh); y++) for (let x = Math.max(0, B.x0); x <= Math.min(w - 1, B.x1); x++) { const i = y * w + x; if (clean[i]) { s[0] += img.r[i]; s[1] += img.g[i]; s[2] += img.b[i]; n++; } }
+    p.col = n >= 4 ? s.map((v) => Math.round(v / n)) : null;
+  }
   return { players, fg: clean, hidden, overlays: rects, S, w, h };
 }
 
@@ -235,16 +245,16 @@ function refineFeet(fg, S, cam, w, h, hidden, hit, boxAt, opt) {
   const B = hit.B, Hp = B.y1 - B.y0, cx0 = Math.round(B.x0 + 0.2 * (B.x1 - B.x0)), cx1 = Math.round(B.x1 - 0.2 * (B.x1 - B.x0));
   const rowHas = (y) => { let n = 0; for (let x = Math.max(0, cx0); x <= Math.min(w - 1, cx1); x++) if (fg[y * w + x]) n++; return n; };
   const rowHidden = (y) => { for (let x = Math.max(0, cx0); x <= Math.min(w - 1, cx1); x++) if (hidden[y * w + x]) return true; return false; };
-  let y = Math.round(B.y0 + 0.5 * Hp), last = -1, gap = 0;
+  let y = Math.round(B.y0 + 0.5 * Hp), last = -1, gap = 0, jumped = null;
   while (y > B.y0 && rowHidden(y)) y--; // the box's middle is behind a graphic: start above it
   let lim = Math.min(h, B.y1 + 0.3 * Hp);
   for (; y < lim; y++) {
     if (rowHas(y) >= 2) { last = y; gap = 0; continue; }
-    if (rowHidden(y)) {
+    if (rowHidden(y) && !opt.noJump) {
       // a graphic across the legs: the feet may show below it (a player in front of the score bug)
       let y2 = y; while (y2 < h && rowHidden(y2)) y2++;
       let below = -1; for (let yy = y2; yy < Math.min(h, y2 + Math.max(3, 0.15 * Hp)); yy++) if (rowHas(yy) >= 2) { below = yy; break; }
-      if (below >= 0 && last >= 0 && below - last < 0.7 * Hp) { y = below - 1; gap = 0; lim = Math.min(h, Math.max(lim, below + 0.3 * Hp)); continue; }
+      if (below >= 0 && last >= 0 && below - last < 0.7 * Hp) { jumped = jumped ?? last; y = below - 1; gap = 0; lim = Math.min(h, Math.max(lim, below + 0.3 * Hp)); continue; }
     }
     if (++gap > Math.max(3, 0.15 * Hp)) break;
   }
@@ -281,6 +291,9 @@ function refineFeet(fg, S, cam, w, h, hidden, hit, boxAt, opt) {
     const R2 = boxAt(bestS[0], bestS[1]); if (!R2) return null;
     return { X: bestS, foot: cam.project([bestS[0], bestS[1], 0]).slice(0, 2), height: 1.72, occluded: true, score: hit.score, B: R2, box: [R2.x0 * S.k, R2.y0 * S.k, (R2.x1 + 1) * S.k, (R2.y1 + 1) * S.k] };
   }
+  // feet found below a graphic must make a person of a person's height (the graphic's own bars and
+  // a caption tab are foreground too): otherwise they are behind it
+  if (jumped != null && (tall > 2.0 || tall < 1.3)) return refineFeet(fg, S, cam, w, h, hidden, hit, boxAt, { ...opt, noJump: true });
   const need = Math.min(opt.minTall ?? 0.42 * 1.75, 0.8 * avail / H * 1.75);
   if (tall < need || need < 0.2) return { why: `tall ${tall.toFixed(2)} need ${need.toFixed(2)}` };
   return { X, foot: cam.project([X[0], X[1], 0]).slice(0, 2), height: tall, score: hit.score, B: R, box: [R.x0 * S.k, R.y0 * S.k, (R.x1 + 1) * S.k, (R.y1 + 1) * S.k] };

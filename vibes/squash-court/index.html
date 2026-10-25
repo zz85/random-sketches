@@ -31,7 +31,7 @@
 <header>
   <h1>Squash Court</h1>
   <button id="open" title="Photo or video (or drop / paste one anywhere)">Open…</button>
-  <input id="file" type="file" accept="image/*,video/*" hidden>
+  <input id="file" type="file" accept="image/*,video/*,.json" hidden>
   <button id="camera">Camera</button>
   <button id="demo" title="A synthetic frame with a known camera">Demo frame</button>
   <button id="play" hidden>Pause</button>
@@ -51,6 +51,8 @@
   <canvas id="plan" class="panel" width="256" height="390"></canvas>
   <h2>Front wall, rectified</h2>
   <canvas id="wall" class="panel" width="256" height="200"></canvas>
+  <h2>Player speed</h2>
+  <canvas id="speed" class="panel" width="320" height="110"></canvas>
   <h2>3D (drag to orbit, wheel to zoom)</h2>
   <canvas id="view3d" class="panel" width="320" height="240"></canvas>
 </aside>

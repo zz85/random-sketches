@@ -222,3 +222,34 @@ describe('ball bounces', () => {
     expect([peak % H.nx, Math.floor(peak / H.nx)]).toEqual([4, 8]);
   });
 });
+
+import { onsets, audioOffset } from './audio.js';
+import { soundImpacts, hitterOf, extrapolate } from './bounces.js';
+import { flight } from './ball.js';
+describe('impact sounds and hitters', () => {
+  test('clicks in noise and speech-like hum are found, the hum is not', () => {
+    const rate = 32000, x = new Float32Array(rate * 2), rng = mulberry32(5), clicks = [0.31, 0.77, 1.12, 1.6];
+    for (let i = 0; i < x.length; i++) x[i] = 0.01 * (rng() - 0.5) + 0.2 * Math.sin(2 * Math.PI * 180 * i / rate) * (0.5 + 0.5 * Math.sin(2 * Math.PI * 3 * i / rate));
+    for (const t of clicks) for (let j = 0; j < 400; j++) x[Math.round(t * rate) + j] += 0.5 * (rng() - 0.5) * Math.exp(-j / 60);
+    const o = onsets(x, rate).map((q) => q.t);
+    expect(o.length).toBe(4);
+    clicks.forEach((t, i) => expect(Math.abs(o[i] - t)).toBeLessThan(0.004));
+  });
+  test('audio delay recovered from impacts both saw', () => {
+    const imp = [1, 2.5, 3.1, 4.7, 6], heard = [0.4, ...imp.map((t) => t + 0.045), 5.2];
+    expect(audioOffset(heard, imp).offset).toBeCloseTo(0.045, 2);
+  });
+  test('extrapolate matches the flight model, forward and back', () => {
+    const X = [3, 6, 1], V = [1, -15, 3], [A] = flight(X, V, [0.2]), f = extrapolate(X, V, 0.2), b = extrapolate(A.X, A.V, -0.2);
+    f.X.forEach((v, j) => expect(v).toBeCloseTo(A.X[j], 3)); b.X.forEach((v, j) => expect(v).toBeCloseTo(X[j], 2));
+  });
+  test('a bounce heard after a lost track is placed on the floor; the hitter is the nearer player', () => {
+    const X0 = [2, 7, 0.6], V0 = [0.5, -14, 0], ts = [0, 0.04, 0.08, 0.12], S = flight(X0, V0, ts);
+    const f = { t0: 1, t1: 1.12, impacts: [], pts: ts.map((t, i) => ({ t: 1 + t, X: S[i].X, V: S[i].V })) };
+    let tz = 0; for (let t = 0.12; t < 1; t += 0.001) if (extrapolate(X0, V0, t).X[2] <= 0) { tz = t; break; } // when it reaches the floor
+    const players = (t, X) => ({ id: Math.hypot(X[0] - 2, X[1] - 7) < Math.hypot(X[0] - 4.5, X[1] - 4) ? 1 : 2, dist: Math.min(Math.hypot(X[0] - 2, X[1] - 7), Math.hypot(X[0] - 4.5, X[1] - 4)), other: Math.max(Math.hypot(X[0] - 2, X[1] - 7), Math.hypot(X[0] - 4.5, X[1] - 4)) });
+    const heard = soundImpacts([1 + tz], [f], players);
+    expect(heard.length).toBe(1); expect(heard[0].plane).toBe('floor');
+    expect(hitterOf(heard[0], [f], players, [0.97])).toBe(1);
+  });
+});

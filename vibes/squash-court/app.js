@@ -6,6 +6,7 @@ import { courtModel, W as CW, L as CL } from './court.js';
 import { renderCourt, randomBroadcastCamera } from './synth.js';
 import { mulberry32 } from './detect.js';
 import { Bounces, heatGrid } from './bounces.js';
+import { onsets as findOnsets, audioOffset, decodeAudio } from './audio.js';
 
 const $ = (id) => document.getElementById(id);
 const stage = $('stage'), sctx = stage.getContext('2d');
@@ -36,7 +37,7 @@ const S = {
 const HM = 0.25, HX = Math.ceil(CW / HM), HY = Math.ceil(CL / HM);
 const newStats = () => ({});
 S.stats = newStats();
-function statFor(id) { return S.stats[id] ??= { hist: [], dist: 0, time: 0, heat: new Float32Array(HX * HY), last: null, speed: 0, top: 0 }; }
+function statFor(id) { return S.stats[id] ??= { hist: [], dist: 0, time: 0, heat: new Float32Array(HX * HY), last: null, speed: 0, top: 0, series: [], log: [] }; }
 function addPlayerStats(players, t) {
   for (const p of players) {
     const st = statFor(p.id);
@@ -47,6 +48,7 @@ function addPlayerStats(players, t) {
       if (cx >= 0 && cy >= 0 && cx < HX && cy < HY && dt > 0) { st.heat[cy * HX + cx] += dt; st.time += dt; }
       if (st.last && dt > 0) st.dist += Math.hypot(p.X[0] - st.last.X[0], p.X[1] - st.last.X[1]);
       st.hist.push({ t, X: p.X.slice() });
+      st.log.push({ t, X: p.X.slice() }); if (st.log.length > 20000) st.log.splice(0, 5000);
     }
     st.last = { t, X: p.X.slice() };
     // speed: least-squares slope over the last 0.6 s (detections ~5 a second, feet jitter by cm)
@@ -56,7 +58,38 @@ function addPlayerStats(players, t) {
       let tt = 0, tx = 0, ty = 0; for (const q of st.hist) { const d = q.t - mt; tt += d * d; tx += d * (q.X[0] - mx); ty += d * (q.X[1] - my); }
       st.speed = tt > 1e-6 ? Math.hypot(tx / tt, ty / tt) : 0; st.top = Math.max(st.top, Math.min(st.speed, 8));
     } else st.speed = 0;
+    const sr = st.series; if (sr.length && t < sr[sr.length - 1].t) sr.length = 0;
+    sr.push({ t, v: p.seen ? st.speed : null }); if (sr.length > 20000) sr.splice(0, 5000);
   }
+}
+// The players nearby at time t (from the logged detections): nearest, its distance and the
+// other's. Used to say who hit a shot.
+function playersAt(t, X) {
+  const near = [];
+  for (const [id, st] of Object.entries(S.stats)) {
+    const L = st.log; if (!L || !L.length) continue;
+    let lo = 0, hi = L.length - 1; while (lo < hi) { const m = (lo + hi) >> 1; if (L[m].t < t) lo = m + 1; else hi = m; }
+    const q = [L[lo], L[lo - 1]].filter(Boolean).sort((a, b2) => Math.abs(a.t - t) - Math.abs(b2.t - t))[0];
+    if (Math.abs(q.t - t) < 0.4) near.push({ id: +id, dist: Math.hypot(q.X[0] - X[0], q.X[1] - X[1]) });
+  }
+  near.sort((a, b2) => a.dist - b2.dist);
+  return near.length ? { id: near[0].id, dist: near[0].dist, other: near[1]?.dist ?? null } : null;
+}
+// Heard impacts (audio.js), in video time once the audio delay is known from impacts both saw.
+S.audio = null;
+function heardTimes() {
+  const A = S.audio; if (!A || !A.on.length) return null;
+  const imp = S.bounces.list.filter((m) => !m.sound).map((m) => m.t);
+  if (imp.length >= 3 && imp.length !== A.nImp) { const o = audioOffset(A.on, imp); A.offset = o.sure ? o.offset : null; A.matched = o.matched; A.chance = o.chance; A.nImp = imp.length; }
+  return A.on.map((t) => t - (A.offset ?? 0));
+}
+async function listen(url, v) {
+  try {
+    const { x, rate } = await decodeAudio(url);
+    if (S.src !== v) return;
+    const on = findOnsets(x, rate).map((o) => o.t);
+    S.audio = { on, offset: null, matched: 0, nImp: 0 };
+  } catch (e) { S.audio = { on: [], error: String(e.message || e) }; }
 }
 // the ball's speed now: the fitted flight's velocity at the frame nearest the current time
 function ballNow() {
@@ -168,7 +201,7 @@ function takeRally(q, k) {
   S.ball = q.ball && { u: q.ball.u / k, v: q.ball.v / k, t: q.ball.t };
   if (S.ball) S.ballTrail.push(S.ball);
   const t = S.src.currentTime ?? 0; S.ballTrail = S.ballTrail.filter((b) => b.t > t - 0.4 && b.t <= t + 0.05);
-  if (q.flights) { S.flights = q.flights.map((f) => ({ ...f, uv: f.uv.map(([u, v]) => [u / k, v / k]) })); S.bounces.update(S.flights); }
+  if (q.flights) { S.flights = q.flights.map((f) => ({ ...f, uv: f.uv.map(([u, v]) => [u / k, v / k]) })); S.bounces.update(S.flights, { onsets: heardTimes(), players: playersAt }); }
 }
 // flights to show at time t: the last 2 s of video (all of them for a still)
 const recentFlights = () => { const t = S.src?.currentTime; return t == null ? S.flights : S.flights.filter((f) => f.t1 > t - 2 && f.t0 <= t + 0.05); };
@@ -183,12 +216,13 @@ function loadFile(file) {
   const url = URL.createObjectURL(file);
   if (file.type.startsWith('video/')) {
     const v = document.createElement('video'); v.src = url; v.muted = !S.sound; v.playsInline = true; v.loop = true;
-    v.onloadeddata = () => useVideo(v); return;
+    v.onloadeddata = () => { useVideo(v); listen(url, v); }; return;
   }
+  if (file.name.endsWith('.json')) { file.text().then((t) => useMatch(JSON.parse(t), file.name)); return; }
   const im = new Image(); im.onload = () => useImage(im, im.naturalWidth, im.naturalHeight); im.src = url;
 }
 function useVideo(v) {
-  stopLive(); S.src = v; S.srcW = v.videoWidth; S.srcH = v.videoHeight; S.cam = null; S.picks = []; clearRally(); S.live = true; fitStage();
+  stopLive(); S.src = v; S.srcW = v.videoWidth; S.srcH = v.videoHeight; S.cam = null; S.picks = []; clearRally(); S.audio = null; S.match = null; S.live = true; fitStage();
   // with sound if wanted; a browser that refuses unmuted playback without a fresh gesture gets it muted
   S.frameCb = watchFrames(v);
   v.play().catch(() => { v.muted = true; soundLabel(); v.play().catch(() => {}); });
@@ -260,7 +294,7 @@ function seg3(ctx, cam, a, b, map, n = 24) {
 }
 function draw() {
   sctx.setTransform(1, 0, 0, 1, 0, 0); sctx.fillStyle = '#111'; sctx.fillRect(0, 0, stage.width, stage.height);
-  if (!S.src) return;
+  if (!S.src) { if (S.match) { drawPlan(); drawWall(); drawSpeed(); readout(); } return; }
   sctx.drawImage(S.src, disp.ox, disp.oy, S.srcW * disp.k, S.srcH * disp.k);
   const map = (u) => [disp.ox + u[0] * disp.k, disp.oy + u[1] * disp.k];
   const dpr = devicePixelRatio || 1;
@@ -277,7 +311,7 @@ function draw() {
     sctx.fillStyle = '#ff2d7a'; sctx.beginPath(); sctx.arc(x, y, 5 * dpr, 0, 7); sctx.fill();
     sctx.font = `${12 * dpr}px system-ui`; sctx.fillStyle = '#fff'; sctx.fillText(fmtX(p), x + 8 * dpr, y - 6 * dpr);
   }
-  drawPlan(); drawWall(); draw3d(); readout();
+  drawPlan(); drawWall(); draw3d(); drawSpeed(); readout();
 }
 // players: a ring on the floor round the feet (dashed when the feet are hidden behind a graphic and
 // placed from the head), the position in metres; the ball: its fitted flights and the live blob
@@ -327,7 +361,7 @@ function drawPlan() {
   pctx.strokeRect(0.5, 0.5, plan.width - 1, plan.height - 1);
   for (const p of S.picks) if (p.surface === 'floor') { pctx.fillStyle = '#ff2d7a'; pctx.beginPath(); pctx.arc(p.X[0] * s, p.X[1] * s, 4, 0, 7); pctx.fill(); }
   if (S.showHeat) drawHeat(s);
-  if (S.showBounces) drawBounces(pctx, S.bounces.on('floor').map((m) => [m.X[0], m.X[1]]), CW, CL, s, (x, y) => [x * s, y * s], !S.showHeat);
+  if (S.showBounces) drawBounces(pctx, S.bounces.on('floor'), CW, CL, s, (x, y) => [x * s, y * s], !S.showHeat, (m) => [m.X[0], m.X[1]]);
   if (S.showRally) {
     // the ball's ground track (shadow), floor bounces, players
     for (const f of recentFlights()) {
@@ -370,8 +404,9 @@ function drawHeat(s) {
 // bounce (a ring when it was inferred from a flight ending on the floor rather than fitted inside
 // one). to(x, y) maps plane metres to canvas pixels; the grid's cell origin is the plane's.
 const BC = 0.25, bounceCnv = document.createElement('canvas');
-function drawBounces(ctx, pts, w, h, s, to, dim) {
-  if (!pts.length) return;
+function drawBounces(ctx, list, w, h, s, to, dim, xy) {
+  if (!list.length) return;
+  const pts = list.map(xy);
   const H = heatGrid(pts, BC, w, h), mx = Math.max(...H.g);
   bounceCnv.width = H.nx; bounceCnv.height = H.ny;
   const bc = bounceCnv.getContext('2d'), img = bc.createImageData(H.nx, H.ny);
@@ -386,7 +421,34 @@ function drawBounces(ctx, pts, w, h, s, to, dim) {
   ctx.save(); ctx.imageSmoothingEnabled = true; ctx.globalAlpha = 0.85;
   ctx.translate(x0, y0); ctx.scale((x1 - x0) / H.nx, (y1 - y0) / H.ny); ctx.drawImage(bounceCnv, 0, 0); ctx.restore();
   ctx.lineWidth = 1.2;
-  for (const [x, y] of pts) { const [px, py] = to(x, y); ctx.strokeStyle = '#000'; ctx.fillStyle = '#ffe600'; ctx.beginPath(); ctx.arc(px, py, 2.6, 0, 7); ctx.fill(); ctx.stroke(); }
+  // dot colour: who hit the shot (grey: not known); a square: heard, not seen
+  list.forEach((m, i) => {
+    const [px, py] = to(...pts[i]); ctx.strokeStyle = '#000'; ctx.fillStyle = m.player ? PCOL[(m.player - 1) % PCOL.length] : '#aaa';
+    ctx.beginPath(); if (m.sound) ctx.rect(px - 2.6, py - 2.6, 5.2, 5.2); else ctx.arc(px, py, 2.8, 0, 7); ctx.fill(); ctx.stroke();
+  });
+}
+// Speed over time per player: the last 30 s (all of it for a match file), gaps where unseen.
+function drawSpeed() {
+  const c = $('speed'), g = c.getContext('2d'), w = c.width, h = c.height;
+  g.fillStyle = '#16181d'; g.fillRect(0, 0, w, h);
+  const all = Object.entries(S.stats).filter(([, st]) => st.series && st.series.length);
+  const tEnd = S.match ? Math.max(1, ...all.map(([, st]) => st.series.at(-1).t)) : S.src?.currentTime ?? 0, span = S.match ? tEnd - Math.min(...all.map(([, st]) => st.series[0].t)) : 30, t0 = tEnd - span;
+  const vMax = 6, X = (t) => 28 + (t - t0) / span * (w - 34), Y = (v) => h - 14 - Math.min(v, vMax) / vMax * (h - 22);
+  g.strokeStyle = '#333'; g.fillStyle = '#888'; g.font = '10px system-ui'; g.lineWidth = 1;
+  for (let v = 0; v <= vMax; v += 2) { g.beginPath(); g.moveTo(28, Y(v)); g.lineTo(w - 6, Y(v)); g.stroke(); g.fillText(`${v}`, 8, Y(v) + 3); }
+  g.fillText('m/s', 2, 10); g.fillText(S.match ? `${(span / 60).toFixed(0)} min` : '30 s', w - 40, h - 2);
+  for (const [id, st] of all) {
+    g.strokeStyle = PCOL[(id - 1) % PCOL.length]; g.lineWidth = 1.5; g.beginPath(); let pen = false;
+    for (const q of st.series) { if (q.t < t0) continue; if (q.v == null) { pen = false; continue; } const x = X(q.t), y = Y(q.v); pen ? g.lineTo(x, y) : g.moveTo(x, y); pen = true; }
+    g.stroke();
+  }
+}
+// A whole match analysed by tools/match.mjs: its players' heatmaps and speeds, every bounce.
+function useMatch(M, name) {
+  stopLive(); S.src = null; S.cam = null; clearRally(); S.match = M;
+  for (const p of M.players) { const st = statFor(p.id); st.heat = Float32Array.from(p.heatmap.seconds); st.dist = p.distance; st.time = p.seconds; st.top = p.topSpeed; st.series = p.speed.map(([t, v]) => ({ t, v })); }
+  S.bounces.list = M.bounces.map((m) => ({ t: m.t, X: [m.x, m.y, m.z], plane: m.plane, inferred: m.inferred, sound: m.sound, player: m.player }));
+  status(`${name}: ${(M.duration / 60).toFixed(1)} min, ${M.bounces.length} impacts, ${M.players.length} players`); draw();
 }
 function drawWall() {
   const s = wall.width / CW; // front wall, 0 … 5 m high
@@ -394,7 +456,7 @@ function drawWall() {
   wctx.strokeStyle = 'rgba(0,240,255,0.8)';
   for (const l of MODEL.lines) if (l.kind === 'front') { const y = wall.height - l.a[2] * s; wctx.beginPath(); wctx.moveTo(0, y); wctx.lineTo(wall.width, y); wctx.stroke(); }
   for (const p of S.picks) if (p.surface === 'front wall') { wctx.fillStyle = '#ff2d7a'; wctx.beginPath(); wctx.arc(p.X[0] * s, wall.height - p.X[2] * s, 4, 0, 7); wctx.fill(); }
-  if (S.showBounces) drawBounces(wctx, S.bounces.on('front').map((m) => [m.X[0], m.X[2]]), CW, wall.height / s, s, (x, z) => [x * s, wall.height - z * s], true);
+  if (S.showBounces) drawBounces(wctx, S.bounces.on('front'), CW, wall.height / s, s, (x, z) => [x * s, wall.height - z * s], true, (m) => [m.X[0], m.X[2]]);
   if (S.showRally) for (const f of recentFlights()) for (const m of f.impacts) if (m.plane === 'front') { wctx.fillStyle = '#ff8a00'; wctx.beginPath(); wctx.arc(m.X[0] * s, wall.height - m.X[2] * s, 4, 0, 7); wctx.fill(); }
 }
 // 3D overview rendered with the same camera class: court box, lines, the fitted camera's frustum.
@@ -426,7 +488,15 @@ function draw3d() {
 }
 function readout() {
   const c = S.cam, el = $('readout');
-  if (!c) { el.textContent = S.src ? 'looking for the court…' : 'Open a photo or video of a squash court, use the camera, or try a demo frame.'; return; }
+  if (S.match) {
+    const M = S.match, fl = S.bounces.on('floor'), fr = S.bounces.on('front');
+    el.textContent = [`match    ${M.source} — ${(M.duration / 60).toFixed(1)} min, court seen ${(M.courtSeconds / 60).toFixed(1)} min`,
+      ...M.players.map((p) => `player ${p.id} ${p.distance.toFixed(0)} m in ${(p.seconds / 60).toFixed(1)} min, top ${p.topSpeed.toFixed(1)} m/s${p.colour ? `, shirt rgb(${p.colour.map(Math.round).join(', ')})` : ''}`),
+      `bounces  ${fl.length} on the floor (${fl.filter((m) => m.X[1] > 5.44).length} behind the short line), ${fr.length} on the front wall, ${S.bounces.list.filter((m) => m.sound).length} found by ear`,
+      ...M.players.map((p) => `         P${p.id} hit ${S.bounces.list.filter((m) => m.player === p.id).length}`)].join('\n');
+    return;
+  }
+  if (!c) { el.textContent = S.src ? 'looking for the court…' : 'Open a photo or video of a squash court (or a match .json from tools/match.mjs), use the camera, or try a demo frame.'; return; }
   const a = c.angles(), hz = S.trackMs.length ? 1000 / (S.trackMs.reduce((s, v) => s + v, 0) / S.trackMs.length) : 0;
   const lines = [
     `camera   x ${c.C[0].toFixed(2)}  y ${c.C[1].toFixed(2)}  z ${c.C[2].toFixed(2)} m`,
@@ -437,10 +507,13 @@ function readout() {
     `fit      coverage ${(S.quality.coverage * 100).toFixed(0)}%  residual ${S.quality.rms.toFixed(2)} px  ${S.okay ? 'good' : 'LOW CONFIDENCE'}`,
     `time     ${S.ms ? Math.round(S.ms.wall) + ' ms' : ''}${hz ? `   tracking ${hz.toFixed(1)} fps` : ''}${S.live && S.path ? `   ${S.path}${S.mount === 'free' ? ', camera moving' : ', fixed mount'}` : ''}`,
   ];
-  if (S.showRally) {
+  if (S.showRally || S.match) {
     for (const p of S.players) { const st = S.stats[p.id]; lines.push(`player ${p.id} x ${p.X[0].toFixed(2)}  y ${p.X[1].toFixed(2)} m${p.occluded ? '  (feet hidden: from the head)' : ''}${p.seen ? '' : '  (coasting)'}`); if (st && S.live) lines.push(`         ${kmh(st.speed)}, top ${st.top.toFixed(1)} m/s, ${st.dist.toFixed(0)} m covered in ${st.time.toFixed(0)} s`); }
     const bn = ballNow(); if (bn) lines.push(`ball now ${kmh(bn.speed)}`);
-    if (S.bounces.list.length) { const fl = S.bounces.on('floor'), fr = S.bounces.on('front'); lines.push(`bounces  ${fl.length} on the floor${fl.length ? ` (${fl.filter((m) => m.X[1] > 5.44).length} behind the short line)` : ''}, ${fr.length} on the front wall`); }
+    if (S.bounces.list.length) { const fl = S.bounces.on('floor'), fr = S.bounces.on('front'); lines.push(`bounces  ${fl.length} on the floor${fl.length ? ` (${fl.filter((m) => m.X[1] > 5.44).length} behind the short line)` : ''}, ${fr.length} on the front wall`);
+      const by = (id) => S.bounces.list.filter((m) => m.player === id && (m.plane === 'floor' || m.plane === 'front')).length, ids = [...new Set(S.bounces.list.map((m) => m.player).filter(Boolean))].sort();
+      if (ids.length) lines.push(`         shots by ${ids.map((id) => `P${id} ${by(id)}`).join(', ')}, ${S.bounces.list.filter((m) => !m.player).length} unknown`); }
+    if (S.audio) lines.push(S.audio.error ? `sound    not decoded (${S.audio.error})` : `sound    ${S.audio.on.length} impacts heard${S.audio.offset != null ? `, audio ${Math.round(S.audio.offset * 1000)} ms after picture (${S.audio.matched} matched, ${S.audio.chance} by chance)` : ', delay not known yet'}, ${S.bounces.list.filter((m) => m.sound).length} bounces found by ear`);
     const f = recentFlights().slice(-1)[0];
     if (f) { const a = f.pts[0].X, e = f.pts[f.pts.length - 1].X, v = (X) => `${X[0].toFixed(1)}, ${X[1].toFixed(1)}, ${X[2].toFixed(1)}`; lines.push(`ball     ${f.t0.toFixed(2)}–${f.t1.toFixed(2)} s  (${v(a)}) → (${v(e)}) m, ${(f.speed * 3.6).toFixed(0)} km/h off the hit${f.impacts.length ? '  hit ' + f.impacts.map((m) => m.plane).join(', ') : ''}`); }
     if (S.rallyMs.players != null) lines.push(`         players ${Math.round(S.rallyMs.players)} ms${S.rallyMs.ball != null ? `, ball ${Math.round(S.rallyMs.ball)} ms` : ''} a frame`);

@@ -20,7 +20,22 @@ export class Rally {
     this.grays = []; // last three distinct frames: { g, t }
     this.ballT = new BallTracker({ gate: 12, slack: 0.6, maxMiss: 3, impacts: false, first: 40 });
     this.playerT = new PlayerTracker(); this.dets = []; this.tPlayers = -Infinity; this.flights = []; this.queue = [];
-    this.last = null;
+    this.last = null; this.fgN = null; this.fgFrames = 0;
+  }
+  // Fixed things the colour model calls foreground (glass-door brackets, the bars under a score
+  // bug, a camera on the tin): pixels that are foreground in most frames of this camera stretch.
+  // People move, so their pixels are foreground a fraction of the time. Masked pixels are not
+  // counted again, so the mask does not switch itself off.
+  staticMask() {
+    if (!this.fgN || this.fgFrames < 30) return null; // 6 s of player detections
+    const N = this.fgN, f = this.fgFrames * 0.7;
+    return (i) => N[i] > f;
+  }
+  learnStatic(P, mask) {
+    const n = P.w * P.h;
+    if (!this.fgN || this.fgN.length !== n) { this.fgN = new Uint16Array(n); this.fgFrames = 0; }
+    this.fgFrames++;
+    for (let i = 0; i < n; i++) if (P.fg[i] || (mask && mask(i))) this.fgN[i]++;
   }
   // players / ball: which parts to run (the page runs them in two workers so the slow player search
   // never makes the ball skip frames); boxes (rgba px) and playerX (metres): players found
@@ -34,9 +49,10 @@ export class Rally {
     let players = [];
     if (!doPlayers) { if (boxes) this.dets = boxes.map((box, i) => ({ box, X: playerX?.[i] ?? null })); }
     else if (t - this.tPlayers >= this.playerEvery) {
-      const t1 = now(), P = detectPlayers(rgba, W, H, cam, { tin, width: Math.min(this.playerW, W) });
+      const mask = this.staticMask(), t1 = now(), P = detectPlayers(rgba, W, H, cam, { tin, width: Math.min(this.playerW, W), staticMask: mask ?? undefined });
+      this.learnStatic(P, mask);
       this.dets = P.players; this.tPlayers = t; ms.players = now() - t1;
-      players = this.playerT.update(P.players, t).map((p) => ({ ...p, box: this.playerT.tracks.find((k) => k.id === p.id)?.det?.box ?? null }));
+      players = this.playerT.update(P.players, t).map((p) => { const d = this.playerT.tracks.find((k) => k.id === p.id)?.det; return { ...p, box: d?.box ?? null, col: d?.col ?? null }; });
     } else players = this.playerT.update([], t).map((p) => ({ ...p, box: null }));
     // ball: candidates in the middle one of the last three distinct frames
     this.grays.push({ g, t }); if (this.grays.length > 3) this.grays.shift();

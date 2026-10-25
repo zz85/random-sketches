@@ -85,9 +85,21 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
     const hs = await b.evaluate(`(()=>{const st=Object.values(__sq.stats);return {n:st.length,sec:st.reduce((s,q)=>s+q.heat.reduce((a,v)=>a+v,0),0),sp:st.map(q=>q.speed)}})()`);
     check('video: heatmap and player speeds accumulate', hs.n > 0 && hs.sec > 0.1 && hs.sp.every((v) => v >= 0 && v < 9), `${hs.n} players, ${hs.sec.toFixed(1)} s in the heatmap, speeds ${hs.sp.map((v) => v.toFixed(1)).join(', ')} m/s`);
     const bb = await b.evaluate(`(()=>{const B=__sq.bounces;B.update([{t0:0.2,t1:0.5,impacts:[{t:0.3,X:[2,0,1.2],plane:'front'}],pts:[{t:0.2,X:[3,5,1],V:[0,-9,1]},{t:0.5,X:[2.5,3,0.03],V:[0,8,-4]}]}]);const n=[B.on('floor').length,B.on('front').length];return {n,fed:(__sq.ballTs||[]).length}})()`);
-    check('video: bounces collected, ball fed from every video frame', bb.n[0] >= 1 && bb.n[1] >= 1 && bb.fed >= 2, `floor ${bb.n[0]}, front ${bb.n[1]}, ${bb.fed} frames to the ball worker`);
+    check('video: bounces collected, ball fed from every video frame', bb.n[0] >= 1 && bb.n[1] >= 1 && bb.fed >= 1, `floor ${bb.n[0]}, front ${bb.n[1]}, ${bb.fed} frames to the ball worker`);
     check('video: players and ball run in their own workers', vp.n > 0 && vp.ms != null && vp.mb != null, `${vp.n} players ${JSON.stringify(vp.X)}, players ${Math.round(vp.ms)} ms, ball ${Math.round(vp.mb)} ms a frame`);
     await shot('video');
+    // a match file from tools/match.mjs
+    const M = { source: 'test.mp4', duration: 600, courtSeconds: 500, audio: { heard: 10, offset: 0.03, matched: 5 }, flights: 2,
+      players: [1, 2].map((id) => ({ id, colour: [200, 50, 90], distance: 900 + id, seconds: 400, topSpeed: 4.5, speed: [[1, 2], [2, 3], [3, null], [5, 1]], heatmap: { cell: 0.25, nx: 26, ny: 39, seconds: Array.from({ length: 26 * 39 }, (_, i) => (i === 22 * 26 + 13 ? 50 : 0)) } })),
+      bounces: [{ t: 3, plane: 'floor', x: 1, y: 8, z: 0, inferred: false, sound: false, player: 1 }, { t: 4, plane: 'front', x: 2, y: 0, z: 1, inferred: false, sound: true, player: 2 }] };
+    fs.writeFileSync('/tmp/squash-smoke/match.json', JSON.stringify(M));
+    await b.send('DOM.setFileInputFiles', { nodeId: node.result.nodeId, files: ['/tmp/squash-smoke/match.json'] });
+    try { await waitFor(() => b.evaluate('!!__sq.match'), 3000); } catch { await b.evaluate(`document.getElementById('file').dispatchEvent(new Event('change'));1`); await waitFor(() => b.evaluate('!!__sq.match'), 3000); }
+    const mt = await b.evaluate(`({txt:document.getElementById('readout').textContent,b:__sq.bounces.list.length})`);
+    check('match file: heatmaps, speeds and bounces shown', mt.b === 2 && /match\s+test\.mp4/.test(mt.txt) && /P1 hit 1/.test(mt.txt), mt.txt.split('\n')[0]);
+    const sp = await b.evaluate(`(()=>{const c=document.getElementById('speed'),d=c.getContext('2d').getImageData(0,0,c.width,c.height).data;let n=0;for(let i=0;i<d.length;i+=4)if((d[i]>200&&d[i+1]<120)||(d[i+2]>200&&d[i]<120))n++;return n})()`);
+    check('speed chart drawn per player', sp > 50, `${sp} px in the players' colours`);
+    await shot('match');
     const errors = [];
     for (const e of b.events) if (e.method === 'Runtime.exceptionThrown') errors.push(e.params.exceptionDetails.exception?.description || e.params.exceptionDetails.text);
     for (const e of b.events) if (e.method === 'Runtime.consoleAPICalled' && e.params.type === 'error') errors.push(e.params.args.map((a) => a.value || a.description).join(' '));

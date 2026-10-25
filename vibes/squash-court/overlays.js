@@ -12,11 +12,12 @@ export function findOverlays(rgba, W, H, opt = {}) {
   // horizontal edges: runs of strong vertical gradient along one row
   const hs = [];
   for (let y = 1; y < h - 1; y++) {
-    let x0 = -1;
+    // a run may skip up to 3 px (floor grain or a leg crossing a caption's edge)
+    let x0 = -1, lastOn = -1;
     for (let x = 0; x <= w; x++) {
       const on = x < w && Math.abs(L[(y + 1) * w + x] - L[(y - 1) * w + x]) > thr && Math.abs(L[(y + 1) * w + x] - L[(y - 1) * w + x]) > 1.6 * Math.abs(L[y * w + Math.min(w - 1, x + 1)] - L[y * w + Math.max(0, x - 1)]);
-      if (on && x0 < 0) x0 = x;
-      if (!on && x0 >= 0) { if (x - x0 >= minLen) hs.push({ y, x0, x1: x - 1 }); x0 = -1; }
+      if (on) { if (x0 < 0) x0 = x; lastOn = x; continue; }
+      if (x0 >= 0 && (x === w || x - lastOn > 3)) { if (lastOn + 1 - x0 >= minLen) hs.push({ y, x0, x1: lastOn }); x0 = -1; }
     }
   }
   // merge the two or three adjacent rows a blurred edge spans
