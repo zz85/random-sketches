@@ -200,3 +200,25 @@ describe('players and ball', () => {
     expect(c.some((q) => Math.abs(q.u - 500.5) < 5)).toBe(false);
   });
 });
+
+import { Bounces, impactsOf, heatGrid } from './bounces.js';
+describe('ball bounces', () => {
+  const fl = (t0, t1, end, impacts = []) => ({ t0, t1, impacts, pts: [{ t: t0, X: [3, 2, 1], V: [0, 5, -2] }, { t: t1, X: end, V: [0, 5, -6] }] });
+  test('a flight ending on the floor is a bounce; one ending in the air is not', () => {
+    expect(impactsOf(fl(0, 0.4, [3, 6, 0.02])).map((m) => [m.plane, m.inferred])).toEqual([['floor', true]]);
+    expect(impactsOf(fl(0, 0.4, [3, 6, 1.2]))).toEqual([]);
+  });
+  test('a replaced window replaces its bounces, older ones stay', () => {
+    const B = new Bounces();
+    B.update([fl(0, 0.4, [3, 6, 0]), fl(1, 1.4, [2, 7, 0])]);
+    B.update([fl(1, 1.4, [4, 8, 0], [{ t: 1.2, X: [3, 0, 1], plane: 'front' }])]); // the second flight refitted
+    expect(B.on('floor').map((m) => m.X[1])).toEqual([6, 8]);
+    expect(B.on('front').length).toBe(1);
+  });
+  test('heat grid keeps the count and peaks at the bounce', () => {
+    const H = heatGrid([[1.1, 2.1], [1.1, 2.1], [5, 9]], 0.25, 6.4, 9.75);
+    const sum = H.g.reduce((s, v) => s + v, 0), peak = H.g.indexOf(Math.max(...H.g));
+    expect(sum).toBeGreaterThan(2.5); expect(sum).toBeLessThan(3.2);
+    expect([peak % H.nx, Math.floor(peak / H.nx)]).toEqual([4, 8]);
+  });
+});

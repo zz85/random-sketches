@@ -79,10 +79,13 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
     const fps = v.trk.length ? 1000 / (v.trk.reduce((s, x) => s + x, 0) / v.trk.length) : 0;
     check('video tracked frame to frame', v.trk.length >= 2 && fps > 8, `${v.frames - f0} frames analysed in the last 1 s, tracking ${fps.toFixed(1)} fps (last: worker ${v.wms?.total?.toFixed(1)} ms of ${v.wms?.wall?.toFixed(1)} ms)`);
     check('tracked camera follows the clip (within 25 cm)', best < 0.25 && v.ok, `${(best * 100).toFixed(1)} cm at ${v.t.toFixed(2)} s (${v.path}, ${v.mount} mount, analysed ${v.tA?.toFixed(2)} s)`);
+    await waitFor(() => b.evaluate('__sq.players.length > 0'), 8000).catch(() => {}); // a frame can come back empty (court lost on it)
     const vp = await b.evaluate(`({n:__sq.players.length,ms:__sq.rallyMs.players,mb:__sq.rallyMs.ball,X:__sq.players.map(p=>p.X.map(v=>+v.toFixed(2)))})`);
     await waitFor(() => b.evaluate('__sq.players.length > 0 && __sq.rallyMs.players != null'), 10000).catch(() => {});
     const hs = await b.evaluate(`(()=>{const st=Object.values(__sq.stats);return {n:st.length,sec:st.reduce((s,q)=>s+q.heat.reduce((a,v)=>a+v,0),0),sp:st.map(q=>q.speed)}})()`);
     check('video: heatmap and player speeds accumulate', hs.n > 0 && hs.sec > 0.1 && hs.sp.every((v) => v >= 0 && v < 9), `${hs.n} players, ${hs.sec.toFixed(1)} s in the heatmap, speeds ${hs.sp.map((v) => v.toFixed(1)).join(', ')} m/s`);
+    const bb = await b.evaluate(`(()=>{const B=__sq.bounces;B.update([{t0:0.2,t1:0.5,impacts:[{t:0.3,X:[2,0,1.2],plane:'front'}],pts:[{t:0.2,X:[3,5,1],V:[0,-9,1]},{t:0.5,X:[2.5,3,0.03],V:[0,8,-4]}]}]);const n=[B.on('floor').length,B.on('front').length];return {n,fed:(__sq.ballTs||[]).length}})()`);
+    check('video: bounces collected, ball fed from every video frame', bb.n[0] >= 1 && bb.n[1] >= 1 && bb.fed >= 2, `floor ${bb.n[0]}, front ${bb.n[1]}, ${bb.fed} frames to the ball worker`);
     check('video: players and ball run in their own workers', vp.n > 0 && vp.ms != null && vp.mb != null, `${vp.n} players ${JSON.stringify(vp.X)}, players ${Math.round(vp.ms)} ms, ball ${Math.round(vp.mb)} ms a frame`);
     await shot('video');
     const errors = [];
