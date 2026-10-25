@@ -5,6 +5,8 @@ import { Camera, rodrigues, rotToRodrigues, lookAt } from './camera.js';
 import { courtModel } from './court.js';
 import { distanceTransform, detectCourt, trackCourt, mulberry32 } from './detect.js';
 import { renderCourt, randomBroadcastCamera } from './synth.js';
+import { homography4, cameraFromFloorH, boxSeeds } from './boxes.js';
+import { features } from './detect.js';
 
 describe('camera', () => {
   test('rodrigues round trip, including 180°', () => {
@@ -32,6 +34,16 @@ describe('camera', () => {
     const h = [H[0] * 2 + H[1] * 6 + H[2], H[3] * 2 + H[4] * 6 + H[5], H[6] * 2 + H[7] * 6 + H[8]], u = c.project(X);
     expect(h[0] / h[2]).toBeCloseTo(u[0], 6); expect(h[1] / h[2]).toBeCloseTo(u[1], 6);
   });
+});
+
+test('service box corners -> floor homography -> camera, exactly', () => {
+  const c = Camera.fromLookAt([2, 15, 4], [3.5, 3, 0.5], 0.02, 900, 1280, 720);
+  const W = [[1.575, 5.415], [1.575, 7.015], [4.825, 5.415], [4.825, 7.015]];
+  const H = homography4(W, W.map(([x, y]) => c.project([x, y, 0])));
+  const d = cameraFromFloorH(H, 1280, 720, 640, 360);
+  d.C.forEach((v, i) => expect(v).toBeCloseTo(c.C[i], 6));
+  expect(d.f).toBeCloseTo(900, 4);
+  expect(cameraFromFloorH(H, 1280, 720, 640, 360, 700).f).toBeCloseTo(700, 6); // given focal: pose only
 });
 
 test('court model: WSF dimensions', () => {
@@ -69,6 +81,19 @@ describe('detection on synthetic frames', () => {
     expect(dC).toBeLessThan(0.1);
     expect(Math.acos(Math.min(1, dot)) * 180 / Math.PI).toBeLessThan(0.5);
     expect(Math.abs(r.cam.f / cam.f - 1)).toBeLessThan(0.01);
+  }, 20000);
+  test('service boxes give seeds near the true camera', () => {
+    const { cam } = cases[2], img = renderCourt(cam, { seed: 3, style: 'club', players: 0, adverts: 4 });
+    const F = features(img.data, W, H), seeds = boxSeeds(F).seeds;
+    expect(seeds.length).toBeGreaterThan(0);
+    const best = Math.min(...seeds.map((s) => Math.hypot(...s.C.map((v, k) => v - cam.C[k]))));
+    expect(best).toBeLessThan(1.5);
+  });
+  test('PSA men\'s tin (0.43 m) is told from the WSF one', () => {
+    const { cam } = cases[4], img = renderCourt(cam, { seed: 5, style: 'glass', players: 2, adverts: 8, tin: 0.43 });
+    const r = detectCourt(img.data, W, H);
+    expect(r.tin).toBe(0.43);
+    expect(Math.hypot(...r.cam.C.map((v, k) => v - cam.C[k]))).toBeLessThan(0.1);
   }, 20000);
   test('tracking recovers a 30 cm / 1.5° / 5% zoom jump in one frame', () => {
     const { cam } = cases[2], img = renderCourt(cam, { seed: 3, style: 'club', players: 2 });

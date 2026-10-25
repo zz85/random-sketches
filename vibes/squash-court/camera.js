@@ -67,8 +67,11 @@ export class Camera {
     const R = this.R, a = X[0] - this.C[0], b = X[1] - this.C[1], c = X[2] - this.C[2];
     const z = R[6] * a + R[7] * b + R[8] * c;
     if (z <= 1e-6) return [NaN, NaN, z];
-    const x = (R[0] * a + R[1] * b + R[2] * c) / z, y = (R[3] * a + R[4] * b + R[5] * c) / z;
-    const d = 1 + this.k1 * (x * x + y * y);
+    const x = (R[0] * a + R[1] * b + R[2] * c) / z, y = (R[3] * a + R[4] * b + R[5] * c) / z, r2 = x * x + y * y;
+    // far outside the frame the one-term distortion polynomial folds back on itself and would
+    // draw points from behind the edges into the picture: report those as not visible
+    if (this.k1 && r2 > this.rmax2()) return [NaN, NaN, -1];
+    const d = 1 + this.k1 * r2;
     return [this.cx + this.f * x * d, this.cy + this.f * y * d, z];
   }
   // world ray through pixel (u, v): origin C, unit direction
@@ -106,6 +109,10 @@ export class Camera {
   homography(plane = 'floor') {
     const P = this.matrix(), c = plane === 'floor' ? [0, 1, 3] : [0, 2, 3];
     return [0, 1, 2].flatMap((i) => c.map((j) => P[i * 4 + j]));
+  }
+  rmax2() {
+    const corner = ((this.w / 2) ** 2 + (this.h / 2) ** 2) / (this.f * this.f) * 4;
+    return this.k1 < 0 ? Math.min(corner, 1 / (3 * -this.k1)) : corner;
   }
   with(p) { return new Camera(p, this.w, this.h, this.cx, this.cy); }
   hfov() { return 2 * Math.atan(this.w / 2 / this.f) * 180 / Math.PI; }

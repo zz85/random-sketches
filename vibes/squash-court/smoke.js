@@ -54,20 +54,25 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
     await b.send('DOM.enable');
     const doc = await b.send('DOM.getDocument', {}), node = await b.send('DOM.querySelector', { nodeId: doc.result.root.nodeId, selector: '#file' });
     await b.send('DOM.setFileInputFiles', { nodeId: node.result.nodeId, files: [CLIP] });
-    await waitFor(() => b.evaluate('__sq.live && __sq.frames > 2'), 30000);
+    // setFileInputFiles fires change on its own, usually; nudge it if the clip has not started
+    try { await waitFor(() => b.evaluate('__sq.live'), 3000); } catch { await b.evaluate(`document.getElementById('file').dispatchEvent(new Event('change'));1`); }
+    await waitFor(() => b.evaluate('__sq.live'), 10000);
+    await b.evaluate(`__sq.src.loop = false; __sq.src.currentTime = 0; 1`); // the truth table below has no wrap-around
+    const f00 = await b.evaluate('__sq.frames');
+    await waitFor(() => b.evaluate(`__sq.frames > ${f00} + 2`), 30000);
     const f0 = await b.evaluate('__sq.frames');
-    await sleep(4000);
+    await sleep(1000);
     // pause, let the last analysis land, then compare with the camera of the frame on screen
     await b.evaluate(`__sq.src.pause();1`); await sleep(100);
     await waitFor(() => b.evaluate('!__sq.busy'), 5000);
     await b.evaluate(`new Promise(r=>{const S=__sq;const go=()=>{if(S.busy)return setTimeout(go,30);S.fails=0;r()};go()})`);
     const v = await b.evaluate(`(async()=>{const S=__sq; await new Promise(r=>{const t=setInterval(()=>{if(!S.busy){clearInterval(t);r()}},20)}); return {frames:S.frames,t:S.src.currentTime,C:S.cam.C,f:S.cam.f,w:S.srcW,trk:S.trackMs.slice(),ok:S.okay}})()`);
     // the last analysed frame may lag the paused frame by one tracking interval: accept the closest truth within 0.4 s
-    const fi = Math.round(v.t * 25);
+    const fi = Math.min(truthCams.length - 1, Math.round(v.t * 25));
     let best = Infinity;
     for (let j = Math.max(0, fi - 10); j <= Math.min(truthCams.length - 1, fi + 1); j++) { const p = truthCams[j].p; best = Math.min(best, Math.hypot(p[3] - v.C[0], p[4] - v.C[1], p[5] - v.C[2])); }
     const fps = v.trk.length ? 1000 / (v.trk.reduce((s, x) => s + x, 0) / v.trk.length) : 0;
-    check('video tracked frame to frame', v.frames - f0 >= 10 && v.trk.length >= 5, `${v.frames - f0} frames in 4 s, tracking ${fps.toFixed(1)} fps`);
+    check('video tracked frame to frame', v.trk.length >= 2 && fps > 8, `${v.frames - f0} frames analysed in the last 1 s, tracking ${fps.toFixed(1)} fps`);
     check('tracked camera follows the clip (within 25 cm)', best < 0.25 && v.ok, `${(best * 100).toFixed(1)} cm at ${v.t.toFixed(2)} s`);
     await shot('video');
     const errors = [];

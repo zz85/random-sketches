@@ -11,7 +11,7 @@ const stage = $('stage'), sctx = stage.getContext('2d');
 const plan = $('plan'), pctx = plan.getContext('2d');
 const wall = $('wall'), wctx = wall.getContext('2d');
 const view = $('view3d'), vctx = view.getContext('2d');
-const MODEL = courtModel();
+let MODEL = courtModel();
 // frames are grabbed at these widths; the detector itself works at 640 and 480 px, tracking at 480
 const DETECT_W = 1280, TRACK_W = 960;
 
@@ -20,7 +20,7 @@ const S = {
   srcW: 0, srcH: 0,
   cam: null, // fitted camera in source pixels
   quality: null, ms: null, busy: false, fails: 0, frames: 0, trackMs: [],
-  picks: [], showLines: true, orbit: { yaw: -0.5, pitch: 0.45, dist: 19 },
+  tin: 0.48, picks: [], showLines: true, orbit: { yaw: -0.5, pitch: 0.45, dist: 19 },
   live: false, procFrame: null,
 };
 window.__sq = S;
@@ -29,8 +29,8 @@ window.__sq = S;
 const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
 let reqId = 0; const pending = new Map();
 worker.onmessage = (e) => { const r = pending.get(e.data.id); pending.delete(e.data.id); r && r(e.data); };
-function run(mode, img, prev) {
-  return new Promise((res) => { const id = ++reqId; pending.set(id, res); worker.postMessage({ id, mode, rgba: img.data, w: img.width, h: img.height, prev }, [img.data.buffer]); });
+function run(mode, img, prev, opt) {
+  return new Promise((res) => { const id = ++reqId; pending.set(id, res); worker.postMessage({ id, mode, rgba: img.data, w: img.width, h: img.height, prev, opt }, [img.data.buffer]); });
 }
 
 // camera in one pixel grid -> another (same pose, scaled intrinsics)
@@ -53,11 +53,15 @@ async function analyse(mode = 'detect') {
   S.procFrame = { img: new ImageData(new Uint8ClampedArray(img.data), img.width, img.height), k };
   const prev = tracking ? scaleCam(S.cam, k, img.width, img.height) : null;
   const t0 = performance.now();
-  const r = await run(tracking ? 'track' : 'detect', img, prev && { p: prev.p, cx: prev.cx, cy: prev.cy });
+  const r = await run(tracking ? 'track' : 'detect', img, prev && { p: prev.p, cx: prev.cx, cy: prev.cy }, tracking ? { tin: S.tin } : {});
   S.busy = false;
   if (r.error) { status(`error: ${r.error.split('\n')[0]}`); console.error(r.error); return; }
   const wall = performance.now() - t0;
-  if (r.cam && (r.ok || !tracking)) { S.cam = scaleCam(fromMsg(r.cam), 1 / k, S.srcW, S.srcH); S.quality = r.quality; S.okay = r.ok; }
+  // a cut to another camera can still give a tracked fit that passes on its own; one that explains
+  // much less than the last detection did is a lost track
+  if (tracking && r.ok && S.refGood && r.quality.good < 0.6 * S.refGood) r.ok = false;
+  if (!tracking && r.ok) S.refGood = r.quality.good;
+  if (r.cam && (r.ok || !tracking)) { S.cam = scaleCam(fromMsg(r.cam), 1 / k, S.srcW, S.srcH); S.quality = r.quality; S.okay = r.ok; if (r.tin) { S.tin = r.tin; MODEL = courtModel({ tin: r.tin }); } }
   S.fails = r.ok ? 0 : S.fails + 1;
   S.ms = { ...r.ms, wall }; S.frames++;
   if (tracking) { S.trackMs.push(wall); if (S.trackMs.length > 30) S.trackMs.shift(); }
@@ -97,7 +101,9 @@ function stopLive() {
 function loop() {
   if (!S.live) return;
   draw();
-  if (!S.busy && S.src.readyState >= 2) analyse(S.cam && S.fails < 3 ? 'track' : 'detect');
+  // a paused video is analysed once, not over and over
+  const t = S.src.currentTime, fresh = !S.src.paused || t !== S.lastT || (!S.okay && S.fails < 3);
+  if (!S.busy && S.src.readyState >= 2 && fresh) { S.lastT = t; analyse(S.cam && S.fails < 3 ? 'track' : 'detect'); }
   requestAnimationFrame(loop);
 }
 let demoN = 1;
@@ -226,6 +232,7 @@ function readout() {
     `         ${c.C[1] > CL ? (c.C[1] - CL).toFixed(2) + ' m behind the back wall' : (CL - c.C[1]).toFixed(2) + ' m in front of the back wall'}, ${c.C[2].toFixed(2)} m up`,
     `view     yaw ${a.yaw.toFixed(1)}°  pitch ${a.pitch.toFixed(1)}° down  roll ${a.roll.toFixed(1)}°`,
     `lens     f ${c.f.toFixed(0)} px  (h-fov ${c.hfov().toFixed(1)}°, ${(36 / 2 / Math.tan(c.hfov() * Math.PI / 360)).toFixed(0)} mm full-frame equiv.)  k1 ${c.k1.toFixed(3)}`,
+    `tin      ${S.tin.toFixed(2)} m (${S.tin < 0.45 ? 'PSA men' : 'WSF / women'})`,
     `fit      coverage ${(S.quality.coverage * 100).toFixed(0)}%  residual ${S.quality.rms.toFixed(2)} px  ${S.okay ? 'good' : 'LOW CONFIDENCE'}`,
     `time     ${S.ms ? Math.round(S.ms.wall) + ' ms' : ''}${hz ? `   tracking ${hz.toFixed(1)} fps` : ''}`,
   ];

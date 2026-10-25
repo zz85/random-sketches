@@ -13,7 +13,8 @@
 //    covers, refine the best by Gauss-Newton ICP (point to nearest line, along the model line's
 //    normal) with a shrinking robust scale, and keep the one that explains the most line pixels.
 import { Camera, solve } from './camera.js';
-import { courtModel, samplePoints } from './court.js';
+import { courtModel, samplePoints, TINS } from './court.js';
+import { boxSeeds } from './boxes.js';
 
 // ---------- image ----------
 
@@ -247,13 +248,22 @@ const now = () => (typeof performance !== 'undefined' ? performance.now() : Date
 // ---------- fit ----------
 
 // Model samples: every ~8 cm on the painted lines, with neighbour info for projected spacing.
-export function modelSamples(tin, step = 0.08) {
+// noTin drops the tin line: its height differs between tours, so the search runs without it and
+// the polish tries each height.
+export function modelSamples(tin, step = 0.08, noTin = false) {
   const model = courtModel({ tin });
+  if (noTin) model.lines = model.lines.filter((l) => l.name !== 'tin');
   return { model, pts: samplePoints(model, step) };
 }
 
-// Physically possible cameras: above the floor and not behind the (opaque) front wall.
-export const plausible = (cam) => cam.C[1] > 0.3 && cam.C[2] > 0.2 && cam.f > 30 && Math.abs(cam.k1) < 0.5;
+// Line pixels closer than this to the border are never detected (the detector's window), so model
+// lines there are neither credited nor penalised.
+const MARGIN = 7;
+const inside = (F, x, y) => x >= MARGIN && y >= MARGIN && x < F.w - MARGIN && y < F.h - MARGIN;
+
+// Physically possible cameras: above the floor, and in front of the front wall unless above it (the
+// reverse-angle camera on top of a show court's front wall).
+export const plausible = (cam) => (cam.C[1] > 0.3 || cam.C[2] > 4.7) && cam.C[2] > 0.2 && cam.f > 30 && Math.abs(cam.k1) < 0.5;
 
 // The back wall line is on the glass right in front of a camera behind the back wall: out of
 // frame or a blur, never usable. Skip it for such cameras.
@@ -261,22 +271,56 @@ const skip = (cam, kind) => kind === 'back' && cam.C[1] > 9.45;
 
 // Score a camera: weighted length (px) of model line that lands on image line pixels, minus a
 // fraction of the length that lands on nothing, over in-frame samples. Higher is better.
-export function scoreCamera(cam, F, S, tau = 3, lambda = 0.5) {
-  const { w, h, dt } = F; let good = 0, bad = 0, prev = null, inFrame = 0;
+// Weight of each line in the score. Every line counts by the fraction of it that is matched, not
+// by its length in pixels or metres, so the short service-box lines weigh as much as the long
+// ones: the floor pattern (short line, half line, the boxes) is the most distinctive thing on a
+// court and the least confusable with glass panel edges, frames and reflections of lines in the
+// glass, so it counts most. A pixel-length score rewards cameras that blow up the few lines they
+// match and push the rest out of frame.
+export const KIND_W = { floor: 1.5, front: 1, side: 0.6, back: 0.6 };
+const segLenCache = new WeakMap();
+function segLengths(S) {
+  let L = segLenCache.get(S); if (L) return L;
+  L = [];
+  for (let i = 1; i < S.length; i++) if (S[i].seg === S[i - 1].seg) L[S[i].seg] = (L[S[i].seg] || 0) + Math.hypot(S[i].X[0] - S[i - 1].X[0], S[i].X[1] - S[i - 1].X[1], S[i].X[2] - S[i - 1].X[2]);
+  segLenCache.set(S, L); return L;
+}
+
+// mode 'frac' (default) for choosing between cameras; mode 'px' (pixel length, no per-line
+// normalisation) is the smoother attractor the coarse search uses.
+const claimCache = new WeakMap();
+function claims(F) { let c = claimCache.get(F); if (!c) { c = { stamp: new Int32Array(F.w * F.h), owner: new Int16Array(F.w * F.h), n: 0 }; claimCache.set(F, c); } return c; }
+
+export function scoreCamera(cam, F, S, tau = 3, lambda = 0.5, angTol = 0.26, mode = 'frac') {
+  const { dt, pts, ptAt, w } = F; let good = 0, bad = 0, prev = null, inFrame = 0;
   if (!plausible(cam)) return { score: -1e9, good: 0, bad: 0, inFrame: 0 };
+  const segL = segLengths(S), claim = claims(F), stamp = ++claim.n;
   for (let i = 0; i < S.length; i++) {
     const s = S[i]; if (skip(cam, s.kind)) { prev = null; continue; }
     const u = cam.project(s.X);
     if (prev && prev.seg === s.seg && u[2] > 0 && prev.u[2] > 0) {
       const mx = (u[0] + prev.u[0]) / 2, my = (u[1] + prev.u[1]) / 2;
-      if (mx >= 1 && my >= 1 && mx < w - 1 && my < h - 1) {
-        const len = Math.min(40, Math.hypot(u[0] - prev.u[0], u[1] - prev.u[1]));
-        const d = dt.dist[(my | 0) * w + (mx | 0)];
-        if (d <= tau) good += len * (1 - d / (tau * 2)); else bad += len;
+      if (inside(F, mx, my)) {
+        const tx = u[0] - prev.u[0], ty = u[1] - prev.u[1], tl = Math.hypot(tx, ty);
+        // a line drawn a few pixels long proves little (a far-away court fits any clutter), so the
+        // credit also needs the line to be drawn at a resolvable size: full at >= 4% of the width
+        const m = Math.hypot(s.X[0] - prev.X[0], s.X[1] - prev.X[1], s.X[2] - prev.X[2]);
+        const len = mode === 'px' ? (KIND_W[s.kind] ?? 1) * Math.min(40, tl) : 100 * (KIND_W[s.kind] ?? 1) * (m / segL[s.seg]) * Math.min(1, tl / m * segL[s.seg] / (0.04 * w));
+        const k = (my | 0) * w + (mx | 0), d = dt.dist[k];
+        // the image line found there must run the same way as the model line (a glass seam or a
+        // frame crossing it does not count)
+        let along = false;
+        if (d <= tau && tl > 1e-6) {
+          const nk = dt.near[k], q = pts[ptAt[nk]]; along = q && Math.abs(q.nx * tx + q.ny * ty) / tl < angTol;
+          // an image line pixel credits one model line only: two model lines laid over the same
+          // image line (the short line over the tin, say) is a wrong camera, not twice the evidence
+          if (along) { const o = claim.owner[nk]; if (claim.stamp[nk] === stamp && o !== s.seg) along = false; else { claim.stamp[nk] = stamp; claim.owner[nk] = s.seg; } }
+        }
+        if (along) good += len * (1 - d / (tau * 2)); else bad += len;
         inFrame++;
       }
     }
-    prev = { u, seg: s.seg };
+    prev = { u, seg: s.seg, X: s.X };
   }
   return { score: good - lambda * bad, good, bad, inFrame };
 }
@@ -296,7 +340,7 @@ export function refine(cam0, F, S, { iters = 12, tau = 4, free = [1, 1, 1, 1, 1,
     for (let i = 0; i < S.length; i++) {
       const s = S[i]; if (skip(cam, s.kind)) continue;
       const u = cam.project(s.X);
-      if (!(u[2] > 0) || u[0] < 1 || u[1] < 1 || u[0] >= w - 1 || u[1] >= h - 1) continue;
+      if (!(u[2] > 0) || !inside(F, u[0], u[1])) continue;
       const k = (u[1] | 0) * w + (u[0] | 0), d = dt.dist[k];
       if (d > tau * 3) continue;
       const nk = dt.near[k], pi = ptAt[nk]; if (pi < 0) continue;
@@ -305,6 +349,7 @@ export function refine(cam0, F, S, { iters = 12, tau = 4, free = [1, 1, 1, 1, 1,
       const X2 = [s.X[0] + s.dir[0] * 0.05, s.X[1] + s.dir[1] * 0.05, s.X[2] + s.dir[2] * 0.05], u2 = cam.project(X2);
       let tx = u2[0] - u[0], ty = u2[1] - u[1]; const tl = Math.hypot(tx, ty); if (!(tl > 1e-6)) continue;
       tx /= tl; ty /= tl;
+      if (Math.abs(q.nx * tx + q.ny * ty) > (tau > 3 ? 1.01 : 0.5)) continue; // the image line must run along the model line (loosely while far off)
       const nx = -ty, ny = tx, r = nx * (u[0] - q.x) + ny * (u[1] - q.y);
       const wt = q.wt * (Math.abs(r) < tau ? (1 - (r / tau) ** 2) ** 2 : 0); // Tukey
       if (wt <= 0) continue;
@@ -350,18 +395,21 @@ function* seeds(w, h, n, rng, cx, cy) {
   for (let i = 0; i < n; i++) {
     const u = rng();
     let C, T;
-    if (u < 0.75) { // broadcast: behind / above the back wall, looking at the front wall
+    if (u < 0.68) { // broadcast: behind / above the back wall, looking at the front wall
       C = [W / 2 + (rng() - 0.5) * 6, L + 0.5 + rng() * 9, 1.5 + rng() * 6];
       T = [W / 2 + (rng() - 0.5) * 3, rng() * 5, rng() * 3];
-    } else if (u < 0.85) { // high overhead, steep
+    } else if (u < 0.78) { // high overhead, steep
       C = [W / 2 + (rng() - 0.5) * 4, L * (0.5 + rng() * 0.8), 5 + rng() * 6];
       T = [W / 2 + (rng() - 0.5) * 2, rng() * 6, 0];
-    } else if (u < 0.93) { // side / corner views through the glass
+    } else if (u < 0.82) { // reverse angle: high above the front wall, looking back down the court
+      C = [W / 2 + (rng() - 0.5) * 4, -2 + rng() * 3.5, 5 + rng() * 5];
+      T = [W / 2 + (rng() - 0.5) * 2, 4 + rng() * 6, 0];
+    } else if (u < 0.88) { // side / corner views through the glass
       const side = rng() < 0.5 ? -1 : 1;
       C = [W / 2 + side * (4 + rng() * 6), rng() * L * 1.3, 1 + rng() * 5];
       T = [W / 2 + (rng() - 0.5) * 3, rng() * L, rng() * 2];
     } else { // inside the court or low behind the back wall (handheld, referee, phone)
-      C = [W / 2 + (rng() - 0.5) * 5, L * (0.4 + rng() * 0.9), 0.8 + rng() * 2.5];
+      C = [-0.5 + rng() * (W + 1), L * (0.3 + rng() * 1.1), 0.5 + rng() * 2.8];
       T = [W / 2 + (rng() - 0.5) * 3, rng() * 3, rng() * 2.5];
     }
     const hfov = (25 + rng() * 75) * Math.PI / 180, f = w / 2 / Math.tan(hfov / 2);
@@ -424,29 +472,29 @@ export function detectCourt(rgba, W, H, opt = {}) {
   const t0 = now(), sizes = opt.workWidth ? [opt.workWidth] : opt.sizes || [640, 480];
   let best = null;
   const fine = features(rgba, W, H, { ...opt, workWidth: sizes[0] });
-  const { model, pts: S } = modelSamples(opt.tin ?? 0.48, 0.08);
   for (const ww of sizes) {
     const r = detectAt(rgba, W, H, { ...opt, workWidth: ww, features: ww === sizes[0] ? fine : undefined });
     // judge on the fine features (polished there first)
+    const { model, pts: S } = modelSamples(r.tin, 0.08);
     let c = toWorkCam(r.cam, fine);
     if (ww !== sizes[0]) c = refine(c, fine, S, { tau: 3, iters: 10, minTau: 1, free: [1, 1, 1, 1, 1, 1, 1, 0] }).cam;
     const sc = total(c, fine, S, model);
-    if (!best || sc.score > best.sc.score) best = { r, c, sc, ww };
+    if (!best || sc.score > best.sc.score) best = { r, c, sc, ww, S };
   }
-  const res = finish({ cam: best.c, ...best.sc }, fine, S, opt);
+  const res = finish({ cam: best.c, ...best.sc }, fine, best.S, opt);
   res.ms = { features: fine.ms, total: now() - t0 };
-  res.features = fine; res.workWidth = best.ww; res.candidates = best.r.candidates;
+  res.features = fine; res.workWidth = best.ww; res.candidates = best.r.candidates; res.tin = best.r.tin;
   return res;
 }
 
 function detectAt(rgba, W, H, opt = {}) {
   const t0 = now();
   const F = opt.features || features(rgba, W, H, opt);
-  const tin = opt.tin ?? 0.48;
-  const { model, pts: S } = modelSamples(tin, 0.08), Sc = modelSamples(tin, 0.25).pts;
+  // search with the WSF tin; the polish below also tries the PSA men's height
+  const { model, pts: S } = modelSamples(0.48, 0.08), Sc = modelSamples(0.48, 0.25).pts;
   const rng = mulberry32(opt.seed ?? 1);
   const tauC = Math.max(4, F.w / 80);
-  const sc0 = (cam) => scoreCamera(cam, F, Sc, tauC, 0.35).score;
+  const sc0 = (cam) => scoreCamera(cam, F, Sc, tauC, 0.35, 1.01, 'px').score;
   // coarse: many seeds scored with a forgiving tolerance
   const nSeeds = opt.seeds ?? 6000, keep = opt.keep ?? 60;
   let top = [];
@@ -457,51 +505,76 @@ function detectAt(rgba, W, H, opt = {}) {
   // local stochastic search around each survivor (shrinking steps), still on the coarse score
   const sd = [0.03, 0.03, 0.03, 0.4, 0.6, 0.4, 0.08, 0];
   for (const t of top) {
-    for (let it = 0, scale = 1; it < 36; it++) {
-      if (it % 12 === 11) scale *= 0.5;
+    for (let it = 0, scale = 1, n = opt.localIters ?? 90; it < n; it++) {
+      if (it % (n / 3 | 0) === (n / 3 | 0) - 1) scale *= 0.5;
       const p = t.cam.p.map((v, i) => v + sd[i] * scale * gauss(rng)), c = t.cam.with(p), sc = sc0(c);
       if (sc > t.sc) { t.cam = c; t.sc = sc; }
     }
   }
-  // keep distinct poses: local search often walks several seeds into the same basin
-  top.sort((a, b) => b.sc - a.sc);
-  const same = (a, b) => Math.hypot(a.C[0] - b.C[0], a.C[1] - b.C[1], a.C[2] - b.C[2]) < 0.6 && a.R[6] * b.R[6] + a.R[7] * b.R[7] + a.R[8] * b.R[8] > 0.998 && Math.abs(a.p[6] - b.p[6]) < 0.08;
+  // keep distinct poses (local search often walks several seeds into the same basin), the best by
+  // the pixel score and the best by the per-line score, which disagree on cluttered glass courts
   const distinct = [];
-  for (const t of top) if (!distinct.some((u) => same(u.cam, t.cam))) distinct.push(t);
-  top = distinct.slice(0, opt.refineN ?? 16);
+  for (const t of top.sort((a, b) => b.sc - a.sc)) if (!distinct.some((u) => same(u.cam, t.cam))) distinct.push(t);
+  for (const t of distinct) t.fr = scoreCamera(t.cam, F, Sc, tauC, 0.5).score;
+  const n = opt.refineN ?? 12, pick = new Set(distinct.slice(0, n));
+  for (const t of distinct.slice().sort((a, b) => b.fr - a.fr).slice(0, n)) pick.add(t);
+  top = [...pick];
   const tCoarse = now() - t0;
   // refine each, re-score both ways (model on image lines, image lines on the model)
   let best = null;
   const tried = [];
-  for (const { cam } of top) {
-    let c = refine(cam, F, Sc, { tau: tauC * 2.5, iters: 14, minTau: tauC / 2 }).cam;
+  // seeds from the service boxes go first: when the boxes are visible they are close to exact
+  const boxes = opt.boxes === false ? [] : boxSeeds(F).seeds.map((cam) => ({ cam, box: true }));
+  for (const { cam, box } of [...boxes, ...top]) {
+    let c = refine(cam, F, Sc, { tau: tauC * (box ? 1.5 : 2.5), iters: 14, minTau: tauC / 2 }).cam;
     c = refine(c, F, S, { tau: tauC, iters: 10, minTau: 1.2 }).cam;
     const sc = total(c, F, S, model);
-    tried.push({ cam: c, ...sc });
+    tried.push({ cam: c, ...sc, box });
     if (!best || sc.score > best.score) best = { cam: c, ...sc };
   }
-  // the focal / distance trade-off: try the best at other zooms, keep any that explains more
-  if (best) for (const k of [0.85, 0.92, 1.08, 1.18]) {
-    const p = best.cam.p.slice(), c0 = best.cam;
-    const fwd = [c0.R[6], c0.R[7], c0.R[8]], target = 12; // dolly along the view axis to keep the centre's scale
-    p[6] += Math.log(k); for (let i = 0; i < 3; i++) p[3 + i] -= fwd[i] * target * (k - 1);
-    let c = refine(c0.with(p), F, Sc, { tau: tauC * 2, iters: 12, minTau: tauC / 2 }).cam;
-    c = refine(c, F, S, { tau: tauC, iters: 10, minTau: 1.2 }).cam;
-    const sc = total(c, F, S, model); tried.push({ cam: c, ...sc });
-    if (sc.score > best.score) best = { cam: c, ...sc };
-  }
-  // final polish with the distortion term free
+  if (opt.debug) opt.debug.push({ w: F.w, nBox: boxes.length, tried: tried.map((t) => ({ score: t.score, C: t.cam.C, box: !!t.box })) });
+  // the focal / distance trade-off is a long shallow valley for broadcast views (a zoomed-in camera
+  // far back looks much like a wider one closer in): probe the best few along it
   if (best) {
-    const r = refine(best.cam, F, S, { tau: 2, iters: 10, minTau: 1, free: [1, 1, 1, 1, 1, 1, 1, opt.distortion === false ? 0 : 1] });
-    const sc = total(r.cam, F, S, model);
-    if (sc.score >= best.score * 0.98) best = { cam: r.cam, ...sc };
+    const lead = [];
+    for (const t of tried.slice().sort((a, b) => b.score - a.score)) { if (!lead.some((u) => same(u.cam, t.cam))) lead.push(t); if (lead.length >= 3) break; }
+    for (const t of lead) for (const k of [0.72, 0.85, 1.15, 1.3, 1.5]) {
+      let c = refine(dolly(t.cam, k), F, Sc, { tau: tauC * 2, iters: 12, minTau: tauC / 2 }).cam;
+      c = refine(c, F, S, { tau: tauC, iters: 10, minTau: 1.2 }).cam;
+      const sc = total(c, F, S, model); tried.push({ cam: c, ...sc });
+      if (sc.score > best.score) best = { cam: c, ...sc };
+    }
   }
-  const res = finish(best, F, S, opt);
+  // final polish with the distortion term free, on the few best distinct candidates: broadcast
+  // lenses bend lines enough that the right camera can trail a wrong one until k1 is fitted
+  if (best) {
+    const cand = [];
+    for (const t of tried.sort((a, b) => b.score - a.score)) { if (!cand.some((u) => same(u.cam, t.cam))) cand.push(t); if (cand.length >= (opt.polishN ?? 8)) break; }
+    best = null;
+    for (const t of cand) for (const tin of opt.tin ? [opt.tin] : TINS) {
+      const M = modelSamples(tin, 0.08);
+      const r = refine(t.cam, F, M.pts, { tau: 2.5, iters: 12, minTau: 1, free: [1, 1, 1, 1, 1, 1, 1, opt.distortion === false ? 0 : 1] });
+      const sc = total(r.cam, F, M.pts, M.model), s0 = total(t.cam, F, M.pts, M.model);
+      const pick = sc.score >= s0.score ? { cam: r.cam, ...sc, tin } : { cam: t.cam, ...s0, tin };
+      if (!best || pick.score > best.score) best = pick;
+    }
+  }
+  const res = finish(best, F, modelSamples(best?.tin ?? 0.48, 0.08).pts, opt);
+  res.tin = best?.tin ?? 0.48;
   res.ms = { features: F.ms, coarse: tCoarse - (opt.features ? 0 : F.ms), total: now() - t0 };
   res.features = F;
-  res.candidates = tried.sort((a, b) => b.score - a.score).slice(0, 5).map((t) => ({ score: t.score, cam: toFull(t.cam, F) }));
+  res.candidates = tried.sort((a, b) => b.score - a.score).slice(0, opt.nCandidates ?? 5).map((t) => ({ score: t.score, cam: toFull(t.cam, F) }));
   return res;
 }
+
+// Zoom by k and dolly along the view axis so the court centre keeps its size in the image.
+function dolly(c0, k) {
+  const p = c0.p.slice(), fwd = [c0.R[6], c0.R[7], c0.R[8]], dist = Math.hypot(c0.C[0] - 3.2, c0.C[1] - 4.9, c0.C[2] - 1);
+  p[6] += Math.log(k); for (let i = 0; i < 3; i++) p[3 + i] -= fwd[i] * dist * (k - 1);
+  return c0.with(p);
+}
+
+const same = (a, b) => Math.hypot(a.C[0] - b.C[0], a.C[1] - b.C[1], a.C[2] - b.C[2]) < 0.6 && a.R[6] * b.R[6] + a.R[7] * b.R[7] + a.R[8] * b.R[8] > 0.998 && Math.abs(a.p[6] - b.p[6]) < 0.08;
 
 function gauss(rng) { let u = 0; while (!u) u = rng(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rng()); }
 
@@ -511,14 +584,32 @@ export function trackCourt(rgba, W, H, prevCam, opt = {}) {
   const F = opt.features || features(rgba, W, H, opt);
   const tin = opt.tin ?? 0.48, S = modelSamples(tin, 0.08).pts;
   const start = toWorkCam(prevCam, F);
-  // wide capture first (a fast pan moves lines tens of pixels), then tight; distortion stays as detected
-  const Sc = modelSamples(tin, 0.25).pts, tauW = opt.tau ?? Math.max(6, F.w / 40);
-  let c = refine(start, F, Sc, { tau: tauW, iters: 8, minTau: tauW / 3, free: [1, 1, 1, 1, 1, 1, 1, 0] }).cam;
-  c = refine(c, F, S, { tau: 4, iters: 8, minTau: 1.2, free: [1, 1, 1, 1, 1, 1, 1, 0] }).cam;
-    const sc = scoreCamera(c, F, S, 2, 0.5);
+  // tight first: a wide tolerance lets clutter drag the camera along the zoom / distance valley.
+  // Only when the tight fit explains too little (a fast pan moved lines tens of pixels) is a wide
+  // capture tried, and the better of the two kept. Distortion stays as detected.
+  const free = [1, 1, 1, 1, 1, 1, 1, 0], M = modelSamples(tin, 0.08);
+  let c = refine(start, F, S, { tau: 4, iters: 10, minTau: 1.2, free }).cam;
+  let sc = scoreCamera(c, F, S, 2, 0.5);
+  if (sc.good < 1.5 * sc.bad || sc.good < 300) {
+    const Sc = modelSamples(tin, 0.25).pts, tauW = opt.tau ?? Math.max(6, F.w / 40);
+    let w = refine(start, F, Sc, { tau: tauW, iters: 8, minTau: tauW / 3, free }).cam;
+    w = refine(w, F, S, { tau: 4, iters: 10, minTau: 1.2, free }).cam;
+    if (total(w, F, S, M.model).score > total(c, F, S, M.model).score) { c = w; sc = scoreCamera(c, F, S, 2, 0.5); }
+  }
+  // the zoom / distance valley again: a broadcast camera zooming in while the fit lags behind
+  // slides along it a little every frame, so probe a step either way and keep the best
+  if (opt.valley !== false) {
+    let bestT = total(c, F, S, M.model).score;
+    for (const k of [0.94, 1.06]) {
+      const c1 = dolly(c, k);
+      const r = refine(c1, F, S, { tau: 3, iters: 8, minTau: 1.2, free }).cam, t = total(r, F, S, M.model).score;
+      if (t > bestT) { bestT = t; c = r; }
+    }
+    sc = scoreCamera(c, F, S, 2, 0.5);
+  }
   const res = finish({ cam: c, ...sc }, F, S, opt);
   res.ms = { features: F.ms, total: now() - t0 };
-  res.features = F;
+  res.features = F; res.tin = tin;
   return res;
 }
 
@@ -546,8 +637,19 @@ function finish(best, F, S, opt) {
     const d = F.dt.dist[(u[1] | 0) * F.w + (u[0] | 0)]; if (d < 2) { se += d * d; n++; }
   }
   const full = toFull(cam, F);
-  const ok = coverage > 0.45 && best.good > 100 * F.w / 640;
-  return { ok, explained: best.explained, cam: full, workCam: cam, score: best.score, good: best.good, bad: best.bad, coverage, recall, rms: Math.sqrt(se / Math.max(1, n)) * F.scale };
+  // line by line: which court lines are in view and matched. A frame is a court when several
+  // lines agree, at least two of them on the floor or two kinds of line, not just one rectangle
+  // (a TV graphic or a door frame can match one or two lines of anything)
+  const lines = [], segs = [...new Set(S.map((s) => s.seg))];
+  for (const sg of segs) {
+    const Sl = S.filter((s) => s.seg === sg), r = scoreCamera(cam, F, Sl, 2, 0.5);
+    const vis = (r.good + r.bad) / ((KIND_W[Sl[0].kind] ?? 1) * 100);
+    lines.push({ name: Sl[0].name, kind: Sl[0].kind, vis, frac: r.good / Math.max(1e-9, r.good + r.bad) });
+  }
+  const matched = lines.filter((l) => l.vis > 0.25 && l.frac > 0.5);
+  const nFloor = matched.filter((l) => l.kind === 'floor').length;
+  const ok = coverage > 0.35 && matched.length >= 3 && nFloor >= 1;
+  return { ok, lines, matched: matched.length, explained: best.explained, cam: full, workCam: cam, score: best.score, good: best.good, bad: best.bad, coverage, recall, rms: Math.sqrt(se / Math.max(1, n)) * F.scale };
 }
 
 function dilate(m, w, h, r) {

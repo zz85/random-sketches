@@ -17,7 +17,7 @@ for (let i = 0; i < n; i++) {
   const cam = randomBroadcastCamera(rng, W, H);
   const style = i % 2 ? 'glass' : 'club';
   const img = renderCourt(cam, { seed: i + 1, style, players: 2, adverts: 8 });
-  const r = detectCourt(img.data, W, H, {});
+  const r = detectCourt(img.data, W, H, JSON.parse(process.env.OPT || '{}'));
   const c = r.cam;
   const ms = modelSamples(0.48, 0.08), tw = toWorkCam(cam, r.features), T = total(tw, r.features, ms.pts, ms.model);
   const Tr = total(refine(tw, r.features, ms.pts, { tau: 3, minTau: 1 }).cam, r.features, ms.pts, ms.model);

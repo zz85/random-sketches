@@ -6,9 +6,12 @@
 
 export const W = 6.4, L = 9.75, LINE = 0.05;
 
-export function courtModel({ tin = 0.48 } = {}) {
+// Tin height: 0.48 m in the WSF rules, 0.43 m (17 in) on the men's PSA tour.
+export const TINS = [0.48, 0.43];
+
+export function courtModel({ tin = 0.48, back: backH = 2.13 } = {}) {
   const h = LINE / 2;
-  const front = 4.57, back = 2.13, service = 1.78, short = 5.44, box = 1.6;
+  const front = 4.57, back = backH, service = 1.78, short = 5.44, box = 1.6;
   const seg = (name, kind, a, b) => ({ name, kind, a, b });
   const lines = [
     // front wall (y = 0)
@@ -50,7 +53,7 @@ export function samplePoints(model, step = 0.1) {
     const u = d.map((v) => v / len);
     for (let k = 0; k < n; k++) {
       const t = k / (n - 1);
-      pts.push({ X: s.a.map((v, i) => v + d[i] * t), dir: u, seg: si, kind: s.kind });
+      pts.push({ X: s.a.map((v, i) => v + d[i] * t), dir: u, seg: si, kind: s.kind, name: s.name });
     }
   });
   return pts;
