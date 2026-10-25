@@ -126,6 +126,7 @@
     <div class="row"><label>Staff size</label><input type="range" id="sZoom" min="0.6" max="2" step="0.05"></div>
     <div class="row"><label>Recognise after pause<small>how long the pen rests before ink becomes notation</small></label><input type="range" id="sDelay" min="250" max="1600" step="50"></div>
     <div class="row"><label>Finger<small>Auto: fingers write until a stylus is used, then fingers scroll and select (palm rejection)</small></label><select id="sFinger"><option value="auto">Auto</option><option value="write">Always writes</option><option value="navigate">Scrolls &amp; selects</option></select></div>
+    <div class="row"><label>Ink<small>Low latency draws the ink straight to the screen, ahead of the page. Switch to compare how closely ink follows the pen. <span id="inkNow" style="display:block;color:var(--ink)"></span></small></label><select id="sInk"><option value="auto">Auto</option><option value="low">Low latency</option><option value="standard">Standard</option></select></div>
     <div class="row"><label>Show my ink under the notation<small>debug: see what the recogniser saw</small></label><input type="checkbox" id="sShowInk"></div>
     <div class="row"><label>Handwriting I taught it<small id="userCount"></small></label><button id="forget">Forget</button></div>
     <div class="row"><label>New score<small>clears the page (undo still works)</small></label><button id="newScore">New</button></div>

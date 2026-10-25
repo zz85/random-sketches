@@ -12,21 +12,40 @@ import { timeline, rangeOf, stepFocus, addClip, addJump, removeMarker, markerByI
 import { layoutMarkers, drawMarkers, hitMarker } from '../notation-ir/markers.js';
 
 const $ = (id) => document.getElementById(id);
-const stage = $('stage'), cScore = $('score'), cInk = $('ink');
+const stage = $('stage'), cScore = $('score');
 const gS = cScore.getContext('2d');
-// Low-latency ink on desktop only. On Android Chrome a desynchronized canvas is put on
-// its own overlay plane where transparent pixels composite as black, which hides the
-// score underneath. ?lowlatency=1 forces it on for testing.
-const lowLatency = new URLSearchParams(location.search).get('lowlatency') === '1' || !/Android/i.test(navigator.userAgent);
-const gI = (lowLatency && cInk.getContext('2d', { desynchronized: true })) || cInk.getContext('2d');
 const params = new URLSearchParams(location.search);
+// Ink canvas: low-latency (desynchronized) or standard, switchable in settings for A/B
+// comparison. Auto = low latency except on Android, where Chrome puts a desynchronized
+// canvas on its own overlay plane and its transparent pixels composite as black over
+// the score. ?lowlatency=1 / =0 overrides the setting. A context's options are fixed
+// when it is created, so switching swaps in a fresh canvas element.
+let cInk = $('ink'), gI = null;
+const IS_ANDROID = /Android/i.test(navigator.userAgent);
+function inkLowWanted() {
+  const q = params.get('lowlatency');
+  if (q === '1' || q === '0') return q === '1';
+  const m = S.settings.ink;
+  return m === 'low' ? true : m === 'standard' ? false : !IS_ANDROID;
+}
+function setupInk() {
+  const want = inkLowWanted();
+  if (gI && S.ink.wanted === want) return false;
+  if (gI) { const c = cInk.cloneNode(false); cInk.replaceWith(c); cInk = c; }
+  gI = (want && cInk.getContext('2d', { desynchronized: true })) || cInk.getContext('2d');
+  const attrs = (gI.getContextAttributes && gI.getContextAttributes()) || {};
+  // what the browser actually gave us: unsupported browsers silently ignore the option
+  S.ink = { wanted: want, active: !!attrs.desynchronized };
+  return true;
+}
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const load = (k) => { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } };
 const store = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* quota or private mode */ } };
 
 const S = {
   score: (!params.has('fresh') && validScore(load('staffink.score'))) || newScore(),
-  settings: { zoom: 1, delay: 700, finger: 'auto', font: 'Bravura', showInk: false, ...(load('staffink.settings') || {}) },
+  settings: { zoom: 1, delay: 700, finger: 'auto', font: 'Bravura', showInk: false, ink: 'auto', ...(load('staffink.settings') || {}) },
+  ink: { wanted: null, active: false },
   user: [], tool: 'write', penSeen: false, scrollY: 0, scale: 12, L: null, w: 0, h: 0,
   undo: [], redo: [], group: [], groupTimer: 0, ptrs: new Map(), fading: [], pending: [],
   selected: null, playing: new Set(), model: null, lastEdit: null, inkHistory: [], player: new Player(),
@@ -36,6 +55,8 @@ const S = {
 };
 for (const u of load('staffink.user') || []) { try { S.user.push(makeUserTemplate(u.label, unpackStrokes(u.strokes))); } catch (e) { /* skip bad entry */ } }
 if (params.get('delay')) S.settings.delay = +params.get('delay');
+
+setupInk();
 
 function validScore(s) { return s && s.version === 1 && Array.isArray(s.measures) && Array.isArray(s.staves) && s.measures.length ? s : null; }
 
@@ -588,7 +609,9 @@ $('title').addEventListener('input', (e) => { S.score.title = e.target.value || 
 function updateMode() {
   const t = { write: 'Write', select: 'Select', erase: 'Erase' }[S.tool];
   const finger = S.tool !== 'write' ? '' : fingerNavigates() ? ' · pen writes, finger scrolls & selects' : S.penSeen ? ' · pen & finger write' : ' · pen, mouse or finger writes';
-  $('mode').textContent = t + finger;
+  // while A/B testing (ink picked by hand or in the address) say which ink is on
+  const ab = S.settings.ink !== 'auto' || params.has('lowlatency') ? (S.ink.active ? ' · low-latency ink' : ' · standard ink') : '';
+  $('mode').textContent = t + finger + ab;
 }
 
 function togglePlay() {
@@ -825,6 +848,7 @@ $('settingsBtn').onclick = () => {
   $('sKey').value = sc.key; $('sTime').value = sc.timeSym === 'common' ? 'C' : sc.time.join('/');
   $('sTempo').value = sc.tempo; $('sFont').value = S.settings.font; $('sZoom').value = S.settings.zoom; $('sDelay').value = S.settings.delay;
   $('sFinger').value = S.settings.finger; $('sShowInk').checked = S.settings.showInk;
+  $('sInk').value = S.settings.ink; inkNote();
   $('userCount').textContent = S.user.length ? `${S.user.length} corrected symbol${S.user.length > 1 ? 's' : ''}` : 'none yet: tap an alternative after a misread';
   $('settings').showModal();
 };
@@ -842,6 +866,14 @@ $('sFont').onchange = (e) => { S.settings.font = e.target.value; document.fonts.
 $('sZoom').oninput = (e) => { S.settings.zoom = +e.target.value; resize(); save(); };
 $('sDelay').oninput = (e) => { S.settings.delay = +e.target.value; save(); };
 $('sFinger').onchange = (e) => { S.settings.finger = e.target.value; updateMode(); save(); };
+function inkNote() {
+  const q = params.get('lowlatency');
+  const now = S.ink.active ? 'now: low latency' : S.ink.wanted ? 'now: standard (this browser has no low-latency canvas)' : 'now: standard';
+  const why = q === '1' || q === '0' ? ` · set by ?lowlatency=${q} in the address` : '';
+  const warn = IS_ANDROID && S.ink.active ? ' · on Android this can black out the page; switch back if it does' : '';
+  $('inkNow').textContent = now + why + warn;
+}
+$('sInk').onchange = (e) => { S.settings.ink = e.target.value; if (setupInk()) resize(); inkNote(); updateMode(); save(); };
 $('sShowInk').onchange = (e) => { S.settings.showInk = e.target.checked; drawScore(); save(); };
 $('forget').onclick = () => { S.user = []; saveUser(); $('userCount').textContent = 'none'; toast('forgot your handwriting corrections'); };
 $('newScore').onclick = () => { scoreChange((s) => { const n = newScore({ staves: s.staves.map((x) => ({ ...x })), key: s.key, time: s.time, tempo: s.tempo }); Object.keys(s).forEach((k) => delete s[k]); Object.assign(s, n); }); $('title').value = S.score.title; S.pending = []; S.inkHistory = []; $('settings').close(); };
@@ -900,7 +932,7 @@ if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.
 
 /** Test/automation hook: page-space (staff spaces) ink straight into the recogniser. */
 window.StaffInk = {
-  S, get score() { return S.score; }, get layout() { return S.L; }, modelReady,
+  S, get inkCanvas() { return cInk; }, get score() { return S.score; }, get layout() { return S.L; }, modelReady,
   write(strokes) { runGroup(strokes); return S.lastEdit && S.lastEdit.edit.label; },
   staffTop(sys = 0, si = 0) { return S.L.systems[sys].staffTops[si]; },
   pageToClient(x, y) { const r = stage.getBoundingClientRect(); return { x: r.left + x * S.scale, y: r.top + (y - S.scrollY) * S.scale }; },

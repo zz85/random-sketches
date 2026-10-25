@@ -265,9 +265,28 @@ const server = http.createServer((req, res) => {
       return { xs, inRest, after }; })()`);
     check('a playhead line moves through notes and rests, and goes on stop', ph.xs.every((x, i) => x != null && (i === 0 || x > ph.xs[i - 1])) && ph.after === 0, JSON.stringify(ph));
 
+    // ---------------------------------------------------------- scene 2f: ink A/B toggle
+    const inkAB = await ev(`(async () => {
+      const pick = (v) => { const el = document.getElementById('sInk'); el.value = v; el.dispatchEvent(new Event('change')); };
+      const state = () => ({ active: StaffInk.S.ink.active, desync: !!StaffInk.inkCanvas.getContext('2d').getContextAttributes().desynchronized, one: document.querySelectorAll('#ink').length, w: StaffInk.inkCanvas.width, mode: document.getElementById('mode').textContent });
+      const auto = state(); pick('standard'); const std = state(); pick('low'); const low = state(); pick('auto');
+      return { auto, std, low };
+    })()`);
+    const inkTop = await ev('StaffInk.staffTop(0, 0)');
+    const inkBefore = await ev('StaffInk.score.measures.reduce((n, m) => n + m.staves[0].events.length, 0)');
+    await ev(`(() => { const el = document.getElementById('sInk'); el.value = 'standard'; el.dispatchEvent(new Event('change')); return true; })()`);
+    await pen(I.note(inkTop, await nextX(1), 5));
+    const inkAfter = await ev('StaffInk.score.measures.reduce((n, m) => n + m.staves[0].events.length, 0)');
+    await ev(`(() => { const el = document.getElementById('sInk'); el.value = 'auto'; el.dispatchEvent(new Event('change')); return true; })()`);
+    await ev(`(() => { document.getElementById('settingsBtn').click(); const el = document.getElementById('sInk'); el.scrollIntoView({ block: 'center' }); return true; })()`);
+    await sleep(150);
+    fs.writeFileSync(path.join(DIR, 'smoke_settings.png'), Buffer.from((await c.send('Page.captureScreenshot', { format: 'png' })).result.data, 'base64'));
+    await ev('document.getElementById("settings").close(), true');
+    check('ink toggle: standard and low latency swap the canvas, pen still writes', inkAB.auto.desync && !inkAB.std.desync && !inkAB.std.active && inkAB.low.active && inkAB.std.one === 1 && inkAB.low.w === inkAB.auto.w && /standard ink/.test(inkAB.std.mode) && /low-latency ink/.test(inkAB.low.mode) && !/ink$/.test(inkAB.auto.mode) && inkAfter === inkBefore + 1, JSON.stringify({ ...inkAB, inkBefore, inkAfter }));
+
     // ---------------------------------------------------------- scene 2d: offline
     await ev('navigator.serviceWorker.ready.then(() => new Promise((r) => { if (navigator.serviceWorker.controller) r(true); else navigator.serviceWorker.addEventListener("controllerchange", () => r(true)); setTimeout(() => r(!!navigator.serviceWorker.controller), 5000); }))');
-    const cached = await ev('caches.open("staffink-v3").then((c) => c.keys()).then((k) => k.length)');
+    const cached = await ev('caches.keys().then((ks) => caches.open(ks.find((k) => k.startsWith("staffink-")))).then((c) => c.keys()).then((k) => k.length)');
     await c.send('Network.enable');
     await c.send('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
     await c.send('Page.navigate', { url: `http://localhost:${PORT}/staffink/?nohelp&delay=250` });
@@ -287,6 +306,13 @@ const server = http.createServer((req, res) => {
     await c.send('Page.navigate', { url: `http://localhost:${PORT}/staffink/?fresh&nohelp&delay=250` });
     await sleep(900);
     await ev('StaffInk.modelReady.then(() => true)');
+    // an Android phone: Auto picks the standard (opaque-safe) ink canvas
+    await c.send('Emulation.setUserAgentOverride', { userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36' });
+    await c.send('Page.reload');
+    await sleep(900);
+    await ev('StaffInk.modelReady.then(() => true)');
+    const andInk = await ev('JSON.stringify({ ...StaffInk.S.ink, desync: !!StaffInk.inkCanvas.getContext("2d").getContextAttributes().desynchronized })').then(JSON.parse);
+    check('Android: Auto ink is standard', andInk.wanted === false && andInk.active === false && andInk.desync === false, JSON.stringify(andInk));
     const mTop = await ev('StaffInk.staffTop(0, 0)');
     async function finger(strokes) {
       const geo = await ev('(() => { const r = document.getElementById("stage").getBoundingClientRect(); return { l: r.left, t: r.top, s: StaffInk.S.scale, sy: StaffInk.S.scrollY }; })()');

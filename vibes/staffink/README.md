@@ -47,7 +47,10 @@ native JSON; autosaves to localStorage.
 
 Input handling follows what the platform offers: Pointer Events with `getCoalescedEvents()`
 for full-rate stylus samples, `getPredictedEvents()` to draw ahead of the pen, pressure
-for stroke width, a `desynchronized` canvas for the ink layer, and palm rejection by
+for stroke width, a `desynchronized` (low-latency) canvas for the ink layer (Settings → Ink:
+Auto uses it everywhere but Android, where Chrome composites its transparent pixels as
+black; Low latency / Standard force one or the other for A/B comparison, as does
+`?lowlatency=1` / `=0`), and palm rejection by
 pointer type (once a stylus is seen, fingers scroll, pinch-zoom and select instead of
 writing; configurable).
 
