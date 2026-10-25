@@ -2,7 +2,8 @@
 // A whole match file: court tracked through the cuts, players and ball on every stretch where the
 // court is seen, impacts heard in the soundtrack. Splits the file into chunks run in parallel
 // (one process each), then merges them:
-//   - players: identities across cuts from shirt colour (two clusters over the whole file), then
+//   - players: identities across cuts from shirt colour (two clusters over the whole file, tracks
+//     seen together kept apart), then
 //     per player the time per 25 cm floor cell (heatmap), distance, speed over time
 //   - bounces: every floor / front-wall impact (fitted, ended on the floor, or heard), with who hit
 //     the shot
@@ -110,17 +111,7 @@ function merge(parts, meta) {
   // the main high camera only: court-level, side and close-up views misjudge depth
   const allFlights = parts.flatMap((p) => p.flights), flights = allFlights.filter((f) => mainView(f.cam)).sort((a, b) => a.t0 - b.t0);
   const heard = parts.flatMap((p) => p.heard).sort((a, b) => a - b);
-  // identities: each tracked player of one camera stretch gets the median shirt colour of its
-  // detections; those colours are split in two (k-means), and the two tracks of one stretch are
-  // kept apart (if both fall on one side, the one nearer the other centre moves)
-  const tracks = new Map();
-  for (const d of dets) { if (!tracks.has(d.track)) tracks.set(d.track, { key: d.track, stretch: d.track.split(':').slice(0, 2).join(':'), cols: [], n: 0 }); const T = tracks.get(d.track); T.n++; if (d.col) T.cols.push(d.col); }
-  const T = [...tracks.values()].filter((t) => t.cols.length >= 2);
-  for (const t of T) t.col = [0, 1, 2].map((k) => t.cols.map((c) => c[k]).sort((a, b) => a - b)[t.cols.length >> 1]);
-  const cents = kmeans2(T.flatMap((t) => Array(Math.min(20, t.cols.length)).fill(t.col)));
-  for (const t of T) { const a = dist3(t.col, cents[0]), b = dist3(t.col, cents[1]); t.id = a <= b ? 1 : 2; t.margin = Math.abs(a - b); }
-  const byStretch = new Map(); for (const t of T) { if (!byStretch.has(t.stretch)) byStretch.set(t.stretch, []); byStretch.get(t.stretch).push(t); }
-  for (const S of byStretch.values()) if (S.length >= 2) { S.sort((a, b) => b.n - a.n); const [a, b] = S; if (a.id === b.id) (a.margin < b.margin ? a : b).id = 3 - a.id; }
+  const { tracks, cents } = linkIdentities(dets);
   for (const d of dets) d.id = tracks.get(d.track)?.id ?? null;
   for (let i = dets.length - 1; i >= 0; i--) if (!dets[i].id) dets.splice(i, 1);
   const players = [1, 2].map((id) => {
@@ -163,6 +154,53 @@ function merge(parts, meta) {
     bounces: B.list.map((m) => ({ t: +m.t.toFixed(3), plane: m.plane, x: +m.X[0].toFixed(3), y: +m.X[1].toFixed(3), z: +m.X[2].toFixed(3), inferred: !!m.inferred, sound: !!m.sound, player: m.player ?? null })),
   };
 }
+// Identities across cuts. Each tracked player of one camera stretch gets the median shirt colour
+// of its detections, leaving out those taken while the two players were within 0.9 m (the boxes
+// mix there) or occluded. Tracks of one stretch that are seen at the same moments are two people:
+// they form chains (a track dropped and restarted is linked to the same partner), and a chain has
+// only two possible labellings, so it is labelled as a whole, whichever fits the two shirt colours
+// better. The two colours are found by k-means over the tracks, then refined with those
+// constraints. A track with too few colour reads takes its label from its chain, or is left out.
+function linkIdentities(dets) {
+  const tracks = new Map(), at = new Map();
+  for (const d of dets) {
+    if (!tracks.has(d.track)) tracks.set(d.track, { key: d.track, stretch: d.track.split(':').slice(0, 2).join(':'), cols: [], n: 0, ts: new Set(), other: new Set() });
+    const T = tracks.get(d.track); T.n++; T.ts.add(d.t);
+    const k = T.stretch + '@' + d.t; if (!at.has(k)) at.set(k, []); at.get(k).push(d);
+  }
+  for (const g of at.values()) {
+    const close = g.length >= 2 && Math.hypot(g[0].X[0] - g[1].X[0], g[0].X[1] - g[1].X[1]) < 0.9;
+    for (const d of g) { const T = tracks.get(d.track); if (d.col && !close && !d.occ) T.cols.push(d.col); for (const o of g) if (o.track !== d.track) T.other.add(o.track); }
+  }
+  const T = [...tracks.values()];
+  for (const t of T) t.col = t.cols.length >= 5 ? [0, 1, 2].map((k) => t.cols.map((c) => c[k]).sort((a, b) => a - b)[t.cols.length >> 1]) : null;
+  // chains: 2-colour the "seen together" graph; a chain that cannot be 2-coloured is split back
+  // into single tracks
+  const side = new Map(), chains = [];
+  for (const t of T) {
+    if (side.has(t.key)) continue;
+    const C = [t], q = [t]; side.set(t.key, 0); let ok = true;
+    while (q.length) { const a = q.pop(); for (const k of a.other) { const o = tracks.get(k); if (!side.has(k)) { side.set(k, 1 - side.get(a.key)); C.push(o); q.push(o); } else if (side.get(k) === side.get(a.key)) ok = false; } }
+    if (ok) chains.push(C); else for (const c of C) { side.set(c.key, 0); chains.push([c]); }
+  }
+  const w = (t) => Math.min(200, t.cols.length);
+  const coloured = T.filter((t) => t.col);
+  let cents = kmeans2(coloured.flatMap((t) => Array(Math.min(20, t.cols.length)).fill(t.col)));
+  for (let it = 0; it < 10; it++) {
+    for (const C of chains) {
+      // cost of labelling side 0 as player 1 (flip = 0) or as player 2 (flip = 1)
+      const cost = [0, 1].map((flip) => C.reduce((s, t) => s + (t.col ? w(t) * dist3(t.col, cents[(side.get(t.key) ^ flip)]) : 0), 0));
+      const flip = cost[0] <= cost[1] ? 0 : 1, any = C.some((t) => t.col);
+      for (const t of C) { t.id = any ? (side.get(t.key) ^ flip) + 1 : null; t.margin = Math.abs(cost[0] - cost[1]); }
+    }
+    const next = [1, 2].map((id) => { const S = coloured.filter((t) => t.id === id), W = S.reduce((s, t) => s + w(t), 0); return W ? [0, 1, 2].map((k) => S.reduce((s, t) => s + w(t) * t.col[k], 0) / W) : cents[id - 1]; });
+    const moved = Math.max(dist3(next[0], cents[0]), dist3(next[1], cents[1]));
+    cents = next.map((c) => c.map(Math.round));
+    if (moved < 0.5) break;
+  }
+  return { tracks, cents, chains: chains.length };
+}
+
 // shirt colours compared by hue (red-green, blue-green) more than brightness: the same shirt is
 // darker in one corner of the court than another
 const feat = (c) => [c[0] - c[1], c[2] - c[1], (c[0] + c[1] + c[2]) / 6];
@@ -208,6 +246,11 @@ function render(M, file) {
 function blurGrid(a, nx, ny) { let g = Float32Array.from(a); for (let p = 0; p < 2; p++) { const o = new Float32Array(g.length); for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) { let v = 0, s = 0; for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) { const X = x + i, Y = y + j; if (X < 0 || Y < 0 || X >= nx || Y >= ny) continue; const k = (i ? 0.5 : 1) * (j ? 0.5 : 1); v += g[Y * nx + X] * k; s += k; } o[y * nx + x] = v / s; } g = o; } return g; }
 function sample(g, nx, ny, x, y) { const x0 = Math.max(0, Math.min(nx - 1, Math.floor(x))), y0 = Math.max(0, Math.min(ny - 1, Math.floor(y))), x1 = Math.min(nx - 1, x0 + 1), y1 = Math.min(ny - 1, y0 + 1), fx = Math.max(0, Math.min(1, x - x0)), fy = Math.max(0, Math.min(1, y - y0)); return g[y0 * nx + x0] * (1 - fx) * (1 - fy) + g[y0 * nx + x1] * fx * (1 - fy) + g[y1 * nx + x0] * (1 - fx) * fy + g[y1 * nx + x1] * fx * fy; }
 
+if (opt('--merge')) { // re-run the merge on the chunks of an earlier run: --merge <out dir>
+  const dir = opt('--merge'), res = []; for (let i = 0; ; i++) { try { res.push(JSON.parse(readFileSync(`${dir}/chunk_${i}.json`, 'utf8'))); } catch { break; } }
+  const M = merge(res, { source: src.split('/').pop(), duration: res.reduce((s, p) => s + p.len, 0) });
+  writeFileSync(`${dir}/match.json`, JSON.stringify(M)); render(M, `${dir}/match.png`); console.log(`merged ${res.length} chunks into ${dir}/match.json`); process.exit(0);
+}
 if (opt('--render')) { render(JSON.parse(readFileSync(opt('--render'), 'utf8')), src); process.exit(0); }
 if (opt('--chunk')) { await chunk(src, +opt('--chunk'), +opt('--len'), opt('--json')); process.exit(0); }
 await main();
