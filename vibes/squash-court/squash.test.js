@@ -175,6 +175,20 @@ describe('players and ball', () => {
     }
     expect(T.tracks.find((k) => k.id === idA).X[0]).toBeCloseTo(5, 0); // the player who started at x = 1
   });
+  test('shirt colour keeps identities through an overlap and a lost player', () => {
+    const T = new PlayerTracker(), RED = [190, 40, 40], DARK = [30, 30, 35];
+    const ids = {};
+    let t = 0;
+    const step = (dets) => { t += 0.04; return T.update(dets, t); };
+    for (let i = 0; i < 20; i++) step([{ X: [2, 6], col: RED }, { X: [4, 6], col: DARK }]);
+    for (const k of T.tracks) ids[k.col[0] > 100 ? 'red' : 'dark'] = k.id;
+    // they cross so positions alone would swap them, and the box is on the wrong player for a while
+    for (let i = 0; i < 10; i++) step([{ X: [3.6, 6], col: RED }, { X: [2.4, 6], col: DARK }]);
+    for (let i = 0; i < 10; i++) step([{ X: [3.4, 6], col: RED }]); // dark player missed
+    const out = step([{ X: [3.8, 6], col: RED }, { X: [2.2, 6], col: DARK }]);
+    expect(out.find((k) => k.X[0] > 3).id).toBe(ids.red);
+    expect(out.find((k) => k.X[0] < 3).id).toBe(ids.dark);
+  });
   test('one flight in 3D from its pixels (within 5 cm)', () => {
     const cam = Camera.fromLookAt([3.2, 14, 4.5], [3.2, 4, 0.8], 0, 1300, 1280, 720);
     const sim = simulate([2, 7, 0.9], [1.5, -20, 4], 0.25, 50);

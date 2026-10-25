@@ -179,12 +179,17 @@ export function detectPlayers(rgba, W, H, cam, opt = {}) {
   const out = findPeople(clean, S, cam, w, h, hidden, opt);
   // inside the court (with a margin for a lunge into the corner)
   const players = out.filter((p) => p.X[0] > -0.15 && p.X[0] < CW + 0.15 && p.X[1] > 0.05 && p.X[1] < CL + 0.15);
-  // the shirt: mean colour of the person's own (foreground) pixels across the chest, for telling
-  // the two players apart across camera cuts
+  // the shirt, for telling the two players apart: the median colour of the person's own
+  // (foreground) pixels, at full resolution, 20-45 % down from the top of the person actually
+  // measured (not of the 1.75 m box: a player in a wide stance stands lower in it, and that band
+  // would catch the head), across the middle 60 % of the box
   for (const p of players) {
-    const B = p.B, Hh = B.y1 - B.y0, s = [0, 0, 0]; let n = 0;
-    for (let y = Math.max(0, Math.round(B.y0 + 0.15 * Hh)); y < Math.min(h, B.y0 + 0.42 * Hh); y++) for (let x = Math.max(0, B.x0); x <= Math.min(w - 1, B.x1); x++) { const i = y * w + x; if (clean[i]) { s[0] += img.r[i]; s[1] += img.g[i]; s[2] += img.b[i]; n++; } }
-    p.col = n >= 4 ? s.map((v) => Math.round(v / n)) : null;
+    const B = p.B, Hh = B.y1 - B.y0, top = B.y1 - Math.min(1.2, p.height / 1.75) * Hh, ph = B.y1 - top, bw = B.x1 - B.x0, k = W / w, px = [[], [], []];
+    for (let y = Math.max(0, Math.round((top + 0.2 * ph) * k)); y < Math.min(H, (top + 0.45 * ph) * k); y++) for (let x = Math.max(0, Math.round((B.x0 + 0.2 * bw) * k)); x < Math.min(W, (B.x0 + 0.8 * bw) * k); x++) {
+      const g = Math.min(h - 1, Math.floor(y / k)) * w + Math.min(w - 1, Math.floor(x / k)); if (!clean[g]) continue;
+      const o = (y * W + x) * 4; px[0].push(rgba[o]); px[1].push(rgba[o + 1]); px[2].push(rgba[o + 2]);
+    }
+    p.col = px[0].length >= 8 ? px.map((a) => a.sort((u, v) => u - v)[a.length >> 1]) : null;
   }
   return { players, fg: clean, hidden, overlays: rects, S, w, h };
 }
@@ -197,7 +202,7 @@ export function detectPlayers(rgba, W, H, cam, opt = {}) {
 // and the next best taken. Fragmented silhouettes (skin the colour of the floor, white shorts on a
 // white wall) still fill a box, where connected components would split them.
 function findPeople(fg0, S, cam, w, h, hidden, opt) {
-  const fg = fg0.slice(), out = [], Ih = integral(hidden, w, h);
+  const fg = fg0.slice(), out = [], hid = hidden.slice(); let Ih = integral(hid, w, h);
   const g = (u) => [u[0] / S.k - 0.5, u[1] / S.k - 0.5];
   const boxAt = (x, y, half = 0.3, top = 1.75) => {
     let px = -(y - cam.C[1]), py = x - cam.C[0]; const pl = Math.hypot(px, py) || 1; px *= half / pl; py *= half / pl;
@@ -231,7 +236,10 @@ function findPeople(fg0, S, cam, w, h, hidden, opt) {
     if (!best) break;
     const P = refineFeet(fg, S, cam, w, h, hidden, best, boxAt, opt);
     // explain the person away: clear their box (the coarse one and the refined one)
-    for (const B of [best.B, P && P.B].filter(Boolean)) for (let y = Math.max(0, B.y0); y <= Math.min(h - 1, B.y1); y++) for (let x = Math.max(0, B.x0); x <= Math.min(w - 1, B.x1); x++) fg[y * w + x] = 0;
+    // and counts as hidden for the next search: a second player partly behind the first is judged
+    // by the part of them still visible, as one behind a graphic is
+    for (const B of [best.B, P && P.B].filter(Boolean)) for (let y = Math.max(0, B.y0); y <= Math.min(h - 1, B.y1); y++) for (let x = Math.max(0, B.x0); x <= Math.min(w - 1, B.x1); x++) { fg[y * w + x] = 0; hid[y * w + x] = 1; }
+    Ih = integral(hid, w, h);
     if (opt.debug) opt.debug.push({ x: best.x, y: best.y, score: best.score, ok: !!P && !P.why, why: P && P.why });
     if (P && !P.why) out.push(P);
   }
@@ -341,32 +349,60 @@ function components(mask, keep, w, h) {
   return out;
 }
 
-// Two-player identity across frames: assign detections to tracks by the cheaper of the two
-// pairings, smooth each track with a constant-velocity filter, and coast a track briefly when its
-// player is hidden.
+// Two-player identity across frames. Each track predicts where its player is now (constant
+// velocity, damped), and the pairing of tracks with this frame's detections is chosen jointly over
+// all of them (two by two is a handful of cases): first the one that pairs the most within the
+// 2.2 m gate, then the lowest cost, where the cost is the distance to the prediction plus how much
+// the shirt differs from the track's. Position alone is ambiguous whenever the players are close or
+// one was missed for a moment; the shirt is not. The track's shirt is learnt slowly, and not at all
+// while the two detections are within 0.9 m (one may carry the other's colour then). A track coasts
+// for a while when its player is not detected.
+const hue = (c) => [c[0] - c[1], c[2] - c[1], (c[0] + c[1] + c[2]) / 6]; // shading changes brightness, not hue
+export const shirtDist = (a, b) => { const p = hue(a), q = hue(b); return Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]); };
 export class PlayerTracker {
-  constructor() { this.tracks = []; }
+  // coast: how long (s) a track survives unseen; its gate widens by `widen` m per second unseen
+  constructor({ gate = 2.2, shirt = 3, velK = 0.5, near = 0.9, veto = 35, coast = 1.5, widen = 3 } = {}) { this.o = { gate, shirt, velK, near, veto, coast, widen }; this.tracks = []; }
   update(dets, t) {
-    const T = this.tracks;
-    for (const k of T) { const dt = t - k.t; k.pred = [k.X[0] + k.v[0] * dt, k.X[1] + k.v[1] * dt]; }
-    const used = new Set(), cost = (k, d) => Math.hypot(k.pred[0] - d.X[0], k.pred[1] - d.X[1]);
-    // greedy by cost is exact for two tracks and two detections
-    const pairs = [];
-    for (const k of T) for (const d of dets) pairs.push([cost(k, d), k, d]);
-    pairs.sort((a, b) => a[0] - b[0]);
-    const done = new Set();
-    for (const [c, k, d] of pairs) {
-      if (done.has(k) || used.has(d) || c > 2.2) continue;
+    const o = this.o, T = this.tracks;
+    for (const k of T) { const dt = t - k.t; k.pred = [k.X[0] + o.velK * k.v[0] * dt, k.X[1] + o.velK * k.v[1] * dt]; }
+    const geo = (k, d) => Math.hypot(k.pred[0] - d.X[0], k.pred[1] - d.X[1]);
+    const gateOf = (k) => o.gate + Math.min(3, o.widen * Math.max(0, t - (k.seenT ?? t)));
+    // a clearly different shirt rules a pairing out, once the track's own shirt is known (a box on
+    // the other player, or a second box on the same one, must not be taken just to pair everyone)
+    const allowed = (k, d) => geo(k, d) <= gateOf(k) && !(o.veto && k.nCol >= 5 && k.col && d.col && shirtDist(k.col, d.col) > o.veto);
+    const cost = (k, d) => geo(k, d) + (o.shirt && k.col && d.col ? o.shirt * Math.min(shirtDist(k.col, d.col), 60) / 30 : 0);
+    // every assignment of tracks to detections (-1: none)
+    let best = { p: T.map(() => -1), nm: 0, c: Infinity };
+    const rec = (i, used, acc) => {
+      if (i === T.length) {
+        let c = 0, nm = 0;
+        for (let a = 0; a < acc.length; a++) { const j = acc[a]; if (j < 0) { c += o.gate; continue; } if (!allowed(T[a], dets[j])) return; c += cost(T[a], dets[j]); nm++; }
+        if (nm > best.nm || (nm === best.nm && c < best.c)) best = { p: acc.slice(), nm, c };
+        return;
+      }
+      acc.push(-1); rec(i + 1, used, acc); acc.pop();
+      for (let j = 0; j < dets.length; j++) if (!used.has(j)) { used.add(j); acc.push(j); rec(i + 1, used, acc); acc.pop(); used.delete(j); }
+    };
+    rec(0, new Set(), []);
+    const close = dets.length === 2 && Math.hypot(dets[0].X[0] - dets[1].X[0], dets[0].X[1] - dets[1].X[1]) < o.near;
+    const used = new Set();
+    best.p.forEach((j, i) => {
+      const k = T[i];
+      if (j < 0) { k.miss++; k.det = null; k.X = k.pred; k.t = t; k.v = k.v.map((v) => v * 0.7); return; }
+      const d = dets[j]; used.add(j);
       const dt = Math.max(1e-3, t - k.t), a = 0.5, nv = [(d.X[0] - k.X[0]) / dt, (d.X[1] - k.X[1]) / dt];
       k.X = [k.pred[0] + a * (d.X[0] - k.pred[0]), k.pred[1] + a * (d.X[1] - k.pred[1])];
       k.v = [k.v[0] * 0.6 + nv[0] * 0.4, k.v[1] * 0.6 + nv[1] * 0.4].map((v) => Math.max(-7, Math.min(7, v)));
-      k.t = t; k.miss = 0; k.det = d; done.add(k); used.add(d);
-    }
-    for (const k of T) if (!done.has(k)) { k.miss++; k.det = null; k.X = k.pred; k.t = t; k.v = k.v.map((v) => v * 0.7); }
+      k.t = t; k.miss = 0; k.det = d; k.seenT = t;
+      if (d.col && !close) { k.col = k.col ? k.col.map((v, c) => v + 0.2 * (d.col[c] - v)) : d.col.slice(); k.nCol = (k.nCol || 0) + 1; }
+    });
     // a coasting (or noisy) track stays in the court and stops at its walls
     for (const k of T) { const c = [Math.max(-0.1, Math.min(CW + 0.1, k.X[0])), Math.max(0.1, Math.min(CL + 0.1, k.X[1]))]; if (c[0] !== k.X[0]) k.v[0] = 0; if (c[1] !== k.X[1]) k.v[1] = 0; k.X = c; }
-    this.tracks = T.filter((k) => k.miss < 12);
-    for (const d of dets) if (!used.has(d) && this.tracks.length < 2) this.tracks.push({ id: this.nextId(), X: d.X.slice(), v: [0, 0], t, miss: 0, det: d });
+    this.tracks = T.filter((k) => t - (k.seenT ?? t) <= o.coast);
+    // a new player only from a detection that is not the shirt of a player being coasted (that is
+    // the same person, found somewhere unexpected: a misplaced box, not a second player)
+    const coastingLike = (d) => d.col && this.tracks.some((k) => k.miss > 0 && k.col && k.nCol >= 5 && shirtDist(k.col, d.col) < o.veto);
+    for (let j = 0; j < dets.length; j++) if (!used.has(j) && this.tracks.length < 2 && !coastingLike(dets[j])) this.tracks.push({ id: this.nextId(), X: dets[j].X.slice(), v: [0, 0], t, miss: 0, det: dets[j], seenT: t, col: dets[j].col ? dets[j].col.slice() : null, nCol: dets[j].col ? 1 : 0 });
     return this.tracks.map((k) => ({ id: k.id, X: k.X.slice(), v: k.v.slice(), seen: k.miss === 0, occluded: !!k.det?.occluded }));
   }
   nextId() { const ids = new Set(this.tracks.map((k) => k.id)); let i = 1; while (ids.has(i)) i++; return i; }
