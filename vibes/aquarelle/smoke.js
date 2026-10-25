@@ -1,6 +1,6 @@
 // Headless check over the Chrome DevTools protocol, zero npm deps (SwiftShader WebGL2).
 // Paints with real pen pointer events (pressure, tilt), touch and mouse through the
-// Procreate-style UI: flow and drying, mixing, glazing, undo/redo, lift, smudge, layers
+// floating toolbars and palette: flow and drying, mixing, glazing, undo/redo, lift, smudge, layers
 // (hide, undo, merge), QuickShape, colour disc, pinch zoom and finger taps, gallery, PNG
 // export, autosave + reload, time-lapse frames, iPad / phone layouts, offline reload.
 // Writes shot_*.png.
@@ -12,8 +12,9 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
-const PW = path.join(process.env.HOME, '.cache/ms-playwright');
-const CHROME = process.env.CHROME || (fs.existsSync(PW) && fs.readdirSync(PW).filter((d) => /^chromium-\d+$/.test(d)).sort().reverse().map((d) => path.join(PW, d, 'chrome-linux/chrome')).find((f) => fs.existsSync(f)));
+// any Playwright Chromium: the shared cache, or a private one (~/.cache/aquarelle-chromium)
+const PWS = [path.join(process.env.HOME, '.cache/ms-playwright'), path.join(process.env.HOME, '.cache/aquarelle-chromium')];
+const CHROME = process.env.CHROME || PWS.filter((d) => fs.existsSync(d)).flatMap((PW) => fs.readdirSync(PW).filter((d) => /^chromium-\d+$/.test(d)).sort().reverse().map((d) => path.join(PW, d, 'chrome-linux/chrome'))).find((f) => fs.existsSync(f));
 if (!CHROME) { console.log('FAIL no Chromium: bunx playwright install chromium, or set CHROME=...'); process.exit(1); }
 const PORT = Number(process.env.PORT || 8847), CDP = Number(process.env.CDP || 9387), VW = 1280, VH = 860;
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.png': 'image/png', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
@@ -113,7 +114,7 @@ try {
     await pen(line(300, 1000, 700, 1060, 14));
     await waitDry(120);
     await ev(`__aq.fit(); __aq.togglePop('layerPop'); true`); await sleep(500); await shot('scene_ui'); await ev(`__aq.togglePop('layerPop'); true`);
-    await ev('document.querySelectorAll("#bar, #side").forEach((p) => (p.style.display = "none")); __aq.fit(); __aq.redraw(); true');
+    await ev('document.querySelectorAll(".panel").forEach((p) => (p.style.display = "none")); __aq.fit(); __aq.redraw(); true');
     await sleep(500); await shot('scene');
     await ev(`(() => { const v = __aq.view; v.z = 2; const p = __aq.toScreen(1200, 760); v.x -= p.x - 640; v.y -= p.y - 430; __aq.redraw(); return true; })()`);
     await sleep(500); await shot('scene_closeup');
@@ -324,9 +325,9 @@ try {
   await ev(`__aq.createPainting(1264, 1680, 'Notes', 1).then(() => { __aq.setMode('pen'); return true; })`); await sleep(300);
   check(await ev('document.body.classList.contains("penmode") && getComputedStyle(document.querySelector("#penBar")).display === "flex"'), 'pen mode shows nibs and ink colours');
   // fits between the bars
-  const fitOk = await ev(`(() => { const a = __aq.toScreen(0, 0), b = __aq.toScreen(__aq.sim.W, __aq.sim.H), top = document.querySelector('#bar').getBoundingClientRect().bottom, pb = document.querySelector('#penBar').getBoundingClientRect().top; return a.y >= top - 1 && b.y <= pb + 1 && a.x >= 0 && b.x <= innerWidth; })()`);
+  const fitOk = await ev(`(() => { const a = __aq.toScreen(0, 0), b = __aq.toScreen(__aq.sim.W, __aq.sim.H), top = Math.max(document.querySelector('#topL').getBoundingClientRect().bottom, document.querySelector('#topR').getBoundingClientRect().bottom), pb = document.querySelector('#penBar').getBoundingClientRect().top; return a.y >= top - 1 && b.y <= pb + 1 && a.x >= 0 && b.x <= innerWidth; })()`);
   check(fitOk, 'page fits between the top bar and the pen bar');
-  const tgt = await ev(`[...document.querySelectorAll('#bar button, #side button, #penBar button')].filter((b) => b.offsetParent).map((b) => { const r = b.getBoundingClientRect(); return Math.min(r.width, r.height); }).sort((a, b) => a - b)[0]`);
+  const tgt = await ev(`[...document.querySelectorAll('.panel button')].filter((b) => b.offsetParent).map((b) => { const r = b.getBoundingClientRect(); return Math.min(r.width, r.height); }).sort((a, b) => a - b)[0]`);
   check(tgt >= 30, 'touch targets at least 30 CSS px (≈ 5 mm on the B7 Pro)', tgt.toFixed(0) + ' px');
   // handwriting: a few cursive-ish words as pen strokes
   const word = (x0, y0, n) => { const pts = []; for (let i = 0; i <= n * 12; i++) { const t = i / 12; pts.push([x0 + t * 34, y0 - 26 * Math.abs(Math.sin(t * Math.PI * 0.9)) + 6 * Math.sin(t * 7)]); } return pts; };

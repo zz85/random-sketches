@@ -1,8 +1,9 @@
 /*
- * app.js - Aquarelle, laid out like Procreate: gallery, top bar (Actions, Water & drying,
- * then brush / smudge / erase / layers / colour on the right), a sidebar with size, opacity
- * and water sliders, the eyedropper square and undo / redo. Input (pen / touch / mouse),
- * view (pan, zoom, rotate, flip), QuickShape, layers, autosave and time-lapse sit around the
+ * app.js - Aquarelle UI: floating toolbars around the sheet (menu, gallery, wet dot and
+ * Pen | Paint top left; undo, redo, hair dryer, tilt, layers, share, full screen, help top
+ * right; brushes on the left with size / water / paint sliders beside them; the pigment
+ * palette along the bottom, or the pen bar in pen mode). Input (pen / touch / mouse), view
+ * (pan, zoom, rotate, flip), QuickShape, layers, autosave and time-lapse sit around the
  * simulation in sim.js.
  */
 import { Sim } from './sim.js';
@@ -53,7 +54,7 @@ document.body.classList.toggle('right', S.right);
 function applyTheme() {
   document.body.classList.toggle('eink', !!S.eink);
   document.body.classList.toggle('penmode', S.mode === 'pen');
-  document.querySelector('meta[name=theme-color]').content = S.eink ? '#ffffff' : '#1c1c1e';
+  document.querySelector('meta[name=theme-color]').content = S.eink ? '#ffffff' : '#28282a';
   if (sim) { applyPattern(); needsRender = true; }
 }
 
@@ -73,7 +74,7 @@ let dpr = Math.min(window.devicePixelRatio || 1, 2);
 const view = { x: 0, y: 0, z: 1, r: 0, f: 1 };
 let needsRender = true, userMovedView = false;
 
-function applyLook() { if (!sim) return; sim.setLook(TINTS[doc.tint].map(srgbToLinear), doc.texture ? 1 : 0); applyPattern(); needsRender = true; }
+function applyLook() { if (!sim) return; sim.setLook(TINTS[doc.tint].map(srgbToLinear), doc.texture ? 1 : 0); applyPattern(); needsRender = true; if (loaded) drawMixWell(); }
 // ruled paper for notes: line spacing scales with the page (about 6.5 mm on a 7" page)
 const PATTERNS = ['None', 'Lined', 'Grid', 'Dots'];
 function applyPattern() {
@@ -136,14 +137,26 @@ function onResize() {
   // a view you moved yourself: keep what was at the old centre at the new centre
   view.x += box.x + box.w / 2 - cx; view.y += box.y + box.h / 2 - cy; needsRender = true;
 }
-const barH = () => $('#bar').getBoundingClientRect().height;
+/** Rect of a visible panel, or null. */
+const rectOf = (sel) => { const el = $(sel); if (!el || !el.offsetParent && getComputedStyle(el).position !== 'fixed') return null; const r = el.getBoundingClientRect(); return r.width && r.height ? r : null; };
+/** The sheet goes in the space the floating panels leave: below the top panels, above the
+ *  palette / pen bar, beside the tool strip (and the sliders on wide screens). */
 function fit() {
   if (!sim) return;
-  const vw = box.w, vh = box.h, top = barH(), side = vw < 700 ? 58 : 76, W = sim.W, H = sim.H;
-  const bottom = S.mode === 'pen' ? ($('#penBar').getBoundingClientRect().height || 110) + 16 : vw < 700 ? 20 : 40;
-  const aw = vw - side * 2, ah = box.y + vh - top - bottom;
+  const W = sim.W, H = sim.H, gap = box.w < 720 ? 8 : 14;
+  const tops = ['#topL', '#topR'].map(rectOf).filter(Boolean), bot = rectOf(S.mode === 'pen' ? '#penBar' : '#palette');
+  let top = Math.max(box.y, ...tops.map((r) => r.bottom)) + gap, bottom = (bot ? bot.top : box.y + box.h) - gap;
+  // side panels (tool strip, sliders): the sheet never goes under them, so every part of it
+  // can be painted without panning
+  const side = ['#tools', '#sliders'].map(rectOf).filter(Boolean);
+  let left = box.x + gap, right = box.x + box.w - gap;
+  for (const r of side) { if (r.left + r.width / 2 < box.x + box.w / 2) left = Math.max(left, r.right + gap); else right = Math.min(right, r.left - gap); }
+  // on wide screens keep the sheet centred: as much room on the right as the panels take on the left
+  if (box.w >= 720) { const inset = Math.max(left - box.x, box.x + box.w - right); left = box.x + inset; right = box.x + box.w - inset; }
+  if (bottom - top < 120) { top = box.y + gap; bottom = box.y + box.h - gap; }
+  const aw = Math.max(50, right - left), ah = Math.max(50, bottom - top);
   const z = Math.min(aw / W, ah / H);
-  view.z = z; view.r = 0; view.x = box.x + side + (aw - W * z) / 2; view.y = top + (ah - H * z) / 2 + (S.mode === 'pen' ? 4 : (vw < 700 ? 10 : 20));
+  view.z = z; view.r = 0; view.x = left + (aw - W * z) / 2; view.y = top + (ah - H * z) / 2;
   if (view.f < 0) view.x += W * z;
   needsRender = true;
 }
@@ -373,8 +386,8 @@ function pickAt(cx, cy) {
   if (S.mode === 'pen') { setPenColour(hex); toast('Pen colour ' + hex); return; }
   useCustom(hex, Math.min(S.colOpacity, 0.15)); toast('Picked ' + hex);
 }
-function setPicking(on) { picking = on; $('#pickBtn').classList.toggle('on', on); updateCursor(); }
-$('#pickBtn').addEventListener('click', () => setPicking(!picking));
+function setPicking(on) { picking = on; $$('.pickBtn').forEach((b) => b.classList.toggle('on', on)); updateCursor(); }
+$('#pickBtn').addEventListener('click', (e) => { e.stopPropagation(); setPicking(!picking); });
 
 /** Load a picked colour as a custom pigment. */
 function useCustom(hex, op = S.colOpacity, gran = S.colGran) {
@@ -382,7 +395,7 @@ function useCustom(hex, op = S.colOpacity, gran = S.colGran) {
   const p = customPigment(hex, op, gran);
   S.pig = [p.id]; S.weights = [1];
   if (S.tool !== 'paint') setTool('paint');
-  if (current().mode !== 0) selectBrush('round');
+  if (current().mode !== 0) useBrush('round');
   loadBrush(); buildWells(); savePrefs();
 }
 function pushHistory(id) {
@@ -532,8 +545,10 @@ addEventListener('keydown', (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.key === ' ') { spaceDown = true; updateCursor(); e.preventDefault(); return; }
   if (k === 'escape') { closePops(); setPicking(false); return; }
-  const tools = { b: 'paint', s: 'smudge', e: 'erase' };
-  if (tools[k]) { setTool(tools[k]); return; }
+  const brushes = { b: 'round', w: 'wash', t: 'flat', r: 'detail', y: 'dry', x: 'splatter', q: 'water', k: 'lift' };
+  if (brushes[k]) { if (S.mode === 'pen') setMode('paint'); useBrush(brushes[k]); return; }
+  const tools = { s: 'smudge', e: 'erase' };
+  if (tools[k]) { if (S.mode === 'pen') setMode('paint'); setTool(tools[k]); markTools(); return; }
   if (k === 'l') { togglePop('layerPop'); return; }
   if (k === 'c') { togglePop('colPop'); return; }
   if (k === 'i') { setPicking(!picking); return; }
@@ -549,21 +564,33 @@ addEventListener('keyup', (e) => { if (e.key === ' ') { spaceDown = false; updat
 // ---------- tools ----------
 function setTool(t) {
   S.tool = t;
-  $$('[data-tool]').forEach((b) => b.classList.toggle('on', b.dataset.tool === t));
-  syncSliders(); updateCursor(); savePrefs();
+  markTools(); syncSliders(); updateCursor(); savePrefs();
   if ($('#brushPop').classList.contains('open')) buildBrushes();
 }
-$$('[data-tool]').forEach((b) => b.addEventListener('click', (e) => {
-  e.stopPropagation();
-  // tapping the active tool opens its brush library, as in Procreate
-  if (S.tool === b.dataset.tool) togglePop('brushPop'); else { setTool(b.dataset.tool); closePops(); }
+/** Light the strip button for the current brush or tool. */
+function markTools() {
+  $$('#tools [data-brush]').forEach((b) => b.classList.toggle('on', S.tool === 'paint' && S.sel.paint === b.dataset.brush));
+  $$('#tools [data-tool]').forEach((b) => b.classList.toggle('on', S.tool === b.dataset.tool));
+}
+function useBrush(id) { S.tool = 'paint'; S.sel.paint = id; setTool('paint'); }
+// one button per brush, as in the first interface; tapping the selected one again opens
+// its settings (smudge and erase: the brush shape they use)
+$$('#tools [data-brush]').forEach((b) => b.addEventListener('click', (e) => {
+  e.stopPropagation(); setPicking(false);
+  if (S.tool === 'paint' && S.sel.paint === b.dataset.brush) { togglePop('brushPop'); return; }
+  closePops(); useBrush(b.dataset.brush);
+}));
+$$('#tools [data-tool]').forEach((b) => b.addEventListener('click', (e) => {
+  e.stopPropagation(); setPicking(false);
+  if (S.tool === b.dataset.tool) { togglePop('brushPop'); return; }
+  closePops(); setTool(b.dataset.tool);
 }));
 
 // ---------- pen mode ----------
 function setMode(m) {
   S.mode = m; savePrefs(); applyTheme();
   $$('#modeSeg button').forEach((b) => b.classList.toggle('on', b.dataset.v === m));
-  closePops(); syncSliders(); updateCursor(); buildPenBar(); refreshColour(); if (!userMovedView) requestAnimationFrame(fit);
+  closePops(); markTools(); syncSliders(); updateCursor(); buildPenBar(); refreshColour(); if (!userMovedView) requestAnimationFrame(fit);
   if (window.__ready) toast(m === 'pen' ? 'Pen: ink for writing notes' : 'Paint: watercolour', 900);
 }
 $$('#modeSeg button').forEach((b) => (b.onclick = (e) => { e.stopPropagation(); setMode(b.dataset.v); }));
@@ -592,13 +619,17 @@ function buildPenBar() {
   const more = document.createElement('button'); more.className = 'pc more'; more.title = 'Any colour…'; more.textContent = '+';
   more.onclick = (e) => { e.stopPropagation(); togglePop('colPop'); };
   sw.appendChild(more);
+  const pk = document.createElement('button'); pk.className = 'pc pickBtn' + (picking ? ' on' : ''); pk.title = 'Pick a colour off the page (or touch and hold)';
+  pk.innerHTML = '<svg><use href="#i-pick"/></svg>';
+  pk.onclick = (e) => { e.stopPropagation(); setPicking(!picking); };
+  sw.appendChild(pk);
 }
 
 // ---------- sidebar sliders ----------
 const SLIDERS = {
-  sSize: { key: 'size', min: 0.6, max: 160, curve: 2.6, fmt: (v) => `Size ${v < 10 ? v.toFixed(1) : Math.round(v)} px` },
-  sPaint: { key: 'paint', min: 0, max: 1, curve: 1, fmt: (v) => `${S.tool === 'paint' ? 'Paint' : 'Strength'} ${Math.round(v * 100)}%` },
-  sWater: { key: 'water', min: 0, max: 1, curve: 1, fmt: (v) => `Water ${Math.round(v * 100)}%` },
+  sSize: { key: 'size', min: 0.6, max: 160, curve: 2.6, fmt: (v) => (v < 10 ? v.toFixed(1) : Math.round(v) + '') },
+  sWater: { key: 'water', min: 0, max: 1, curve: 1, fmt: (v) => Math.round(v * 100) + '%' },
+  sPaint: { key: 'paint', min: 0, max: 1, curve: 1, fmt: (v) => Math.round(v * 100) + '%' },
 };
 function syncSliders() {
   const { cfg, mode } = current();
@@ -606,19 +637,14 @@ function syncSliders() {
     const sl = SLIDERS[id], el = document.getElementById(id), v = cfg[sl.key] ?? 0;
     const t = Math.pow((v - sl.min) / (sl.max - sl.min), 1 / sl.curve);
     el.querySelector('.fill').style.height = t * 100 + '%';
-    el.querySelector('.knob').style.top = `calc(4px + ${(1 - t)} * (100% - 8px))`;
+    el.querySelector('.knob').style.top = (1 - t) * 100 + '%';
+    el.querySelector('.val').textContent = sl.fmt(v);
     const usable = sl.key === 'size' || (mode < 5 && (sl.key === 'paint' ? mode !== 1 : mode <= 1));
     el.classList.toggle('off', !usable);
   }
+  // smudge / erase / lift: the paint slider is their strength
+  $('#sPaint label').textContent = S.tool === 'paint' && mode !== 2 ? 'Paint' : 'Strength';
   refreshColour();
-}
-function bubble(text, el) {
-  const b = $('#bubble');
-  if (!text) { b.style.display = 'none'; return; }
-  const r = el.getBoundingClientRect();
-  b.textContent = text; b.style.display = 'block';
-  b.style.top = r.top + r.height / 2 - 16 + 'px';
-  if (S.right) { b.style.left = ''; b.style.right = innerWidth - r.left + 10 + 'px'; } else { b.style.right = ''; b.style.left = r.right + 10 + 'px'; }
 }
 for (const id in SLIDERS) {
   const el = document.getElementById(id), sl = SLIDERS[id];
@@ -631,7 +657,7 @@ for (const id in SLIDERS) {
     const { cfg, id, mode } = current();
     cfg[sl.key] = sl.min + Math.pow(t, sl.curve) * (sl.max - sl.min);
     if (mode >= 5) S.pen.size[id] = cfg.size;
-    syncSliders(); bubble(sl.fmt(cfg[sl.key]), el);
+    syncSliders();
     if (sl.key === 'size') showSizePreview();
   };
   el.addEventListener('pointerdown', (e) => {
@@ -642,13 +668,13 @@ for (const id in SLIDERS) {
     drag = { y: e.clientY, x: e.clientX, t }; set(e);
   });
   el.addEventListener('pointermove', (e) => { if (drag) set(e); });
-  const up = () => { if (drag) { drag = null; bubble(null); $('#cursor').style.display = 'none'; savePrefs(); } };
+  const up = () => { if (drag) { drag = null; $('#cursor').style.display = 'none'; savePrefs(); } };
   el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
 }
 function showSizePreview() {
   const c = $('#cursor'), r = brushRadiusPx();
   c.style.display = 'block'; c.style.width = c.style.height = 2 * r + 'px'; c.style.borderStyle = 'solid';
-  c.style.transform = `translate(${box.x + box.w / 2 - r}px, ${(box.y + box.h + barH()) / 2 - r}px)`;
+  c.style.transform = `translate(${box.x + box.w / 2 - r}px, ${box.y + box.h / 2 - r}px)`;
 }
 
 // ---------- popovers ----------
@@ -662,10 +688,10 @@ function togglePop(id) {
   const p = document.getElementById(id), open = !p.classList.contains('open');
   closePops(id);
   p.classList.toggle('open', open);
-  if (open) ({ brushPop: buildBrushes, colPop: buildColour, layerPop: buildLayers, actPop: buildActions, adjPop: buildAdjust })[id]?.();
+  if (open) ({ brushPop: buildBrushes, colPop: buildColour, layerPop: buildLayers, actPop: buildActions })[id]?.();
 }
 document.addEventListener('pointerdown', (e) => {
-  if (e.target === canvas || e.target.closest('.pop, .menu, #bar, #side, #gallery, .tl')) return;
+  if (e.target === canvas || e.target.closest('.pop, .menu, .panel, #gallery, .tl')) return;
   closePops();
 });
 function tabs(barSel, paneRoot, onShow) {
@@ -681,9 +707,8 @@ function seg(sel, val, on) {
 }
 
 // brush library
-let studio = false;
 function selectBrush(id) {
-  S.sel[S.tool] = id; savePrefs(); syncSliders(); updateCursor();
+  S.sel[S.tool] = id; savePrefs(); markTools(); syncSliders(); updateCursor();
 }
 function drawPreview(cv, id) {
   const g = cv.getContext('2d'), W = cv.width, H = cv.height, B = BRUSHES[id];
@@ -706,31 +731,27 @@ function drawPreview(cv, id) {
   if (B?.mode === 1) { g.fillStyle = '#8fc4ff'; g.font = '11px system-ui'; }
 }
 function buildBrushes() {
-  const tool = S.tool, cats = tool === 'paint' ? CATEGORIES : ['Shapes'];
-  $('#brushTitle').textContent = tool === 'paint' ? 'Brush Library' : tool === 'smudge' ? 'Smudge with…' : 'Erase with…';
-  $('#studioBtn').style.display = tool === 'paint' ? '' : 'none';
-  $('#studio').style.display = studio && tool === 'paint' ? '' : 'none';
-  $('#brushPop .lib').style.display = studio && tool === 'paint' ? 'none' : '';
-  $('#studioBtn').textContent = studio ? 'Library' : 'Settings';
-  if (studio && tool === 'paint') return buildStudio();
-  if (!cats.includes(S.cat)) S.cat = cats[0];
-  const cb = $('#brushCats'); cb.innerHTML = '';
-  for (const c of cats) { const b = document.createElement('button'); b.textContent = c; b.className = c === S.cat ? 'on' : ''; b.onclick = () => { S.cat = c; buildBrushes(); }; cb.appendChild(b); }
-  const list = $('#brushList'); list.innerHTML = '';
-  const ids = tool === 'paint' ? Object.keys(BRUSHES).filter((k) => BRUSHES[k].cat === S.cat) : SHAPES;
-  for (const id of ids) {
+  const tool = S.tool, list = $('#brushList'), st = $('#studio');
+  list.innerHTML = ''; st.innerHTML = '';
+  if (tool === 'paint') {
+    $('#brushTitle').textContent = BRUSHES[S.sel.paint].name;
+    $('#studioReset').style.display = '';
+    return buildStudio();
+  }
+  $('#brushTitle').textContent = tool === 'smudge' ? 'Smudge with…' : 'Erase with…';
+  $('#studioReset').style.display = 'none';
+  for (const id of SHAPES) {
     const b = document.createElement('button'); b.className = 'bru' + (S.sel[tool] === id ? ' on' : ''); b.title = BRUSHES[id].note;
-    b.innerHTML = `<span>${BRUSHES[id].name}</span><canvas width="560" height="88"></canvas>`;
+    b.innerHTML = `<span>${BRUSHES[id].name}</span><canvas width="560" height="80"></canvas>`;
     drawPreview(b.querySelector('canvas'), id);
-    // tap the selected brush again for its settings
-    b.onclick = () => { if (S.sel[tool] === id && tool === 'paint') { studio = true; buildBrushes(); return; } selectBrush(id); buildBrushes(); };
+    b.onclick = () => { selectBrush(id); buildBrushes(); };
     list.appendChild(b);
   }
 }
-$('#studioBtn').onclick = () => { studio = !studio; buildBrushes(); };
+$('#studioReset').onclick = () => { const id = S.sel.paint; S.brush[id] = { ...DEF.brush[id] }; syncSliders(); savePrefs(); buildBrushes(); };
 function buildStudio() {
   const id = S.sel.paint, B = BRUSHES[id], cfg = S.brush[id], el = $('#studio');
-  el.innerHTML = `<div class="h3">${B.name} — ${B.note}</div>`;
+  el.innerHTML = `<div class="h3">${B.note}</div>`;
   const rows = [['size', 'Size (px)', 1, 160, 1], ['water', 'Water', 0, 1, 0.01], ['paint', 'Paint', 0, 1, 0.01], ['sizePressure', 'Pressure → size', 0, 1, 0.01], ['paintPressure', 'Pressure → paint', 0, 1, 0.01], ['spacing', 'Spacing', 0.05, 0.8, 0.01]];
   for (const [k, label, min, max, step] of rows) {
     const r = document.createElement('div'); r.className = 'row';
@@ -738,9 +759,6 @@ function buildStudio() {
     r.querySelector('input').oninput = (e) => { cfg[k] = +e.target.value; syncSliders(); savePrefs(); };
     el.appendChild(r);
   }
-  const reset = document.createElement('button'); reset.className = 'btn'; reset.textContent = 'Reset brush'; reset.style.margin = '10px 8px';
-  reset.onclick = () => { S.brush[id] = { ...DEF.brush[id] }; syncSliders(); savePrefs(); buildStudio(); };
-  el.appendChild(reset);
 }
 
 // colour
@@ -748,31 +766,48 @@ let mixMode = false, disc = null, discTimer = 0;
 const wellColour = (p) => rgbToHex(swatch(p, 1.1, [1, 1, 1]));
 function refreshColour() {
   if (!loaded) return;
-  if (S.mode === 'pen') { const c = S.pen.nib === 'highlighter' ? S.pen.mark : S.pen.col; $('#colBtn').style.background = c; $('#colNew').style.background = c; buildPenBar(); return; }
+  if (S.mode === 'pen') { const c = S.pen.nib === 'highlighter' ? S.pen.mark : S.pen.col; $('#colNew').style.background = c; buildPenBar(); return; }
   const hex = rgbToHex(swatch(loaded, 1.1, [1, 1, 1]));
-  $('#colBtn').style.background = hex; $('#colNew').style.background = hex;
+  $('#colNew').style.background = hex;
   const names = S.pig.map((p) => pigById(p).name);
-  $('#colName').textContent = names.length > 1 ? names.map((n, i) => (S.weights[i] > 1 ? S.weights[i] + '× ' : '') + n.replace(/^Custom /, '')).join(' + ') : names[0];
-  $('#colNote').textContent = S.pig.length > 1 ? 'mixed on the brush' : pigById(S.pig[0]).note || '';
-  $('#mixText').innerHTML = S.pig.length > 1 ? `<b>${S.pig.length} pigments</b> on the brush` : mixMode ? 'Tap pigments to add them to the brush' : 'Tap a pigment to load it';
+  const name = names.length > 1 ? names.map((n, i) => (S.weights[i] > 1 ? S.weights[i] + '× ' : '') + n.replace(/^Custom /, '').split(' ').pop()).join(' + ') : names[0];
+  const note = S.pig.length > 1 ? 'mixed on the brush' : pigById(S.pig[0]).note || '';
+  $('#colName').textContent = name; $('#colNote').textContent = note;
+  $('#mixName').textContent = name; $('#mixNote').textContent = note;
+  drawMixWell();
+}
+/** The big well: what is on the brush, from a thin wash (left) to a full load (right), on this paper. */
+function drawMixWell() {
+  const c = $('#mixWell canvas'), g = c.getContext('2d'), N = c.width;
+  const img = g.createImageData(N, N), bg = TINTS[doc?.tint || 'white'];
+  const { cfg } = S.tool === 'paint' && S.mode !== 'pen' ? current() : current('paint');
+  const amt = concOf(cfg.paint ?? 0.5) * (0.35 + 0.65 * (cfg.water ?? 0.6)), cache = new Map();
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const dx = x - N / 2, dy = y - N / 2, i = (y * N + x) * 4;
+    if (Math.hypot(dx, dy) > N / 2) continue;
+    const t = Math.round(Math.min(1, Math.max(0, (x / N) * 1.25 - 0.1 + dy / N * 0.2)) * 24) / 24;
+    let col = cache.get(t);
+    if (!col) { col = swatch(loaded, Math.max(0.05, amt) * (0.15 + 0.85 * t), bg); cache.set(t, col); }
+    img.data[i] = col[0] * 255; img.data[i + 1] = col[1] * 255; img.data[i + 2] = col[2] * 255; img.data[i + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
 }
 function buildColour() {
   $('#colOld').style.background = $('#colNew').style.background;
   if (!disc) {
     disc = new Disc($('#disc'), (hsv, done) => {
       const hex = rgbToHex(hsvToRgb(...hsv));
-      $('#colNew').style.background = hex; $('#colBtn').style.background = hex;
+      $('#colNew').style.background = hex;
       if (S.mode === 'pen') { if (done) setPenColour(hex); return; }
       clearTimeout(discTimer); if (done) useCustom(hex); else discTimer = setTimeout(() => useCustom(hex), 250);
     });
-    tabs('#colTabs', '#colPop');
   }
   disc.set(rgbToHsv(S.mode === 'pen' ? hexToRgb(S.pen.nib === 'highlighter' ? S.pen.mark : S.pen.col) : swatch(loaded, 1, [1, 1, 1])));
-  if (S.mode === 'pen') { $('#colTabs [data-t="disc"]').click(); $('#colName').textContent = S.pen.nib === 'highlighter' ? 'Highlighter colour' : 'Ink colour'; $('#colNote').textContent = 'drag the ring for the hue, inside for the shade'; }
+  if (S.mode === 'pen') { $('#colName').textContent = S.pen.nib === 'highlighter' ? 'Highlighter colour' : 'Ink colour'; $('#colNote').textContent = 'drag the ring for the hue, inside for the shade'; }
   $('#colOpacity').value = S.colOpacity; $('#colGran').value = S.colGran;
   const upd = () => { S.colOpacity = +$('#colOpacity').value; S.colGran = +$('#colGran').value; const c = S.pig.length === 1 && S.pig[0].startsWith('custom:') ? S.pig[0].split(':')[1] : null; if (c) useCustom(c); savePrefs(); };
   $('#colOpacity').onchange = upd; $('#colGran').onchange = upd;
-  buildWells(); buildHistory(); refreshColour();
+  buildHistory(); if (S.mode !== 'pen') refreshColour();
 }
 function buildWells() {
   const box = $('#wells'); if (!box) return; box.innerHTML = '';
@@ -785,6 +820,10 @@ function buildWells() {
     b.addEventListener('click', (e) => { if (!longed) choosePigment(p.id, e.shiftKey || mixMode); });
     box.appendChild(b);
   }
+  // any colour: the wheel
+  const rb = document.createElement('button'); rb.className = 'well rainbow'; rb.title = 'Any colour: the colour wheel (C)';
+  rb.onclick = (e) => { e.stopPropagation(); togglePop('colPop'); };
+  box.appendChild(rb);
   markWells();
 }
 function markWells() { $$('.well[data-id]').forEach((w) => { const i = S.pig.indexOf(w.dataset.id); w.classList.toggle('on', i >= 0 && S.pig.length === 1); w.classList.toggle('part', i >= 0 && S.pig.length > 1); }); }
@@ -800,11 +839,11 @@ function choosePigment(id, add) {
     if (S.pig.length > 4) { S.pig.shift(); S.weights.shift(); }
   } else { S.pig = [id]; S.weights = [1]; }
   if (S.tool !== 'paint') setTool('paint');
-  if (current().mode !== 0) selectBrush('round');
+  if (current().mode !== 0) useBrush('round');
   loadBrush(); markWells(); savePrefs();
 }
-$('#mixToggle').onclick = () => { mixMode = !mixMode; $('#mixToggle').classList.toggle('on', mixMode); $('#mixToggle').style.color = mixMode ? 'var(--accent)' : ''; refreshColour(); };
-$('#colBtn').onclick = (e) => { e.stopPropagation(); togglePop('colPop'); };
+$('#mixToggle').onclick = () => { mixMode = !mixMode; $('#mixToggle').classList.toggle('on', mixMode); toast(mixMode ? 'Mixing: tap pigments to add them to the brush' : 'Tap a pigment to load it'); };
+$('#mixWell').onclick = (e) => { e.stopPropagation(); togglePop('colPop'); };
 
 // layers
 let thumbsDirty = true, selOpts = false;
@@ -890,8 +929,14 @@ function buildActions() {
   $('#optPressure').value = S.pressure; $('#optPressure').oninput = (e) => { S.pressure = +e.target.value; savePrefs(); };
   $('#optSmooth').value = S.smooth; $('#optSmooth').oninput = (e) => { S.smooth = +e.target.value; savePrefs(); };
   seg('#fingerSeg', S.fingers, (v) => { S.fingers = v; savePrefs(); });
+  buildAdjust();
 }
-$('#actBtn').onclick = (e) => { e.stopPropagation(); togglePop('actPop'); };
+$('#menuBtn').onclick = (e) => { e.stopPropagation(); togglePop('actPop'); };
+$('#galItem').onclick = () => { closePops(); openGallery(); };
+$('#fsItem').onclick = () => { closePops(); setFullscreen(!fsEl()); };
+$('#shareBtn').onclick = (e) => { e.stopPropagation(); exportImage('png'); };
+function showHelp() { if (!$('#actPop').classList.contains('open')) togglePop('actPop'); $('#actTabs [data-t="help"]').click(); }
+$('#helpBtn').onclick = (e) => { e.stopPropagation(); if ($('#actPop').classList.contains('open') && $('[data-pane="help"]').style.display !== 'none') closePops(); else showHelp(); };
 $('#exportPng').onclick = () => { closePops(); exportImage('png'); };
 $('#exportJpg').onclick = () => { closePops(); exportImage('jpeg'); };
 $('#exportVid').onclick = async () => { closePops(); await rec.flush().catch(() => {}); if (!rec.count) return toast('Nothing recorded yet'); toast('Recording video…', 4000); try { await exportVideo(rec, doc.name, 30, toast); } catch (e) { toast('Video export failed: ' + e.message, 3000); } };
@@ -905,11 +950,17 @@ function buildAdjust() {
   seg('#drySeg', S.drying, (v) => { S.drying = +v; sim.speed = S.drying; savePrefs(); });
   seg('#tiltSeg', tiltMode, (v) => setTilt(+v));
 }
-$('#adjBtn').onclick = (e) => { e.stopPropagation(); togglePop('adjPop'); };
 function dryNow() { sim.dryNow(); needsRender = true; scheduleSave(); toast('Dried'); }
-$('#dryNow').onclick = dryNow;
-$('#dryHold').addEventListener('pointerdown', (e) => { e.preventDefault(); dryHold = true; $('#dryHold').classList.add('on'); });
-for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) $('#dryHold').addEventListener(ev, () => { dryHold = false; $('#dryHold').classList.remove('on'); });
+// hair dryer: hold to dry faster, double-tap to dry at once
+let lastDryTap = 0;
+$('#dryBtn').addEventListener('pointerdown', (e) => {
+  e.preventDefault(); e.stopPropagation();
+  const now = performance.now();
+  if (now - lastDryTap < 330) { dryNow(); lastDryTap = 0; return; }
+  lastDryTap = now; dryHold = true; $('#dryBtn').classList.add('on');
+});
+for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) $('#dryBtn').addEventListener(ev, () => { dryHold = false; $('#dryBtn').classList.remove('on'); });
+$('#tiltBtn').onclick = (e) => { e.stopPropagation(); setTilt((tiltMode + 1) % 3); };
 
 // tilt: flat, board tilted towards you, or follow the device (where it has a gyro)
 let tiltMode = 0, devGrav = [0, 0];
@@ -918,7 +969,7 @@ async function setTilt(m) {
     try { if (typeof DeviceOrientationEvent !== 'undefined' && DeviceOrientationEvent.requestPermission && await DeviceOrientationEvent.requestPermission() !== 'granted') m = 0; } catch { m = 0; }
     if (!('ondeviceorientation' in window) || !matchMedia('(pointer: coarse)').matches) { toast('This device has no tilt sensor'); m = 0; }
   }
-  tiltMode = m; buildAdjust();
+  tiltMode = m; buildAdjust(); $('#tiltBtn').classList.toggle('on', m > 0);
   toast(['Board flat', 'Board tilted: wet paint runs down the sheet', 'Tilt your device to move wet paint'][m]);
 }
 addEventListener('deviceorientation', (e) => {
@@ -1042,7 +1093,8 @@ async function createPainting(W, H, name, pattern = 0) {
   dirty = true; save(true);
   return d;
 }
-$('#galBtn').onclick = openGallery;
+$('#galBtn').onclick = (e) => { e.stopPropagation(); openGallery(); };
+$('#galBack').onclick = () => { if (doc) $('#gallery').classList.remove('open'); };
 $('#newBtn').onclick = (e) => menu(e, [
   ['Notebook page, lined', async () => { await createPainting(1264, 1680, 'Notes', 1); setMode('pen'); }],
   ['Notebook page, grid', async () => { await createPainting(1264, 1680, 'Notes', 2); setMode('pen'); }],
@@ -1119,7 +1171,7 @@ function frame(t) {
 }
 
 // ---------- start ----------
-setTool(S.tool); loadBrush(); applyTheme(); setMode(S.mode); syncSliders();
+setTool(S.tool); buildWells(); loadBrush(); applyTheme(); setMode(S.mode); syncSliders();
 let opened = false;
 if (!qs.has('fresh') && !NOSAVE) {
   try {
@@ -1131,10 +1183,10 @@ if (!qs.has('fresh') && !NOSAVE) {
 }
 if (!opened) {
   // first visit: a canvas the shape of the screen, straight into painting
-  const [w, h] = SIZES[0].get();
+  const [w, h] = SIZES.find((s) => s.name === 'Screen size').get();
   openDoc(newDoc(w, h), null);
   if (!NOSAVE) { dirty = true; save(true); }
-  if (!S.helpSeen && !qs.has('nohelp')) { togglePop('actPop'); $('#actTabs [data-t="help"]').click(); S.helpSeen = true; savePrefs(); }
+  if (!S.helpSeen && !qs.has('nohelp')) { showHelp(); S.helpSeen = true; savePrefs(); }
 }
 requestAnimationFrame(frame);
 if ('serviceWorker' in navigator && !qs.has('nosw') && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
@@ -1142,7 +1194,7 @@ if ('serviceWorker' in navigator && !qs.has('nosw') && location.protocol !== 'fi
 // test / debugging hook
 window.__aq = {
   box, get dpr() { return dpr; }, setFullscreen, get sim() { return sim; }, get doc() { return doc; }, view, S, get stroke() { return stroke; }, fit, setTool, selectBrush, choosePigment, useCustom, render,
-  redraw: () => { needsRender = true; }, setMode, setNib, setPenColour, exportImage, save, toSheet, toScreen, openGallery, openById, createPainting, rec, togglePop, dupLayer,
+  redraw: () => { needsRender = true; }, useBrush, setMode, setNib, setPenColour, exportImage, save, toSheet, toScreen, openGallery, openById, createPainting, rec, togglePop, dupLayer,
   get penSeen() { return penSeen; },
 };
 window.__ready = true;

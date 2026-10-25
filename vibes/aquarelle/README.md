@@ -1,7 +1,7 @@
 # Aquarelle
 
 Watercolour painting in the browser, built on a fluid simulation rather than textured
-stamps, with a Procreate-style interface. Paint is pigment carried by water: it flows while
+stamps. Paint is pigment carried by water: it flows while
 the paper is wet, blooms when you drop wet into wet, darkens at the edges as it dries,
 settles into the paper's tooth, and glazes over dried layers. Made for Apple Pencil /
 stylus first; finger and mouse work too. No backend, no build step, no dependencies: plain
@@ -9,7 +9,7 @@ ES modules and WebGL2. Installable PWA, works offline.
 
 ![scene](shot_scene.png)
 
-The first interface (tools on the left, pigment wells along the bottom) is kept at [`v1/`](v1/) for side-by-side testing; it stores its paintings separately.
+[`v1/`](v1/) is the first build of this interface (before layers, gallery and pen mode), kept for comparison; it stores its painting separately.
 
 ```
 python3 -m http.server      # any static server (the service worker needs https or localhost)
@@ -22,48 +22,56 @@ node smoke.js               # headless Chromium (SwiftShader), real pen/touch/mo
 
 ![interface](shot_scene_ui.png)
 
-The layout follows Procreate. **Gallery** (top left) holds every painting with its
-thumbnail: + makes a new canvas (screen size, 4:3, square, A4, postcard, large), ⋯ renames,
-duplicates or deletes, Import turns a photo into a glaze layer to paint over. Next to it,
-the **wrench** (Actions: share PNG / JPEG / time-lapse video; canvas paper, texture,
-colour, flip; time-lapse replay; preferences; help) and the **drop** (water and drying: dry
-now, hair dryer, drying speed, tilt the board). The dot after it pulses while the sheet is
-wet. On the right: **paint, smudge, erase** (tap the active one again for its brush
-library), **layers** and the **colour** disc.
+The interface is the first one's floating toolbars, with everything added since.
 
-The **sidebar** has brush size, the eyedropper square, opacity (how much paint the brush
-carries, or the strength of smudge / erase) and water, then undo and redo. Sliders drag
-relative to where you touch them, finer when you drag sideways; a bubble shows the value.
-Right-hand interface puts it on the other side.
+- **Left:** one button per brush (Round, Wash, Flat, Rigger, Dry brush, Splatter, Clear
+  water, Lift), then Smudge, Eraser and the eyedropper. Tap the selected brush again for
+  its settings (size, water, paint, pressure → size / paint, spacing, reset); tap Smudge
+  or Eraser again to choose the brush shape they use.
+- **Beside the brushes:** Size, Water and Paint sliders with their values on top (on a
+  phone or a 7" e-reader they sit on the right). They drag relative to where you touch,
+  finer when you drag sideways. For Lift, Smudge and Eraser the Paint slider is their
+  strength.
+- **Bottom:** the watercolour palette. The big well shows what is on the brush, from a thin
+  wash to a full load; tap it, or the rainbow well at the end, for the colour wheel.
+  Tap a pigment to load it; + Mix (or long-press / Shift-click a well) adds pigments to the
+  brush.
+- **Top left:** menu (share, canvas, video, preferences, help), gallery, the wet dot (it
+  pulses while the sheet is wet) and **Pen | Paint**.
+- **Top right:** undo, redo, hair dryer (hold to dry faster, double-tap to dry at once),
+  tilt the board, layers, share, full screen, help.
+
+The sheet is fitted into the space the panels leave, so no part of it is under a toolbar.
+Right-hand interface (Prefs) mirrors the brushes and sliders.
 
 | Input | Does |
 |---|---|
 | Pencil / stylus | paints. Pressure sets size and load (pressure curve in Prefs), tilt lays the brush on its side. Hover shows the brush outline |
 | Finger | paints until a pen has been used, then navigates (Prefs → Fingers) |
 | Two fingers | pan, pinch-zoom, twist to rotate (snaps square); a quick pinch in fits the canvas |
-| Two / three / four-finger tap | undo / redo / hide the interface |
-| Touch and hold | eyedropper (also the sidebar square, Alt-click or I) |
+| Two / three / four-finger tap | undo / redo / hide the toolbars |
+| Touch and hold | eyedropper (also the dropper at the bottom of the brushes, Alt-click or I) |
 | Hold at the end of a stroke | QuickShape: the stroke is taken back, with everything its water did, and painted again as a straight line or an ellipse (circle when nearly round) |
 | Mouse | left paints (speed stands in for pressure), middle/right or Space-drag pans, wheel zooms |
-| Keys | P pen / paint, B paint, S smudge, E erase, L layers, C colours, I eyedropper, `[` `]` size, 1–9 pigments (Shift adds to the mix), F dry now, ⌘Z / ⇧⌘Z, 0 fit, Tab hide UI |
+| Keys | B W T R Y X brushes, Q water, K lift, P pen / paint, S smudge, E erase, L layers, C colours, I eyedropper, `[` `]` size, 1–9 pigments (Shift adds to the mix), F dry now, ⌘Z / ⇧⌘Z, 0 fit, Tab hide UI |
 
-**Pen mode** (Pen | Paint at the top, or P) is for writing notes. Ink goes straight into
+**Pen mode** (Pen | Paint at the top left, or P) is for writing notes. Ink goes straight into
 the page with a crisp edge and no water, so it is dry the moment you lift the pen and
 never bleeds into wet paint. Nibs along the bottom: Ballpoint, Fineliner (constant width),
 Brush pen (hairline to bold with pressure), Highlighter (transparent chisel, writing under
-it stays readable) and Eraser; the sidebar keeps size, eyedropper, undo and redo. The
+it stays readable) and Eraser, in a pen bar that replaces the palette; the brushes and the
+water / paint sliders step aside, leaving size. The
 stylus's eraser end erases in either mode. Gallery → + → Notebook page makes a 1264 × 1680
 page (the B7 Pro's own resolution) with lined or grid ruling; any canvas can take lined,
 grid or dotted ruling under Actions → Canvas → Page ruling. Ink and watercolour share
 layers and undo, so notes can be painted over and the other way round.
 
-**Choosing colours.** In pen mode, tap a swatch in the bottom bar (ten inks picked to stay
-distinct on colour e-paper, six highlighter colours when the highlighter is selected), or
-tap + or the round button at the top right for the colour disc: drag the outer ring for
-the hue, inside the disc for the shade (left greyer, right purer, up lighter, down
-darker). Colours you write with are added to the bar. Touch and hold the page (or the
-eyedropper square) to pick a colour off it. In paint mode the round button opens the
-disc too, plus Palette with the 19 pigments and + Mix.
+**Choosing colours.** In paint mode, tap a pigment in the palette along the bottom; the
+big well or the rainbow well opens the colour wheel. In pen mode, tap a swatch in the pen
+bar (ten inks picked to stay distinct on colour e-paper, six highlighter colours when the
+highlighter is selected) or + for the wheel: drag the outer ring for the hue, inside for
+the shade (left greyer, right purer, up lighter, down darker). Colours you write with are
+added to the bar. Touch and hold the page (or the dropper) to pick a colour off it.
 
 **E-paper screens** (Bigme B7 Pro: 7" Kaleido colour, 1264 × 1680 at 300 ppi black and
 white / 150 ppi colour, capacitive pen with pressure, Android 14) get a light, high-contrast
@@ -77,25 +85,23 @@ fits between the top bar and the pen bar and every control is at least 30 CSS px
 hardware overlay plane that e-paper drivers handle badly. For the snappiest pen, set the
 B7 Pro's per-app refresh mode for the browser to its fast mode in the Bigme E-Ink centre.
 
-**Full screen.** The ⛶ button in the top bar goes full screen (Fullscreen API: Android
+**Full screen.** The corners button in the top bar goes full screen (Fullscreen API: Android
 Chrome, desktop, Safari); Prefs → Full screen on first touch does it with the first tap (on
 by default on Android tablets and phones; a browser only allows it from a tap). Added to the
 home screen, the app opens full screen by itself.
 
-**Brush library**: Watercolour (Round, Wash, Flat with a chisel edge, Rigger, Dry brush),
-Water (Clear water to wet the paper or soften edges, Lift to blot paint back off),
-Effects (Splatter). Each shows a stroke preview; tap the selected brush again (or
-Settings) for its brush studio: size, water, paint, pressure → size, pressure → paint,
-spacing, reset. Smudge and erase borrow the shape of any watercolour brush. Smudge drags
+**Brushes**: Flat has a chisel edge held at a fixed angle; Clear water wets the paper or
+softens an edge, Lift blots paint back off. Smudge and erase borrow the shape of any
+watercolour brush. Smudge drags
 wet paint along the stroke and pushes dried paint around more gently (liftable pigments
 move more). With "brush runs dry" on, a stroke empties as it goes.
 
-**Colours**: a Procreate-style disc (hue ring, saturation × brightness inside) whose picks
+**Colours**: a colour wheel (hue ring, saturation × brightness inside) whose picks
 become custom pigments with an adjustable opacity (glassy to body colour) and granulation,
 the palette of 19 artist pigments (Hansa Yellow, New Gamboge, Yellow Ochre, Pyrrole Orange,
 Cadmium Red, Quinacridone Rose, Dioxazine Violet, French Ultramarine, Cerulean, Phthalo
 Blue/Green, Hooker's and Sap Green, Burnt Sienna/Umber, Indian Red, Payne's Grey, Potter's
-Pink, Titanium White) with + Mix to load up to four on the brush, and a history row.
+Pink, Titanium White) with + Mix to load up to four on the brush, and a row of recent colours.
 
 **Layers**: add, select, hide, opacity, rename, clear, duplicate, merge down, move,
 delete — all undoable, in the same history as strokes. The paper is the background layer.
@@ -216,8 +222,9 @@ it gzip-compressed (`CompressionStream`) in IndexedDB with a JPEG thumbnail.
   pigment-like mixing, re-wetting dried paint, gravity from device tilt, 28 papers.
 - **Procreate** — the best-selling iPad painting app, but its watercolour is stamp-based
   brushes with "wet mix"; no fluid. Its interface is the one iPad painters know (gallery,
-  tool row, size / opacity sidebar, finger-tap undo, QuickShape, time-lapse), so Aquarelle
-  borrows that layout around its own engine. Same for most others: **Tayasui Watercolor**,
+  tool row, size / opacity sidebar, finger-tap undo, QuickShape, time-lapse); Aquarelle
+  borrows its gestures, gallery, layers, QuickShape and time-lapse, but keeps its own
+  floating toolbars and a pigment palette along the bottom. Same for most others: **Tayasui Watercolor**,
   **Clip Studio**, **Krita**, **Corel Painter** (Painter's "Real Watercolor" since 2017 does
   simulate flow on the desktop).
 
