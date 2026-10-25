@@ -80,6 +80,9 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
     check('video tracked frame to frame', v.trk.length >= 2 && fps > 8, `${v.frames - f0} frames analysed in the last 1 s, tracking ${fps.toFixed(1)} fps (last: worker ${v.wms?.total?.toFixed(1)} ms of ${v.wms?.wall?.toFixed(1)} ms)`);
     check('tracked camera follows the clip (within 25 cm)', best < 0.25 && v.ok, `${(best * 100).toFixed(1)} cm at ${v.t.toFixed(2)} s (${v.path}, ${v.mount} mount, analysed ${v.tA?.toFixed(2)} s)`);
     const vp = await b.evaluate(`({n:__sq.players.length,ms:__sq.rallyMs.players,mb:__sq.rallyMs.ball,X:__sq.players.map(p=>p.X.map(v=>+v.toFixed(2)))})`);
+    await waitFor(() => b.evaluate('__sq.players.length > 0 && __sq.rallyMs.players != null'), 10000).catch(() => {});
+    const hs = await b.evaluate(`(()=>{const st=Object.values(__sq.stats);return {n:st.length,sec:st.reduce((s,q)=>s+q.heat.reduce((a,v)=>a+v,0),0),sp:st.map(q=>q.speed)}})()`);
+    check('video: heatmap and player speeds accumulate', hs.n > 0 && hs.sec > 0.1 && hs.sp.every((v) => v >= 0 && v < 9), `${hs.n} players, ${hs.sec.toFixed(1)} s in the heatmap, speeds ${hs.sp.map((v) => v.toFixed(1)).join(', ')} m/s`);
     check('video: players and ball run in their own workers', vp.n > 0 && vp.ms != null && vp.mb != null, `${vp.n} players ${JSON.stringify(vp.X)}, players ${Math.round(vp.ms)} ms, ball ${Math.round(vp.mb)} ms a frame`);
     await shot('video');
     const errors = [];

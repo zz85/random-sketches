@@ -20,7 +20,7 @@ export const K = 1.2 * 0.5 * Math.PI * BALL_R * BALL_R / (2 * 0.024);
 
 // Integrate one flight from X0, V0 for duration T, returning the position at the requested times.
 export function flight(X0, V0, times, k = K) {
-  const out = [], h = 1 / 400;
+  const out = [], h = 1 / 100; // RK2: under 0.1 mm off a 1/400 s step over a 1 s flight
   let x = X0.slice(), v = V0.slice(), t = 0;
   const ts = times.map((t, i) => [t, i]).sort((a, b) => a[0] - b[0]);
   for (const [tt, i] of ts) {

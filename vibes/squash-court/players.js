@@ -145,7 +145,7 @@ export function detectPlayers(rgba, W, H, cam, opt = {}) {
   // sits on top of the score bug)
   const hidden = new Uint8Array(w * h), rects = opt.overlays ?? findOverlays(rgba, W, H);
   for (const [x0, y0, x1, y1] of rects) {
-    const mx = 0.012 * W, my = 0.65 * (y1 - y0);
+    const mx = 0.012 * W, my = 0.2 * (y1 - y0);
     for (let y = Math.max(0, Math.floor((y0 - my) / S.k)); y < Math.min(h, Math.ceil((y1 + 0.01 * H) / S.k)); y++) for (let x = Math.max(0, Math.floor((x0 - mx) / S.k)); x < Math.min(w, Math.ceil((x1 + mx) / S.k)); x++) hidden[y * w + x] = 1;
   }
   if (opt.staticMask) for (let i = 0; i < w * h; i++) if (opt.staticMask(i)) hidden[i] = 1;
@@ -237,7 +237,17 @@ function refineFeet(fg, S, cam, w, h, hidden, hit, boxAt, opt) {
   const rowHidden = (y) => { for (let x = Math.max(0, cx0); x <= Math.min(w - 1, cx1); x++) if (hidden[y * w + x]) return true; return false; };
   let y = Math.round(B.y0 + 0.5 * Hp), last = -1, gap = 0;
   while (y > B.y0 && rowHidden(y)) y--; // the box's middle is behind a graphic: start above it
-  for (; y < Math.min(h, B.y1 + 0.3 * Hp); y++) { if (rowHas(y) >= 2) { last = y; gap = 0; } else if (++gap > Math.max(3, 0.15 * Hp)) break; }
+  let lim = Math.min(h, B.y1 + 0.3 * Hp);
+  for (; y < lim; y++) {
+    if (rowHas(y) >= 2) { last = y; gap = 0; continue; }
+    if (rowHidden(y)) {
+      // a graphic across the legs: the feet may show below it (a player in front of the score bug)
+      let y2 = y; while (y2 < h && rowHidden(y2)) y2++;
+      let below = -1; for (let yy = y2; yy < Math.min(h, y2 + Math.max(3, 0.15 * Hp)); yy++) if (rowHas(yy) >= 2) { below = yy; break; }
+      if (below >= 0 && last >= 0 && below - last < 0.7 * Hp) { y = below - 1; gap = 0; lim = Math.min(h, Math.max(lim, below + 0.3 * Hp)); continue; }
+    }
+    if (++gap > Math.max(3, 0.15 * Hp)) break;
+  }
   if (last < 0) return { why: 'no fg below' };
   if (last >= h - 2) return { why: 'feet below frame' }; // the feet are below the frame
   // a graphic right below: the feet may be behind it, unless the person above is complete
@@ -340,6 +350,8 @@ export class PlayerTracker {
       k.t = t; k.miss = 0; k.det = d; done.add(k); used.add(d);
     }
     for (const k of T) if (!done.has(k)) { k.miss++; k.det = null; k.X = k.pred; k.t = t; k.v = k.v.map((v) => v * 0.7); }
+    // a coasting (or noisy) track stays in the court and stops at its walls
+    for (const k of T) { const c = [Math.max(-0.1, Math.min(CW + 0.1, k.X[0])), Math.max(0.1, Math.min(CL + 0.1, k.X[1]))]; if (c[0] !== k.X[0]) k.v[0] = 0; if (c[1] !== k.X[1]) k.v[1] = 0; k.X = c; }
     this.tracks = T.filter((k) => k.miss < 12);
     for (const d of dets) if (!used.has(d) && this.tracks.length < 2) this.tracks.push({ id: this.nextId(), X: d.X.slice(), v: [0, 0], t, miss: 0, det: d });
     return this.tracks.map((k) => ({ id: k.id, X: k.X.slice(), v: k.v.slice(), seen: k.miss === 0, occluded: !!k.det?.occluded }));

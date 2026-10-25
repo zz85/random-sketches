@@ -83,6 +83,9 @@ export class Rally {
     const span = Math.hypot(pts[pts.length - 1].u - pts[0].u, pts[pts.length - 1].v - pts[0].v);
     let path = 0; for (let i = 1; i < pts.length; i++) path += Math.hypot(pts[i].u - pts[i - 1].u, pts[i].v - pts[i - 1].v);
     if (span < 12 * s || span / (pts[pts.length - 1].t - pts[0].t) < 150 * s) return null; // still, or drifting: a spectator, a reflection, a racket held up
+    // cheap first: a flight's image path is smooth in time (a quadratic fits it to a few px; tracks
+    // here do not join across impacts), a jittering limb or reflection is not. Only those go to 3D.
+    if (smooth2D(pts) > 8 * Math.max(1, s)) return null;
     const segs = cutTrack(pts, cam, { tol: 2.5 * Math.max(1, s) });
     if (!segs.length) return null;
     const used = segs.reduce((n, [a, b]) => n + b - a + 1, 0);
@@ -95,11 +98,28 @@ export class Rally {
     if (speeds.some((v) => v > 75) || Math.max(...speeds) < 4) return null; // slower than a drop shot: a spectator through the glass
     return {
       t0: pts[0].t, t1: pts[pts.length - 1].t, rms: F.rms, labels: F.labels, speed: Math.max(...speeds),
-      pts: P3.map((q) => ({ t: q.t, X: q.X })), uv: pts.map((q) => [q.u, q.v]),
+      pts: P3.map((q) => ({ t: q.t, X: q.X, V: q.V })), uv: pts.map((q) => [q.u, q.v]),
       impacts: F.impacts.map((m) => ({ t: m.t, X: m.X, plane: m.plane })),
     };
   }
 }
 
+// rms (px) of the best quadratic in time through a track's u and v
+function smooth2D(pts) {
+  const t0 = pts[0].t, T = pts.map((p) => p.t - t0), n = pts.length;
+  const fit = (y) => { // least squares y = a + b t + c t^2 via normal equations
+    const S = [0, 0, 0, 0, 0], R = [0, 0, 0];
+    for (let i = 0; i < n; i++) { let p = 1; for (let k = 0; k < 5; k++) { S[k] += p; if (k < 3) R[k] += p * y[i]; p *= T[i]; } }
+    const M = [[S[0], S[1], S[2]], [S[1], S[2], S[3]], [S[2], S[3], S[4]]], x = solve3(M, R);
+    if (!x) return Infinity;
+    let e = 0; for (let i = 0; i < n; i++) { const d = x[0] + x[1] * T[i] + x[2] * T[i] * T[i] - y[i]; e += d * d; } return e / n;
+  };
+  return Math.sqrt(fit(pts.map((p) => p.u)) + fit(pts.map((p) => p.v)));
+}
+function solve3(M, r) {
+  const d = (m) => m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+  const D = d(M); if (Math.abs(D) < 1e-18) return null;
+  return [0, 1, 2].map((j) => d(M.map((row, i) => row.map((v, k) => (k === j ? r[i] : v)))) / D);
+}
 const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 function meanDiff(a, b) { let s = 0; const n = Math.min(a.length, b.length), step = 7; let m = 0; for (let i = 0; i < n; i += step) { s += Math.abs(a[i] - b[i]); m++; } return s / m; }

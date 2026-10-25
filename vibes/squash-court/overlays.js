@@ -44,6 +44,16 @@ export function findOverlays(rgba, W, H, opt = {}) {
       rects.push([grow(Math.max(a.x0, b.x0), -1) * k, a.y0 * k, (grow(Math.min(a.x1, b.x1), 1) + 1) * k, (b.y + 1) * k]);
     }
   }
+  // caption tabs ("GAME BALL", a player's name) sit on top of a score bug: a row edge a little above
+  // a found rectangle, within its width, closes a tab whether or not its short sides show
+  for (const R of rects.slice()) {
+    const top = R[1] / k;
+    for (const a of edges) {
+      const dy = top - a.y; if (dy < h * 0.018 || dy > h * 0.07) continue;
+      if (a.x0 * k < R[0] - 4 * k || (a.x1 + 1) * k > R[2] + 4 * k || a.x1 - a.x0 > 0.9 * (R[2] - R[0]) / k) continue;
+      rects.push([a.x0 * k, a.y0 * k, (a.x1 + 1) * k, R[1]]);
+    }
+  }
   return rects;
 }
 
