@@ -7,6 +7,7 @@ import { renderCourt, randomBroadcastCamera } from './synth.js';
 import { mulberry32 } from './detect.js';
 import { Bounces, heatGrid } from './bounces.js';
 import { onsets as findOnsets, audioOffset, decodeAudio } from './audio.js';
+import { Commentary, describe, movement, mainView } from './commentary.js';
 
 const $ = (id) => document.getElementById(id);
 const stage = $('stage'), sctx = stage.getContext('2d');
@@ -30,7 +31,7 @@ const S = {
   live: false, procFrame: null, sound: true,
   // players and ball (rally.js in the worker): players [{ id, X, seen, occluded, box }], the live
   // ball pixel, and fitted flights { t0, t1, pts: [{ t, X }], uv, impacts, labels, speed }
-  showRally: true, showHeat: true, showBounces: true, bounces: new Bounces(), players: [], ball: null, ballTrail: [], flights: [], rallyMs: {},
+  showRally: true, showHeat: true, showBounces: true, bounces: new Bounces(), comm: new Commentary(), feed: [], speak: false, moveSaid: {}, players: [], ball: null, ballTrail: [], flights: [], rallyMs: {},
 };
 // Per player: recent positions (speed), distance covered and time spent per 25 cm floor cell
 // (the heatmap). Kept in the page, fed by the players worker's tracked positions.
@@ -75,6 +76,54 @@ function playersAt(t, X) {
   near.sort((a, b2) => a.dist - b2.dist);
   return near.length ? { id: near[0].id, dist: near[0].dist, other: near[1]?.dist ?? null } : null;
 }
+// ---------- commentary ----------
+// Shots are (re)built from the main camera's flights whenever the flight window changes; each
+// keeps its id, so a refit rewrites its line in place instead of adding another. Shots with
+// little evidence behind them (an inferred wall contact and few frames) are shown faded.
+const nameOf = (id) => `P${id}`;
+function comment() {
+  const fl = S.flights.filter((f) => mainView(f.cam));
+  if (!fl.length) return;
+  const changed = S.comm.update(fl, S.bounces.list, playersAt);
+  for (const s of changed) {
+    if (s.quality < 2) continue;
+    const text = describe(s, nameOf), o = S.feed.find((e) => e.id === s.id);
+    if (o) { if (o.text !== text) { o.text = text; o.player = s.player; o.sure = s.quality >= 3; } continue; }
+    S.feed.push({ id: s.id, t: s.t, text, player: s.player, sure: s.quality >= 3, fresh: true });
+    if (S.speak && s.quality >= 3) say(text);
+  }
+  S.feed.sort((a, b) => b.t - a.t); if (S.feed.length > 200) S.feed.length = 200;
+  renderFeed();
+}
+function commentMoves() {
+  const t = S.src?.currentTime ?? 0;
+  for (const p of S.players) {
+    if (!p.seen) continue;
+    const st = S.stats[p.id], text = st && movement(p.id, p.X, st.speed, nameOf); if (!text) continue;
+    const key = p.id + text.split(' corner')[0].slice(-10);
+    if (t - (S.moveSaid[key] ?? -Infinity) < 6) continue; // once per corner visit
+    S.moveSaid[key] = t;
+    S.feed.unshift({ id: `m${p.id}-${t}`, t, text, player: p.id, sure: true, fresh: true, move: true });
+  }
+  renderFeed();
+}
+const clock = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}.${Math.floor((t % 1) * 10)}`;
+function renderFeed() {
+  const el = $('feed'); if (!el) return;
+  el.replaceChildren(...S.feed.slice(0, 60).map((e) => {
+    const li = document.createElement('li'); li.className = (e.fresh ? 'new' : '') + (e.sure ? '' : ' maybe'); e.fresh = false;
+    li.style.borderLeftColor = e.player ? PCOL[(e.player - 1) % PCOL.length] : '#666';
+    const t = document.createElement('span'); t.className = 't'; t.textContent = clock(e.t); li.append(t, e.text); return li;
+  }));
+}
+function say(text) {
+  if (!('speechSynthesis' in window)) return;
+  const u = new SpeechSynthesisUtterance(text.replace(/\((\d+) km\/h\)/, 'at $1 kilometres an hour'));
+  u.rate = 1.15; speechSynthesis.cancel(); speechSynthesis.speak(u); // the newest shot wins
+}
+// Front-wall contacts: one per shot (measured or carried to the wall), for the whole clip.
+const contacts = () => S.comm.shots.map((s) => ({ t: s.t, X: s.front, player: s.player, measured: s.measured }));
+
 // Heard impacts (audio.js), in video time once the audio delay is known from impacts both saw.
 S.audio = null;
 function heardTimes() {
@@ -98,7 +147,7 @@ function ballNow() {
   return null;
 }
 const kmh = (v) => `${v.toFixed(1)} m/s (${(v * 3.6).toFixed(0)} km/h)`;
-const clearRally = () => { S.stats = newStats(); S.bounces.clear(); S.players = []; S.ball = null; S.ballTrail = []; S.flights = []; S.rallyMs = {}; for (const R of rallyW) R.reset = true; };
+const clearRally = () => { S.stats = newStats(); S.bounces.clear(); S.comm.clear(); S.feed = []; S.moveSaid = {}; renderFeed(); S.players = []; S.ball = null; S.ballTrail = []; S.flights = []; S.rallyMs = {}; for (const R of rallyW) R.reset = true; };
 window.__sq = S;
 
 // ---------- worker ----------
@@ -196,12 +245,12 @@ async function analyse(mode = 'detect') {
 function takeRally(q, k) {
   if (q.dup || !S.showRally) return;
   S.rallyMs[q.mode === 'ball' ? 'ball' : 'players'] = q.ms;
-  if (q.players) { S.players = q.players.map((p) => ({ ...p, box: p.box && p.box.map((v) => v / k) })); addPlayerStats(S.players, S.src.currentTime ?? 0); }
+  if (q.players) { S.players = q.players.map((p) => ({ ...p, box: p.box && p.box.map((v) => v / k) })); addPlayerStats(S.players, S.src.currentTime ?? 0); commentMoves(); }
   if (q.mode !== 'ball') return;
   S.ball = q.ball && { u: q.ball.u / k, v: q.ball.v / k, t: q.ball.t };
   if (S.ball) S.ballTrail.push(S.ball);
   const t = S.src.currentTime ?? 0; S.ballTrail = S.ballTrail.filter((b) => b.t > t - 0.4 && b.t <= t + 0.05);
-  if (q.flights) { S.flights = q.flights.map((f) => ({ ...f, uv: f.uv.map(([u, v]) => [u / k, v / k]) })); S.bounces.update(S.flights, { onsets: heardTimes(), players: playersAt }); }
+  if (q.flights) { S.flights = q.flights.map((f) => ({ ...f, uv: f.uv.map(([u, v]) => [u / k, v / k]) })); S.bounces.update(S.flights, { onsets: heardTimes(), players: playersAt }); comment(); }
 }
 // flights to show at time t: the last 2 s of video (all of them for a still)
 const recentFlights = () => { const t = S.src?.currentTime; return t == null ? S.flights : S.flights.filter((f) => f.t1 > t - 2 && f.t0 <= t + 0.05); };
@@ -294,7 +343,7 @@ function seg3(ctx, cam, a, b, map, n = 24) {
 }
 function draw() {
   sctx.setTransform(1, 0, 0, 1, 0, 0); sctx.fillStyle = '#111'; sctx.fillRect(0, 0, stage.width, stage.height);
-  if (!S.src) { if (S.match) { drawPlan(); drawWall(); drawSpeed(); readout(); } return; }
+  if (!S.src) { if (S.match) { drawPlan(); drawWall(); drawSpeed(); drawPlayerHeat($('heat1'), 1); drawPlayerHeat($('heat2'), 2); readout(); } return; }
   sctx.drawImage(S.src, disp.ox, disp.oy, S.srcW * disp.k, S.srcH * disp.k);
   const map = (u) => [disp.ox + u[0] * disp.k, disp.oy + u[1] * disp.k];
   const dpr = devicePixelRatio || 1;
@@ -311,7 +360,7 @@ function draw() {
     sctx.fillStyle = '#ff2d7a'; sctx.beginPath(); sctx.arc(x, y, 5 * dpr, 0, 7); sctx.fill();
     sctx.font = `${12 * dpr}px system-ui`; sctx.fillStyle = '#fff'; sctx.fillText(fmtX(p), x + 8 * dpr, y - 6 * dpr);
   }
-  drawPlan(); drawWall(); draw3d(); drawSpeed(); readout();
+  drawPlan(); drawWall(); draw3d(); drawSpeed(); drawPlayerHeat($('heat1'), 1); drawPlayerHeat($('heat2'), 2); readout();
 }
 // players: a ring on the floor round the feet (dashed when the feet are hidden behind a graphic and
 // placed from the head), the position in metres; the ball: its fitted flights and the live blob
@@ -361,7 +410,7 @@ function drawPlan() {
   pctx.strokeRect(0.5, 0.5, plan.width - 1, plan.height - 1);
   for (const p of S.picks) if (p.surface === 'floor') { pctx.fillStyle = '#ff2d7a'; pctx.beginPath(); pctx.arc(p.X[0] * s, p.X[1] * s, 4, 0, 7); pctx.fill(); }
   if (S.showHeat) drawHeat(s);
-  if (S.showBounces) drawBounces(pctx, S.bounces.on('floor'), CW, CL, s, (x, y) => [x * s, y * s], !S.showHeat, (m) => [m.X[0], m.X[1]]);
+  if (S.showBounces) { const F = S.bounces.on('floor'); drawBounces(pctx, F, CW, CL, s, (x, y) => [x * s, y * s], !S.showHeat, (m) => [m.X[0], m.X[1]]); if (F.length) { const L = F[F.length - 1]; ringLast(pctx, L, L.X[0] * s, L.X[1] * s); } }
   if (S.showRally) {
     // the ball's ground track (shadow), floor bounces, players
     for (const f of recentFlights()) {
@@ -448,7 +497,35 @@ function useMatch(M, name) {
   stopLive(); S.src = null; S.cam = null; clearRally(); S.match = M;
   for (const p of M.players) { const st = statFor(p.id); st.heat = Float32Array.from(p.heatmap.seconds); st.dist = p.distance; st.time = p.seconds; st.top = p.topSpeed; st.series = p.speed.map(([t, v]) => ({ t, v })); }
   S.bounces.list = M.bounces.map((m) => ({ t: m.t, X: [m.x, m.y, m.z], plane: m.plane, inferred: m.inferred, sound: m.sound, player: m.player }));
+  S.comm.shots = (M.shots ?? []).map((s, i) => ({ ...s, id: i + 1, measured: s.quality >= 4 }));
+  S.feed = (M.shots ?? []).filter((s) => s.quality >= 2).map((s, i) => ({ id: i + 1, t: s.t, text: s.text, player: s.player, sure: s.quality >= 3 })).reverse(); renderFeed();
   status(`${name}: ${(M.duration / 60).toFixed(1)} min, ${M.bounces.length} impacts, ${M.players.length} players`); draw();
+}
+// One player's heatmap on a plain court: time per 25 cm cell, in the player's colour.
+function drawPlayerHeat(cnv, id) {
+  const g = cnv.getContext('2d'), s = cnv.width / CW, st = S.stats[id];
+  g.fillStyle = '#3a342c'; g.fillRect(0, 0, cnv.width, cnv.height);
+  const title = $(`heat${id}t`);
+  if (st) {
+    const h = heatGrid([], HM, CW, CL); // same grid; fill it with the player's seconds, blurred
+    h.g.set(st.heat); const B = blurHeat(h.g, h.nx, h.ny), mx = Math.max(1e-9, ...B);
+    const hc = document.createElement('canvas'); hc.width = h.nx; hc.height = h.ny; const hx = hc.getContext('2d'), img = hx.createImageData(h.nx, h.ny);
+    const rgb = [1, 3, 5].map((i) => parseInt(PCOL[(id - 1) % PCOL.length].slice(i, i + 2), 16));
+    for (let i = 0; i < B.length; i++) { const a = B[i] / mx; if (a < 0.03) continue; const o = i * 4; img.data[o] = rgb[0]; img.data[o + 1] = rgb[1]; img.data[o + 2] = rgb[2]; img.data[o + 3] = Math.min(255, 40 + 215 * a); }
+    hx.putImageData(img, 0, 0); g.save(); g.imageSmoothingEnabled = true; g.drawImage(hc, 0, 0, h.nx * HM * s, h.ny * HM * s); g.restore();
+    if (title) title.textContent = `Player ${id} heatmap — ${st.dist.toFixed(0)} m, top ${st.top.toFixed(1)} m/s`;
+  } else if (title) title.textContent = `Player ${id} heatmap`;
+  g.strokeStyle = 'rgba(0,240,255,0.7)'; g.lineWidth = 1;
+  for (const l of MODEL.lines) if (l.kind === 'floor') { g.beginPath(); g.moveTo(l.a[0] * s, l.a[1] * s); g.lineTo(l.b[0] * s, l.b[1] * s); g.stroke(); }
+  g.strokeRect(0.5, 0.5, cnv.width - 1, cnv.height - 1);
+  const p = S.players.find((q) => q.id === id); if (p) { g.fillStyle = '#fff'; g.beginPath(); g.arc(p.X[0] * s, p.X[1] * s, 4, 0, 7); g.fill(); }
+}
+function blurHeat(a, nx, ny) { let g = Float32Array.from(a); for (let p = 0; p < 2; p++) { const o = new Float32Array(g.length); for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) { let v = 0, w = 0; for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) { const X = x + i, Y = y + j; if (X < 0 || Y < 0 || X >= nx || Y >= ny) continue; const k = (i ? 0.5 : 1) * (j ? 0.5 : 1); v += g[Y * nx + X] * k; w += k; } o[y * nx + x] = v / w; } g = o; } return g; }
+// the most recent mark of a list, ringed in green with its time
+function ringLast(ctx, m, px, py) {
+  ctx.strokeStyle = '#39ff6a'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(px, py, 7, 0, 7); ctx.stroke();
+  ctx.fillStyle = '#39ff6a'; ctx.beginPath(); ctx.arc(px, py, 3.5, 0, 7); ctx.fill();
+  ctx.font = '10px system-ui'; ctx.fillText(clock(m.t), Math.min(ctx.canvas.width - 40, px + 9), Math.max(10, py - 6));
 }
 function drawWall() {
   const s = wall.width / CW; // front wall, 0 … 5 m high
@@ -456,7 +533,9 @@ function drawWall() {
   wctx.strokeStyle = 'rgba(0,240,255,0.8)';
   for (const l of MODEL.lines) if (l.kind === 'front') { const y = wall.height - l.a[2] * s; wctx.beginPath(); wctx.moveTo(0, y); wctx.lineTo(wall.width, y); wctx.stroke(); }
   for (const p of S.picks) if (p.surface === 'front wall') { wctx.fillStyle = '#ff2d7a'; wctx.beginPath(); wctx.arc(p.X[0] * s, wall.height - p.X[2] * s, 4, 0, 7); wctx.fill(); }
-  if (S.showBounces) drawBounces(wctx, S.bounces.on('front'), CW, wall.height / s, s, (x, z) => [x * s, wall.height - z * s], true, (m) => [m.X[0], m.X[2]]);
+  // every front-wall contact (one per shot), coloured by hitter; the last one in green
+  const C = S.showBounces ? contacts() : [];
+  if (C.length) { drawBounces(wctx, C, CW, wall.height / s, s, (x, z) => [x * s, wall.height - z * s], true, (m) => [m.X[0], m.X[2]]); const L = C[C.length - 1]; ringLast(wctx, L, L.X[0] * s, wall.height - L.X[2] * s); }
   if (S.showRally) for (const f of recentFlights()) for (const m of f.impacts) if (m.plane === 'front') { wctx.fillStyle = '#ff8a00'; wctx.beginPath(); wctx.arc(m.X[0] * s, wall.height - m.X[2] * s, 4, 0, 7); wctx.fill(); }
 }
 // 3D overview rendered with the same camera class: court box, lines, the fitted camera's frustum.
@@ -554,7 +633,19 @@ $('bounces').onchange = (e) => { S.showBounces = e.target.checked; draw(); };
 $('heat').onchange = (e) => { S.showHeat = e.target.checked; draw(); };
 $('rally').onchange = (e) => { S.showRally = e.target.checked; clearRally(); if (S.showRally && !S.live && S.cam && S.procFrame) runRally(S.procFrame, scaleCam(S.cam, S.procFrame.k, S.procFrame.img.width, S.procFrame.img.height), 0, false); draw(); };
 $('export').onclick = exportJSON;
-$('clear').onclick = () => { S.picks = []; draw(); };
+// Clear: measured points and everything gathered so far (heatmaps, bounces, speeds, commentary);
+// a playing video starts gathering again from the current frame
+$('clear').onclick = () => { S.picks = []; const m = S.match; clearRally(); S.match = null; if (m && !S.src) S.cam = null; status('cleared'); draw(); };
+$('speak').onchange = (e) => { S.speak = e.target.checked; if (!S.speak && 'speechSynthesis' in window) speechSynthesis.cancel(); };
+{ // drag the side panel's edge to resize it (kept across reloads)
+  const grip = $('grip'), set = (w) => { w = Math.max(300, Math.min(innerWidth - 320, w)); document.body.style.setProperty('--side', `${w}px`); localStorage.setItem('squashSide', w); };
+  const saved = +localStorage.getItem('squashSide'); if (saved) set(saved);
+  let drag = false;
+  grip.addEventListener('pointerdown', (e) => { drag = true; grip.classList.add('drag'); grip.setPointerCapture(e.pointerId); });
+  grip.addEventListener('pointermove', (e) => { if (drag) { set(innerWidth - e.clientX - 3); fitStage(); draw(); } });
+  grip.addEventListener('pointerup', () => { drag = false; grip.classList.remove('drag'); });
+  grip.addEventListener('keydown', (e) => { const w = parseInt(getComputedStyle(document.body).getPropertyValue('--side')) || 620; if (e.key === 'ArrowLeft') set(w + 20); else if (e.key === 'ArrowRight') set(w - 20); else return; fitStage(); draw(); });
+}
 function soundLabel() { const v = S.src; $('sound').textContent = v instanceof HTMLVideoElement && !v.muted ? 'Sound on' : 'Sound off'; }
 $('sound').onclick = () => { const v = S.src; if (!(v instanceof HTMLVideoElement)) return; v.muted = !v.muted; S.sound = !v.muted; soundLabel(); };
 $('play').onclick = () => { const v = S.src; if (!(v instanceof HTMLVideoElement)) return; v.paused ? v.play() : v.pause(); $('play').textContent = v.paused ? 'Play' : 'Pause'; };

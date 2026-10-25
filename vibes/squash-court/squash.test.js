@@ -253,3 +253,25 @@ describe('impact sounds and hitters', () => {
     expect(hitterOf(heard[0], [f], players, [0.97])).toBe(1);
   });
 });
+
+import { Commentary, describe as describeShot } from './commentary.js';
+describe('commentary', () => {
+  // simulate a shot up to its first floor bounce and name it
+  const aim = (X0, T, sp) => { const d = T.map((v, j) => v - X0[j]), L = Math.hypot(...d), V = d.map((v) => (v / L) * sp); V[2] += 0.5 * 9.81 * L / sp; return V; };
+  const shot = (X0, V0) => {
+    const sim = simulate(X0, V0, 2.5, 50), stop = sim.events.find((e) => e.type === 'floor')?.t ?? 2.5;
+    const pts = sim.frames.filter((f) => f.t <= stop + 0.02).map((f) => ({ t: f.t, X: f.X, V: f.V }));
+    const C = new Commentary(), out = C.update([{ t0: 0, t1: pts.at(-1).t, pts, impacts: sim.events.filter((e) => e.t <= stop + 1e-3).map((e) => ({ t: e.t, X: e.X, plane: e.type })) }], [], () => ({ id: 1, dist: 0.4, other: 3 }));
+    expect(out.length).toBe(1); return out[0];
+  };
+  test('straight drive, tight and deep', () => { const s = shot([5.6, 8, 0.6], aim([5.6, 8, 0.6], [5.9, 0, 1.4], 42)); expect(s.kind).toMatchObject({ type: 'drive', direction: 'straight', tight: 'left', length: 'deep' }); expect(describeShot(s)).toMatch(/^P1 plays a hard straight drive/); });
+  test('crosscourt drive', () => expect(shot([5.6, 8, 0.6], aim([5.6, 8, 0.6], [2.6, 0, 1.3], 40)).kind).toMatchObject({ type: 'drive', direction: 'crosscourt' }));
+  test('lob', () => expect(shot([4.5, 3, 0.4], aim([4.5, 3, 0.4], [4.4, 0, 4.0], 13)).kind.type).toBe('lob'));
+  test('drop', () => expect(shot([2, 3.5, 0.5], aim([2, 3.5, 0.5], [1.4, 0, 0.62], 9)).kind).toMatchObject({ type: 'drop', length: 'short' }));
+  test('boast', () => expect(shot([0.6, 8, 0.6], [-8, -22, 4]).kind.type).toBe('boast'));
+  test('a contact inferred from a flight that never reached the wall', () => {
+    const sim = simulate([3, 7, 0.8], [0.3, -30, 3], 0.12, 50), pts = sim.frames.map((f) => ({ t: f.t, X: f.X, V: f.V }));
+    const out = new Commentary().update([{ t0: 0, t1: pts.at(-1).t, pts, impacts: [] }]);
+    expect(out.length).toBe(1); expect(out[0].measured).toBe(false); expect(out[0].front[1]).toBeLessThan(0.05);
+  });
+});

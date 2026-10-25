@@ -113,6 +113,7 @@ export class Rally {
     const speeds = F.flights.map((f) => Math.hypot(...f.V0));
     if (speeds.some((v) => v > 75) || Math.max(...speeds) < 4) return null; // slower than a drop shot: a spectator through the glass
     return {
+      cam: cam.C.map((v) => +v.toFixed(2)), // where the camera stood: shots are named from the main view only
       t0: pts[0].t, t1: pts[pts.length - 1].t, rms: F.rms, labels: F.labels, speed: Math.max(...speeds),
       pts: P3.map((q) => ({ t: q.t, X: q.X, V: q.V })), uv: pts.map((q) => [q.u, q.v]),
       impacts: F.impacts.map((m) => ({ t: m.t, X: m.X, plane: m.plane })),

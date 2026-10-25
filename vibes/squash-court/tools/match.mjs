@@ -16,6 +16,7 @@ import { createTracker, resetTracker, trackFrame, recallShot } from '../track.js
 import { Rally } from '../rally.js';
 import { onsets, audioOffset } from '../audio.js';
 import { Bounces, heatGrid, impactsOf } from '../bounces.js';
+import { Commentary, describe, mainView } from '../commentary.js';
 import { W as CW, L as CL, courtModel } from '../court.js';
 import { writeImage, line } from './nodeimg.js';
 
@@ -43,6 +44,8 @@ async function main() {
   console.log(`court seen ${(M.courtSeconds / 60).toFixed(1)} min; ${M.players.map((p) => `P${p.id} ${p.distance.toFixed(0)} m, top ${p.topSpeed.toFixed(1)} m/s`).join('; ')}`);
   const fl = M.bounces.filter((m) => m.plane === 'floor');
   console.log(`${fl.length} floor bounces (${fl.filter((m) => m.sound).length} by ear), ${M.bounces.filter((m) => m.plane === 'front').length} front-wall hits; hitter known for ${M.bounces.filter((m) => m.player).length}; audio ${M.audio.sure ? `${Math.round(M.audio.offset * 1000)} ms after picture (${M.audio.matched} impacts matched, ${M.audio.chance} by chance)` : `delay not determined (best ${M.audio.matched}, ${M.audio.chance} by chance)`}, ${M.audio.heard} heard`);
+  const kinds = {}; for (const s of M.shots) { const k = s.kind.type + (s.kind.direction ? ' ' + s.kind.direction : ''); kinds[k] = (kinds[k] || 0) + 1; }
+  console.log(`${M.shots.length} shots: ${Object.entries(kinds).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join(', ')}; ${M.flightsOtherViews} flights from other cameras left out`);
   console.log(`wrote ${out}/match.json, ${out}/match.png in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
 }
 
@@ -66,7 +69,7 @@ async function chunk(file, ss, len, json) {
     if (!win || !win.length) return;
     const a = win[0].t0 - 0.05, b = Math.max(...win.map((f) => f.t1)) + 0.05;
     for (let i = flights.length - 1; i >= 0; i--) if (flights[i].t0 >= a && flights[i].t0 <= b) flights.splice(i, 1);
-    for (const f of win) flights.push({ t0: f.t0, t1: f.t1, impacts: f.impacts, labels: f.labels, speed: f.speed, pts: f.pts.map((q) => ({ t: +q.t.toFixed(4), X: q.X.map((v) => +v.toFixed(3)), V: q.V && q.V.map((v) => +v.toFixed(2)) })) });
+    for (const f of win) flights.push({ cam: f.cam, t0: f.t0, t1: f.t1, impacts: f.impacts, labels: f.labels, speed: f.speed, pts: f.pts.map((q) => ({ t: +q.t.toFixed(4), X: q.X.map((v) => +v.toFixed(3)), V: q.V && q.V.map((v) => +v.toFixed(2)) })) });
   };
   const frame = (rgba) => {
     const t = ss + idx++ / fps;
@@ -104,7 +107,8 @@ async function chunk(file, ss, len, json) {
 // ---------- merge ----------
 function merge(parts, meta) {
   const dets = parts.flatMap((p) => p.dets).sort((a, b) => a.t - b.t);
-  const flights = parts.flatMap((p) => p.flights).sort((a, b) => a.t0 - b.t0);
+  // the main high camera only: court-level, side and close-up views misjudge depth
+  const allFlights = parts.flatMap((p) => p.flights), flights = allFlights.filter((f) => mainView(f.cam)).sort((a, b) => a.t0 - b.t0);
   const heard = parts.flatMap((p) => p.heard).sort((a, b) => a - b);
   // identities: each tracked player of one camera stretch gets the median shirt colour of its
   // detections; those colours are split in two (k-means), and the two tracks of one stretch are
@@ -149,11 +153,13 @@ function merge(parts, meta) {
   const B = new Bounces();
   const shift = off.sure ? off.offset : 0, on = heard.map((t) => t - shift);
   // per stretch of flights (the window logic wants nearby flights only)
-  for (let i = 0; i < flights.length;) { let j = i + 1; while (j < flights.length && flights[j].t0 - flights[j - 1].t1 < 3) j++; B.update(flights.slice(i, j), { onsets: on, players: playersAt }); i = j; }
+  const CM = new Commentary();
+  for (let i = 0; i < flights.length;) { let j = i + 1; while (j < flights.length && flights[j].t0 - flights[j - 1].t1 < 3) j++; B.update(flights.slice(i, j), { onsets: on, players: playersAt }); CM.update(flights.slice(i, j), B.list, playersAt); i = j; }
   return {
     ...meta, courtSeconds: parts.reduce((s, p) => s + p.courtSeconds, 0),
     audio: { heard: heard.length, offset: shift, matched: off.matched, chance: off.chance, sure: off.sure },
-    players, flights: flights.length,
+    players, flights: flights.length, flightsOtherViews: allFlights.length - flights.length,
+    shots: CM.shots.map((s) => ({ t: +s.t.toFixed(3), player: s.player, kind: s.kind, front: s.front.map((v) => +v.toFixed(3)), bounce: s.bounce && s.bounce.X.map((v) => +v.toFixed(3)), speed: s.speed && +s.speed.toFixed(1), quality: s.quality, text: describe(s) })),
     bounces: B.list.map((m) => ({ t: +m.t.toFixed(3), plane: m.plane, x: +m.X[0].toFixed(3), y: +m.X[1].toFixed(3), z: +m.X[2].toFixed(3), inferred: !!m.inferred, sound: !!m.sound, player: m.player ?? null })),
   };
 }
