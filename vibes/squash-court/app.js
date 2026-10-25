@@ -29,7 +29,7 @@ const S = {
   srcW: 0, srcH: 0,
   cam: null, // fitted camera in source pixels
   quality: null, ms: null, busy: false, fails: 0, frames: 0, trackMs: [],
-  tin: 0.48, picks: [], showLines: true, orbit: { yaw: -0.5, pitch: 0.45, dist: 19 },
+  tin: 0.48, picks: [], showLines: true, showFrustum: true, orbit: { yaw: -0.5, pitch: 0.45, dist: 19 },
   live: false, procFrame: null, sound: true,
   // players and ball (rally.js in the worker): players [{ id, X, seen, occluded, box }], the live
   // ball pixel, and fitted flights { t0, t1, pts: [{ t, X }], uv, impacts, labels, speed }
@@ -408,6 +408,14 @@ function drawRallyStage(map, dpr) {
     sctx.stroke();
     for (const m of f.impacts) { const u = c.project(m.X); if (!(u[2] > 0)) continue; const [x, y] = map(u); sctx.fillStyle = '#ff8a00'; sctx.beginPath(); sctx.arc(x, y, 4 * dpr, 0, 7); sctx.fill(); }
   }
+  // where the latest flight goes next, dashed (as in the 3D view)
+  const P = predicted(recentFlights());
+  if (P) {
+    sctx.strokeStyle = '#ff8a00'; sctx.lineWidth = 2 * dpr; sctx.setLineDash([6 * dpr, 5 * dpr]); sctx.beginPath(); let first = true;
+    for (const q of P.pts) { const u = c.project(q.X); if (!(u[2] > 0)) { first = true; continue; } const [x, y] = map(u); first ? sctx.moveTo(x, y) : sctx.lineTo(x, y); first = false; }
+    sctx.stroke(); sctx.setLineDash([]);
+    for (const m of P.hits) { const u = c.project(m.X); if (!(u[2] > 0)) continue; const [x, y] = map(u); sctx.strokeStyle = m.out ? '#ff3b30' : '#ff8a00'; sctx.lineWidth = 2 * dpr; sctx.beginPath(); sctx.arc(x, y, (m.out ? 6 : 4.5) * dpr, 0, 7); sctx.stroke(); }
+  }
   const bn = ballNow(); if (bn) { const u = c.project(bn.X); if (u[2] > 0) { const [x, y] = map(u); sctx.font = `${12 * dpr}px system-ui`; sctx.fillStyle = '#ffe600'; sctx.fillText(`${(bn.speed * 3.6).toFixed(0)} km/h`, x + 9 * dpr, y - 9 * dpr); sctx.beginPath(); sctx.arc(x, y, 4 * dpr, 0, 7); sctx.fill(); } }
   sctx.strokeStyle = '#39ff6a'; sctx.lineWidth = 1.5 * dpr;
   for (const b of S.ballTrail) { const [x, y] = map([b.u, b.v]); sctx.strokeRect(x - 6 * dpr, y - 6 * dpr, 12 * dpr, 12 * dpr); }
@@ -579,9 +587,11 @@ function draw3d() {
   if (S.cam) {
     const c = S.cam, depth = Math.max(3, Math.hypot(c.C[0] - T[0], c.C[1] - T[1], c.C[2] - T[2]) * 0.35);
     const corners = [[0, 0], [c.w, 0], [c.w, c.h], [0, c.h]].map(([u, v]) => { const r = c.ray(u, v); return r.d.map((d, i) => r.o[i] + d * depth); });
-    vctx.strokeStyle = '#ffe600';
-    for (const q of corners) seg3(vctx, vc, c.C, q, id, 2);
-    for (let i = 0; i < 4; i++) seg3(vctx, vc, corners[i], corners[(i + 1) % 4], id, 2);
+    if (S.showFrustum) {
+      vctx.strokeStyle = '#ffe600';
+      for (const q of corners) seg3(vctx, vc, c.C, q, id, 2);
+      for (let i = 0; i < 4; i++) seg3(vctx, vc, corners[i], corners[(i + 1) % 4], id, 2);
+    }
     vctx.strokeStyle = 'rgba(255,230,0,0.35)';
     for (const p of S.picks) seg3(vctx, vc, c.C, p.X, id, 2);
     for (const p of S.picks) { const u = vc.project(p.X); if (u[2] > 0) { vctx.fillStyle = '#ff2d7a'; vctx.beginPath(); vctx.arc(u[0], u[1], 3.5, 0, 7); vctx.fill(); } }
@@ -683,6 +693,7 @@ $('camera').onclick = useCamera;
 $('demo').onclick = demo;
 $('redetect').onclick = () => { S.fails = 9; if (!S.live) analyse('detect'); };
 $('lines').onchange = (e) => { S.showLines = e.target.checked; draw(); };
+$('frustum').onchange = (e) => { S.showFrustum = e.target.checked; draw3d(); };
 $('bounces').onchange = (e) => { S.showBounces = e.target.checked; draw(); };
 $('heat').onchange = (e) => { S.showHeat = e.target.checked; draw(); };
 $('rally').onchange = (e) => { S.showRally = e.target.checked; clearRally(); if (S.showRally && !S.live && S.cam && S.procFrame) runRally(S.procFrame, scaleCam(S.cam, S.procFrame.k, S.procFrame.img.width, S.procFrame.img.height), 0, false); draw(); };

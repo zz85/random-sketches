@@ -36,6 +36,11 @@
   .names { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
   .names label { display: flex; gap: 6px; align-items: center; }
   .names input { width: 13ch; background: #262a33; color: var(--fg); border: 1px solid #333844; border-radius: 4px; padding: 4px 6px; font: inherit; }
+  .legend { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: #aab; }
+  .legend li { display: flex; align-items: center; gap: 4px; }
+  .legend .ln { width: 16px; height: 0; border-top: 2px solid; display: inline-block; }
+  .legend .ln.dash { border-top-style: dashed; }
+  .chk3 { font-weight: normal; font-size: 12px; margin-left: 8px; cursor: pointer; }
   .sw { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
   #nameNote { color: var(--dim); font-size: 12px; }
   @keyframes flash { from { background: #34404f; } to { background: #1e2128; } }
@@ -85,7 +90,19 @@
     <h2>Player speed</h2><canvas id="speed" class="panel" width="320" height="110"></canvas></figure>
   <figure><h2 id="heat1t">Player 1 heatmap</h2><canvas id="heat1" class="panel heat2" width="256" height="390"></canvas></figure>
   <figure><h2 id="heat2t">Player 2 heatmap</h2><canvas id="heat2" class="panel heat2" width="256" height="390"></canvas></figure>
-  <figure class="wide"><h2>3D (drag to orbit, wheel to zoom; ball fitted solid, predicted dashed)</h2><canvas id="view3d" class="panel" width="480" height="300"></canvas></figure>
+  <figure class="wide"><h2>3D (drag to orbit, wheel to zoom) <label class="chk3"><input id="frustum" type="checkbox" checked> camera view</label></h2><canvas id="view3d" class="panel" width="480" height="300"></canvas>
+    <ul class="legend" aria-label="3D view colours">
+      <li><span class="ln" style="border-color:#ffe600"></span>ball, fitted</li>
+      <li><span class="ln dash" style="border-color:#ff8a00"></span>ball, predicted</li>
+      <li><span class="ln" style="border-color:rgba(255,230,0,0.35)"></span>its shadow on the floor</li>
+      <li><span class="sw" style="background:#fff"></span>ball now</li>
+      <li><span class="sw" style="background:#ff8a00"></span>predicted impact</li>
+      <li><span class="sw" style="background:#ff3b30"></span>out / tin</li>
+      <li><span class="ln" style="border-color:#ff2d7a"></span><span class="ln" style="border-color:#2dd4ff"></span>players</li>
+      <li><span class="ln" style="border-color:#ffe600"></span>camera's field of view</li>
+      <li><span class="ln" style="border-color:#d33"></span>court lines</li>
+      <li><span class="ln" style="border-color:#666"></span>walls and floor</li>
+    </ul></figure>
   <pre id="readout" class="wide"></pre>
 </aside>
 <footer id="status">Click the frame to place a point on the floor or walls, in metres.</footer>
