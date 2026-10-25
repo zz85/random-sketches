@@ -68,6 +68,37 @@ export function simulate(X0, V0, T, fps, { e = 0.45, eFloor = 0.5, mu = 0.25, hi
   return { frames, events };
 }
 
+// Where the ball goes next: carry a state X, V (time t) forward with drag, gravity and the same
+// bounce model as simulate, until the second floor bounce (the rally is over), the ball leaves the
+// court (above an out line: front 4.57, sides falling to 2.13 at the back, back 2.13; or into the
+// tin), or T seconds. Returns the path every 1/100 s and its impacts, with why it stopped.
+export function predictPath(X, V, { t = 0, T = 1.5, e = 0.45, eFloor = 0.5, mu = 0.25, tin = 0.48 } = {}) {
+  const step = 1 / 400, pts = [{ t, X: X.slice() }], hits = [];
+  let x = X.slice(), v = V.slice(), s = 0, floors = 0, end = 'time';
+  const outH = (p) => (p.axis === 1 ? (p.val === 0 ? 4.57 : 2.13) : 4.57 - (4.57 - 2.13) * Math.min(1, Math.max(0, x[1] / CL)));
+  run: while (s < T) {
+    const sp = Math.hypot(...v), a = [-K * sp * v[0], -K * sp * v[1], -G - K * sp * v[2]];
+    const xn = x.map((q, j) => q + v[j] * step + 0.5 * a[j] * step * step), vn = v.map((q, j) => q + a[j] * step);
+    s += step;
+    for (const [name, P] of Object.entries(PLANES)) {
+      const lo = P.val === 0, q = xn[P.axis] - (lo ? BALL_R : -BALL_R);
+      if (!((lo && q < P.val && vn[P.axis] < 0) || (!lo && q > P.val && vn[P.axis] > 0))) continue;
+      xn[P.axis] = P.val + (lo ? BALL_R : -BALL_R);
+      const hit = { t: t + s, plane: name, X: xn.slice() };
+      if (name !== 'floor' && xn[2] > outH(P)) { hits.push({ ...hit, out: true }); x = xn; end = 'out'; break run; }
+      if (name === 'front' && xn[2] < tin) { hits.push({ ...hit, out: true }); x = xn; end = 'tin'; break run; }
+      hits.push(hit);
+      vn[P.axis] = -vn[P.axis] * (name === 'floor' ? eFloor : e);
+      for (let j = 0; j < 3; j++) if (j !== P.axis) vn[j] *= 1 - mu;
+      if (name === 'floor' && ++floors === 2) { x = xn; end = 'down'; break run; }
+    }
+    x = xn; v = vn;
+    if (Math.round(s * 400) % 4 === 0) pts.push({ t: t + s, X: x.slice() });
+  }
+  pts.push({ t: t + s, X: x.slice() });
+  return { pts, hits, end };
+}
+
 // ---------- 2D detection ----------
 
 // Gray at a w-wide grid.

@@ -6,8 +6,10 @@ import { courtModel, W as CW, L as CL } from './court.js';
 import { renderCourt, randomBroadcastCamera } from './synth.js';
 import { mulberry32 } from './detect.js';
 import { Bounces, heatGrid } from './bounces.js';
+import { predictPath } from './ball.js';
 import { onsets as findOnsets, audioOffset, decodeAudio } from './audio.js';
 import { Commentary, describe, movement, mainView } from './commentary.js';
+import { TControl, tLabel } from './tcontrol.js';
 
 const $ = (id) => document.getElementById(id);
 const stage = $('stage'), sctx = stage.getContext('2d');
@@ -38,6 +40,7 @@ const S = {
 const HM = 0.25, HX = Math.ceil(CW / HM), HY = Math.ceil(CL / HM);
 const newStats = () => ({});
 S.stats = newStats();
+S.tctl = new TControl(); // T domination: time near the T, and who is nearer it
 function statFor(id) { return S.stats[id] ??= { hist: [], dist: 0, time: 0, heat: new Float32Array(HX * HY), last: null, speed: 0, top: 0, series: [], log: [] }; }
 function addPlayerStats(players, t) {
   for (const p of players) {
@@ -48,7 +51,7 @@ function addPlayerStats(players, t) {
       const cx = Math.floor(p.X[0] / HM), cy = Math.floor(p.X[1] / HM);
       if (cx >= 0 && cy >= 0 && cx < HX && cy < HY && dt > 0) { st.heat[cy * HX + cx] += dt; st.time += dt; }
       if (st.last && dt > 0) st.dist += Math.hypot(p.X[0] - st.last.X[0], p.X[1] - st.last.X[1]);
-      st.hist.push({ t, X: p.X.slice() });
+      st.hist.push({ t, X: p.X.slice() }); S.tctl.add(p.id, t, p.X);
       st.log.push({ t, X: p.X.slice() }); if (st.log.length > 20000) st.log.splice(0, 5000);
     }
     st.last = { t, X: p.X.slice() };
@@ -163,7 +166,7 @@ function ballNow() {
   return null;
 }
 const kmh = (v) => `${v.toFixed(1)} m/s (${(v * 3.6).toFixed(0)} km/h)`;
-const clearRally = () => { S.stats = newStats(); S.bounces.clear(); S.comm.clear(); S.feed = []; S.moveSaid = {}; renderFeed(); S.players = []; S.ball = null; S.ballTrail = []; S.flights = []; S.rallyMs = {}; for (const R of rallyW) R.reset = true; };
+const clearRally = () => { S.stats = newStats(); S.tctl = new TControl(); S.bounces.clear(); S.comm.clear(); S.feed = []; S.moveSaid = {}; renderFeed(); S.players = []; S.ball = null; S.ballTrail = []; S.flights = []; S.rallyMs = {}; for (const R of rallyW) R.reset = true; };
 window.__sq = S;
 
 // ---------- worker ----------
@@ -519,6 +522,7 @@ function drawSpeed() {
 function useMatch(M, name) {
   stopLive(); S.src = null; S.cam = null; clearRally(); S.match = M;
   for (const p of M.players) { const st = statFor(p.id); st.heat = Float32Array.from(p.heatmap.seconds); st.dist = p.distance; st.time = p.seconds; st.top = p.topSpeed; st.series = p.speed.map(([t, v]) => ({ t, v })); }
+  S.tctl = TControl.fromSummaries(Object.fromEntries(M.players.map((p) => [p.id, p.tControl ?? null])));
   S.bounces.list = M.bounces.map((m) => ({ t: m.t, X: [m.x, m.y, m.z], plane: m.plane, inferred: m.inferred, sound: m.sound, player: m.player }));
   S.comm.shots = (M.shots ?? []).map((s, i) => ({ ...s, id: i + 1, measured: s.quality >= 4 }));
   S.feed = (M.shots ?? []).filter((s) => s.quality >= 2).map((s, i) => ({ id: i + 1, t: s.t, text: s.text, shot: s.kind && s.front ? s : null, player: s.player, sure: s.quality >= 3 })).reverse();
@@ -537,7 +541,7 @@ function drawPlayerHeat(cnv, id) {
     const rgb = [1, 3, 5].map((i) => parseInt(PCOL[(id - 1) % PCOL.length].slice(i, i + 2), 16));
     for (let i = 0; i < B.length; i++) { const a = B[i] / mx; if (a < 0.03) continue; const o = i * 4; img.data[o] = rgb[0]; img.data[o + 1] = rgb[1]; img.data[o + 2] = rgb[2]; img.data[o + 3] = Math.min(255, 40 + 215 * a); }
     hx.putImageData(img, 0, 0); g.save(); g.imageSmoothingEnabled = true; g.translate(CW * s, 0); g.scale(-1, 1); g.drawImage(hc, 0, 0, h.nx * HM * s, h.ny * HM * s); g.restore();
-    if (title) title.textContent = `${nameOf(id)} heatmap — ${st.dist.toFixed(0)} m, top ${st.top.toFixed(1)} m/s`;
+    if (title) title.textContent = `${nameOf(id)} heatmap — ${st.dist.toFixed(0)} m, top ${st.top.toFixed(1)} m/s${tLabel(S.tctl.summary(id)) ? `, ${tLabel(S.tctl.summary(id))}` : ''}`;
   } else if (title) title.textContent = `${nameOf(id)} heatmap`;
   g.strokeStyle = 'rgba(0,240,255,0.7)'; g.lineWidth = 1;
   for (const l of MODEL.lines) if (l.kind === 'floor') { g.beginPath(); g.moveTo((CW - l.a[0]) * s, l.a[1] * s); g.lineTo((CW - l.b[0]) * s, l.b[1] * s); g.stroke(); }
@@ -584,17 +588,43 @@ function draw3d() {
   }
   if (S.showRally) {
     vctx.lineWidth = 3; for (const p of S.players) { vctx.strokeStyle = pcol(p); seg3(vctx, vc, [p.X[0], p.X[1], 0], [p.X[0], p.X[1], p.height ?? 1.75], id, 2); }
-    vctx.lineWidth = 1.5; vctx.strokeStyle = '#ffe600';
-    for (const f of recentFlights()) for (let i = 1; i < f.pts.length; i++) seg3(vctx, vc, f.pts[i - 1].X, f.pts[i].X, id, 1);
+    // the ball: fitted flights solid, with their shadow on the floor; where the latest one goes
+    // next dashed (predicted with the same physics, through its bounces), and the ball now
+    const path = (P) => { vctx.beginPath(); let on = false; for (const X of P) { const u = vc.project(X); if (u[2] > 0.05) { on ? vctx.lineTo(u[0], u[1]) : vctx.moveTo(u[0], u[1]); on = true; } else on = false; } vctx.stroke(); };
+    const dot = (X, r, fill) => { const u = vc.project(X); if (u[2] > 0.05) { vctx.fillStyle = fill; vctx.beginPath(); vctx.arc(u[0], u[1], r, 0, 7); vctx.fill(); } };
+    const fl = recentFlights();
+    vctx.lineWidth = 1.5;
+    for (const f of fl) { vctx.strokeStyle = 'rgba(255,230,0,0.25)'; path(f.pts.map((q) => [q.X[0], q.X[1], 0])); vctx.strokeStyle = '#ffe600'; path(f.pts.map((q) => q.X)); }
+    const P = predicted(fl);
+    if (P) {
+      vctx.setLineDash([5, 4]); vctx.lineWidth = 2;
+      vctx.strokeStyle = 'rgba(255,138,0,0.3)'; path(P.pts.map((q) => [q.X[0], q.X[1], 0]));
+      vctx.strokeStyle = '#ff8a00'; path(P.pts.map((q) => q.X));
+      vctx.setLineDash([]);
+      for (const m of P.hits) dot(m.X, m.out ? 5 : 3.5, m.out ? '#ff3b30' : '#ff8a00');
+    }
+    const bn = ballNow();
+    if (bn) { vctx.strokeStyle = 'rgba(255,255,255,0.5)'; vctx.lineWidth = 1; path([bn.X, [bn.X[0], bn.X[1], 0]]); dot(bn.X, 4, '#fff'); }
     vctx.lineWidth = 1;
   }
 }
+// The latest flight carried on past its last fitted point (cached per flight object: the worker
+// sends new objects when it refits)
+const predCache = new WeakMap();
+function predicted(fl) {
+  const f = fl.reduce((a, b) => (!a || b.t0 > a.t0 ? b : a), null);
+  if (!f) return null;
+  if (!predCache.has(f)) { const q = [...f.pts].reverse().find((p) => p.V); predCache.set(f, q ? predictPath(q.X, q.V, { t: q.t, T: 1.5, tin: S.tin }) : null); }
+  return predCache.get(f);
+}
+// ", T 58% (on the T 31% of the time, 1.4 m from it on average)"
+const tText = (m) => (m && m.seconds ? `, ${m.controlShare != null ? `T ${(m.controlShare * 100).toFixed(0)}% (` : '('}on the T ${(m.zoneShare * 100).toFixed(0)}% of the time, ${m.meanDistance.toFixed(1)} m from it on average)` : '');
 function readout() {
   const c = S.cam, el = $('readout');
   if (S.match) {
     const M = S.match, fl = S.bounces.on('floor'), fr = S.bounces.on('front');
     el.textContent = [`match    ${M.source} — ${(M.duration / 60).toFixed(1)} min, court seen ${(M.courtSeconds / 60).toFixed(1)} min`,
-      ...M.players.map((p) => `${nameOf(p.id).padEnd(8)} ${p.distance.toFixed(0)} m in ${(p.seconds / 60).toFixed(1)} min, top ${p.topSpeed.toFixed(1)} m/s${p.colour ? `, shirt rgb(${p.colour.map(Math.round).join(', ')})` : ''}`),
+      ...M.players.map((p) => `${nameOf(p.id).padEnd(8)} ${p.distance.toFixed(0)} m in ${(p.seconds / 60).toFixed(1)} min, top ${p.topSpeed.toFixed(1)} m/s${tText(p.tControl)}${p.colour ? `, shirt rgb(${p.colour.map(Math.round).join(', ')})` : ''}`),
       `bounces  ${fl.length} on the floor (${fl.filter((m) => m.X[1] > 5.44).length} behind the short line), ${fr.length} on the front wall, ${S.bounces.list.filter((m) => m.sound).length} found by ear`,
       ...M.players.map((p) => `         ${nameOf(p.id)} hit ${S.bounces.list.filter((m) => m.player === p.id).length}`)].join('\n');
     return;
@@ -611,7 +641,7 @@ function readout() {
     `time     ${S.ms ? Math.round(S.ms.wall) + ' ms' : ''}${hz ? `   tracking ${hz.toFixed(1)} fps` : ''}${S.live && S.path ? `   ${S.path}${S.mount === 'free' ? ', camera moving' : ', fixed mount'}` : ''}`,
   ];
   if (S.showRally || S.match) {
-    for (const p of S.players) { const st = S.stats[p.id]; lines.push(`${nameOf(p.id).padEnd(8)} x ${p.X[0].toFixed(2)}  y ${p.X[1].toFixed(2)} m${p.occluded ? '  (feet hidden: from the head)' : ''}${p.seen ? '' : '  (coasting)'}`); if (st && S.live) lines.push(`         ${kmh(st.speed)}, top ${st.top.toFixed(1)} m/s, ${st.dist.toFixed(0)} m covered in ${st.time.toFixed(0)} s`); }
+    for (const p of S.players) { const st = S.stats[p.id]; lines.push(`${nameOf(p.id).padEnd(8)} x ${p.X[0].toFixed(2)}  y ${p.X[1].toFixed(2)} m${p.occluded ? '  (feet hidden: from the head)' : ''}${p.seen ? '' : '  (coasting)'}`); if (st && S.live) lines.push(`         ${kmh(st.speed)}, top ${st.top.toFixed(1)} m/s, ${st.dist.toFixed(0)} m covered in ${st.time.toFixed(0)} s${tText(S.tctl.summary(p.id))}`); }
     const bn = ballNow(); if (bn) lines.push(`ball now ${kmh(bn.speed)}`);
     if (S.bounces.list.length) { const fl = S.bounces.on('floor'), fr = S.bounces.on('front'); lines.push(`bounces  ${fl.length} on the floor${fl.length ? ` (${fl.filter((m) => m.X[1] > 5.44).length} behind the short line)` : ''}, ${fr.length} on the front wall`);
       const by = (id) => S.bounces.list.filter((m) => m.player === id && (m.plane === 'floor' || m.plane === 'front')).length, ids = [...new Set(S.bounces.list.map((m) => m.player).filter(Boolean))].sort();
@@ -640,7 +670,7 @@ function exportJSON() {
     time: S.src?.currentTime ?? null,
     players: S.players.map((p) => ({ id: p.id, x: p.X[0], y: p.X[1], seen: p.seen, feetHidden: p.occluded, speed: S.stats[p.id]?.speed ?? null })),
     bounces: S.bounces.list.map((m) => ({ t: m.t, plane: m.plane, x: m.X[0], y: m.X[1], z: m.X[2], inferred: m.inferred })),
-    playerStats: Object.fromEntries(Object.entries(S.stats).map(([id, st]) => [id, { distance: st.dist, seconds: st.time, topSpeed: st.top, heatmap: { cell: HM, nx: HX, ny: HY, note: 'seconds per cell, row-major from x = 0, y = 0', seconds: Array.from(st.heat, (v) => +v.toFixed(3)) } }])),
+    playerStats: Object.fromEntries(Object.entries(S.stats).map(([id, st]) => [id, { distance: st.dist, seconds: st.time, topSpeed: st.top, tControl: S.tctl.summary(id), heatmap: { cell: HM, nx: HX, ny: HY, note: 'seconds per cell, row-major from x = 0, y = 0', seconds: Array.from(st.heat, (v) => +v.toFixed(3)) } }])),
     ball: S.flights.map((f) => ({ t0: f.t0, t1: f.t1, speed: f.speed, impacts: f.impacts, points: f.pts })),
   };
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })); a.download = 'squash-court.json'; a.click();

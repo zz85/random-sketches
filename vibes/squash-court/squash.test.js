@@ -151,7 +151,7 @@ describe('sparse tracking (track.js)', () => {
 
 // ---------- players and ball ----------
 import { detectPlayers, PlayerTracker } from './players.js';
-import { simulate, fitFlight, fitFlights, cutTrack, ballCandidates, toGray } from './ball.js';
+import { simulate, fitFlight, fitFlights, cutTrack, ballCandidates, toGray, predictPath } from './ball.js';
 
 describe('players and ball', () => {
   test('players on the floor within 10 cm (true camera)', () => {
@@ -195,6 +195,20 @@ describe('players and ball', () => {
     const pts = sim.frames.map((f) => { const u = cam.project(f.X); return { t: f.t, u: u[0], v: u[1], X: f.X }; });
     const f = fitFlight(pts, cam);
     for (let i = 0; i < pts.length; i++) expect(Math.hypot(...f.pts3[i].X.map((v, j) => v - pts[i].X[j]))).toBeLessThan(0.05);
+  });
+  test('the rest of a drive predicted from its first half (front wall, two bounces, within 3 cm)', () => {
+    const cam = Camera.fromLookAt([3.2, 14, 4.5], [3.2, 4, 0.8], 0, 1300, 1280, 720);
+    const sim = simulate([2, 7, 0.9], [1, -24, 4], 1.4, 50);
+    const pts = sim.frames.filter((f) => f.t < 0.18).map((f) => { const u = cam.project(f.X); return { t: f.t, u: u[0], v: u[1], X: f.X }; });
+    const fit = fitFlight(pts, cam), q = fit.pts3[fit.pts3.length - 1];
+    const P = predictPath(q.X, q.V, { t: pts[pts.length - 1].t, T: 1.5 });
+    expect(P.hits.map((m) => m.plane)).toEqual(['front', 'floor', 'floor']);
+    expect(P.end).toBe('down');
+    for (const f of sim.frames.filter((f) => f.t > 0.2 && f.t < P.hits[2].t)) {
+      const p = P.pts.reduce((a, b) => (Math.abs(b.t - f.t) < Math.abs(a.t - f.t) ? b : a));
+      expect(Math.hypot(...p.X.map((v, j) => v - f.X[j]))).toBeLessThan(0.03);
+    }
+    expect(predictPath([3, 8, 1], [0.5, -12, 9]).end).toBe('out'); // over the front-wall out line
   });
   test('a drive is cut at the front wall and labelled', () => {
     const cam = Camera.fromLookAt([3.2, 14, 4.5], [3.2, 4, 0.8], 0, 1300, 1280, 720);
