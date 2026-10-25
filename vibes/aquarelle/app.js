@@ -6,7 +6,7 @@
  * (pan, zoom, rotate, flip), QuickShape, layers, autosave and time-lapse sit around the
  * simulation in sim.js.
  */
-import { Sim } from './sim.js';
+import { Sim, TILE } from './sim.js';
 import { makePaper, PAPERS } from './paper.js';
 import { PIGMENTS, mix, swatch, rgbToHex, customPigment, mass, hexToRgb, srgbToLinear } from './km.js';
 import { strokeStamps, Smoother, BRUSHES, CATEGORIES, SHAPES, splatterDrops, INKS, PEN_COLOURS, MARK_COLOURS } from './brush.js';
@@ -36,6 +36,7 @@ const DEF = {
   // zoom a page opens at, relative to the whole page (1) or 'width'; null = 125% on small
   // screens (7" e-readers, phones), the whole page elsewhere
   zoomStart: null,
+  labels: true, // show a tool's name when it is tapped
   // pen mode (notes): nib, ink colour, highlighter colour, size per nib
   mode: 'paint', pen: { nib: 'ballpoint', col: '#141414', mark: '#ffe24a', size: Object.fromEntries(Object.entries(INKS).map(([k, v]) => [k, v.size])), customs: [] },
   eink: null,
@@ -81,20 +82,26 @@ function applyLook() { if (!sim) return; sim.setLook(TINTS[doc.tint].map(srgbToL
 // ruled paper for notes: line spacing scales with the page (about 6.5 mm on a 7" page)
 const PATTERNS = ['None', 'Lined', 'Grid', 'Dots'];
 function applyPattern() {
-  sim.setPattern(doc.pattern || 0, Math.round(Math.max(sim.W, sim.H) / 22), S.eink ? [0.6, 0.6, 0.6] : [0.62, 0.72, 0.9]);
+  sim.setPattern(doc.pattern || 0, Math.round((sim.infinite ? 1680 : Math.max(sim.W, sim.H)) / 22), S.eink ? [0.6, 0.6, 0.6] : [0.62, 0.72, 0.9]);
   sim.pattern.margin = S.eink ? [0.7, 0.7, 0.7] : [0.95, 0.55, 0.55];
 }
 
-/** Open a painting on a fresh simulation. data = saved layers, or null for a blank sheet. */
-function openDoc(d, data) {
-  doc = d;
-  try { sim?.dispose(); sim = new Sim(gl, d.W, d.H, makePaper(d.paper, 512, 3)); } catch (e) { fatal(e.message); }
+/** A simulation of this size and kind (a page, or the window of an infinite page). */
+function ensureSim(W, H, infinite) {
+  if (sim && sim.W === W && sim.H === H && sim.infinite === !!infinite) return;
+  try { sim?.dispose(); sim = new Sim(gl, W, H, makePaper(doc.paper, 512, 3), { infinite }); } catch (e) { fatal(e.message); }
   sim.speed = S.drying;
-  if (data) sim.loadAll(data);
-  applyLook();
-  rec.reset(NOSAVE ? null : d.id, d.frames || 0);
+}
+const isInf = (data) => data?.v === 3 || data?.infinite;
+/** Open a painting. data = the saved page, or null for a blank sheet. */
+async function openDoc(d, data) {
+  doc = d; world = null;
   d.pages ??= [d.id]; d.page ??= 0; d.pageThumbs ??= {};
-  view.f = 1; userMovedView = false; updatePages(); fit();
+  view.f = 1; userMovedView = false;
+  if (isInf(data)) await openInfinite(d.pages[d.page], data);
+  else { ensureSim(d.W, d.H, false); sim.loadAll(data || { layers: [] }); applyLook(); fit(); }
+  rec.reset(NOSAVE ? null : d.id, d.frames || 0);
+  updatePages();
   if (S.currentId !== d.id) { S.currentId = d.id; savePrefs(); }
   updateUndo(); buildLayers(); markWet(true);
 }
@@ -176,8 +183,9 @@ function freeArea() {
   if (right - left < 120) { left = box.x + gap; right = box.x + box.w - gap; }
   return { left, top, right, bottom, w: right - left, h: bottom - top };
 }
-/** Zoom at which the whole sheet just fits the free area ("100%"). */
-function baseZ() { const A = freeArea(); return Math.min(A.w / sim.W, A.h / sim.H); }
+/** Zoom at which the whole sheet just fits the free area ("100%"); on an infinite page,
+ *  the zoom at which a page width (1264 px) fills it. */
+function baseZ() { const A = freeArea(); return sim.infinite ? A.w / PAGE_W : Math.min(A.w / sim.W, A.h / sim.H); }
 const startZoom = () => S.zoomStart ?? (S.eink || box.w <= 720 ? 1.25 : 1);
 /**
  * Put the sheet in the free area at a zoom: 1 = whole page, 1.25 = a quarter closer,
@@ -186,6 +194,7 @@ const startZoom = () => S.zoomStart ?? (S.eink || box.w <= 720 ? 1.25 : 1);
 function fit(mode) {
   if (!sim) return;
   if (mode !== 'width' && !(+mode > 0 && +mode < 20)) mode = startZoom(); // also when passed an event or a timestamp
+  if (sim.infinite) return infFit(mode === 'width' ? 1 : +mode);
   layoutPanels();
   const A = freeArea(), W = sim.W, H = sim.H, z0 = Math.min(A.w / W, A.h / H);
   const z = mode === 'width' ? A.w / W : z0 * (+mode || 1);
@@ -197,9 +206,10 @@ function fit(mode) {
   if (view.f < 0) view.x += W * z;
   needsRender = true;
 }
-/** Keep some of the sheet on screen however far it is panned. */
+/** Keep some of the sheet on screen however far it is panned (an infinite page: move its window). */
 function clampView() {
   if (!sim) return;
+  if (sim.infinite) return worldKeep();
   const A = freeArea(), cs = [[0, 0], [sim.W, 0], [0, sim.H], [sim.W, sim.H]].map(([x, y]) => toScreen(x, y));
   const xs = cs.map((p) => p.x), ys = cs.map((p) => p.y), M = 60;
   const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
@@ -232,7 +242,7 @@ function zoomBy(f) {
   const A = freeArea(), b = baseZ();
   let t = view.z * f / b;
   if (Math.abs(t - 1) < 0.06) { fit(1); userMovedView = true; return; }
-  t = Math.min(12 / b, Math.max(0.5, t));
+  t = Math.min(12 / b, Math.max(minRel(), t));
   zoomAt(A.left + A.w / 2, A.top + A.h / 2, t * b / view.z); clampView();
 }
 /** The %: whole page, or back to the zoom pages open at. */
@@ -240,11 +250,36 @@ function zoomToggle() {
   const rel = view.z / baseZ(), st = startZoom();
   fit(Math.abs(rel - 1) < 0.03 ? (st === 1 ? 'width' : st) : 1); userMovedView = true;
 }
+// zoom slider: logarithmic, from the smallest zoom allowed to 8x the whole page
+const zoomRange = () => [minRel(), 8];
+function minRel() { return sim?.infinite ? infMinZ() / baseZ() : 0.5; }
 let lastPct = '';
 function updateZoomLabel() {
   if (!sim) return;
-  const p = Math.round(view.z / baseZ() * 100) + '%';
-  if (p !== lastPct) { $('#zoomPct').textContent = p; lastPct = p; }
+  const rel = view.z / baseZ(), p = Math.round(rel * 100) + '%';
+  if (p !== lastPct) {
+    $('#zoomPct').textContent = p; lastPct = p;
+    const [lo, hi] = zoomRange(), t = Math.min(1, Math.max(0, Math.log(rel / lo) / Math.log(hi / lo)));
+    $('#zoomTrack .fill').style.height = t * 100 + '%'; $('#zoomTrack .knob').style.top = (1 - t) * 100 + '%';
+  }
+}
+{
+  let drag = null;
+  const el = $('#zoomTrack'), relAt = (t) => { const [lo, hi] = zoomRange(); return lo * Math.pow(hi / lo, Math.min(1, Math.max(0, t))); };
+  const setT = (t) => {
+    let rel = relAt(t); if (Math.abs(rel - 1) < 0.04) rel = 1; // a detent at the whole page
+    const A = freeArea(); zoomAt(A.left + A.w / 2, A.top + A.h / 2, rel * baseZ() / view.z); clampView(); updateZoomLabel();
+  };
+  el.addEventListener('pointerdown', (e) => {
+    e.preventDefault(); e.stopPropagation(); el.setPointerCapture(e.pointerId);
+    const r = el.querySelector('.track').getBoundingClientRect(), [lo, hi] = zoomRange();
+    let t = Math.log(view.z / baseZ() / lo) / Math.log(hi / lo);
+    if (Math.abs(e.clientY - (r.top + (1 - t) * r.height)) > 22) { t = 1 - (e.clientY - r.top) / r.height; setT(t); }
+    drag = { y: e.clientY, t, h: r.height };
+  });
+  el.addEventListener('pointermove', (e) => { if (drag) setT(drag.t - (e.clientY - drag.y) / drag.h); });
+  const up = () => { drag = null; };
+  el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
 }
 $('#zoomIn').onclick = (e) => { e.stopPropagation(); zoomBy(1.25); };
 $('#zoomOut').onclick = (e) => { e.stopPropagation(); zoomBy(1 / 1.25); };
@@ -341,8 +376,36 @@ function inkVec(id) {
   return { bK: [...p.K, 0], bS: [...p.S, 0.4 * m], cover: hl ? 0 : 1 };
 }
 
+/** Pastel: dry chalky stick stamps straight into the paper, catching its grain. */
+function emitPastel(s) {
+  const st = stroke, { id, B, cfg } = current(st.tool);
+  const pr = s.p != null ? s.p : (st.type === 'mouse' ? 0.55 : 0.6);
+  const tilt = 1 - s.alt / (Math.PI / 2);
+  const r = Math.max(0.8, cfg.size * (1 - B.sizePressure + B.sizePressure * Math.pow(Math.max(pr, 0.05), 0.8)) * (1 + tilt * 0.9));
+  const el = 1 + tilt * 1.6, ex = tilt > 0.05 ? -Math.sin(s.az) : 1, ey = tilt > 0.05 ? Math.cos(s.az) : 0;
+  const point = { x: s.x, y: s.y, p: pr, t: s.t, r, el, ex, ey };
+  let pts;
+  if (!st.last) pts = [{ ...point }];
+  else {
+    const { stamps, rest } = strokeStamps(st.last, point, Math.max(0.5, r * (cfg.spacing || B.spacing)), st.rest);
+    st.rest = rest; st.len += Math.hypot(point.x - st.last.x, point.y - st.last.y); pts = stamps;
+  }
+  st.last = point;
+  if (!pts.length) return;
+  const v = st.inkVec || (st.inkVec = pastelVec());
+  // the stamp's strength is how hard it presses: it sets how deep into the grain it reaches
+  sim.ink(pts.map((q) => ({ x: q.x, y: q.y, r: q.r, a: Math.min(1, Math.pow(q.p ?? pr, 0.8) * (0.3 + 0.95 * (cfg.paint ?? 0.6))), ex: q.ex, ey: q.ey, el: q.el, wt: st.seed % 97 })), { mode: 7, tooth: B.tooth, cover: B.cover, ...v });
+  needsRender = true; paintTick++;
+}
+/** The loaded colour as an opaque, chalky pastel (pigment in a white chalk binder). */
+function pastelVec() {
+  const p = customPigment(rgbToHex(swatch(loaded, 1.1, [1, 1, 1])), 0.85, 0), m = mass(p);
+  return { bK: [...p.K, 0], bS: [...p.S, 0.8 * m] };
+}
+
 function emit(s) {
   if (stroke.tool === 'pen' || stroke.tool === 'inkerase') return emitInk(s);
+  if (current(stroke.tool).mode === 7) return emitPastel(s);
   const st = stroke, { B, cfg } = current(st.tool);
   if (st.last) {
     const dt = Math.max(1, s.t - st.last.t), d = Math.hypot(s.x - st.last.x, s.y - st.last.y);
@@ -406,7 +469,7 @@ function endStroke() {
   if (!stroke) return;
   clearTimeout(stroke.hold?.t);
   if (!stroke.snapped) for (const q of stroke.sm.finish()) emit(q);
-  if (stroke.tool === 'paint' && current().mode === 0) pushHistory(S.pig.length === 1 ? S.pig[0] : null);
+  if (stroke.tool === 'paint' && [0, 7].includes(current().mode)) pushHistory(S.pig.length === 1 ? S.pig[0] : null);
   if (stroke.tool === 'pen' && S.pen.nib !== 'highlighter') S.pen.customs = [S.pen.col, ...S.pen.customs.filter((c) => c !== S.pen.col)].slice(0, 6);
   stroke = null;
   if (fitPending) { fitPending = false; if (!userMovedView) fit(); }
@@ -470,7 +533,7 @@ function useCustom(hex, op = S.colOpacity, gran = S.colGran) {
   const p = customPigment(hex, op, gran);
   S.pig = [p.id]; S.weights = [1];
   if (S.tool !== 'paint') setTool('paint');
-  if (current().mode !== 0) useBrush('round');
+  if (![0, 7].includes(current().mode)) useBrush('round');
   loadBrush(); buildWells(); savePrefs();
 }
 function pushHistory(id) {
@@ -643,7 +706,8 @@ addEventListener('keydown', (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.key === ' ') { spaceDown = true; updateCursor(); e.preventDefault(); return; }
   if (k === 'escape') { closePops(); setPicking(false); return; }
-  const brushes = { b: 'round', w: 'wash', t: 'flat', r: 'detail', y: 'dry', x: 'splatter', q: 'water', k: 'lift' };
+  const brushes = { b: 'round', w: 'wash', t: 'flat', r: 'detail', y: 'dry', x: 'splatter', q: 'water', k: 'lift', a: e.shiftKey ? 'pastelpencil' : 'pastel' };
+  if (k === 'n') { insertPage(doc.page + 1, !!sim.infinite); return; }
   if (brushes[k]) { if (S.mode === 'pen') setMode('paint'); useBrush(brushes[k]); return; }
   const tools = { s: 'smudge', e: 'erase' };
   if (tools[k]) { if (S.mode === 'pen') setMode('paint'); setTool(tools[k]); markTools(); return; }
@@ -728,56 +792,110 @@ function buildPenBar() {
 }
 
 // ---------- sidebar sliders ----------
+// One slim slider: the chips above it show size, water and paint, and pick which of them
+// the slider moves; dragging up / down on a chip changes that value directly.
 const SLIDERS = {
-  sSize: { key: 'size', min: 0.6, max: 160, curve: 2.6, fmt: (v) => (v < 10 ? v.toFixed(1) : Math.round(v) + '') },
-  sWater: { key: 'water', min: 0, max: 1, curve: 1, fmt: (v) => Math.round(v * 100) + '%' },
-  sPaint: { key: 'paint', min: 0, max: 1, curve: 1, fmt: (v) => Math.round(v * 100) + '%' },
+  size: { min: 0.6, max: 160, curve: 2.6, fmt: (v) => (v < 10 ? v.toFixed(1) : Math.round(v) + '') },
+  water: { min: 0, max: 1, curve: 1, fmt: (v) => Math.round(v * 100) + '%' },
+  paint: { min: 0, max: 1, curve: 1, fmt: (v) => Math.round(v * 100) + '%' },
 };
+let slKey = 'size';
+const usableKeys = () => {
+  const { mode } = current();
+  // pen ink: size; pastel: size + pressure (paint); water and lift: no paint; erase / smudge: strength
+  return mode >= 5 && mode !== 7 ? ['size'] : mode === 7 ? ['size', 'paint'] : mode === 1 ? ['size', 'water'] : mode >= 2 && mode <= 4 ? ['size', 'paint'] : ['size', 'water', 'paint'];
+};
+const tOf = (k, v) => Math.pow(((v ?? 0) - SLIDERS[k].min) / (SLIDERS[k].max - SLIDERS[k].min), 1 / SLIDERS[k].curve);
+function setSlKey(k) { slKey = k; syncSliders(); }
 function syncSliders() {
-  const { cfg, mode } = current();
-  for (const id in SLIDERS) {
-    const sl = SLIDERS[id], el = document.getElementById(id), v = cfg[sl.key] ?? 0;
-    const t = Math.pow((v - sl.min) / (sl.max - sl.min), 1 / sl.curve);
-    el.querySelector('.fill').style.height = t * 100 + '%';
-    el.querySelector('.knob').style.top = (1 - t) * 100 + '%';
-    el.querySelector('.val').textContent = sl.fmt(v);
-    const usable = sl.key === 'size' || (mode < 5 && (sl.key === 'paint' ? mode !== 1 : mode <= 1));
-    el.classList.toggle('off', !usable);
+  const { cfg, mode } = current(), keys = usableKeys();
+  if (!keys.includes(slKey)) slKey = 'size';
+  const panel = $('#sliders'); panel.dataset.k = slKey;
+  for (const ch of $$('#sliders .chip')) {
+    const k = ch.dataset.k;
+    ch.hidden = !keys.includes(k); ch.classList.toggle('on', k === slKey);
+    ch.querySelector('b').textContent = SLIDERS[k].fmt(cfg[k] ?? 0);
+    ch.querySelector('small').textContent = k === 'paint' ? (mode === 0 ? 'paint' : mode === 7 ? 'press' : 'strength') : k;
   }
-  // smudge / erase / lift: the paint slider is their strength
-  $('#sPaint label').textContent = S.tool === 'paint' && mode !== 2 ? 'Paint' : 'Strength';
+  const t = tOf(slKey, cfg[slKey]);
+  $('#slTrack .fill').style.height = t * 100 + '%';
+  $('#slTrack .knob').style.top = (1 - t) * 100 + '%';
   refreshColour();
 }
-for (const id in SLIDERS) {
-  const el = document.getElementById(id), sl = SLIDERS[id];
+function setValue(k, t) {
+  const { cfg, id, mode } = current(), sl = SLIDERS[k];
+  cfg[k] = sl.min + Math.pow(Math.min(1, Math.max(0, t)), sl.curve) * (sl.max - sl.min);
+  if (mode >= 5 && mode !== 7 && k === 'size') S.pen.size[id] = cfg.size;
+  syncSliders();
+  if (k === 'size') showSizePreview();
+}
+/** Vertical drag on `el` (track of height h px) changing value k; relative, finer when dragging sideways. */
+function dragValue(el, getK, h, jump) {
   let drag = null;
-  const set = (e) => {
-    const r = el.querySelector('.track').getBoundingClientRect();
-    // relative drag (a touch does not jump the value); finer when dragging sideways, as in Procreate
-    const fine = 1 / (1 + Math.abs(e.clientX - drag.x) / 50);
-    const t = Math.min(1, Math.max(0, drag.t - (e.clientY - drag.y) / r.height * fine));
-    const { cfg, id, mode } = current();
-    cfg[sl.key] = sl.min + Math.pow(t, sl.curve) * (sl.max - sl.min);
-    if (mode >= 5) S.pen.size[id] = cfg.size;
-    syncSliders();
-    if (sl.key === 'size') showSizePreview();
-  };
   el.addEventListener('pointerdown', (e) => {
     e.preventDefault(); e.stopPropagation(); el.setPointerCapture(e.pointerId);
-    const { cfg } = current(), r = el.querySelector('.track').getBoundingClientRect();
-    let t = Math.pow(((cfg[sl.key] ?? 0) - sl.min) / (sl.max - sl.min), 1 / sl.curve);
-    if (Math.abs(e.clientY - (r.top + (1 - t) * r.height)) > 22) t = Math.min(1, Math.max(0, 1 - (e.clientY - r.top) / r.height));
-    drag = { y: e.clientY, x: e.clientX, t }; set(e);
+    const k = getK(), { cfg } = current();
+    let t = tOf(k, cfg[k]);
+    if (jump) { const r = el.querySelector('.track').getBoundingClientRect(); if (Math.abs(e.clientY - (r.top + (1 - t) * r.height)) > 22) t = Math.min(1, Math.max(0, 1 - (e.clientY - r.top) / r.height)); }
+    drag = { y: e.clientY, x: e.clientX, t, k, moved: false };
+    if (jump) setValue(k, t);
   });
-  el.addEventListener('pointermove', (e) => { if (drag) set(e); });
-  const up = () => { if (drag) { drag = null; $('#cursor').style.display = 'none'; savePrefs(); } };
+  el.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    if (Math.abs(e.clientY - drag.y) > 3) drag.moved = true;
+    const fine = 1 / (1 + Math.abs(e.clientX - drag.x) / 50);
+    if (drag.moved || jump) setValue(drag.k, drag.t - (e.clientY - drag.y) / (h() || 150) * fine);
+  });
+  const up = () => { if (drag) { const d = drag; drag = null; $('#cursor').style.display = 'none'; savePrefs(); if (!jump && !d.moved) setSlKey(d.k); } };
   el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
 }
+dragValue($('#slTrack'), () => slKey, () => $('#slTrack .track').getBoundingClientRect().height, true);
+for (const ch of $$('#sliders .chip')) dragValue(ch, () => ch.dataset.k, () => $('#slTrack .track').getBoundingClientRect().height, false);
 function showSizePreview() {
   const c = $('#cursor'), r = brushRadiusPx();
   c.style.display = 'block'; c.style.width = c.style.height = 2 * r + 'px'; c.style.borderStyle = 'solid';
   c.style.transform = `translate(${box.x + box.w / 2 - r}px, ${box.y + box.h / 2 - r}px)`;
 }
+
+// ---------- tool labels ----------
+// Tapping (or hovering with a mouse or a hovering pen) a toolbar button shows its name beside
+// it for a moment; brushes add what they are for.
+const labelEl = document.createElement('div'); labelEl.id = 'tipLabel'; document.body.appendChild(labelEl);
+let labelT = 0, hoverT = 0;
+function labelFor(b) {
+  const br = b.dataset.brush && BRUSHES[b.dataset.brush];
+  if (br) return [br.name, br.note];
+  if (b.dataset.tool) return [{ smudge: 'Smudge', erase: 'Eraser' }[b.dataset.tool], b.dataset.tool === 'smudge' ? 'push paint around; tap again for its shape' : 'tap again for its shape'];
+  if (b.dataset.nib) return null; // pen nibs have their names under them
+  const t = (b.getAttribute('title') || '').trim(); if (!t) return null;
+  const m = t.match(/^(.*?)(?:\s+\((.*?)\))?(?:\s*[—:]\s*(.*))?$/);
+  return [m[1], m[3] || m[2] || ''];
+}
+function showLabel(b, ms = 1500) {
+  const l = labelFor(b); if (!l || !l[0]) return;
+  labelEl.innerHTML = '<b></b><small></small>';
+  labelEl.querySelector('b').textContent = l[0]; labelEl.querySelector('small').textContent = l[1] || '';
+  labelEl.style.display = 'block';
+  const r = b.getBoundingClientRect(), w = labelEl.offsetWidth, h = labelEl.offsetHeight;
+  // beside a vertical strip, below a top bar, above a bottom bar
+  let x, y;
+  if (r.top < box.y + 80 && r.width < 80) { x = r.left + r.width / 2 - w / 2; y = r.bottom + 8; }
+  else if (r.left < box.x + box.w / 2) { x = r.right + 10; y = r.top + r.height / 2 - h / 2; }
+  else { x = r.left - w - 10; y = r.top + r.height / 2 - h / 2; }
+  labelEl.style.left = Math.max(4, Math.min(innerWidth - w - 4, x)) + 'px'; labelEl.style.top = Math.max(4, Math.min(innerHeight - h - 4, y)) + 'px';
+  clearTimeout(labelT); labelT = setTimeout(() => (labelEl.style.display = 'none'), ms);
+}
+const hideLabel = () => { clearTimeout(hoverT); clearTimeout(labelT); labelEl.style.display = 'none'; };
+document.addEventListener('pointerdown', (e) => {
+  const b = e.target.closest('.panel button, .panel .vs'); if (!b) { hideLabel(); return; }
+  if (e.pointerType !== 'mouse' && S.labels !== false) showLabel(b);
+}, true);
+document.addEventListener('pointerover', (e) => {
+  const b = e.target.closest('.panel button'); clearTimeout(hoverT);
+  if (!b || e.pointerType === 'touch') return;
+  hoverT = setTimeout(() => showLabel(b, 2500), 450);
+});
+document.addEventListener('pointerout', (e) => { if (e.target.closest('.panel button')) { clearTimeout(hoverT); if (e.pointerType === 'mouse') labelEl.style.display = 'none'; } });
 
 // ---------- popovers ----------
 function closePops(except) {
@@ -941,7 +1059,7 @@ function choosePigment(id, add) {
     if (S.pig.length > 4) { S.pig.shift(); S.weights.shift(); }
   } else { S.pig = [id]; S.weights = [1]; }
   if (S.tool !== 'paint') setTool('paint');
-  if (current().mode !== 0) useBrush('round');
+  if (![0, 7].includes(current().mode)) useBrush('round');
   loadBrush(); markWells(); savePrefs();
 }
 $('#mixToggle').onclick = () => { mixMode = !mixMode; $('#mixToggle').classList.toggle('on', mixMode); toast(mixMode ? 'Mixing: tap pigments to add them to the brush' : 'Tap a pigment to load it'); };
@@ -977,9 +1095,12 @@ function buildLayers() {
     o.querySelector('input').onchange = () => { scheduleSave(); buildLayers(); };
     const acts = [
       ['Rename', () => { const n = prompt('Layer name', L.name); if (n) { L.name = n; scheduleSave(); } }],
-      ['Clear', () => { sim.clearAll(); afterEdit(); }],
-      ['Duplicate', () => { if (sim.layers.length >= sim.maxLayers) return toast('Layer limit for this canvas size'); dupLayer(L); afterEdit(); }],
-      ['Merge down', () => { if (!sim.mergeDownOp(L)) toast('Nothing below to merge into'); afterEdit(); }],
+      ['Clear', () => {
+        if (sim.infinite) { if (!confirm('Clear this layer everywhere on the infinite page? Undo only brings back the part around you.')) return; clearWorldLayer(L); }
+        sim.clearAll(); afterEdit();
+      }],
+      ['Duplicate', () => { if (sim.infinite) return toast('Not on an infinite page'); if (sim.layers.length >= sim.maxLayers) return toast('Layer limit for this canvas size'); dupLayer(L); afterEdit(); }],
+      ['Merge down', () => { if (sim.infinite) return toast('Not on an infinite page'); if (!sim.mergeDownOp(L)) toast('Nothing below to merge into'); afterEdit(); }],
       ['Move up', () => { sim.moveLayerOp(L, i + 1); afterEdit(); }],
       ['Move down', () => { sim.moveLayerOp(L, i - 1); afterEdit(); }],
       ['Delete', () => { if (!sim.deleteLayerOp(L)) toast('A painting keeps at least one layer'); selOpts = false; afterEdit(); }],
@@ -1024,6 +1145,7 @@ function buildActions() {
   chk('#optRight', () => S.right, (v) => { S.right = v; document.body.classList.toggle('right', v); });
   chk('#optFs', () => !!S.autoFs, (v) => { S.autoFs = v; if (v) setFullscreen(true); });
   chk('#optEink', () => !!S.eink, (v) => { S.eink = v; applyTheme(); });
+  chk('#optLabels', () => S.labels !== false, (v) => (S.labels = v));
   chk('#optCursor', () => S.cursor, (v) => { S.cursor = v; updateCursor(); });
   chk('#optQuick', () => S.quick, (v) => (S.quick = v));
   chk('#optRotate', () => S.rotate, (v) => { S.rotate = v; if (!v) { view.r = 0; needsRender = true; } });
@@ -1037,6 +1159,7 @@ function buildActions() {
 $('#menuBtn').onclick = (e) => { e.stopPropagation(); togglePop('actPop'); };
 $('#galItem').onclick = () => { closePops(); openGallery(); };
 $('#addPageItem').onclick = () => { closePops(); insertPage(doc.page + 1); };
+$('#addInfItem').onclick = () => { closePops(); insertPage(doc.page + 1, true); };
 $('#fsItem').onclick = () => { closePops(); setFullscreen(!fsEl()); };
 $('#shareBtn').onclick = (e) => { e.stopPropagation(); exportImage('png'); };
 function showHelp() { if (!$('#actPop').classList.contains('open')) togglePop('actPop'); $('#actTabs [data-t="help"]').click(); }
@@ -1131,13 +1254,17 @@ async function save(force) {
   saving = true;
   const d = doc, s = sim, key = d.pages[d.page];
   try {
-    const data = await s.readAll();
+    const look = { paper: d.paper, tint: d.tint, texture: d.texture, pattern: d.pattern || 0 };
+    let data = null, inf = null;
+    if (s.infinite) inf = await saveWorld(); // tiles that changed; the layer list and the view
+    else data = await s.readAll();
     if (s !== sim || d !== doc || key !== d.pages[d.page]) return; // another painting or page was opened meanwhile
     const frames = await rec.flush();
     d.pageThumbs[key] = await makeThumb();
-    const meta = { id: d.id, name: d.name, W: d.W, H: d.H, created: d.created, frames, pages: d.pages.slice(), page: d.page, pageThumbs: { ...d.pageThumbs }, thumb: d.pageThumbs[d.pages[0]] || d.pageThumbs[key] };
-    if (NOSAVE) pageCache.set(key, data);
-    else await store.savePainting(key, meta, { ...data, paper: d.paper, tint: d.tint, texture: d.texture, pattern: d.pattern || 0 });
+    const meta = { id: d.id, name: d.name, W: d.W, H: d.H, created: d.created, frames, pages: d.pages.slice(), page: d.page, pageThumbs: { ...d.pageThumbs }, thumb: d.pageThumbs[d.pages[0]] || d.pageThumbs[key], inf: d.inf || undefined };
+    if (inf) { if (NOSAVE) pageCache.set(key, { v: 3, ...inf, ...look }); else await store.savePageRecord(key, meta, { ...inf, ...look }); }
+    else if (NOSAVE) pageCache.set(key, data);
+    else await store.savePainting(key, meta, { ...data, ...look });
     d.frames = frames;
     dirty = false; window.__saved = (window.__saved || 0) + 1;
   } catch (e) { console.warn('save failed', e); }
@@ -1145,17 +1272,164 @@ async function save(force) {
 }
 addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && dirty) { sim.dryNow(); save(true); } });
 
+// ---------- infinite pages ----------
+// An infinite page is a window (sheet a bit larger than the screen) over unlimited paper
+// kept in 128 px tiles. When the view gets near the window's edge the window moves: tiles
+// that changed and leave are read back into memory (and saved, gzipped, to IndexedDB),
+// tiles that arrive are written in. Tiles near the window are decompressed ahead of time,
+// so moving never waits; until they are ready the view stops at the window's edge.
+const PAGE_W = 1264, IM = 128, RING = 4;
+let world = null; // {key, raw: Map(local key -> {K, S} | null), comp: Map(local key -> packed), pending: Set, loading: Set}
+const worlds = new Map(); // ?nosave: infinite pages kept in memory
+const tkey = (uid, x, y) => `${uid}|${x},${y}`;
+/** Window size for this screen: a page width and the free area's height at 100%, plus margins. */
+function winSize() {
+  const A = freeArea(), zb = A.w / PAGE_W, r = (v) => Math.ceil(v / 128) * 128;
+  return [Math.min(2048, r(PAGE_W + 2 * IM)), Math.min(2048, r(A.h / zb + 2 * IM))];
+}
+/** Smallest zoom at which the view still fits inside the window's margins. */
+function infMinZ() { const A = freeArea(); return Math.max(A.w / (sim.W - 2 * IM), A.h / (sim.H - 2 * IM)); }
+function visibleRect() {
+  const A = freeArea(), ps = [[A.left, A.top], [A.right, A.top], [A.left, A.bottom], [A.right, A.bottom]].map(([x, y]) => toSheet(x, y));
+  const xs = ps.map((p) => p.x), ys = ps.map((p) => p.y);
+  return { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
+}
+/** Move the view so that sheet point (sx, sy) sits at screen point (cx, cy). */
+function placeAt(sx, sy, cx, cy) { const q = toScreen(sx, sy); view.x += cx - q.x; view.y += cy - q.y; needsRender = true; }
+function infFit(rel = startZoom()) {
+  const A = freeArea(), p = toSheet(A.left, A.top), keep = p.x > 0 && p.y > 0 && p.x < sim.W && p.y < sim.H;
+  view.r = 0; view.z = Math.max(infMinZ(), rel * baseZ());
+  placeAt(keep ? p.x : IM, keep ? p.y : IM, A.left, A.top); worldKeep();
+}
+async function openInfinite(key, data) {
+  const [W, H] = winSize();
+  ensureSim(W, H, true);
+  sim.loadAll({ layers: (data.layers || []).map((l) => ({ ...l, K: null, S: null })), active: data.active });
+  world = (NOSAVE && worlds.get(key)) || { key, raw: new Map(), comp: new Map(), pending: new Set(), loading: new Set() };
+  worlds.set(key, world);
+  if (!NOSAVE) for (const [k, v] of await store.getTiles(key + '|')) world.comp.set(k.slice(key.length + 1), v);
+  // the window around where you were looking
+  const v = data.view || { wx: IM, wy: IM, zr: startZoom() };
+  sim.origin = [Math.floor((v.wx - IM) / TILE) * TILE, Math.floor((v.wy - IM) / TILE) * TILE];
+  await loadWindow();
+  applyLook();
+  const A = freeArea();
+  view.r = 0; view.z = Math.max(infMinZ(), (v.zr || 1) * baseZ());
+  placeAt(v.wx - sim.origin[0], v.wy - sim.origin[1], A.left, A.top);
+  worldKeep(); prefetch();
+}
+/** Decompress and write every tile inside the window. */
+async function loadWindow() {
+  const tw = sim.W / TILE, th = sim.H / TILE, [ox, oy] = sim.origin.map((v) => v / TILE);
+  for (const L of sim.layers) for (let y = 0; y < th; y++) for (let x = 0; x < tw; x++) {
+    const k = tkey(L.uid, ox + x, oy + y);
+    if (!world.raw.has(k) && world.comp.has(k)) world.raw.set(k, await store.unpackTile(world.comp.get(k)));
+    const d = world.raw.get(k); if (d) sim.writeTile(L, x, y, d.K, d.S);
+  }
+  sim.compose();
+}
+/** Decompress tiles around the window (and towards where it is about to move). */
+function prefetch(dx = 0, dy = 0) {
+  if (!world) return;
+  const w = world, tw = sim.W / TILE, th = sim.H / TILE, [ox, oy] = sim.origin.map((v) => v / TILE), sx = dx / TILE, sy = dy / TILE;
+  const x0 = ox + Math.min(0, sx) - RING, x1 = ox + tw + Math.max(0, sx) + RING, y0 = oy + Math.min(0, sy) - RING, y1 = oy + th + Math.max(0, sy) + RING;
+  for (const k of w.comp.keys()) {
+    if (w.raw.has(k) || w.loading.has(k)) continue;
+    const m = k.match(/\|(-?\d+),(-?\d+)$/), x = +m[1], y = +m[2];
+    if (x < x0 || x >= x1 || y < y0 || y >= y1) continue;
+    w.loading.add(k);
+    store.unpackTile(w.comp.get(k)).then((d) => { if (!w.raw.has(k)) w.raw.set(k, d); }).finally(() => w.loading.delete(k));
+  }
+}
+/** Can the window move by (dx, dy) now, i.e. is every tile it would bring in decompressed? */
+function tilesReady(dx, dy) {
+  const tw = sim.W / TILE, th = sim.H / TILE, nx = (sim.origin[0] + dx) / TILE, ny = (sim.origin[1] + dy) / TILE, sx = dx / TILE, sy = dy / TILE;
+  for (const L of sim.layers) for (let y = 0; y < th; y++) for (let x = 0; x < tw; x++) {
+    const ox = x + sx, oy = y + sy; if (ox >= 0 && oy >= 0 && ox < tw && oy < th) continue;
+    const k = tkey(L.uid, nx + x, ny + y); if (!world.raw.has(k) && world.comp.has(k)) return false;
+  }
+  return true;
+}
+function keepTile(t) { // a tile read back from the window: into memory, to be saved
+  const k = tkey(t.L.uid, sim.origin[0] / TILE + t.tx, sim.origin[1] / TILE + t.ty);
+  world.raw.set(k, t.empty ? null : { K: t.K, S: t.S }); world.pending.add(k);
+}
+/** Keep the view inside the window, moving the window when the view nears its edge. */
+function worldKeep() {
+  if (!sim?.infinite || !world) return;
+  const A = freeArea(), zmin = infMinZ();
+  if (view.z < zmin - 1e-9) { const c = toSheet(A.left + A.w / 2, A.top + A.h / 2); view.z = zmin; placeAt(c.x, c.y, A.left + A.w / 2, A.top + A.h / 2); }
+  let v = visibleRect();
+  const W = sim.W, H = sim.H;
+  if (v.x0 >= IM && v.y0 >= IM && v.x1 <= W - IM && v.y1 <= H - IM) return;
+  const dx = Math.round(((v.x0 + v.x1) / 2 - W / 2) / TILE) * TILE, dy = Math.round(((v.y0 + v.y1) / 2 - H / 2) / TILE) * TILE;
+  if ((dx || dy) && !stroke && !turning && tilesReady(dx, dy)) { shiftWorld(dx, dy); v = visibleRect(); }
+  else if (dx || dy) prefetch(dx, dy);
+  // until it can move: stop at the window's edge
+  const sx = v.x0 < 0 ? -v.x0 : v.x1 > W ? W - v.x1 : 0, sy = v.y0 < 0 ? -v.y0 : v.y1 > H ? H - v.y1 : 0;
+  if (sx || sy) { const a = toScreen(0, 0), b = toScreen(sx, sy); view.x -= b.x - a.x; view.y -= b.y - a.y; if (gesture?.v0) { gesture.v0.x -= b.x - a.x; gesture.v0.y -= b.y - a.y; } }
+}
+function shiftWorld(dx, dy) {
+  if (sim.wet) sim.dryNow(); // wet paint does not travel with the window
+  const [ox, oy] = sim.origin.map((v) => v / TILE);
+  sim.shift(dx, dy, keepTile, (L, x, y) => world.raw.get(tkey(L.uid, ox + dx / TILE + x, oy + dy / TILE + y)) || null);
+  sim.origin = [sim.origin[0] + dx, sim.origin[1] + dy];
+  // the same paper stays under your fingers
+  const a = toScreen(0, 0), b = toScreen(dx, dy); view.x += b.x - a.x; view.y += b.y - a.y;
+  if (gesture) {
+    for (const k of ['a', 'b', 's0', 's']) if (gesture[k]) gesture[k] = { x: gesture[k].x - dx, y: gesture[k].y - dy };
+    if (gesture.v0) { gesture.v0.x += b.x - a.x; gesture.v0.y += b.y - a.y; }
+  }
+  needsRender = true; updateUndo(); prefetch(); scheduleSave();
+  window.__shifts = (window.__shifts || 0) + 1;
+}
+/** Save an infinite page: changed tiles, then the layer list and the view. */
+async function saveWorld() {
+  const w = world;
+  for (const t of sim.takeDirty()) keepTile(t);
+  const puts = [], dels = [];
+  for (const k of [...w.pending]) {
+    const v = w.raw.get(k); w.pending.delete(k);
+    if (NOSAVE) continue;
+    if (v) { const p = await store.packTile(v.K, v.S); w.comp.set(k, p); puts.push([w.key + '|' + k, p]); }
+    else { w.comp.delete(k); dels.push(w.key + '|' + k); }
+  }
+  if (puts.length || dels.length) await store.writeTiles(puts, dels);
+  if (!NOSAVE) trimRaw();
+  const A = freeArea(), p = toSheet(A.left, A.top);
+  return { infinite: true, layers: sim.layers.map((L) => ({ uid: L.uid, name: L.name, visible: L.visible, opacity: L.opacity })), active: sim.layers.indexOf(sim.layer),
+    view: { wx: p.x + sim.origin[0], wy: p.y + sim.origin[1], zr: view.z / baseZ() } };
+}
+/** Forget decompressed tiles far from the window (they are safe, compressed, in comp). */
+function trimRaw() {
+  const tw = sim.W / TILE, th = sim.H / TILE, [ox, oy] = sim.origin.map((v) => v / TILE), R = RING + 4;
+  for (const k of world.raw.keys()) {
+    if (world.pending.has(k)) continue;
+    const m = k.match(/\|(-?\d+),(-?\d+)$/), x = +m[1], y = +m[2];
+    if (x < ox - R || x >= ox + tw + R || y < oy - R || y >= oy + th + R) world.raw.delete(k);
+  }
+}
+/** Clear a layer's tiles outside the window (the window itself is cleared by Sim.clearAll). */
+function clearWorldLayer(L) {
+  for (const k of new Set([...world.raw.keys(), ...world.comp.keys()])) if (k.startsWith(L.uid + '|')) { world.raw.set(k, null); world.pending.add(k); }
+}
+
 // ---------- pages ----------
 // A painting is a notebook of one or more pages. One page is in the simulation at a time;
 // turning saves it (dried) and loads the next. Undo history is per visit to a page.
 let turning = false, wantPage = null;
 const pageCache = new Map(); // ?nosave: pages kept in memory instead of IndexedDB
-async function loadPage(n) {
+async function loadPage(n, fresh) {
   const key = doc.pages[n];
-  const data = pageCache.get(key) || (NOSAVE ? null : await store.loadPainting(key));
-  sim.loadAll(data || { layers: [] });
+  const data = fresh || pageCache.get(key) || (NOSAVE ? null : await store.loadPainting(key));
+  const wasInf = !!sim?.infinite;
   doc.page = n;
-  placeTop(); updatePages(); updateUndo(); buildLayers(); markWet(true); thumbsDirty = true; needsRender = true;
+  if (isInf(data)) await openInfinite(key, data);
+  else {
+    world = null; ensureSim(doc.W, doc.H, false); sim.loadAll(data || { layers: [] }); applyLook();
+    if (wasInf) fit(); else placeTop();
+  }
+  updatePages(); updateUndo(); buildLayers(); markWet(true); thumbsDirty = true; needsRender = true;
 }
 /** Turn to page n (0-based). Past the last page: a new blank page, if `add`. */
 async function gotoPage(n, add = true) {
@@ -1174,14 +1448,14 @@ async function gotoPage(n, add = true) {
   } finally { turning = false; afterTurn(); }
 }
 function afterTurn() { if (wantPage) { const [d, add] = wantPage; wantPage = null; gotoPage(doc.page + d, add); } }
-async function insertPage(at) {
+async function insertPage(at, infinite = false) {
   if (turning || !doc) return;
   turning = true;
   try {
     if (stroke) endStroke();
     await flushSave();
     doc.pages.splice(at, 0, store.newPageKey(doc.id));
-    await loadPage(at);
+    await loadPage(at, infinite ? { v: 3, infinite: true, layers: [] } : { layers: [] });
     dirty = true; save(true);
     if (window.__ready) toast(`New page ${at + 1} of ${doc.pages.length}`, 900);
   } finally { turning = false; afterTurn(); }
@@ -1196,7 +1470,8 @@ async function deletePage(n) {
     clearTimeout(saveT); while (saving) await new Promise((r) => setTimeout(r, 30));
     if (n !== doc.page && dirty) await save(true);
     const [key] = doc.pages.splice(n, 1); delete doc.pageThumbs[key]; pageCache.delete(key);
-    if (!NOSAVE) await store.del('layers', key);
+    if (!NOSAVE) { await store.del('layers', key); await store.delTiles(key + '|'); }
+    worlds.delete(key);
     if (n === doc.page) { dirty = false; await loadPage(Math.min(n, doc.pages.length - 1)); }
     else if (n < doc.page) { doc.page--; updatePages(); }
     dirty = true; save(true);
@@ -1213,10 +1488,8 @@ function updatePages() {
   const n = doc.pages.length, i = doc.page;
   document.body.classList.toggle('single-page', n < 2);
   $('#pgNum').textContent = `${i + 1} / ${n}`;
-  $('#pgPrev').disabled = i === 0;
-  // on the last page › adds one
-  $('#pgNext use').setAttribute('href', i === n - 1 ? '#i-pageadd' : '#i-next');
-  $('#pgNext').title = i === n - 1 ? 'Add a page' : 'Next page (Page Down)';
+  $('#pgPrev').disabled = i === 0; $('#pgNext').disabled = i === n - 1;
+  if (sim?.infinite) $('#pgNum').textContent += ' ∞';
   if ($('#pagePop').classList.contains('open')) buildPages();
 }
 function buildPages() {
@@ -1240,9 +1513,10 @@ function buildPages() {
   $('#pgEarlier').disabled = doc.page === 0; $('#pgLater').disabled = doc.page === doc.pages.length - 1;
 }
 $('#pgPrev').onclick = (e) => { e.stopPropagation(); gotoPage(doc.page - 1); };
-$('#pgNext').onclick = (e) => { e.stopPropagation(); gotoPage(doc.page + 1); };
+$('#pgNext').onclick = (e) => { e.stopPropagation(); gotoPage(doc.page + 1, false); };
+$('#pgNew').onclick = (e) => { e.stopPropagation(); insertPage(doc.page + 1, !!sim.infinite); };
 $('#pgNum').onclick = (e) => { e.stopPropagation(); togglePop('pagePop'); };
-$('#pgAdd').onclick = () => { closePops(); insertPage(doc.page + 1); };
+$('#pgAdd').onclick = () => { closePops(); insertPage(doc.page + 1, !!sim.infinite); };
 $('#pgEarlier').onclick = () => { movePage(doc.page, doc.page - 1); };
 $('#pgLater').onclick = () => { movePage(doc.page, doc.page + 1); };
 $('#pgDelete').onclick = () => { closePops(); deletePage(doc.page); };
@@ -1259,7 +1533,7 @@ async function openGallery() {
     const card = document.createElement('div'); card.className = 'card' + (doc && m.id === doc.id ? ' cur' : '');
     const url = m.thumb ? URL.createObjectURL(m.thumb) : null;
     const np = store.pagesOf(m).length;
-    card.innerHTML = `<button class="th">${url ? `<img src="${url}" alt="">` : ''}</button><div class="meta"><div><b></b><small>${np > 1 ? np + ' pages · ' : ''}${m.W} × ${m.H} · ${new Date(m.updated).toLocaleDateString()}</small></div><button class="more">⋯</button></div>`;
+    card.innerHTML = `<button class="th">${url ? `<img src="${url}" alt="">` : ''}</button><div class="meta"><div><b></b><small>${np > 1 ? np + ' pages · ' : ''}${m.inf ? '∞' : m.W + ' × ' + m.H} · ${new Date(m.updated).toLocaleDateString()}</small></div><button class="more">⋯</button></div>`;
     card.querySelector('b').textContent = m.name;
     card.querySelector('.th').onclick = () => openById(m.id);
     card.querySelector('.more').onclick = (e) => cardMenu(e, m);
@@ -1296,13 +1570,13 @@ async function openById(id) {
   let page = Math.min(Math.max(0, meta.page || 0), pages.length - 1), data = await store.loadPainting(pages[page]);
   if (!data && page) { page = 0; data = await store.loadPainting(pages[0]); }
   if (!data) { toast('Could not open that painting'); return; }
-  openDoc({ id, name: meta.name, W: data.W, H: data.H, paper: data.paper || 'cold', tint: data.tint || 'white', texture: !!data.texture, pattern: data.pattern || 0, created: meta.created, frames: meta.frames || 0, pages: pages.slice(), page, pageThumbs: { ...(meta.pageThumbs || {}) } }, data);
+  await openDoc({ id, name: meta.name, W: data.W || 1264, H: data.H || 1680, paper: data.paper || 'cold', tint: data.tint || 'white', texture: !!data.texture, pattern: data.pattern || 0, created: meta.created, frames: meta.frames || 0, inf: meta.inf, pages: pages.slice(), page, pageThumbs: { ...(meta.pageThumbs || {}) } }, data);
   $('#gallery').classList.remove('open');
 }
-async function createPainting(W, H, name, pattern = 0) {
+async function createPainting(W, H, name, pattern = 0, infinite = false) {
   await flushSave();
-  const d = newDoc(W, H, name, pattern);
-  openDoc(d, null);
+  const d = newDoc(W, H, name, pattern); if (infinite) d.inf = true;
+  await openDoc(d, infinite ? { v: 3, infinite: true, layers: [] } : null);
   $('#gallery').classList.remove('open');
   dirty = true; save(true);
   return d;
@@ -1313,6 +1587,8 @@ $('#newBtn').onclick = (e) => menu(e, [
   ['Notebook, lined', async () => { await createPainting(1264, 1680, 'Notes', 1); setMode('pen'); }],
   ['Notebook, grid', async () => { await createPainting(1264, 1680, 'Notes', 2); setMode('pen'); }],
   ['Notebook, dotted', async () => { await createPainting(1264, 1680, 'Notes', 3); setMode('pen'); }],
+  ['Infinite page, lined', async () => { await createPainting(1264, 1680, 'Infinite notes', 1, true); setMode('pen'); }],
+  ['Infinite canvas', async () => { await createPainting(1264, 1680, 'Infinite canvas', 0, true); }],
   ...SIZES.filter((s) => !s.note).map((s) => { const [w, h] = s.get(); return [`${s.name}  ${w} × ${h}`, () => createPainting(w, h)]; }),
 ]);
 $('#importBtn').onclick = () => $('#importFile').click();
@@ -1372,6 +1648,7 @@ function frame(t) {
   const ms = t - lastT, dt = Math.min(0.25, ms / 1000); lastT = t;
   if (sim && doc) {
     adapt(t, ms);
+    if (sim.infinite && !stroke && world) worldKeep();
     sim.params.grav = gravity();
     sim.dryBoost = dryHold ? 3 : 0;
     const stepped = sim.step(dt);
@@ -1399,7 +1676,7 @@ if (!qs.has('fresh') && !NOSAVE) {
 if (!opened) {
   // first visit: a canvas the shape of the screen, straight into painting
   const [w, h] = SIZES.find((s) => s.name === 'Screen size').get();
-  openDoc(newDoc(w, h), null);
+  await openDoc(newDoc(w, h), null);
   if (!NOSAVE) { dirty = true; save(true); }
   if (!S.helpSeen && !qs.has('nohelp')) { showHelp(); S.helpSeen = true; savePrefs(); }
 }
@@ -1409,7 +1686,7 @@ if ('serviceWorker' in navigator && !qs.has('nosw') && location.protocol !== 'fi
 // test / debugging hook
 window.__aq = {
   box, get dpr() { return dpr; }, setFullscreen, get sim() { return sim; }, get doc() { return doc; }, view, S, get stroke() { return stroke; }, fit, setTool, selectBrush, choosePigment, useCustom, render,
-  redraw: () => { needsRender = true; }, baseZ, zoomBy, zoomToggle, freeArea, gotoPage, insertPage, deletePage, movePage, get pageCache() { return pageCache; }, useBrush, setMode, setNib, setPenColour, exportImage, save, toSheet, toScreen, openGallery, openById, createPainting, rec, togglePop, dupLayer,
+  redraw: () => { needsRender = true; }, get world() { return world; }, worldKeep, infMinZ, visibleRect, placeAt, freeAreaRect: () => freeArea(), baseZ, zoomBy, zoomToggle, freeArea, gotoPage, insertPage, deletePage, movePage, get pageCache() { return pageCache; }, useBrush, setMode, setNib, setPenColour, exportImage, save, toSheet, toScreen, openGallery, openById, createPainting, rec, togglePop, dupLayer,
   get penSeen() { return penSeen; },
 };
 window.__ready = true;

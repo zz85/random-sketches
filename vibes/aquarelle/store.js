@@ -8,6 +8,9 @@
  *           K / S are the dried pigment layers as half floats, gzip-compressed where the
  *           browser has CompressionStream.
  *   frames  "id:n" -> JPEG Blob, the time-lapse
+ *   tiles   "page key|layer uid|x,y" -> {gzipped, K, S}: an infinite page's pigment in 128 px
+ *           tiles (only tiles with something on them); its layers record (v: 3) holds the
+ *           layer list and where you were looking
  * Version 1 kept a single painting under paintings/"current"; it is migrated on first open.
  */
 
@@ -16,10 +19,10 @@ let dbp = null;
 function open() {
   if (dbp) return dbp;
   dbp = new Promise((res, rej) => {
-    const r = indexedDB.open(DB, 2);
+    const r = indexedDB.open(DB, 3);
     r.onupgradeneeded = () => {
       const db = r.result;
-      for (const s of ['paintings', 'meta', 'layers', 'frames']) if (!db.objectStoreNames.contains(s)) db.createObjectStore(s);
+      for (const s of ['paintings', 'meta', 'layers', 'frames', 'tiles']) if (!db.objectStoreNames.contains(s)) db.createObjectStore(s);
     };
     r.onsuccess = () => res(r.result);
     r.onerror = () => rej(r.error);
@@ -59,10 +62,30 @@ export async function savePainting(id, meta, data) {
 
 export async function loadPainting(id) {
   const d = await get('layers', id);
+  if (d?.v === 3) return d; // infinite page: layers come in tiles
   if (!d || d.v !== 2) return null;
   const layers = [];
   for (const L of d.layers) layers.push({ ...L, K: new Uint16Array((await gunz(L.K, d.gzipped)).buffer), S: new Uint16Array((await gunz(L.S, d.gzipped)).buffer) });
   return { ...d, layers };
+}
+
+// ---- infinite pages ----
+const range = (prefix) => IDBKeyRange.bound(prefix, prefix + '\uffff');
+/** All tiles under a key prefix as [[key, value]]. */
+export const getTiles = (prefix) => tx('tiles', 'readonly', (s) => new Promise((res, rej) => {
+  const out = [], c = s.openCursor(range(prefix));
+  c.onsuccess = () => { const cur = c.result; if (!cur) return res(out); out.push([cur.key, cur.value]); cur.continue(); };
+  c.onerror = () => rej(c.error);
+}));
+export const delTiles = (prefix) => tx('tiles', 'readwrite', (s) => { s.delete(range(prefix)); });
+/** Write and delete tiles in one transaction: puts [[key, value]], dels [key]. */
+export const writeTiles = (puts, dels) => tx('tiles', 'readwrite', (s) => { for (const [k, v] of puts) s.put(v, k); for (const k of dels) s.delete(k); });
+export async function packTile(K, S) { return { gzipped: zipped, K: await gz(new Uint8Array(K.buffer)), S: await gz(new Uint8Array(S.buffer)) }; }
+export async function unpackTile(v) { return { K: new Uint16Array((await gunz(v.K, v.gzipped)).buffer), S: new Uint16Array((await gunz(v.S, v.gzipped)).buffer) }; }
+/** An infinite page's record (layer list, view) and the gallery card. */
+export async function savePageRecord(key, meta, rec) {
+  await put('layers', key, { v: 3, ...rec });
+  await put('meta', meta.id, { ...meta, updated: Date.now() });
 }
 
 export async function listPaintings() { return (await all('meta')).sort((a, b) => b.updated - a.updated); }
@@ -70,7 +93,7 @@ export async function listPaintings() { return (await all('meta')).sort((a, b) =
 export async function deletePainting(id) {
   const m = await get('meta', id);
   await del('meta', id);
-  for (const k of new Set([id, ...pagesOf(m || { id })])) await del('layers', k);
+  for (const k of new Set([id, ...pagesOf(m || { id })])) { await del('layers', k); await delTiles(k + '|'); }
   for (let i = 0; i < (m?.frames || 0); i++) await del('frames', id + ':' + i);
 }
 
@@ -82,6 +105,7 @@ export async function duplicatePainting(id) {
     const d = await get('layers', k); if (!d) continue;
     const nk = i === 0 ? nid : newPageKey(nid);
     await put('layers', nk, d); pages.push(nk);
+    if (d.v === 3) { const ts = await getTiles(k + '|'); if (ts.length) await writeTiles(ts.map(([tk, v]) => [nk + tk.slice(k.length), v]), []); }
     if (m.pageThumbs?.[k]) thumbs[nk] = m.pageThumbs[k];
   }
   if (!pages.length) return null;

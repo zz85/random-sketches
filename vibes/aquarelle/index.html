@@ -56,18 +56,20 @@
   #tools { left: calc(10px + var(--safe-l)); top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 2px; padding: 4px; }
   #tools hr { border: 0; border-top: 1px solid var(--line); margin: 3px 6px; }
 
-  /* sliders, next to the tools */
-  #sliders { left: calc(66px + var(--safe-l)); top: 50%; transform: translateY(-50%); display: flex; gap: 10px; padding: 28px 10px 30px; }
-  body.right #tools { left: auto; right: calc(10px + var(--safe-r)); }
+  /* one slim slider for size / water / paint: the chips above it show all three values and
+     pick which one the slider moves (or drag up / down on a chip directly) */
+  #sliders { left: calc(66px + var(--safe-l)); top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px; width: 50px; }
   body.right #sliders { left: auto; right: calc(66px + var(--safe-r)); }
-  .vs { width: 30px; height: 190px; position: relative; touch-action: none; cursor: ns-resize; }
-  .vs .track { position: absolute; left: 12px; top: 0; bottom: 0; width: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.12); overflow: hidden; }
+  .chip { width: 42px; height: 36px; border-radius: 9px; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.05; touch-action: none; }
+  .chip b { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .chip small { font-size: 8.5px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.04em; }
+  .chip.on { background: var(--acc-bg); } .chip.on b, .chip.on small { color: var(--accent); }
+  .chip[hidden] { display: none; }
+  .vs { width: 42px; height: 170px; position: relative; touch-action: none; cursor: ns-resize; margin: 10px 0; }
+  .vs .track { position: absolute; left: 18px; top: 0; bottom: 0; width: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.12); overflow: hidden; }
   .vs .fill { position: absolute; left: 0; right: 0; bottom: 0; background: rgba(232, 194, 122, 0.55); }
-  #sWater .fill { background: rgba(127, 179, 230, 0.6); }
-  .vs .knob { position: absolute; left: 3px; width: 24px; height: 24px; margin-top: -12px; border-radius: 50%; background: #f3efe6; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5); }
-  .vs label { position: absolute; bottom: -22px; left: -8px; right: -8px; text-align: center; font-size: 10px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.06em; }
-  .vs .val { position: absolute; top: -20px; left: -12px; right: -12px; text-align: center; font-size: 11px; color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .vs.off { opacity: 0.25; pointer-events: none; }
+  #sliders[data-k="water"] .fill { background: rgba(127, 179, 230, 0.6); }
+  .vs .knob { position: absolute; left: 9px; width: 24px; height: 24px; margin-top: -12px; border-radius: 50%; background: #f3efe6; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5); }
 
   /* watercolour palette (bottom) */
   #palette { left: 50%; transform: translateX(-50%); bottom: calc(10px + var(--safe-b)); display: flex; align-items: center; gap: 8px; padding: 8px 10px; max-width: calc(100% - 20px); }
@@ -100,7 +102,7 @@
   .pc.pickBtn svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
   .pc.pickBtn.on { background: var(--acc-bg); color: var(--accent); }
   body.penmode #penBar { display: flex; flex-direction: column; }
-  body.penmode #tools, body.penmode #palette, body.penmode #dryBtn, body.penmode #tiltBtn, body.penmode #wet, body.penmode #sPaint, body.penmode #sWater, body.penmode #colPop .pane-paint { display: none; }
+  body.penmode #tools, body.penmode #palette, body.penmode #dryBtn, body.penmode #tiltBtn, body.penmode #wet, body.penmode #colPop .pane-paint { display: none; }
 
   /* popovers */
   .pop { display: none; position: fixed; z-index: 10; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
@@ -208,6 +210,7 @@
   /* pages (top centre) and zoom (bottom right) */
   #pages { top: calc(10px + var(--safe-t)); left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 0; padding: 4px; }
   #pages .ico { width: 38px; }
+  #pgNew { border-left: 1px solid var(--line); border-radius: 0 10px 10px 0; }
   #pgNum { min-width: 56px; height: 40px; padding: 0 6px; border-radius: 10px; font-weight: 600; font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
   #pgNum:hover { background: rgba(255, 255, 255, 0.06); }
   body.single-page:not(.penmode) #pages { display: none; }
@@ -215,6 +218,8 @@
   body.penmode #zoomBar { bottom: calc(10px + var(--safe-b)); }
   body.right #zoomBar { right: auto; left: calc(10px + var(--safe-l)); }
   #zoomBar .ico { width: 40px; height: 40px; }
+  #zoomTrack { height: 110px; margin: 6px 0; }
+  #zoomTrack .fill { background: rgba(255, 255, 255, 0.22); }
   #zoomPct { width: 44px; height: 30px; border-radius: 8px; font-size: 11.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
   #pagePop { left: 50%; transform: translateX(-50%); width: min(440px, calc(100% - 20px)); }
   #pageGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 12px 10px; padding: 6px 4px; }
@@ -227,6 +232,13 @@
   body.eink .pg.on .pth { box-shadow: 0 0 0 3px #000; }
   body.eink .pg .pth { box-shadow: 0 0 0 2px #000; }
 
+  #tipLabel { position: fixed; z-index: 70; display: none; pointer-events: none; padding: 6px 10px; border-radius: 9px; background: var(--panel2); border: 1px solid var(--line);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4); max-width: 230px; }
+  #tipLabel b { display: block; font-size: 13px; font-weight: 600; }
+  #tipLabel small { display: block; font-size: 11.5px; color: var(--dim); }
+  #tipLabel small:empty { display: none; }
+  body.eink #tipLabel { background: #000; color: #fff; border: 0; } body.eink #tipLabel small { color: #ddd; }
+
   /* ---- colour e-paper (Bigme B7 Pro and friends): white, black, thick lines, nothing that moves ---- */
   body.eink { --bg: #e6e6e6; --panel: #fff; --panel2: #fff; --line: #000; --ink: #000; --dim: #333; --accent: #000; --acc-bg: #000; --on-acc: #fff; }
   body.eink *, body.eink *::before, body.eink *::after { transition: none !important; animation: none !important; box-shadow: none !important; text-shadow: none !important; }
@@ -236,8 +248,9 @@
   body.eink .pc, body.eink .sw, body.eink .well, body.eink #mixWell { box-shadow: inset 0 0 0 2px #000 !important; }
   body.eink .pc.on, body.eink .sw.on, body.eink .well.on { outline: 3px solid #000; outline-offset: 3px; }
   body.eink .well.part::after { background: #000; border-color: #fff; }
-  body.eink .vs .track { background: #fff; border: 2px solid #000; width: 8px; left: 11px; }
-  body.eink .vs .fill, body.eink #sWater .fill { background: #000; }
+  body.eink .vs .track { background: #fff; border: 2px solid #000; width: 8px; left: 17px; }
+  body.eink .vs .fill, body.eink #sliders[data-k="water"] .fill, body.eink #zoomTrack .fill { background: #000; }
+  body.eink .chip.on { background: #000; } body.eink .chip.on b, body.eink .chip.on small { color: #fff; }
   body.eink .vs .knob { background: #fff; border: 2px solid #000; }
   body.eink #mixToggle { border: 2px solid #000; color: #000; }
   body.eink #mixToggle.on { background: #000; color: #fff; }
@@ -255,15 +268,14 @@
     :root { --toph: calc(56px + var(--safe-t)); }
     .ico { width: 40px; height: 40px; }
     #title, #shareBtn, #tiltBtn, #helpBtn { display: none !important; }
-    #pages .ico { width: 34px; } #pgNum { min-width: 50px; padding: 0 4px; }
+    #pages .ico { width: 32px; } #pgNum { min-width: 46px; padding: 0 3px; }
     #wet { min-width: 0; padding: 0 6px; } #wet span { display: none; }
     #modeSeg button { padding: 7px 10px; }
-    #sliders { left: auto; right: calc(8px + var(--safe-r)); gap: 2px; padding: 24px 4px 26px; }
+    /* the slider column and the zoom buttons share the right edge: sliders from the top */
+    #sliders { left: auto; right: calc(8px + var(--safe-r)); top: calc(var(--toph) + 8px); transform: none; width: 48px; }
     body.right #sliders { right: auto; left: calc(8px + var(--safe-l)); }
-    .vs { height: 150px; width: 24px; }
-    .vs .track { left: 9px; } .vs .knob { left: 0; }
-    .vs label { font-size: 8px; letter-spacing: 0; left: -3px; right: -3px; }
-    .vs .val { font-size: 10px; left: -4px; right: -4px; }
+    #zoomBar { right: calc(8px + var(--safe-r)); }
+    .vs { height: 140px; }
     #mixInfo, #mixToggle { display: none; }
     .well { width: 34px; height: 34px; }
     #mixWell { width: 44px; height: 44px; }
@@ -272,7 +284,7 @@
     #brushPop { width: min(340px, calc(100% - 76px)); left: calc(58px + var(--safe-l)); }
     #colPop { bottom: calc(70px + var(--safe-b)); }
   }
-  @media (max-width: 720px) and (max-height: 700px) { .vs { height: 110px; } }
+  @media (max-width: 720px) and (max-height: 700px) { .vs { height: 100px; } #zoomTrack { height: 70px; } }
   /* phones: fewer buttons up top (tilt, full screen and help are in the menu) */
   @media (max-width: 480px) {
     #tiltBtn, #fsBtn, #helpBtn { display: none !important; }
@@ -280,6 +292,7 @@
     #modeSeg button { padding: 7px 8px; font-size: 12px; }
     #wet { display: none; }
   }
+  @media (max-height: 760px) { #tools .ico { height: 38px; } }
   @media (max-height: 640px) { #tools .ico { width: 38px; height: 36px; } #tools hr { margin: 1px 6px; } }
 </style>
 </head>
@@ -290,6 +303,9 @@
 <div id="err"></div>
 
 <svg width="0" height="0" style="position:absolute">
+  <symbol id="i-pastel" viewBox="0 0 24 24"><path d="M14.5 3.5l6 6-8.5 8.5-6-6z"/><path d="M6 12l-2.5 2.5a2 2 0 0 0 0 2.8l3.2 3.2a2 2 0 0 0 2.8 0L12 18"/><path d="M15 21h.01M18 19.5h.01M20.5 16.5h.01"/></symbol>
+  <symbol id="i-pastelpencil" viewBox="0 0 24 24"><path d="M18 3l3 3-12 12-4 1 1-4z"/><path d="M15 6l3 3"/><path d="M3.5 21.5l1.8-1.8"/></symbol>
+  <symbol id="i-infinite" viewBox="0 0 24 24"><path d="M12 12c-2-2.7-3.6-4-5.5-4a4 4 0 0 0 0 8c1.9 0 3.5-1.3 5.5-4zm0 0c2 2.7 3.6 4 5.5 4a4 4 0 0 0 0-8c-1.9 0-3.5 1.3-5.5 4z"/></symbol>
   <symbol id="i-prev" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></symbol>
   <symbol id="i-next" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></symbol>
   <symbol id="i-pageadd" viewBox="0 0 24 24"><path d="M6 3.5h8l4 4v13H6z"/><path d="M14 3.5v4h4M12 11v6M9 14h6"/></symbol>
@@ -356,6 +372,9 @@
   <button class="ico" data-brush="dry" title="Dry brush (Y)"><svg><use href="#i-dry"/></svg></button>
   <button class="ico" data-brush="splatter" title="Splatter (X)"><svg><use href="#i-splatter"/></svg></button>
   <hr>
+  <button class="ico" data-brush="pastel" title="Soft pastel (A)"><svg><use href="#i-pastel"/></svg></button>
+  <button class="ico" data-brush="pastelpencil" title="Pastel pencil (Shift A)"><svg><use href="#i-pastelpencil"/></svg></button>
+  <hr>
   <button class="ico" data-brush="water" title="Clear water: wet the paper, soften edges (Q)"><svg><use href="#i-water"/></svg></button>
   <button class="ico" data-brush="lift" title="Lift: blot paint off with a damp brush (K)"><svg><use href="#i-lift"/></svg></button>
   <button class="ico" data-tool="smudge" title="Smudge (S) — tap again to choose its shape"><svg><use href="#i-smudge"/></svg></button>
@@ -364,9 +383,10 @@
 </div>
 
 <div id="sliders" class="panel">
-  <div class="vs" id="sSize"><div class="val"></div><div class="track"><div class="fill"></div></div><div class="knob"></div><label>Size</label></div>
-  <div class="vs" id="sWater"><div class="val"></div><div class="track"><div class="fill"></div></div><div class="knob"></div><label>Water</label></div>
-  <div class="vs" id="sPaint"><div class="val"></div><div class="track"><div class="fill"></div></div><div class="knob"></div><label>Paint</label></div>
+  <button class="chip" data-k="size" title="Brush size — tap to put it on the slider, or drag up / down on it"><b></b><small>size</small></button>
+  <button class="chip" data-k="water" title="Water on the brush — tap to put it on the slider, or drag up / down on it"><b></b><small>water</small></button>
+  <button class="chip" data-k="paint" title="Paint on the brush (strength for lift, smudge and erase) — tap to put it on the slider, or drag up / down on it"><b></b><small>paint</small></button>
+  <div class="vs" id="slTrack"><div class="track"><div class="fill"></div></div><div class="knob"></div></div>
 </div>
 
 <div id="palette" class="panel">
@@ -380,12 +400,14 @@
 <div id="pages" class="panel" title="Pages">
   <button class="ico" id="pgPrev" title="Previous page (Page Up)"><svg><use href="#i-prev"/></svg></button>
   <button id="pgNum" title="All pages: add, move, delete">1 / 1</button>
-  <button class="ico" id="pgNext" title="Next page (Page Down); on the last page, a new page"><svg><use href="#i-next"/></svg></button>
+  <button class="ico" id="pgNext" title="Next page (Page Down)"><svg><use href="#i-next"/></svg></button>
+  <button class="ico" id="pgNew" title="New page after this one (N)"><svg><use href="#i-pageadd"/></svg></button>
 </div>
 
-<div id="zoomBar" class="panel" title="Zoom">
+<div id="zoomBar" class="panel">
   <button class="ico" id="zoomIn" title="Zoom in (+)"><svg><use href="#i-zin"/></svg></button>
-  <button id="zoomPct" title="Tap: whole page / your zoom (0)">100%</button>
+  <div class="vs" id="zoomTrack" title="Zoom — drag"><div class="track"><div class="fill"></div></div><div class="knob"></div></div>
+  <button id="zoomPct" title="Whole page / your zoom (0)">100%</button>
   <button class="ico" id="zoomOut" title="Zoom out (−)"><svg><use href="#i-zout"/></svg></button>
 </div>
 
@@ -435,6 +457,7 @@
     <div data-pane="canvas" style="display:none">
       <div class="h3">Paper</div><div id="paperList"></div>
       <button class="item" id="addPageItem"><span>Add a page<small>this painting becomes a notebook: ‹ › at the top turn pages</small></span></button>
+      <button class="item" id="addInfItem"><span>Add an infinite page<small>paper without edges: keep panning in any direction</small></span></button>
       <div class="row"><span>Page ruling</span><div class="seg" id="patSeg"></div></div>
       <div class="row"><span>Show paper texture</span><input type="checkbox" id="optTexture"></div>
       <div class="row"><span>Paper colour</span><div id="tints" style="display:flex;gap:8px"></div></div>
@@ -451,6 +474,7 @@
       <div class="row"><span>Tilt the board</span><div class="seg" id="tiltSeg"><button data-v="0">Flat</button><button data-v="1">Tilted</button><button data-v="2">Device</button></div></div>
       <div class="row"><span>E-paper display<small style="display:block;color:var(--dim);font-size:11.5px">light, high-contrast, no animation</small></span><input type="checkbox" id="optEink"></div>
       <div class="row"><span>Full screen on first touch</span><input type="checkbox" id="optFs"></div>
+      <div class="row"><span>Show tool names when tapped<small>hovering with a mouse always shows them</small></span><input type="checkbox" id="optLabels"></div>
       <div class="row"><span>Right-hand interface</span><input type="checkbox" id="optRight"></div>
       <div class="row"><span>Brush cursor</span><input type="checkbox" id="optCursor"></div>
       <div class="row"><span>Fingers once a pen is used</span><div class="seg" id="fingerSeg"><button data-v="auto">Navigate</button><button data-v="paint">Paint</button></div></div>
@@ -471,13 +495,15 @@
         <tr><td>Finger</td><td>paints until a pen is used, then navigates (Prefs)</td></tr>
         <tr><td>Two fingers</td><td>moving together: pan only (locked, no zoom or rotation); spreading: zoom; twisting: rotate. A quick pinch in shows the whole page</td></tr>
         <tr><td>Zoom</td><td>+ and − at the bottom right, the % between them switches between the whole page and your zoom (Prefs → Open pages at)</td></tr>
+        <tr><td>Pastel</td><td>the two pastel sticks in the brushes: dry and opaque, they catch the paper's grain (press harder to fill it), cover what is under them and smudge with Smudge</td></tr>
+        <tr><td>Infinite page</td><td>Gallery → + → Infinite page, or Canvas → Add an infinite page: no edges, pan as far as you like in any direction</td></tr>
         <tr><td>Pages</td><td>‹ › at the top turn pages; › on the last page adds one. Tap the page number for all pages: move, delete. Gallery → + → Notebook makes a ruled notebook</td></tr>
         <tr><td>Two-finger tap</td><td>undo — three-finger tap: redo — four-finger tap: full screen</td></tr>
         <tr><td>Touch and hold</td><td>eyedropper (or the dropper in the tools, or Alt-click)</td></tr>
         <tr><td>Hold at stroke end</td><td>QuickShape: snaps to a straight line or an ellipse</td></tr>
         <tr><td>Wet-in-wet</td><td>Clear water brush first, then drop paint in and watch it bloom</td></tr>
         <tr><td>Glazing</td><td>let it dry (hair dryer: hold, or double-tap to dry at once) and paint over: colours multiply like real glazes</td></tr>
-        <tr><td>Keys</td><td>Page Up / Page Down pages, + / − zoom, B W T R Y X brushes, Q water, K lift, S smudge, E erase, I eyedropper, P pen / paint, L layers, C colour wheel, [ ] size, 1–9 pigments, F dry, ⌘Z / ⇧⌘Z, Space-drag pan, wheel zoom, 0 fit, Tab hide UI</td></tr>
+        <tr><td>Keys</td><td>Page Up / Page Down pages, N new page, + / − zoom, B W T R Y X brushes, A / Shift A pastel, Q water, K lift, S smudge, E erase, I eyedropper, P pen / paint, L layers, C colour wheel, [ ] size, 1–9 pigments, F dry, ⌘Z / ⇧⌘Z, Space-drag pan, wheel zoom, 0 fit, Tab hide UI</td></tr>
       </table>
     </div>
   </div>

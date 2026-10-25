@@ -53,9 +53,11 @@ export const BRUSHES = {
   dry: { name: 'Dry brush', cat: 'Watercolour', size: 26, water: 0.15, paint: 0.8, shape: 2, spacing: 0.15, sizePressure: 0.5, paintPressure: 0.4, note: 'little water: only the paper tooth takes paint' },
   water: { name: 'Clear water', cat: 'Water', mode: 1, size: 30, water: 0.8, paint: 0, shape: 0, spacing: 0.18, sizePressure: 0.5, paintPressure: 0, note: 'wet the paper first, soften edges, make blooms' },
   lift: { name: 'Lift', cat: 'Water', mode: 2, size: 24, water: 0.3, paint: 0.8, shape: 0, spacing: 0.18, sizePressure: 0.5, paintPressure: 0, note: 'blot paint back off with a damp brush' },
+  pastel: { name: 'Soft pastel', cat: 'Pastel', mode: 7, size: 18, water: 0, paint: 0.65, shape: 0, spacing: 0.12, sizePressure: 0.3, paintPressure: 1, tooth: 0.12, cover: 0.35, note: 'dry, chalky and opaque: a light touch catches the paper\'s grain, pressing fills it' },
+  pastelpencil: { name: 'Pastel pencil', cat: 'Pastel', mode: 7, size: 5, water: 0, paint: 0.7, shape: 0, spacing: 0.14, sizePressure: 0.4, paintPressure: 1, tooth: 0.07, cover: 0.5, note: 'harder, finer pastel for lines and detail' },
   splatter: { name: 'Splatter', cat: 'Effects', size: 40, water: 0.7, paint: 0.6, shape: 3, spacing: 0.6, sizePressure: 0.5, paintPressure: 0.3, note: 'flick drops off the brush' },
 };
-export const CATEGORIES = ['Watercolour', 'Water', 'Effects'];
+export const CATEGORIES = ['Watercolour', 'Water', 'Pastel', 'Effects'];
 
 /** Pen mode nibs: ink with a crisp edge and no water. Sizes are radii in sheet px. */
 export const INKS = {

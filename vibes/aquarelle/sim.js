@@ -314,6 +314,7 @@ uniform sampler2D uComp, uLit; uniform float uPaperN, uLitAmt;
 uniform mat3 uInv; uniform vec2 uSheet, uCanvas; uniform float uDpr, uZoom;
 uniform vec3 uDesk; uniform int uExport; uniform float uExpScale;
 uniform int uPat; uniform float uPatSp; uniform vec3 uPatCol, uPatMargin;
+uniform int uInf; uniform vec2 uOrigin; uniform vec3 uPaperLin;
 out vec4 o;
 // coverage of a line at distance d (sheet px): at least ~0.9 sheet px wide, and never thinner
 // than a screen pixel when zoomed out, so ruling stays visible and exports the same
@@ -321,7 +322,8 @@ float rule(float d, float fw) { float hw = max(0.9, 0.6 * fw); return 1.0 - smoo
 vec3 toSrgb(vec3 c) { c = clamp(c, 0.0, 1.0); return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
 void main() {
   vec2 p = uExport == 1 ? gl_FragCoord.xy * uExpScale : (uInv * vec3(vec2(gl_FragCoord.x, uCanvas.y - gl_FragCoord.y) / uDpr, 1.0)).xy;
-  if (p.x < 0.0 || p.y < 0.0 || p.x > uSheet.x || p.y > uSheet.y) {
+  bool outside = p.x < 0.0 || p.y < 0.0 || p.x > uSheet.x || p.y > uSheet.y;
+  if (outside && uInf == 0) {
     // soft drop shadow of the sheet on the desk
     vec2 q = p - vec2(3.0, 5.0) / uZoom * uDpr;
     vec2 dd = max(max(-q, q - uSheet), 0.0) * uZoom / uDpr;
@@ -329,7 +331,9 @@ void main() {
   }
   vec2 uv = p / uSheet;
   vec3 R;
-  if (uZoom >= 1.0 || uExport == 1 && uExpScale <= 1.0) R = texture(uComp, uv).rgb;
+  // an infinite page has no edge: beyond the loaded window it is bare paper (briefly, while panning)
+  if (outside) R = uPaperLin;
+  else if (uZoom >= 1.0 || uExport == 1 && uExpScale <= 1.0) R = texture(uComp, uv).rgb;
   else {
     // zoomed out, one screen pixel covers several sheet pixels: average 4 taps
     vec2 d = 0.5 / (uZoom * uSheet);
@@ -338,9 +342,10 @@ void main() {
   if (uLitAmt > 0.0) R *= mix(1.0, texture(uLit, (p + 0.5) / uPaperN).r * 1.25, uLitAmt);
   if (uPat > 0) {
     // ruling multiplies like a printed line: ink and paint on top stay dark
-    vec2 fw = max(fwidth(p), vec2(1e-3)), g = p - floor(p / uPatSp + 0.5) * uPatSp;
+    vec2 wp = p + uOrigin; // world position: ruling continues across an infinite page
+    vec2 fw = max(fwidth(p), vec2(1e-3)), g = wp - floor(wp / uPatSp + 0.5) * uPatSp;
     float a = 0.0, m = 0.0;
-    if (uPat == 1) { a = p.y > uPatSp * 2.5 ? rule(abs(g.y), fw.y) : 0.0; m = rule(abs(p.x - uPatSp * 2.0), fw.x); }
+    if (uPat == 1) { a = uInf == 1 || wp.y > uPatSp * 2.5 ? rule(abs(g.y), fw.y) : 0.0; m = uInf == 1 ? 0.0 : rule(abs(wp.x - uPatSp * 2.0), fw.x); }
     else if (uPat == 2) a = max(rule(abs(g.x), fw.x), rule(abs(g.y), fw.y)) * 0.75;
     else { float r = max(1.7, 0.9 * fw.x); a = 1.0 - smoothstep(r - 0.5 * fw.x, r + 0.5 * fw.x, length(g)); }
     R = mix(R, R * uPatCol, a); R = mix(R, R * uPatMargin, m * 0.8);
@@ -374,10 +379,15 @@ void main() { ivec2 P = ivec2(gl_FragCoord.xy); float a = float(uActive); oK = t
 // Mode 5 inks: within a stroke stamps converge on the ink amount instead of piling up, so a
 // line stays even; uCover = how much ink replaces what is under it (0 = transparent glaze,
 // as a highlighter). Mode 6 erases deposited pigment outright.
-const FS_INK = HDR + `
+//
+// Mode 7 is pastel: a dry, chalky, opaque stick. The paper's tooth decides where it
+// catches: a light touch marks only the peaks of the grain, pressing harder fills the
+// valleys (s.w carries the pressure). It covers what is under it and builds up with
+// passes; uTooth is how soft the threshold is (soft pastel crumbles more than a pencil).
+const FS_INK = HDR + COMMON + `
 uniform sampler2D uDK, uDS;
 uniform vec4 uSt[${MAX_ST}], uSt2[${MAX_ST}], uSt3[${MAX_ST}];
-uniform int uN, uMode; uniform vec4 uBK, uBS; uniform float uCover;
+uniform int uN, uMode; uniform vec4 uBK, uBS; uniform float uCover, uTooth;
 layout(location = 0) out vec4 oDK; layout(location = 1) out vec4 oDS;
 void main() {
   ivec2 P = ivec2(gl_FragCoord.xy); vec2 p = vec2(P);
@@ -387,6 +397,15 @@ void main() {
     vec4 s = uSt[i], s3 = uSt3[i];
     vec2 d = p - s.xy, ax = s3.xy;
     vec2 e = vec2(dot(d, ax) / s3.z, dot(d, vec2(-ax.y, ax.x)));
+    if (uMode == 7) {
+      float c = 1.0 - smoothstep(0.5, 1.0, length(e) / s.z);
+      if (c <= 0.0) continue;
+      float g = hAt(p) + (hash(p * 0.731 + s3.w) - 0.5) * 0.22 * uTooth * 5.0;
+      float thr = mix(0.9, 0.08, clamp(s.w, 0.0, 1.0));
+      c *= smoothstep(thr - uTooth, thr + uTooth, g);
+      dk = mix(dk, uBK, c * uCover); ds = mix(ds, uBS, c * uCover);
+      continue;
+    }
     float c = clamp(s.z - length(e) + 0.5, 0.0, 1.0) * s.w;
     if (c <= 0.0) continue;
     if (uMode == 6) { dk *= 1.0 - c; ds *= 1.0 - c; continue; }
@@ -449,8 +468,10 @@ export function fromHalf(h) {
 export const TILE = 128;
 
 export class Sim {
-  constructor(gl, W, H, paper) {
+  /** opts.infinite: this sheet is a window onto an infinite page (smaller undo history, shift()). */
+  constructor(gl, W, H, paper, opts = {}) {
     this.gl = gl; this.W = W; this.H = H;
+    this.infinite = !!opts.infinite; this.origin = [0, 0]; this.dirty = new Map();
     this.floatRead = !!gl.getExtension('EXT_color_buffer_float');
     if (!this.floatRead && !gl.getExtension('EXT_color_buffer_half_float')) throw new Error('This device cannot render to floating-point textures (EXT_color_buffer_float).');
     this.vao = gl.createVertexArray();
@@ -489,7 +510,7 @@ export class Sim {
   // state is copied home, so a layer costs 2 textures instead of 4.
   addLayer(index, name) {
     this.nLayers = (this.nLayers || 0) + 1;
-    const L = { id: ++Sim.lid, name: name || 'Layer ' + this.nLayers, K: this.tex(), S: this.tex(), visible: true, opacity: 1 };
+    const L = { id: ++Sim.lid, uid: Math.random().toString(36).slice(2, 10), name: name || 'Layer ' + this.nLayers, K: this.tex(), S: this.tex(), visible: true, opacity: 1 };
     this.clearTex(L.K); this.clearTex(L.S);
     const i = index ?? (this.layer ? this.layers.indexOf(this.layer) + 1 : this.layers.length);
     this.layers.splice(i, 0, L);
@@ -581,15 +602,128 @@ export class Sim {
     for (let i = 0; i < stamps.length; i += MAX_ST) {
       const batch = { st: stamps.slice(i, i + MAX_ST), b: { ...b, shape: 0 } };
       this.use('ink'); this.bind('uDK', this.s.DK.cur); this.bind('uDS', this.s.DS.cur);
-      const r = this.setStampUniforms(batch); this.f1('uCover', b.cover ?? 1);
+      const r = this.setStampUniforms(batch); this.f1('uCover', b.cover ?? 1); this.f1('uTooth', b.tooth ?? 0.1);
       if (r[2] <= r[0] || r[3] <= r[1]) continue;
       const t = [r[0] - 2, r[1] - 2, r[2] + 2, r[3] + 2];
-      this.saveTiles(t);
-      this.use('ink'); this.bind('uDK', this.s.DK.cur); this.bind('uDS', this.s.DS.cur); this.setStampUniforms(batch); this.f1('uCover', b.cover ?? 1);
+      this.saveTiles(t); this.markDirty(t);
+      this.use('ink'); this.bind('uDK', this.s.DK.cur); this.bind('uDS', this.s.DS.cur); this.setStampUniforms(batch); this.f1('uCover', b.cover ?? 1); this.f1('uTooth', b.tooth ?? 0.1);
       this.draw([this.s.DK.nxt, this.s.DS.nxt], r); this.keep(['DK', 'DS'], r);
       this.compose(this.clampRect(t));
     }
   }
+  // ---- infinite pages: tiles and the moving window ----
+  /** Note that a rect of layer L changed (tile coords in TILE units), for saving its tiles. */
+  markDirty(r, L = this.layer) {
+    if (!this.infinite || !r || !L) return;
+    let set = this.dirty.get(L); if (!set) this.dirty.set(L, (set = new Set()));
+    const x0 = Math.max(0, Math.floor(r[0] / TILE)), y0 = Math.max(0, Math.floor(r[1] / TILE)), x1 = Math.min(this.W / TILE, Math.ceil(r[2] / TILE)), y1 = Math.min(this.H / TILE, Math.ceil(r[3] / TILE));
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) set.add(x + ',' + y);
+  }
+  /** Read a rect of layer L's dried pigment as half floats, row by row from y0. */
+  readRegion(L, x0, y0, w, h) {
+    const gl = this.gl, n = w * h * 4, out = { K: new Uint16Array(n), S: new Uint16Array(n) };
+    for (const [t, key] of [[this.kOf(L), 'K'], [this.sOf(L), 'S']]) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo([t]));
+      if (this.floatRead) {
+        const f = new Float32Array(n); gl.readPixels(x0, y0, w, h, gl.RGBA, gl.FLOAT, f);
+        if (typeof Float16Array !== 'undefined') out[key] = new Uint16Array(new Float16Array(f).buffer);
+        else { const hh = out[key]; for (let i = 0; i < n; i++) hh[i] = f[i] === 0 ? 0 : toHalf(f[i]); }
+      } else gl.readPixels(x0, y0, w, h, gl.RGBA, gl.HALF_FLOAT, out[key]);
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return out;
+  }
+  /** Tiles of layer L as {tx, ty, K, S, empty}, read in one go per bounding box. */
+  readTiles(L, tiles) {
+    if (!tiles.length) return [];
+    let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1;
+    for (const [tx, ty] of tiles) { x0 = Math.min(x0, tx); y0 = Math.min(y0, ty); x1 = Math.max(x1, tx); y1 = Math.max(y1, ty); }
+    const w = (x1 - x0 + 1) * TILE, h = (y1 - y0 + 1) * TILE, R = this.readRegion(L, x0 * TILE, y0 * TILE, w, h), out = [];
+    for (const [tx, ty] of tiles) {
+      const K = new Uint16Array(TILE * TILE * 4), S = new Uint16Array(TILE * TILE * 4), ox = (tx - x0) * TILE, oy = (ty - y0) * TILE;
+      let any = 0;
+      for (let j = 0; j < TILE; j++) {
+        const src = ((oy + j) * w + ox) * 4, dst = j * TILE * 4;
+        K.set(R.K.subarray(src, src + TILE * 4), dst); S.set(R.S.subarray(src, src + TILE * 4), dst);
+      }
+      // half floats: 0 and -0 are the only all-zero-exponent-and-mantissa patterns that matter here
+      for (let i = 0; i < K.length && !any; i++) any = (K[i] & 0x7fff) | (S[i] & 0x7fff);
+      out.push({ tx, ty, K, S, empty: !any });
+    }
+    return out;
+  }
+  /** Put a tile's half-float data into layer L (both textures of the active layer's pair). */
+  writeTile(L, tx, ty, K, S) {
+    const gl = this.gl, ts = L === this.layer ? [[this.s.DK.t[0], K], [this.s.DK.t[1], K], [this.s.DS.t[0], S], [this.s.DS.t[1], S]] : [[L.K, K], [L.S, S]];
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    for (const [t, d] of ts) { gl.bindTexture(gl.TEXTURE_2D, t); gl.texSubImage2D(gl.TEXTURE_2D, 0, tx * TILE, ty * TILE, TILE, TILE, gl.RGBA, gl.HALF_FLOAT, d); }
+  }
+  /** Read and forget the changed tiles: [{L, tx, ty, K, S, empty}] (for saving). */
+  takeDirty(filter) {
+    const out = [];
+    for (const [L, set] of this.dirty) {
+      if (!this.layers.includes(L)) { this.dirty.delete(L); continue; }
+      const tiles = [...set].map((k) => k.split(',').map(Number)).filter(([x, y]) => !filter || filter(x, y));
+      for (const t of this.readTiles(L, tiles)) { out.push({ L, ...t }); set.delete(t.tx + ',' + t.ty); }
+    }
+    return out;
+  }
+  /**
+   * Move the window over the infinite page by (dx, dy) sheet px (multiples of TILE): content
+   * moves by -d. Changed tiles that leave are read back and handed to leave({L, tx, ty, K, S,
+   * empty}) in old window coordinates; tiles that arrive are filled from arrive(L, tx, ty)
+   * (new window coordinates; null = empty). Water, the wet state and the undo history move too;
+   * history that falls outside the window can no longer be undone.
+   */
+  shift(dx, dy, leave, arrive) {
+    const gl = this.gl, W = this.W, H = this.H, sx = dx / TILE, sy = dy / TILE, tw = W / TILE, th = H / TILE;
+    if (!dx && !dy) return;
+    const inside = (x, y) => x >= 0 && y >= 0 && x < tw && y < th;
+    // 1. changed tiles that leave
+    for (const t of this.takeDirty((x, y) => !inside(x - sx, y - sy))) leave(t);
+    // 2. every spatial texture moves
+    this.shiftTmp ??= this.tex();
+    const texs = [...this.s.W.t, ...this.s.FK.t, ...this.s.FS.t];
+    for (const L of this.layers) texs.push(...(L === this.layer ? [...this.s.DK.t, ...this.s.DS.t] : [L.K, L.S]));
+    const srcX0 = Math.max(0, dx), srcY0 = Math.max(0, dy), srcX1 = Math.min(W, W + dx), srcY1 = Math.min(H, H + dy);
+    for (const t of texs) {
+      this.clearTex(this.shiftTmp);
+      if (srcX1 > srcX0 && srcY1 > srcY0) {
+        this.bindBlit(t, this.shiftTmp);
+        gl.blitFramebuffer(srcX0, srcY0, srcX1, srcY1, srcX0 - dx, srcY0 - dy, srcX1 - dx, srcY1 - dy, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+      }
+      this.blitFull(this.shiftTmp, t);
+    }
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null); gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+    // 3. tiles that arrive
+    for (const L of this.layers) for (let y = 0; y < th; y++) for (let x = 0; x < tw; x++) {
+      if (inside(x + sx, y + sy)) continue;
+      const d = arrive(L, x, y); if (d) this.writeTile(L, x, y, d.K, d.S);
+    }
+    // 4. bookkeeping: dirty tiles, undo history, wet rect
+    for (const [L, set] of this.dirty) {
+      const n = new Set(); for (const k of set) { const [x, y] = k.split(',').map(Number); if (inside(x - sx, y - sy)) n.add(x - sx + ',' + (y - sy)); }
+      this.dirty.set(L, n);
+    }
+    for (const r of [...this.undo, ...this.redo]) {
+      if (r.op || !r.tiles.length) continue;
+      const tiles = [], keys = new Set();
+      for (const t of r.tiles) {
+        const x = t.tx - sx, y = t.ty - sy;
+        if (inside(x, y)) { tiles.push({ ...t, tx: x, ty: y }); keys.add(y * 10000 + x); } else { this.atlas.free.push(t.slot); r.broken = true; }
+      }
+      r.tiles = tiles; r.keys = keys;
+    }
+    // a step that cannot be undone ends the history there: drop it and everything older
+    const bi = this.undo.map((r) => !!r.broken).lastIndexOf(true);
+    if (bi >= 0) for (const r of this.undo.splice(0, bi + 1)) this.freeRecord(r, false);
+    if (this.redo.some((r) => r.broken)) { for (const r of this.redo) this.freeRecord(r, true); this.redo = []; }
+    if (this.active) { const a = this.active.map((v, i) => v - (i % 2 ? dy : dx)); this.active = a[2] > 0 && a[3] > 0 && a[0] < W && a[1] < H ? this.clampRect(a) : null; }
+    this.queue.length = 0; // (a pending wet-map probe is discarded: its rect is not the active one any more)
+    this.clearTex(this.F); if (this.Fn) this.clearTex(this.Fn);
+    this.compose();
+  }
+
   /** Ruled note paper drawn under the paint: 0 none, 1 lined, 2 grid, 3 dots. Spacing in sheet px. */
   setPattern(type, sp, col) { this.pattern = { ...this.pattern, type, sp: sp ?? this.pattern.sp, col: col ?? this.pattern.col }; }
 
@@ -604,6 +738,7 @@ export class Sim {
     this.draw([this.s.DK.nxt, this.s.DS.nxt], [0, 0, this.W, this.H]); this.s.DK.flip(); this.s.DS.flip();
     this.blitFull(this.s.DK.cur, this.s.DK.nxt); this.blitFull(this.s.DS.cur, this.s.DS.nxt);
     gl.deleteTexture(t);
+    this.markDirty([0, 0, this.W, this.H]);
     this.compose();
   }
   setLayerProps(L, props) { Object.assign(L, props); this.compose(); }
@@ -733,7 +868,7 @@ export class Sim {
     let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
     for (const s of stamps) { const r = s.r * (s.el || 1) * 1.3 + 2; x0 = Math.min(x0, s.x - r); y0 = Math.min(y0, s.y - r); x1 = Math.max(x1, s.x + r); y1 = Math.max(y1, s.y + r); }
     const M = b.mode <= 1 ? 56 : 8;
-    this.activate([x0 - M, y0 - M, x1 + M, y1 + M]);
+    this.activate([x0 - M, y0 - M, x1 + M, y1 + M]); this.markDirty([x0 - M, y0 - M, x1 + M, y1 + M]);
     // pointer events arrive several per frame: top up the last batch if it is the same brush,
     // so a frame costs one or two substeps, not one per event
     const same = (q) => q && q.b.mode === b.mode && q.b.shape === b.shape && q.b.mix === b.mix && q.b.bK.every((v, i) => v === b.bK[i]) && q.b.bS.every((v, i) => v === b.bS[i]);
@@ -829,6 +964,7 @@ export class Sim {
     for (let i = 0; i < n; i++) this.substep(dt / n);
     this.dryBoost = Math.max(0, this.dryBoost - dt);
     this.wetTime += dt;
+    this.markDirty(this.active); // water carries pigment anywhere in the wet rect
     this.compose(this.active);
     this.probe();
     return true;
@@ -894,7 +1030,7 @@ export class Sim {
   static KEYS = ['W', 'FK', 'FS', 'DK', 'DS'];
   initUndo() {
     const tw = Math.ceil(this.W / TILE), th = Math.ceil(this.H / TILE);
-    const slots = Math.ceil(tw * th * 1.15) + 4, cols = Math.ceil(Math.sqrt(slots)), rows = Math.ceil(slots / cols);
+    const slots = Math.ceil(tw * th * (this.infinite ? 0.6 : 1.15)) + 4, cols = Math.ceil(Math.sqrt(slots)), rows = Math.ceil(slots / cols);
     this.atlas = { cols, rows, free: Array.from({ length: cols * rows }, (_, i) => cols * rows - 1 - i), tex: {} };
     for (const k of Sim.KEYS) this.atlas.tex[k] = this.tex(cols * TILE, rows * TILE);
   }
@@ -958,6 +1094,7 @@ export class Sim {
     to.push(rec);
     let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1;
     for (const t of from.tiles) { x0 = Math.min(x0, t.tx * TILE); y0 = Math.min(y0, t.ty * TILE); x1 = Math.max(x1, (t.tx + 1) * TILE); y1 = Math.max(y1, (t.ty + 1) * TILE); }
+    if (x1 > 0) this.markDirty([x0, y0, x1, y1], from.layer || this.layer);
     this.queue.length = 0;
     if (x1 > 0) { const a = this.active; this.active = this.clampRect(a ? [Math.min(a[0], x0), Math.min(a[1], y0), Math.max(a[2], x1), Math.max(a[3], y1)] : [x0, y0, x1, y1]); this.compose(this.clampRect([x0, y0, x1, y1])); }
     this.clearTex(this.F);
@@ -985,6 +1122,7 @@ export class Sim {
     this.begin(); this.saveTiles([0, 0, this.W, this.H]);
     for (const k of Sim.KEYS) for (const t of this.s[k].t) this.clearTex(t);
     this.clearTex(this.F); this.active = null; this.queue.length = 0;
+    this.markDirty([0, 0, this.W, this.H]);
     this.compose();
   }
 
@@ -1040,6 +1178,7 @@ export class Sim {
     this.bind('uComp', opts.comp || this.comp); this.bind('uLit', this.litTex);
     this.f1('uPaperN', this.paperN); this.f1('uLitAmt', this.litAmt);
     const P = this.pattern; this.i1('uPat', P.type); this.f1('uPatSp', P.sp); gl.uniform3fv(u.uPatCol, P.col); gl.uniform3fv(u.uPatMargin, P.margin);
+    this.i1('uInf', this.infinite && !opts.exportFbo ? 1 : 0); gl.uniform2f(u.uOrigin, this.origin[0], this.origin[1]); gl.uniform3fv(u.uPaperLin, this.paperCol);
     gl.uniformMatrix3fv(u.uInv, false, view.inv);
     gl.uniform2f(u.uSheet, this.W, this.H); gl.uniform2f(u.uCanvas, canvasW, canvasH);
     this.f1('uDpr', dpr); this.f1('uZoom', view.zoom * dpr);
@@ -1132,7 +1271,7 @@ export class Sim {
   /** Dried painting, every layer: {layers: [{name, visible, opacity, K, S}], active}. */
   async readAll() {
     const layers = [];
-    for (const L of this.layers) { const { K, S } = await this.readDried(L); layers.push({ name: L.name, visible: L.visible, opacity: L.opacity, K, S }); }
+    for (const L of this.layers) { const { K, S } = await this.readDried(L); layers.push({ uid: L.uid, name: L.name, visible: L.visible, opacity: L.opacity, K, S }); }
     return { layers, active: this.layers.indexOf(this.layer) };
   }
   /** Replace all layers with saved ones (half-float arrays from readDried). Clears history. */
@@ -1144,15 +1283,16 @@ export class Sim {
     for (const L of this.layers) this.freeLayer(L);
     this.layers = []; this.layer = null; this.s.DK = this.s.DS = null; this.nLayers = 0;
     for (const d of data.layers) {
-      const L = this.addLayer(this.layers.length, d.name); L.visible = d.visible ?? true; L.opacity = d.opacity ?? 1;
+      const L = this.addLayer(this.layers.length, d.name); L.visible = d.visible ?? true; L.opacity = d.opacity ?? 1; if (d.uid) L.uid = d.uid;
       for (const [t, arr] of [[L.K, d.K], [L.S, d.S]]) {
+        if (!arr) continue; // an infinite page's layers come in tiles
         gl.bindTexture(gl.TEXTURE_2D, t); gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
         gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, this.W, this.H, gl.RGBA, gl.HALF_FLOAT, arr);
       }
     }
     if (!this.layers.length) this.addLayer();
     this.setLayer(this.layers[Math.min(this.layers.length - 1, Math.max(0, data.active ?? this.layers.length - 1))]);
-    this.undo = []; this.redo = []; this.rec = null; this.initUndoFree();
+    this.undo = []; this.redo = []; this.rec = null; this.initUndoFree(); this.dirty = new Map();
     this.compose();
   }
   initUndoFree() { const n = this.atlas.cols * this.atlas.rows; this.atlas.free = Array.from({ length: n }, (_, i) => n - 1 - i); }
@@ -1165,7 +1305,7 @@ export class Sim {
     for (const r of this.undo) r.op?.free?.(false);
     for (const r of this.redo) r.op?.free?.(true);
     for (const k in this.atlas.tex) gl.deleteTexture(this.atlas.tex[k]);
-    for (const t of [this.F, this.Fn, this.paperTex, this.litTex, this.probeTex, this.comp, this.comp2]) if (t) gl.deleteTexture(t);
+    for (const t of [this.F, this.Fn, this.paperTex, this.litTex, this.probeTex, this.comp, this.comp2, this.shiftTmp]) if (t) gl.deleteTexture(t);
     for (const f of this.fbos.values()) gl.deleteFramebuffer(f);
     for (const k in this.prog) gl.deleteProgram(this.prog[k].p);
   }

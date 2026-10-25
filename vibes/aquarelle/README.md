@@ -24,14 +24,15 @@ node smoke.js               # headless Chromium (SwiftShader), real pen/touch/mo
 
 The interface is the first one's floating toolbars, with everything added since.
 
-- **Left:** one button per brush (Round, Wash, Flat, Rigger, Dry brush, Splatter, Clear
-  water, Lift), then Smudge, Eraser and the eyedropper. Tap the selected brush again for
+- **Left:** one button per brush (Round, Wash, Flat, Rigger, Dry brush, Splatter, Soft
+  pastel, Pastel pencil, Clear water, Lift), then Smudge, Eraser and the eyedropper. Tap a
+  button (or hover it) to see its name; Preferences → Tool names turns that off. Tap the selected brush again for
   its settings (size, water, paint, pressure → size / paint, spacing, reset); tap Smudge
   or Eraser again to choose the brush shape they use.
-- **Beside the brushes:** Size, Water and Paint sliders with their values on top (on a
-  phone or a 7" e-reader they sit on the right). They drag relative to where you touch,
-  finer when you drag sideways. For Lift, Smudge and Eraser the Paint slider is their
-  strength.
+- **Size / water / paint:** one slim column of three values over one slider (top right on
+  a phone or a 7" e-reader). Tap a value to put it on the slider, or drag up and down on
+  the value itself. For Lift, Smudge and Eraser paint is their strength; pastel has no water.
+- **Zoom:** + / − with a slider between them (bottom right); the % resets to fit.
 - **Bottom:** the watercolour palette. The big well shows what is on the brush, from a thin
   wash to a full load; tap it, or the rainbow well at the end, for the colour wheel.
   Tap a pigment to load it; + Mix (or long-press / Shift-click a well) adds pigments to the
@@ -81,6 +82,19 @@ stylus's eraser end erases in either mode. Gallery → + → Notebook page makes
 page (the B7 Pro's own resolution) with lined or grid ruling; any canvas can take lined,
 grid or dotted ruling under Actions → Canvas → Page ruling. Ink and watercolour share
 layers and undo, so notes can be painted over and the other way round.
+
+**Pastel.** Soft pastel and Pastel pencil are dry, chalky and opaque: a light touch catches
+only the peaks of the paper's grain, pressing harder fills the valleys, and a few passes
+cover dark paint underneath (light over dark, which watercolour cannot do). Tilting a
+stylus broadens the stroke; Smudge blends it. They use the loaded palette colour.
+
+**Pages.** ‹ › at the top turn pages and + adds a page after this one (N on a keyboard);
+the page number opens add / move / delete. **Infinite page:** Gallery → + → Infinite page
+(lined) or Infinite canvas, or Canvas → Add an infinite page in a notebook. It has no edges:
+pan as far as you like. Only a window a little larger than the screen is in the simulation;
+as you pan it moves, and paper you leave is kept in 128 px tiles (only tiles with something
+on them, gzipped in IndexedDB), so a page costs what is drawn on it. Undo reaches back as far
+as the window you are in.
 
 **Choosing colours.** In paint mode, tap a pigment in the palette along the bottom; the
 big well or the rainbow well opens the colour wheel. In pen mode, tap a swatch in the pen

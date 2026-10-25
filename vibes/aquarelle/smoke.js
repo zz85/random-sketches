@@ -30,8 +30,10 @@ function cdp(wsUrl) {
 
 const server = http.createServer((req, res) => {
   const u = decodeURIComponent(new URL(req.url, 'http://x').pathname);
-  const f = path.join(DIR, u === '/' ? 'index.html' : u);
-  if (!f.startsWith(DIR) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { res.writeHead(404); return res.end(); }
+  // the app is served at /, and the shared ../pwa/ of the other experiments at /pwa/
+  const f = u.startsWith('/pwa/') ? path.join(DIR, '..', u) : path.join(DIR, u === '/' ? 'index.html' : u);
+  const ok = f.startsWith(DIR) || f.startsWith(path.join(DIR, '..', 'pwa'));
+  if (!ok || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { res.writeHead(404); return res.end(); }
   res.writeHead(200, { 'content-type': MIME[path.extname(f)] || 'application/octet-stream', 'cache-control': 'no-store' });
   fs.createReadStream(f).pipe(res);
 }).listen(PORT, '127.0.0.1');
@@ -396,8 +398,9 @@ try {
   const p1 = await band(3);
   check(p1.mean < blank1.mean - 3, 'writes on page 1');
   check(await ev(`getComputedStyle(document.querySelector('#pages')).display !== 'none' && document.querySelector('#pgNum').textContent.trim() === '1 / 1'`), 'page control shows 1 / 1 in pen mode');
-  await sel('#pgNext');
-  check(await waitFor('__aq.doc.pages.length === 2 && __aq.doc.page === 1'), '› on the last page adds a page');
+  check(await ev(`document.querySelector('#pgNext').disabled`), '› is off on the last page');
+  await sel('#pgNew');
+  check(await waitFor('__aq.doc.pages.length === 2 && __aq.doc.page === 1'), 'the + in the page bar adds a page');
   check(Math.abs((await band(3)).mean - blank1.mean) < 1, 'the new page is blank');
   check(await ev(`document.querySelector('#pgNum').textContent.trim() === '2 / 2'`), 'page control shows 2 / 2');
   await pen(line(200, lsp * 6, 900, lsp * 6, 30), { pressure: () => 0.7 });
@@ -463,6 +466,126 @@ try {
   await c.send('Emulation.setTouchEmulationEnabled', { enabled: false });
   await c.send('Emulation.setDeviceMetricsOverride', { width: VW, height: VH, deviceScaleFactor: 1, mobile: false });
   check(errors().length === 0, 'no console errors (notebook)', errors().join(' | '));
+
+  // 16b. compact sliders, zoom slider, tool labels, pastel, infinite page (B7 Pro size)
+  await c.send('Emulation.setDeviceMetricsOverride', { width: 632, height: 840, deviceScaleFactor: 2, mobile: true });
+  check(await load('fresh=1&nosw=1&nohelp=1&nosave=1&eink=1'), 'loads for the new controls');
+  await ev(`__aq.createPainting(1264, 1680).then(() => { __aq.useBrush('round'); return true; })`); await sleep(300);
+  const slw = await ev(`document.querySelector('#sliders').getBoundingClientRect().width`);
+  check(slw <= 52, 'size / water / paint fit one slim column', slw.toFixed(0) + ' px wide');
+  const chipVals = await ev(`[...document.querySelectorAll('#sliders .chip:not([hidden]) b')].map((b) => b.textContent)`);
+  check(chipVals.length === 3 && chipVals.every((v) => v), 'chips show all three values', chipVals.join(' / '));
+  // tap the water chip: the slider moves water
+  const wch = await ev(`(() => { const r = document.querySelector('#sliders .chip[data-k="water"]').getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
+  for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x: wch[0], y: wch[1], button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1 });
+  await sleep(100);
+  const w0 = await ev('__aq.S.brush.round.water'), size0 = await ev('__aq.S.brush.round.size');
+  const trP = await ev(`(() => { const r = document.querySelector('#slTrack .track').getBoundingClientRect(); return [r.left + r.width / 2, r.top, r.bottom]; })()`);
+  await c.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: trP[0], y: trP[1] + 8, button: 'left', buttons: 1, clickCount: 1 });
+  await c.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: trP[0], y: trP[1] + 8, button: 'left', buttons: 0, clickCount: 1 });
+  await sleep(100);
+  check(await ev(`document.querySelector('#sliders').dataset.k === 'water'`) && (await ev('__aq.S.brush.round.water')) > Math.max(w0, 0.9) && (await ev('__aq.S.brush.round.size')) === size0, 'tapping a chip puts its value on the slider', `water ${w0.toFixed(2)} -> ${(await ev('__aq.S.brush.round.water')).toFixed(2)}`);
+  // drag up on the size chip changes size directly
+  const sch = await ev(`(() => { const r = document.querySelector('#sliders .chip[data-k="size"]').getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
+  await c.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: sch[0], y: sch[1], button: 'left', buttons: 1, clickCount: 1 });
+  for (let i = 1; i <= 8; i++) await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: sch[0], y: sch[1] - i * 6, button: 'left', buttons: 1 });
+  await c.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: sch[0], y: sch[1] - 48, button: 'left', buttons: 0, clickCount: 1 });
+  check((await ev('__aq.S.brush.round.size')) > size0 * 1.2, 'dragging on the size chip changes the size', `${size0.toFixed(1)} -> ${(await ev('__aq.S.brush.round.size')).toFixed(1)}`);
+  // zoom slider
+  await ev('__aq.fit(1); true'); await sleep(150);
+  const zt = await ev(`(() => { const r = document.querySelector('#zoomTrack .track').getBoundingClientRect(); return [r.left + r.width / 2, r.top, r.bottom]; })()`);
+  const zr0 = await ev('__aq.view.z / __aq.baseZ()');
+  await c.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: zt[0], y: zt[1] + (zt[2] - zt[1]) * 0.15, button: 'left', buttons: 1, clickCount: 1 });
+  await c.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: zt[0], y: zt[1] + (zt[2] - zt[1]) * 0.15, button: 'left', buttons: 0, clickCount: 1 });
+  await sleep(150);
+  const zr1 = await ev('__aq.view.z / __aq.baseZ()');
+  check(zr1 > zr0 * 2, 'zoom slider zooms in', `${(zr0 * 100).toFixed(0)}% -> ${(zr1 * 100).toFixed(0)}%`);
+  check(await ev(`document.querySelector('#zoomPct').textContent`) === Math.round(zr1 * 100) + '%', 'and the % follows it');
+  await ev('__aq.fit(1); true');
+  // tapping a tool shows its name
+  await c.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+  const wb = await ev(`(() => { const r = document.querySelector('#tools [data-brush="wash"]').getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
+  await c.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: wb[0], y: wb[1], id: 40 }] });
+  await c.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await sleep(150);
+  const labP = await ev(`(() => { const l = document.querySelector('#tipLabel'); return l.style.display === 'block' ? l.textContent : ''; })()`);
+  check(/Wash/.test(labP), 'tapping a tool shows its name', labP);
+  await shot('eink_label');
+  await c.send('Emulation.setTouchEmulationEnabled', { enabled: false });
+  await sleep(1700);
+  check(await ev(`document.querySelector('#tipLabel').style.display === 'none'`), 'and the name goes away by itself');
+
+  // pastel: catches the paper's grain lightly, fills it when pressed, covers a dark wash
+  await ev(`(() => { __aq.useBrush('round'); __aq.choosePigment('payne'); Object.assign(__aq.S.brush.round, { size: 40, water: 0.6, paint: 0.9 }); return true; })()`);
+  // a dark band of dried pigment (ink stamps: a watercolour stroke runs out of paint along the way)
+  await ev(`(() => { const st = []; for (let x = 200; x <= 1000; x += 6) st.push({ x, y: 300, r: 26, a: 1, ex: 1, ey: 0, el: 1 }); __aq.sim.ink(st, { mode: 5, bK: [2.5, 2.2, 1.8, 0], bS: [0.05, 0.05, 0.05, 0.3], cover: 1 }); __aq.sim.dryNow(); return true; })()`);
+  const darkBg = await stat(300, 290, 900, 310);
+  await ev(`(() => { __aq.useBrush('pastel'); __aq.choosePigment('hansa'); Object.assign(__aq.S.brush.pastel, { size: 30, paint: 0.6 }); return true; })()`);
+  check(await ev(`!document.querySelector('#sliders .chip[data-k="water"]').offsetParent || document.querySelector('#sliders .chip[data-k="water"]').hidden`), 'pastel has no water chip');
+  for (let k = 0; k < 2; k++) await pen(line(200, 300, 1000, 300, 40), { pressure: () => 0.95 });
+  const coveredP = await stat(300, 290, 900, 310);
+  check(coveredP.mean > darkBg.mean + 40, 'opaque pastel covers a dark wash', `${darkBg.mean.toFixed(0)} -> ${coveredP.mean.toFixed(0)}`);
+  const pv = (y) => ev(`(() => { const px = __aq.sim.exportPixels(); const W = __aq.sim.W; const v = []; for (let x = 320; x < 880; x += 2) { const i = (${y} * W + x) * 4; v.push((px[i] + px[i + 1] + px[i + 2]) / 3); } const m = v.reduce((a, b) => a + b) / v.length; return { m, marked: v.filter((q) => q < 245).length / v.length }; })()`);
+  await pen(line(200, 600, 1000, 600, 40), { pressure: () => 0.2 });
+  await pen(line(200, 800, 1000, 800, 40), { pressure: () => 1 });
+  await pen(line(200, 800, 1000, 800, 40), { pressure: () => 1 });
+  const lightP = await pv(600), heavyP = await pv(800);
+  check(lightP.marked > 0.05 && lightP.marked < 0.85 && heavyP.marked > lightP.marked + 0.1, 'a lightP pastel stroke catches only the grain; pressing fills it', `marked ${(lightP.marked * 100).toFixed(0)}% vs ${(heavyP.marked * 100).toFixed(0)}%`);
+  check(!(await ev('__aq.sim.wet')), 'pastel is dry');
+  await shot('pastel');
+  // smudge drags pastel
+  const sm0P = await stat(560, 820, 640, 900);
+  await ev(`(() => { __aq.setTool('smudge'); Object.assign(__aq.S.tools.smudge, { size: 30, paint: 1 }); return true; })()`);
+  for (let k = 0; k < 3; k++) await pen(line(600, 790, 600, 900, 20), { pressure: () => 1 });
+  const sm1P = await stat(560, 820, 640, 900);
+  check(sm1P.mean < sm0P.mean - 0.5, 'smudge drags pastel', `${sm0P.mean.toFixed(1)} -> ${sm1P.mean.toFixed(1)}`);
+
+  // infinite page: write, pan far away, write, come backP; it saves and reopens
+  const scr2 = async (x, y) => ev(`(() => { const c = document.querySelector('#gl'), gl = __aq.sim.gl; __aq.render(); const px = new Uint8Array(4 * 81); const b = c.getBoundingClientRect(), d = c.width / b.width; gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.readPixels(Math.round((${x} - b.left) * d) - 4, Math.round(c.height - (${y} - b.top) * d) - 4, 9, 9, gl.RGBA, gl.UNSIGNED_BYTE, px); let m = 255 * 3; for (let i = 0; i < 81; i++) m = Math.min(m, px[i * 4] + px[i * 4 + 1] + px[i * 4 + 2]); return m / 3; })()`);
+  const dragBy = async (dx, dy, steps = 10) => { // middle-button drag = pan
+    const x0 = 300, y0 = 400;
+    await c.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: x0, y: y0, button: 'middle', buttons: 4, clickCount: 1 });
+    for (let i = 1; i <= steps; i++) { await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: x0 + dx * i / steps, y: y0 + dy * i / steps, button: 'middle', buttons: 4 }); await sleep(30); }
+    await c.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: x0 + dx, y: y0 + dy, button: 'middle', buttons: 0, clickCount: 1 });
+    await sleep(120);
+  };
+  check(await load('fresh=1&nosw=1&nohelp=1&eink=1'), 'loads for an infinite page');
+  await ev(`__aq.createPainting(1264, 1680, 'Infinite test', 1, true).then(() => { __aq.setMode('pen'); return true; })`); await sleep(600);
+  check(await ev('__aq.sim.infinite && !!__aq.world'), 'an infinite page opens');
+  // world-space ink at a screen point: write a short line there
+  const inkAt = async (cx, cy) => { const pts = []; for (let i = 0; i < 12; i++) { const p = await ev(`(() => { const p = __aq.toSheet(${cx - 30 + i * 5}, ${cy}); return [p.x, p.y]; })()`); pts.push(p); } await pen(pts, { pressure: () => 0.8 }); };
+  await ev(`(() => { __aq.setNib('fineliner'); __aq.S.pen.size.fineliner = 4; return true; })()`);
+  await inkAt(320, 300);
+  const worldPt = await ev(`(() => { const p = __aq.toSheet(320, 300); return [p.x + __aq.sim.origin[0], p.y + __aq.sim.origin[1]]; })()`);
+  check((await scr2(320, 300)) < 120, 'writes on the infinite page');
+  const shifts0 = await ev('window.__shifts || 0');
+  for (let k = 0; k < 8; k++) await dragBy(-420, -150); // far to the right and down
+  await sleep(300);
+  const travelled = await ev(`(() => { const p = __aq.toSheet(320, 300); return [p.x + __aq.sim.origin[0], p.y + __aq.sim.origin[1]]; })()`);
+  const distP = Math.hypot(travelled[0] - worldPt[0], travelled[1] - worldPt[1]);
+  check(distP > 4000 && (await ev('window.__shifts || 0')) > shifts0, 'pans far beyond the first window (the window moves)', `${distP.toFixed(0)} px away, ${(await ev('window.__shifts || 0')) - shifts0} moves`);
+  check((await scr2(320, 300)) > 200, 'fresh paper far away');
+  await inkAt(320, 300);
+  const farPt = travelled;
+  check((await scr2(320, 300)) < 120, 'writes far away too');
+  for (let k = 0; k < 8; k++) await dragBy(420, 150);
+  await sleep(500);
+  for (let i = 0; i < 20 && Math.abs((await ev('__aq.sim.origin[0]')) - 0) > 4096; i++) await sleep(100);
+  const backP = await ev(`(() => { const q = __aq.toScreen(${worldPt[0]} - __aq.sim.origin[0], ${worldPt[1]} - __aq.sim.origin[1]); return [q.x, q.y]; })()`);
+  check(Math.abs(backP[0] - 320) < 40 && Math.abs(backP[1] - 300) < 40, 'pans backP to the start', backP.map((v) => v.toFixed(0)).join(','));
+  check((await scr2(backP[0], backP[1])) < 120, 'the first writing came backP from its tiles');
+  await shot('infinite');
+  await ev('__aq.save(true)');
+  check(await load('nosw=1&nohelp=1&eink=1'), 'reload the infinite page'); await sleep(800);
+  check(await ev('__aq.sim.infinite'), 'reopens as an infinite page');
+  const back2 = await ev(`(() => { const q = __aq.toScreen(${worldPt[0]} - __aq.sim.origin[0], ${worldPt[1]} - __aq.sim.origin[1]); return [q.x, q.y]; })()`);
+  check((await scr2(back2[0], back2[1])) < 120, 'first writing restored after reload', back2.map((v) => v.toFixed(0)).join(','));
+  for (let k = 0; k < 8; k++) await dragBy(-420, -150);
+  await sleep(500);
+  const far2 = await ev(`(() => { const q = __aq.toScreen(${farPt[0]} - __aq.sim.origin[0], ${farPt[1]} - __aq.sim.origin[1]); return [q.x, q.y]; })()`);
+  check(far2[0] > 0 && far2[0] < 632 && (await scr2(far2[0], far2[1])) < 120, 'far writing restored too', far2.map((v) => v.toFixed(0)).join(','));
+  check(errors().length === 0, 'no console errors (new controls, pastel, infinite page)', errors().join(' | '));
+  await c.send('Emulation.setDeviceMetricsOverride', { width: VW, height: VH, deviceScaleFactor: 1, mobile: false });
 
   // 17. pen-to-paint alignment, full screen and resizing, on both interfaces (this one and v1/)
   await c.send('Emulation.setDeviceMetricsOverride', { width: 632, height: 840, deviceScaleFactor: 2, mobile: true });
