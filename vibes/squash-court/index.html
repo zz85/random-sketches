@@ -24,6 +24,15 @@
   .heat2 { aspect-ratio: 6.4 / 9.75; }
   pre.coach { margin: 0 0 6px; font: 11px/1.45 ui-monospace, monospace; white-space: pre-wrap; color: #ddd; }
   .coachMaps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .respCtl { display: flex; gap: 6px; margin-bottom: 6px; }
+  .respTitle { text-align: center; font: 600 13px system-ui; margin: 2px 0; }
+  .respQ { text-align: center; font: 12px system-ui; margin: 0 0 6px; }
+  .respQ i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin: 0 4px 0 10px; vertical-align: -1px; }
+  .respWrap { position: relative; max-width: 300px; margin: 0 auto; }
+  .respTip { position: absolute; z-index: 2; background: #fff; color: #222; border-radius: 8px; box-shadow: 0 3px 14px rgba(0,0,0,.45); padding: 8px 12px; font: 12px/1.6 system-ui; min-width: 140px; pointer-events: none; }
+  .respTip h4 { margin: 0 0 4px; padding-bottom: 3px; border-bottom: 1px solid #ddd; text-align: center; font-size: 13px; }
+  .respTip div { display: flex; justify-content: space-between; gap: 14px; } .respTip b { color: #1877f2; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   .coachMaps h3 { font: 600 11px system-ui; margin: 0 0 3px; color: #bbb; }
   #feed { font: 13px system-ui; margin: 0; padding: 0; list-style: none; max-height: 240px; overflow: auto; display: flex; flex-direction: column; gap: 4px; }
   #feed li { padding: 4px 6px; border-left: 3px solid #555; background: #1e2128; border-radius: 3px; }
@@ -99,6 +108,13 @@
       <div><h3 title="Where each volley was taken (filled) and where the opponent was at that moment (ring), joined">Volleys, and the opponent then</h3><canvas id="coachV" class="panel heat2" width="200" height="305"></canvas></div>
       <div><h3 title="The ball's first floor bounce after the front wall, one per shot. ● drive, ▲ drop / kill, ■ lob, ◆ boast; hollow: carried on from the flight, not seen">First bounces</h3><canvas id="coachB" class="panel heat2" width="200" height="305"></canvas></div>
     </div></figure>
+  <figure class="wide"><h2>Response patterns</h2>
+    <div class="respCtl"><select id="respWho" aria-label="Whose shots"><option value="1">Player 1</option><option value="2">Player 2</option></select>
+      <select id="respType" aria-label="Which of their shots"><option value="all">All shots</option><option value="drive">Drives</option><option value="drop">Drops</option><option value="kill">Kills</option><option value="lob">Lobs</option><option value="boast">Boasts</option></select></div>
+    <h3 id="respTitle" class="respTitle">Response</h3>
+    <p id="respQ" class="respQ"></p>
+    <div class="respWrap"><canvas id="resp" class="panel heat2" width="300" height="457" tabindex="0" aria-describedby="respList"></canvas><div id="respTip" class="respTip" hidden></div></div>
+    <p id="respList" class="sr"></p></figure>
   <figure><h2 id="heat1t">Player 1 heatmap</h2><canvas id="heat1" class="panel heat2" width="256" height="390"></canvas></figure>
   <figure><h2 id="heat2t">Player 2 heatmap</h2><canvas id="heat2" class="panel heat2" width="256" height="390"></canvas></figure>
   <figure class="wide"><h2>3D (drag to orbit, wheel to zoom) <label class="chk3"><input id="frustum" type="checkbox" checked> camera view</label></h2><canvas id="view3d" class="panel" width="480" height="300"></canvas>

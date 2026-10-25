@@ -10,7 +10,7 @@ import { predictPath } from './ball.js';
 import { onsets as findOnsets, audioOffset, decodeAudio } from './audio.js';
 import { Commentary, describe, movement, mainView } from './commentary.js';
 import { TControl, tLabel, T_POINT } from './tcontrol.js';
-import { coachStats, posAtFromLogs } from './coaching.js';
+import { coachStats, posAtFromLogs, responsePatterns, ZONE_X, ZONE_Y } from './coaching.js';
 
 const $ = (id) => document.getElementById(id);
 const stage = $('stage'), sctx = stage.getContext('2d');
@@ -371,7 +371,7 @@ function seg3(ctx, cam, a, b, map, n = 24) {
 }
 function draw() {
   sctx.setTransform(1, 0, 0, 1, 0, 0); sctx.fillStyle = '#111'; sctx.fillRect(0, 0, stage.width, stage.height);
-  if (!S.src) { if (S.match) { drawPlan(); drawWall(); drawSpeed(); drawPlayerHeat($('heat1'), 1); drawPlayerHeat($('heat2'), 2); drawCoach(); readout(); } return; }
+  if (!S.src) { if (S.match) { drawPlan(); drawWall(); drawSpeed(); drawPlayerHeat($('heat1'), 1); drawPlayerHeat($('heat2'), 2); drawCoach(); drawResp(); readout(); } return; }
   sctx.drawImage(S.src, disp.ox, disp.oy, S.srcW * disp.k, S.srcH * disp.k);
   const map = (u) => [disp.ox + u[0] * disp.k, disp.oy + u[1] * disp.k];
   const dpr = devicePixelRatio || 1;
@@ -388,7 +388,7 @@ function draw() {
     sctx.fillStyle = '#ff2d7a'; sctx.beginPath(); sctx.arc(x, y, 5 * dpr, 0, 7); sctx.fill();
     sctx.font = `${12 * dpr}px system-ui`; sctx.fillStyle = '#fff'; sctx.fillText(fmtX(p), x + 8 * dpr, y - 6 * dpr);
   }
-  drawPlan(); drawWall(); draw3d(); drawSpeed(); drawPlayerHeat($('heat1'), 1); drawPlayerHeat($('heat2'), 2); drawCoach(); readout();
+  drawPlan(); drawWall(); draw3d(); drawSpeed(); drawPlayerHeat($('heat1'), 1); drawPlayerHeat($('heat2'), 2); drawCoach(); drawResp(); readout();
 }
 // players: a ring on the floor round the feet (dashed when the feet are hidden behind a graphic and
 // placed from the head), the position in metres; the ball: its fitted flights and the live blob
@@ -561,9 +561,50 @@ function drawPlayerHeat(cnv, id) {
   g.strokeRect(0.5, 0.5, cnv.width - 1, cnv.height - 1);
   const p = S.players.find((q) => q.id === id); if (p) { g.fillStyle = '#fff'; g.beginPath(); g.arc((CW - p.X[0]) * s, p.X[1] * s, 4, 0, 7); g.fill(); }
 }
-function blurHeat(a, nx, ny) { let g = Float32Array.from(a); for (let p = 0; p < 2; p++) { const o = new Float32Array(g.length); for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) { let v = 0, w = 0; for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) { const X = x + i, Y = y + j; if (X < 0 || Y < 0 || X >= nx || Y >= ny) continue; const k = (i ? 0.5 : 1) * (j ? 0.5 : 1); v += g[Y * nx + X] * k; w += k; } o[y * nx + x] = v / w; } g = o; } return g; }
-// the most recent mark of a list, ringed in green with its time
-function ringLast(ctx, m, px, py) {
+// ---------- response patterns ----------
+// Where the opponent took the ball in reply to one player's shots, over 12 zones: the share per
+// zone (the busiest shaded), the reply shots in a zone on hover / tap / arrow keys, and the replies'
+// quality (coaching.js replyQuality).
+const QCOL = { high: '#5fe36a', medium: '#ffbf1f', low: '#f0584f' };
+let respZones = null, respSel = null;
+function drawResp() {
+  const cnv = $('resp'), g = cnv.getContext('2d'), w = cnv.width, h = cnv.height, s = w / CW;
+  const who = +$('respWho').value, type = $('respType').value;
+  for (const i of [1, 2]) { const o = $('respWho').options[i - 1]; if (o.textContent !== nameOf(i)) o.textContent = nameOf(i); }
+  const R = S.coach ? responsePatterns(S.coach.shots, who, type) : null;
+  $('respTitle').textContent = `${nameOf(3 - who)} response`;
+  $('respQ').innerHTML = R && R.n ? ['high', 'medium', 'low'].map((k) => `<i style="background:${QCOL[k]}"></i>${k[0].toUpperCase() + k.slice(1)} <b>${Math.round(R.share[k] * 100)}%</b>`).join('') + ` <span style="color:#999">· ${R.n} replies to ${R.of} shots</span>` : '<span style="color:#999">No replies with both hitters known yet.</span>';
+  // zone rectangles in canvas px (column 0 is the left wall as the camera sees it: x = 6.4)
+  const xs = [0, (CW - ZONE_X[1]) * s, (CW - ZONE_X[0]) * s, w], ys = [0, ...ZONE_Y.map((y) => y * s), h];
+  respZones = []; for (let r = 0; r < 4; r++) for (let c = 0; c < 3; c++) respZones.push({ zone: r * 3 + c + 1, x0: xs[c], x1: xs[c + 1], y0: ys[r], y1: ys[r + 1], Z: R ? R.zones[r * 3 + c] : null });
+  g.fillStyle = '#fafafa'; g.fillRect(0, 0, w, h);
+  const mx = R ? Math.max(...R.zones.map((z) => z.n)) : 0;
+  for (const z of respZones) {
+    const v = z.Z?.n ?? 0;
+    if (v && mx) { g.fillStyle = `rgba(245,150,60,${0.15 + 0.6 * (v / mx)})`; g.fillRect(z.x0, z.y0, z.x1 - z.x0, z.y1 - z.y0); }
+    g.strokeStyle = '#bbb'; g.setLineDash([3, 3]); g.lineWidth = 1; g.strokeRect(z.x0 + 0.5, z.y0 + 0.5, z.x1 - z.x0 - 1, z.y1 - z.y0 - 1); g.setLineDash([]);
+    if (respSel === z.zone) { g.strokeStyle = '#1877f2'; g.lineWidth = 3; g.strokeRect(z.x0 + 1.5, z.y0 + 1.5, z.x1 - z.x0 - 3, z.y1 - z.y0 - 3); }
+    g.fillStyle = '#333'; g.font = '9px system-ui'; g.fillText(String(z.zone), z.x0 + 4, z.y0 + 11);
+    g.fillStyle = v ? '#222' : '#aaa'; g.font = `600 ${Math.round(w / 13)}px system-ui`; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(v ? `${Math.round(z.Z.share * 100)}%` : '0', (z.x0 + z.x1) / 2, (z.y0 + z.y1) / 2); g.textAlign = 'left'; g.textBaseline = 'alphabetic';
+  }
+  // the court lines faintly underneath the grid
+  g.strokeStyle = 'rgba(200,60,50,0.9)'; g.lineWidth = 2; g.strokeRect(1, 1, w - 2, h - 2);
+  g.strokeStyle = 'rgba(200,60,50,0.55)'; g.lineWidth = 1.5;
+  for (const l of MODEL.lines) if (l.kind === 'floor') { g.beginPath(); g.moveTo((CW - l.a[0]) * s, l.a[1] * s); g.lineTo((CW - l.b[0]) * s, l.b[1] * s); g.stroke(); }
+  $('respList').textContent = R && R.n ? R.zones.filter((z) => z.n).map((z) => `Zone ${z.zone}: ${Math.round(z.share * 100)}%, ${Object.entries(z.shots).map(([k, n]) => `${k} ${n}`).join(', ')}`).join('. ') : 'No replies yet.';
+  showRespTip();
+}
+function showRespTip() {
+  const tip = $('respTip'), z = respZones?.find((q) => q.zone === respSel);
+  if (!z || !z.Z?.n) { tip.hidden = true; return; }
+  const cnv = $('resp'), k = cnv.clientWidth / cnv.width;
+  tip.innerHTML = `<h4>Zone ${z.zone}</h4>` + Object.entries(z.Z.shots).map(([l, n]) => `<div><span>${l}</span><b>${n}</b></div>`).join('');
+  tip.hidden = false;
+  const left = Math.min(Math.max(0, z.x0 * k), cnv.clientWidth - tip.offsetWidth), top = z.y1 * k + 4 + tip.offsetHeight > cnv.clientHeight ? Math.max(0, z.y0 * k - tip.offsetHeight - 4) : z.y1 * k + 4;
+  tip.style.left = `${left}px`; tip.style.top = `${top}px`;
+}
+function respAt(e) { const c = $('resp'), r = c.getBoundingClientRect(), x = (e.clientX - r.left) * c.width / r.width, y = (e.clientY - r.top) * c.height / r.height; return respZones?.find((z) => x >= z.x0 && x < z.x1 && y >= z.y0 && y < z.y1)?.zone ?? null; }
 // ---------- coaching panel (coaching.js) ----------
 // Three floor plans, both players or one (the selector): where each stood when the other struck
 // the ball, with the 1 m ring round the T; volleys (filled, the hitter's colour) joined to where the
@@ -610,6 +651,9 @@ function drawCoach() {
   }
   $('coachText').textContent = L.join('\n');
 }
+function blurHeat(a, nx, ny) { let g = Float32Array.from(a); for (let p = 0; p < 2; p++) { const o = new Float32Array(g.length); for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) { let v = 0, w = 0; for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) { const X = x + i, Y = y + j; if (X < 0 || Y < 0 || X >= nx || Y >= ny) continue; const k = (i ? 0.5 : 1) * (j ? 0.5 : 1); v += g[Y * nx + X] * k; w += k; } o[y * nx + x] = v / w; } g = o; } return g; }
+// the most recent mark of a list, ringed in green with its time
+function ringLast(ctx, m, px, py) {
   ctx.strokeStyle = '#39ff6a'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(px, py, 7, 0, 7); ctx.stroke();
   ctx.fillStyle = '#39ff6a'; ctx.beginPath(); ctx.arc(px, py, 3.5, 0, 7); ctx.fill();
   ctx.font = '10px system-ui'; ctx.fillText(clock(m.t), Math.min(ctx.canvas.width - 40, px + 9), Math.max(10, py - 6));
@@ -775,6 +819,11 @@ for (const i of [1, 2]) $(`name${i}`).addEventListener('input', (e) => { S.names
 $('swapNames').onclick = () => setNames({ 1: S.names[2], 2: S.names[1] }, 'swapped');
 $('speak').onchange = (e) => { S.speak = e.target.checked; if (!S.speak && 'speechSynthesis' in window) speechSynthesis.cancel(); };
 $('coachWho').onchange = () => draw();
+$('respWho').onchange = $('respType').onchange = () => draw();
+$('resp').addEventListener('pointermove', (e) => { const z = respAt(e); if (z !== respSel) { respSel = z; drawResp(); } });
+$('resp').addEventListener('pointerleave', () => { respSel = null; drawResp(); });
+$('resp').addEventListener('pointerdown', (e) => { respSel = respAt(e); drawResp(); });
+$('resp').addEventListener('keydown', (e) => { const d = { ArrowRight: 1, ArrowLeft: -1, ArrowDown: 3, ArrowUp: -3 }[e.key]; if (!d) return; e.preventDefault(); respSel = Math.min(12, Math.max(1, (respSel ?? 0) + d)); drawResp(); });
 { // drag the side panel's edge to resize it (kept across reloads)
   const grip = $('grip'), set = (w) => { w = Math.max(300, Math.min(innerWidth - 320, w)); document.body.style.setProperty('--side', `${w}px`); localStorage.setItem('squashSide', w); };
   const saved = +localStorage.getItem('squashSide'); if (saved) set(saved);

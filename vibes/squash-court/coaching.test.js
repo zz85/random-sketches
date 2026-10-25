@@ -56,3 +56,30 @@ describe('coaching', () => {
     expect(C.players[1].firstBounces.zones.front).toBe(1);
   });
 });
+
+import { zoneOf, shotLabel, replyQuality, responsePatterns } from './coaching.js';
+describe('response patterns', () => {
+  test('zones: 1 front left (as the camera sees it), 12 back right', () => {
+    expect(zoneOf([6, 0.5])).toBe(1); expect(zoneOf([3.2, 0.5])).toBe(2); expect(zoneOf([0.5, 0.5])).toBe(3);
+    expect(zoneOf([6, 3])).toBe(4); expect(zoneOf([1, 6])).toBe(9); expect(zoneOf([5.5, 9])).toBe(10); expect(zoneOf([0.3, 9.5])).toBe(12);
+  });
+  test('labels and reply quality', () => {
+    expect(shotLabel({ volley: true, kind: { type: 'drive', direction: 'crosscourt' } })).toBe('Volley Cross Drive');
+    expect(shotLabel({ volley: false, kind: { type: 'boast' } })).toBe('Boast');
+    expect(replyQuality({ volley: true, kind: { type: 'drive' }, hit: { X: [5.5, 9] } })).toBe('high');
+    expect(replyQuality({ volley: false, kind: { type: 'drop' }, hit: { X: [3, 4] } })).toBe('high');
+    expect(replyQuality({ volley: false, kind: { type: 'drive' }, hit: { X: [5.5, 9] } })).toBe('low');
+    expect(replyQuality({ volley: false, kind: { type: 'drive' }, hit: { X: [3.2, 8.5] } })).toBe('medium');
+  });
+  test('replies counted per zone, by the striker\'s shot type, within a rally only', () => {
+    const r = (t, rally, hitter, type, X, volley = false) => ({ t, rally, hitter, kind: { type }, hit: X ? { X } : null, volley });
+    const rows = [r(0, 0, 1, 'drive', [1, 9]), r(1, 0, 2, 'drive', [5.5, 9]), r(2, 0, 1, 'drop', [3, 3]), r(3, 0, 2, 'drop', [5.8, 1], false),
+      r(4, 0, 1, 'drive', [1, 8]), r(9, 1, 2, 'lob', [5, 9])]; // the last reply is another rally
+    const all = responsePatterns(rows, 1);
+    expect(all.of).toBe(3); expect(all.n).toBe(2);
+    expect(all.zones[9].n).toBe(1); expect(all.zones[9].shots).toEqual({ Drive: 1 }); expect(all.zones[0].shots).toEqual({ Drop: 1 });
+    expect(all.quality).toEqual({ high: 1, medium: 0, low: 1 }); // a drop from the front (high), a drive from the back corner (low)
+    const drops = responsePatterns(rows, 1, 'drop');
+    expect(drops.n).toBe(1); expect(drops.zones[0].share).toBe(1);
+  });
+});

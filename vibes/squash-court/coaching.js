@@ -60,16 +60,16 @@ function evidence(s, posAt) {
 
 export function assignHitters(shots, posAt, gap) {
   const ev = new Map(shots.map((s) => [s, evidence(s, posAt)])), out = new Map();
-  for (const R of rallies(shots, gap)) {
+  rallies(shots, gap).forEach((R, ri) => {
     // alternation A: the first shot is P1's; B: P2's. Score = votes agreeing minus disagreeing.
     let score = 0, weight = 0;
     R.forEach((s, i) => { const v = ev.get(s).vote; score += i % 2 ? -v : v; weight += Math.abs(v); });
     const sure = weight > 0 ? Math.abs(score) / weight : 0;
     R.forEach((s, i) => {
       const e = ev.get(s), first = score >= 0 ? 1 : 2, id = weight > 0 && sure >= 0.34 ? (i % 2 ? 3 - first : first) : null;
-      out.set(s, { id, sure, own: Math.abs(e.vote) >= 1 ? (e.vote > 0 ? 1 : 2) : null, hit: id ? e.hits[id] ?? null : null, rally: R });
+      out.set(s, { id, sure, own: Math.abs(e.vote) >= 1 ? (e.vote > 0 ? 1 : 2) : null, hit: id ? e.hits[id] ?? null : null, rally: R, ri });
     });
-  }
+  });
   return out;
 }
 
@@ -80,7 +80,7 @@ export function coachStats(shots, posAt, { radius = 1.0, gap = 2.3 } = {}) {
     const h = H.get(s), prev = shots[i - 1], next = shots[i + 1];
     const sameR = (o) => o && H.get(o).rally === h.rally;
     const hit = h.hit, hitT = hit?.t ?? null;
-    const row = { t: s.t, hitter: h.id, sure: +h.sure.toFixed(2), kind: s.kind, hit: hit ? { t: +hit.t.toFixed(3), X: hit.X.map((v) => +v.toFixed(2)) } : null, volley: null, opp: null, oppT: null, first: null };
+    const row = { t: s.t, rally: h.ri, hitter: h.id, sure: +h.sure.toFixed(2), kind: s.kind, hit: hit ? { t: +hit.t.toFixed(3), X: hit.X.map((v) => +v.toFixed(2)) } : null, volley: null, opp: null, oppT: null, first: null };
     // 2. a volley: the previous shot (the opponent's) had not reached the floor when this one was hit
     if (hit && sameR(prev)) {
       const b = bounceOf(prev);
@@ -140,4 +140,49 @@ export function posAtFromLogs(logs, tol = 0.4) {
     const q = [L[lo], L[lo - 1]].filter(Boolean).sort((a, b) => Math.abs(a.t - t) - Math.abs(b.t - t))[0];
     return q && Math.abs(q.t - t) <= tol ? xy(q.X) : null;
   };
+}
+
+// ---------- response patterns ----------
+// The court in 12 zones, as coaches chart it: three columns (the side strips the width of a service
+// box, 1.6 m, and the middle) and four rows (the front 1.6 m, the rest of the front court to the
+// short line, the service boxes, the back). Zone 1 is front left as the main camera sees the court
+// (facing the front wall: the left wall is x = 6.4), 12 is back right.
+export const ZONE_X = [1.6, 4.8], ZONE_Y = [1.6, 5.44, 7.04];
+export function zoneOf(X) {
+  const c = X[0] > ZONE_X[1] ? 0 : X[0] > ZONE_X[0] ? 1 : 2, r = X[1] < ZONE_Y[0] ? 0 : X[1] < ZONE_Y[1] ? 1 : X[1] < ZONE_Y[2] ? 2 : 3;
+  return r * 3 + c + 1;
+}
+const cap = (w) => w.charAt(0).toUpperCase() + w.slice(1);
+// "Volley Cross Drive", "Boast", "Drop"
+export function shotLabel(row) {
+  const k = row.kind ?? {};
+  return [row.volley ? 'Volley' : null, k.direction === 'crosscourt' ? 'Cross' : null, cap(k.type ?? 'shot')].filter(Boolean).join(' ');
+}
+// How good a reply is, from what it is and where it was taken (our own grading, from the shot alone):
+//   high    taken on the volley, or a drop / kill from in front of the back of the service boxes
+//   low     a boast, a lob not on the volley, or any reply from the back corners not on the volley
+//   medium  the rest
+export function replyQuality(row, zone = zoneOf(row.hit.X)) {
+  const t = row.kind?.type;
+  if (row.volley || ((t === 'drop' || t === 'kill') && zone <= 9)) return 'high';
+  if (t === 'boast' || t === 'lob' || zone === 10 || zone === 12) return 'low';
+  return 'medium';
+}
+// Where `striker`'s opponent took the ball in reply to striker's shots (of one type, or 'all'): per
+// zone the share and the reply shots, and the replies' quality. A reply is the next shot of the same
+// rally, by the other player, with its racket hit located.
+export function responsePatterns(rows, striker, type = 'all') {
+  const zones = Array.from({ length: 12 }, (_, i) => ({ zone: i + 1, n: 0, share: 0, shots: {} })), quality = { high: 0, medium: 0, low: 0 };
+  let n = 0, of = 0;
+  for (let i = 0; i + 1 < rows.length; i++) {
+    const a = rows[i], b = rows[i + 1];
+    if (a.hitter !== striker || (type !== 'all' && a.kind?.type !== type)) continue;
+    of++;
+    if (b.rally !== a.rally || b.hitter !== 3 - striker || !b.hit) continue;
+    const z = zoneOf(b.hit.X), Z = zones[z - 1], l = shotLabel(b);
+    Z.n++; Z.shots[l] = (Z.shots[l] || 0) + 1; quality[replyQuality(b, z)]++; n++;
+  }
+  for (const Z of zones) { Z.share = n ? Z.n / n : 0; Z.shots = Object.fromEntries(Object.entries(Z.shots).sort((p, q) => q[1] - p[1])); }
+  const share = Object.fromEntries(Object.entries(quality).map(([k, v]) => [k, n ? v / n : 0]));
+  return { striker, responder: 3 - striker, type, n, of, zones, quality, share };
 }
