@@ -62,6 +62,8 @@ The court is a known 3D object (WSF singles: 9.75 × 6.4 m, front out line 4.57,
 
 ## Limits
 
+What to build next, with the numbers to measure it by, is in [TODO.md](TODO.md).
+
 Assumes a standard singles court and a principal point at the image centre. Painted lines must be visible; a frame showing one wall and a sliver of floor is ambiguous. On show courts the side-wall out line rarely matches the WSF slope exactly, so it weighs least. A camera that really moves (dolly, hand-held) is only recognised after a few frames, during which the fixed-mount prior pulls it back. A cut to a camera not seen before relies on a new detection, which can pick a wrong fit on blue-line courts. The full tracker still runs on doubtful frames, and those cost ≈ 50 ms.
 
 Players: two at most, found per frame; a player hidden by the other, or crouched behind a score bug (placed as if standing), is misplaced, and a player half out of frame is not found. Speeds inherit the position errors: a player placed from the head behind a graphic, or a coasting track, gives a wrong speed for those moments, and the heatmap counts it. Sound: onsets include shoe squeaks, the crowd and the commentary; most heard impacts are never used, but a wrong one near the end of a flight can add a wrong bounce. Slow-motion replays shot from the main camera are analysed like live play and give wrong ball speeds and repeated bounces. Ball: a 40 mm ball is 2–5 px on a 720p broadcast, so it is lost against the players, the tin, and the lines; at 25 fps it moves up to 2 m between frames on a drive, so a racket-to-racket flight has little to fix its depth; the camera is assumed fixed during a flight.
