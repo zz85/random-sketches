@@ -102,7 +102,7 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
     check('Clear resets heatmaps, bounces and commentary', cl.heat === 0 && cl.b === 0 && cl.shots === 0 && cl.feed === 0, JSON.stringify(cl));
     // a match file from tools/match.mjs
     const M = { source: 'test.mp4', duration: 600, courtSeconds: 500, audio: { heard: 10, offset: 0.03, matched: 5 }, flights: 2,
-      players: [1, 2].map((id) => ({ id, colour: [200, 50, 90], distance: 900 + id, seconds: 400, topSpeed: 4.5, speed: [[1, 2], [2, 3], [3, null], [5, 1]], heatmap: { cell: 0.25, nx: 26, ny: 39, seconds: Array.from({ length: 26 * 39 }, (_, i) => (i === 22 * 26 + 13 ? 50 : 0)) } })),
+      players: [1, 2].map((id) => ({ id, colour: [200, 50, 90], distance: 900 + id, seconds: 400, topSpeed: 4.5, tControl: { seconds: 400, zoneSeconds: id === 1 ? 160 : 90, zoneShare: id === 1 ? 0.4 : 0.225, controlSeconds: id === 1 ? 180 : 120, controlShare: id === 1 ? 0.6 : 0.4, meanDistance: 1.2 + id / 10, radius: 1 }, speed: [[1, 2], [2, 3], [3, null], [5, 1]], heatmap: { cell: 0.25, nx: 26, ny: 39, seconds: Array.from({ length: 26 * 39 }, (_, i) => (i === 22 * 26 + 13 ? 50 : 0)) } })),
       shots: [{ t: 2.5, player: 1, kind: { type: 'drive', direction: 'straight', length: 'deep' }, front: [5.9, 0, 1.4], bounce: [6, 8.5, 0], speed: 40, quality: 4, text: 'P1 plays a hard straight drive (144 km/h), dying in the back corner.' }],
       bounces: [{ t: 3, plane: 'floor', x: 1, y: 8, z: 0, inferred: false, sound: false, player: 1 }, { t: 4, plane: 'front', x: 2, y: 0, z: 1, inferred: false, sound: true, player: 2 }] };
     fs.writeFileSync('/tmp/squash-smoke/match.json', JSON.stringify(M));
@@ -113,6 +113,8 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
     check('commentary feed shows the shots', fd.length === 1 && /straight drive/.test(fd[0]), fd[0]);
     check('match file: heatmaps, speeds and bounces shown', mt.b === 2 && /match\s+test\.mp4/.test(mt.txt) && /P1 hit 1/.test(mt.txt), mt.txt.split('\n')[0]);
     const sp = await b.evaluate(`(()=>{const c=document.getElementById('speed'),d=c.getContext('2d').getImageData(0,0,c.width,c.height).data;let n=0;for(let i=0;i<d.length;i+=4)if((d[i]>200&&d[i+1]<120)||(d[i+2]>200&&d[i]<120))n++;return n})()`);
+    const tt = await b.evaluate(`[document.getElementById('heat1t').textContent, document.getElementById('heat2t').textContent, document.getElementById('readout').textContent]`);
+    check('T domination per player (heatmap titles, readout)', /T 60%/.test(tt[0]) && /T 40%/.test(tt[1]) && /on the T 40% of the time/.test(tt[2]), `${tt[0]} | ${tt[1]}`);
     check('speed chart drawn per player', sp > 50, `${sp} px in the players' colours`);
     await shot('match');
     const errors = [];

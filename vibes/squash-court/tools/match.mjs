@@ -4,7 +4,8 @@
 // (one process each), then merges them:
 //   - players: identities across cuts from shirt colour (two clusters over the whole file, tracks
 //     seen together kept apart), then
-//     per player the time per 25 cm floor cell (heatmap), distance, speed over time
+//     per player the time per 25 cm floor cell (heatmap), distance, speed over time, and T
+//     domination (share of the time both are seen that each is nearer the T; time within 1 m of it)
 //   - bounces: every floor / front-wall impact (fitted, ended on the floor, or heard), with who hit
 //     the shot
 // Writes <out>/match.json (open it in the page) and <out>/match.png (floor plan).
@@ -18,6 +19,7 @@ import { Rally } from '../rally.js';
 import { onsets, audioOffset } from '../audio.js';
 import { Bounces, heatGrid, impactsOf } from '../bounces.js';
 import { Commentary, describe, mainView } from '../commentary.js';
+import { TControl } from '../tcontrol.js';
 import { W as CW, L as CL, courtModel } from '../court.js';
 import { writeImage, line } from './nodeimg.js';
 
@@ -42,7 +44,7 @@ async function main() {
   const M = merge(res, { source: src.split('/').pop(), duration: to - from });
   writeFileSync(`${out}/match.json`, JSON.stringify(M));
   render(M, `${out}/match.png`);
-  console.log(`court seen ${(M.courtSeconds / 60).toFixed(1)} min; ${M.players.map((p) => `P${p.id} ${p.distance.toFixed(0)} m, top ${p.topSpeed.toFixed(1)} m/s`).join('; ')}`);
+  console.log(`court seen ${(M.courtSeconds / 60).toFixed(1)} min; ${M.players.map((p) => `P${p.id} ${p.distance.toFixed(0)} m, top ${p.topSpeed.toFixed(1)} m/s${p.tControl?.controlShare != null ? `, T ${(p.tControl.controlShare * 100).toFixed(0)}% (on it ${(p.tControl.zoneShare * 100).toFixed(0)}%, ${p.tControl.meanDistance.toFixed(1)} m avg)` : ''}`).join('; ')}`);
   const fl = M.bounces.filter((m) => m.plane === 'floor');
   console.log(`${fl.length} floor bounces (${fl.filter((m) => m.sound).length} by ear), ${M.bounces.filter((m) => m.plane === 'front').length} front-wall hits; hitter known for ${M.bounces.filter((m) => m.player).length}; audio ${M.audio.sure ? `${Math.round(M.audio.offset * 1000)} ms after picture (${M.audio.matched} impacts matched, ${M.audio.chance} by chance)` : `delay not determined (best ${M.audio.matched}, ${M.audio.chance} by chance)`}, ${M.audio.heard} heard`);
   const kinds = {}; for (const s of M.shots) { const k = s.kind.type + (s.kind.direction ? ' ' + s.kind.direction : ''); kinds[k] = (kinds[k] || 0) + 1; }
@@ -114,6 +116,8 @@ function merge(parts, meta) {
   const { tracks, cents } = linkIdentities(dets);
   for (const d of dets) d.id = tracks.get(d.track)?.id ?? null;
   for (let i = dets.length - 1; i >= 0; i--) if (!dets[i].id) dets.splice(i, 1);
+  // T domination over the merged detections (time order, both players)
+  const tctl = new TControl(); for (const d of dets) tctl.add(d.id, d.t, d.X);
   const players = [1, 2].map((id) => {
     const D = dets.filter((d) => d.id === id), heat = new Float32Array(Math.ceil(CW / 0.25) * Math.ceil(CL / 0.25)), nx = Math.ceil(CW / 0.25);
     let dist = 0, secs = 0; const speed = [], vs = [];
@@ -129,7 +133,7 @@ function merge(parts, meta) {
       speed.push([d.t, v == null ? null : +v.toFixed(2)]); if (v != null) vs.push(v);
     }
     vs.sort((a, b) => a - b);
-    return { id, colour: cents[id - 1], distance: dist, seconds: secs, topSpeed: vs.length ? vs[Math.floor(vs.length * 0.95)] : 0, speed, heatmap: { cell: 0.25, nx, ny: 39, seconds: Array.from(heat, (v) => +v.toFixed(3)) } };
+    return { id, colour: cents[id - 1], distance: dist, seconds: secs, topSpeed: vs.length ? vs[Math.floor(vs.length * 0.95)] : 0, tControl: tctl.summary(id), speed, heatmap: { cell: 0.25, nx, ny: 39, seconds: Array.from(heat, (v) => +v.toFixed(3)) } };
   });
   // who was where: nearest detection in time per player
   const byId = { 1: dets.filter((d) => d.id === 1), 2: dets.filter((d) => d.id === 2) };
