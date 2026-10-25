@@ -322,7 +322,10 @@ try {
   await c.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
   check(await load('fresh=1&nosw=1&nosave=1&nohelp=1&eink=1'), 'loads on a 7" e-paper screen');
   check(await ev('document.body.classList.contains("eink")'), 'e-paper theme');
-  await ev(`__aq.createPainting(1264, 1680, 'Notes', 1).then(() => { __aq.setMode('pen'); return true; })`); await sleep(300);
+  await ev(`__aq.createPainting(1264, 1680, 'Notes', 1).then(() => { __aq.setMode('pen'); return true; })`); await sleep(400);
+  const z125 = await ev('__aq.view.z / __aq.baseZ()'), top125 = await ev(`(() => { const a = __aq.toScreen(0, 0), A = __aq.freeArea(); return Math.abs(a.y - A.top) < 1 && Math.abs(a.x - A.left) < 1; })()`);
+  check(Math.abs(z125 - 1.25) < 0.01 && top125, 'a 7" screen opens pages at 125%, from the top left', (z125 * 100).toFixed(0) + '%');
+  await ev('__aq.fit(1); true'); await sleep(200);
   check(await ev('document.body.classList.contains("penmode") && getComputedStyle(document.querySelector("#penBar")).display === "flex"'), 'pen mode shows nibs and ink colours');
   // fits between the bars
   const fitOk = await ev(`(() => { const a = __aq.toScreen(0, 0), b = __aq.toScreen(__aq.sim.W, __aq.sim.H), top = Math.max(document.querySelector('#topL').getBoundingClientRect().bottom, document.querySelector('#topR').getBoundingClientRect().bottom), pb = document.querySelector('#penBar').getBoundingClientRect().top; return a.y >= top - 1 && b.y <= pb + 1 && a.x >= 0 && b.x <= innerWidth; })()`);
@@ -380,7 +383,88 @@ try {
   await c.send('Emulation.setTouchEmulationEnabled', { enabled: false });
   await c.send('Emulation.setDeviceMetricsOverride', { width: VW, height: VH, deviceScaleFactor: 1, mobile: false });
 
-  // 16. pen-to-paint alignment, full screen and resizing, on both interfaces (this one and v1/)
+  // 16. notebooks: pages, zoom buttons, two-finger gesture lock (B7 Pro size, saving on)
+  await c.send('Emulation.setDeviceMetricsOverride', { width: 632, height: 840, deviceScaleFactor: 2, mobile: true });
+  await c.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+  const waitFor = async (expr, ms = 8000) => { for (let i = 0; i < ms / 100; i++) { if (await ev(expr)) return true; await sleep(100); } return false; };
+  check(await load('fresh=1&nosw=1&nohelp=1&eink=1'), 'loads for a notebook');
+  await ev(`__aq.createPainting(1264, 1680, 'Notebook test', 1).then(() => { __aq.setMode('pen'); __aq.fit(1); return true; })`); await sleep(400);
+  const lsp = await ev('__aq.sim.pattern.sp');
+  const band = (k) => stat(180, Math.round(lsp * k - 14), 920, Math.round(lsp * k + 14));
+  const blank1 = await band(3);
+  await pen(line(200, lsp * 3, 900, lsp * 3, 30), { pressure: () => 0.7 });
+  const p1 = await band(3);
+  check(p1.mean < blank1.mean - 3, 'writes on page 1');
+  check(await ev(`getComputedStyle(document.querySelector('#pages')).display !== 'none' && document.querySelector('#pgNum').textContent.trim() === '1 / 1'`), 'page control shows 1 / 1 in pen mode');
+  await sel('#pgNext');
+  check(await waitFor('__aq.doc.pages.length === 2 && __aq.doc.page === 1'), '› on the last page adds a page');
+  check(Math.abs((await band(3)).mean - blank1.mean) < 1, 'the new page is blank');
+  check(await ev(`document.querySelector('#pgNum').textContent.trim() === '2 / 2'`), 'page control shows 2 / 2');
+  await pen(line(200, lsp * 6, 900, lsp * 6, 30), { pressure: () => 0.7 });
+  const p2 = await band(6);
+  await sel('#pgPrev');
+  check(await waitFor('__aq.doc.page === 0'), '‹ goes back to page 1');
+  check(Math.abs((await band(3)).mean - p1.mean) < 0.5 && Math.abs((await band(6)).mean - blank1.mean) < 1, 'page 1 has its own ink, not page 2\'s');
+  await sel('#pgNext');
+  const okp = await waitFor('__aq.doc.page === 1');
+  check(okp && Math.abs((await band(6)).mean - p2.mean) < 0.5, 'and page 2 still has its ink');
+  await sel('#pgNum'); await sleep(400);
+  check(await ev(`document.querySelectorAll('#pageGrid .pg').length === 2 && document.querySelectorAll('#pageGrid .pg')[1].classList.contains('on')`), 'page list shows both pages');
+  await shot('eink_pages');
+  await ev(`__aq.togglePop('pagePop'); true`);
+  await ev('__aq.save(true)');
+  check(await load('nosw=1&nohelp=1&eink=1'), 'reload the notebook'); await sleep(600);
+  check(await ev('__aq.doc.pages.length === 2 && __aq.doc.page === 1'), 'reopens at the page it was on, with both pages');
+  check(Math.abs((await band(6)).mean - p2.mean) < 0.5, 'page 2 restored');
+  await ev('__aq.openGallery()'); await sleep(400);
+  check(await ev(`document.querySelector('#ggrid').textContent.includes('2 pages')`), 'gallery card says 2 pages');
+  await ev(`document.querySelector('#galBack').click(); true`);
+  await ev('window.confirm = () => true; true');
+  await ev('__aq.deletePage(1)');
+  check(await waitFor('__aq.doc.pages.length === 1 && __aq.doc.page === 0') && Math.abs((await band(3)).mean - p1.mean) < 0.5, 'deleting page 2 leaves page 1');
+
+  // zoom buttons
+  await ev('__aq.fit(1); true'); await sleep(200);
+  const zb = await ev('__aq.view.z');
+  await sel('#zoomIn'); await sleep(300);
+  check(Math.abs((await ev('__aq.view.z')) / zb - 1.25) < 0.01 && (await ev(`document.querySelector('#zoomPct').textContent`)) === '125%', '+ zooms in by a quarter, % shows it');
+  await sel('#zoomIn'); await sel('#zoomOut'); await sel('#zoomOut'); await sleep(300);
+  check(Math.abs((await ev('__aq.view.z')) / zb - 1) < 0.01, '− zooms back out (snaps to the whole page)');
+  await sel('#zoomPct'); await sleep(200);
+  check(Math.abs((await ev('__aq.view.z / __aq.baseZ()')) - 1.25) < 0.01, 'tapping the % goes to the zoom pages open at');
+  await sel('#zoomPct'); await sleep(200);
+  check(Math.abs((await ev('__aq.view.z / __aq.baseZ()')) - 1) < 0.01, 'and back to the whole page');
+
+  // two fingers moving together pan only, even with a little twist and spread in them
+  const tv = async () => ev('[__aq.view.x, __aq.view.y, __aq.view.z, __aq.view.r]');
+  const touchPath = async (frames) => {
+    await c.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: frames[0].map(([x, y], i) => ({ x, y, id: 20 + i })) });
+    for (const f of frames.slice(1)) { await c.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: f.map(([x, y], i) => ({ x, y, id: 20 + i })) }); await sleep(30); }
+    await c.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await sleep(150);
+  };
+  await ev('__aq.S.rotate = true; __aq.fit(1.5); true'); await sleep(200);
+  let g0 = await tv();
+  await touchPath(Array.from({ length: 14 }, (_, i) => [[200 + i * 8, 400 + i * 6 + i * 1.2], [330 + i * 8 + i * 0.6, 400 + i * 6 - i * 1.2]]));
+  let g1 = await tv();
+  check(g1[3] === 0 && Math.abs(g1[2] - g0[2]) < 1e-9 && Math.hypot(g1[0] - g0[0], g1[1] - g0[1]) > 50, 'two-finger pan stays a pan: no rotation, no zoom', `moved ${Math.hypot(g1[0] - g0[0], g1[1] - g0[1]).toFixed(0)} px, r ${g1[3]}, z ${(g1[2] / g0[2]).toFixed(4)}`);
+  // spreading zooms without rotating, even with a little twist
+  g0 = await tv();
+  await touchPath(Array.from({ length: 12 }, (_, i) => [[260 - i * 9, 420 + i * 0.8], [380 + i * 9, 420 - i * 0.8]]));
+  g1 = await tv();
+  check(g1[3] === 0 && g1[2] > g0[2] * 1.3, 'spreading two fingers zooms, without rotating', `z ×${(g1[2] / g0[2]).toFixed(2)}`);
+  // a deliberate twist rotates (Prefs → Rotate on)
+  await ev('__aq.fit(1); true'); await sleep(100);
+  await touchPath(Array.from({ length: 12 }, (_, i) => { const a = i * 0.05, cx = 316, cy = 420, r = 70; return [[cx - r * Math.cos(a), cy - r * Math.sin(a)], [cx + r * Math.cos(a), cy + r * Math.sin(a)]]; }));
+  g1 = await tv();
+  check(Math.abs(g1[3]) > 0.3, 'a twist from the start rotates', `r ${g1[3].toFixed(2)}`);
+  await ev('__aq.S.rotate = false; __aq.fit(1); true');
+  await touchPath(Array.from({ length: 12 }, (_, i) => { const a = i * 0.05, cx = 316, cy = 420, r = 70; return [[cx - r * Math.cos(a), cy - r * Math.sin(a)], [cx + r * Math.cos(a), cy + r * Math.sin(a)]]; }));
+  check((await tv())[3] === 0, 'and never with rotation turned off');
+  await c.send('Emulation.setTouchEmulationEnabled', { enabled: false });
+  await c.send('Emulation.setDeviceMetricsOverride', { width: VW, height: VH, deviceScaleFactor: 1, mobile: false });
+  check(errors().length === 0, 'no console errors (notebook)', errors().join(' | '));
+
+  // 17. pen-to-paint alignment, full screen and resizing, on both interfaces (this one and v1/)
   await c.send('Emulation.setDeviceMetricsOverride', { width: 632, height: 840, deviceScaleFactor: 2, mobile: true });
   const colAt = (x) => ev(`(() => { __aq.render(); const c = document.querySelector('#gl'), gl = __aq.sim.gl, r = c.getBoundingClientRect(), sx = c.width / r.width; const bx = Math.round((${x} - r.left) * sx), px = new Uint8Array(4 * c.height); gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.readPixels(bx, 0, 1, c.height, gl.RGBA, gl.UNSIGNED_BYTE, px); return { px: Array.from(px), top: r.top, sy: c.height / r.height, H: c.height }; })()`);
   const dabAt = async (x, y) => {
@@ -435,7 +519,7 @@ try {
   }
   await c.send('Emulation.setDeviceMetricsOverride', { width: VW, height: VH, deviceScaleFactor: 1, mobile: false });
 
-  // 17. offline: register the service worker, reload offline
+  // 18. offline: register the service worker, reload offline
   check(await load('nohelp=1'), 'load with service worker');
   for (let i = 0; i < 50 && !(await ev('!!navigator.serviceWorker.controller')); i++) await sleep(200);
   if (!(await ev('!!navigator.serviceWorker.controller'))) { await load('nohelp=1'); await sleep(500); }

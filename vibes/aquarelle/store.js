@@ -1,7 +1,10 @@
 /*
  * store.js - persistence. IndexedDB holds a gallery of paintings:
- *   meta    id -> {id, name, W, H, created, updated, frames, thumb (Blob)}
- *   layers  id -> {v: 2, W, H, active, paper, tint, texture, layers: [{name, visible, opacity, K, S}]}
+ *   meta    id -> {id, name, W, H, created, updated, frames, thumb (Blob), pages: [page key],
+ *              page (last open), pageThumbs: {page key: Blob}}
+ *   layers  page key -> {v: 2, W, H, active, paper, tint, texture, layers: [{name, visible, opacity, K, S}]}
+ *           A painting or notebook has one or more pages; the first page's key is the
+ *           painting's id (paintings saved before pages existed are one-page notebooks).
  *           K / S are the dried pigment layers as half floats, gzip-compressed where the
  *           browser has CompressionStream.
  *   frames  "id:n" -> JPEG Blob, the time-lapse
@@ -43,12 +46,15 @@ const zipped = typeof CompressionStream !== 'undefined';
 
 export const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
-/** Save a painting: data from Sim.readAll() plus look settings, and its gallery card. */
+export const pagesOf = (m) => (m?.pages?.length ? m.pages : [m.id]);
+export const newPageKey = (id) => id + '~' + newId();
+
+/** Save one page (data from Sim.readAll() plus look settings) under its key, and the gallery card. */
 export async function savePainting(id, meta, data) {
   const layers = [];
   for (const L of data.layers) layers.push({ name: L.name, visible: L.visible, opacity: L.opacity, K: await gz(new Uint8Array(L.K.buffer)), S: await gz(new Uint8Array(L.S.buffer)) });
-  await put('layers', id, { v: 2, gzipped: zipped, W: meta.W, H: meta.H, active: data.active, paper: data.paper, tint: data.tint, texture: data.texture, layers });
-  await put('meta', id, { ...meta, id, updated: Date.now() });
+  await put('layers', id, { v: 2, gzipped: zipped, W: meta.W, H: meta.H, active: data.active, paper: data.paper, tint: data.tint, texture: data.texture, pattern: data.pattern, layers });
+  await put('meta', meta.id || id, { ...meta, id: meta.id || id, updated: Date.now() });
 }
 
 export async function loadPainting(id) {
@@ -63,17 +69,24 @@ export async function listPaintings() { return (await all('meta')).sort((a, b) =
 
 export async function deletePainting(id) {
   const m = await get('meta', id);
-  await del('meta', id); await del('layers', id);
+  await del('meta', id);
+  for (const k of new Set([id, ...pagesOf(m || { id })])) await del('layers', k);
   for (let i = 0; i < (m?.frames || 0); i++) await del('frames', id + ':' + i);
 }
 
 export async function duplicatePainting(id) {
-  const m = await get('meta', id), d = await get('layers', id);
-  if (!m || !d) return null;
-  const nid = newId();
-  await put('layers', nid, d);
+  const m = await get('meta', id);
+  if (!m) return null;
+  const nid = newId(), pages = [], thumbs = {};
+  for (const [i, k] of pagesOf(m).entries()) {
+    const d = await get('layers', k); if (!d) continue;
+    const nk = i === 0 ? nid : newPageKey(nid);
+    await put('layers', nk, d); pages.push(nk);
+    if (m.pageThumbs?.[k]) thumbs[nk] = m.pageThumbs[k];
+  }
+  if (!pages.length) return null;
   for (let i = 0; i < (m.frames || 0); i++) { const f = await get('frames', id + ':' + i); if (f) await put('frames', nid + ':' + i, f); }
-  await put('meta', nid, { ...m, id: nid, name: m.name + ' copy', created: Date.now(), updated: Date.now() });
+  await put('meta', nid, { ...m, id: nid, name: m.name + ' copy', pages, pageThumbs: thumbs, page: Math.min(m.page || 0, pages.length - 1), created: Date.now(), updated: Date.now() });
   return nid;
 }
 

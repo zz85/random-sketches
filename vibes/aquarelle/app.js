@@ -33,6 +33,9 @@ const DEF = {
   drying: 1, runDry: true, fingers: 'auto', smooth: 0.3, rotate: true, right: false, cursor: true, pressure: 1, quick: true, record: true,
   helpSeen: false, currentId: null,
   autoFs: /Android/i.test(navigator.userAgent) && matchMedia('(pointer: coarse)').matches,
+  // zoom a page opens at, relative to the whole page (1) or 'width'; null = 125% on small
+  // screens (7" e-readers, phones), the whole page elsewhere
+  zoomStart: null,
   // pen mode (notes): nib, ink colour, highlighter colour, size per nib
   mode: 'paint', pen: { nib: 'ballpoint', col: '#141414', mark: '#ffe24a', size: Object.fromEntries(Object.entries(INKS).map(([k, v]) => [k, v.size])), customs: [] },
   eink: null,
@@ -90,7 +93,8 @@ function openDoc(d, data) {
   if (data) sim.loadAll(data);
   applyLook();
   rec.reset(NOSAVE ? null : d.id, d.frames || 0);
-  view.f = 1; userMovedView = false; fit();
+  d.pages ??= [d.id]; d.page ??= 0; d.pageThumbs ??= {};
+  view.f = 1; userMovedView = false; updatePages(); fit();
   if (S.currentId !== d.id) { S.currentId = d.id; savePrefs(); }
   updateUndo(); buildLayers(); markWet(true);
 }
@@ -105,7 +109,8 @@ const SIZES = [
   { name: 'Large 4 : 3', get: () => [2048, 1536] },
 ];
 function newDoc(W, H, name, pattern = 0) {
-  return { id: store.newId(), name: name || (pattern ? 'Notes' : 'Untitled'), W, H, paper: pattern ? 'hot' : 'cold', tint: 'white', texture: false, pattern, created: Date.now(), frames: 0 };
+  const id = store.newId();
+  return { id, name: name || (pattern ? 'Notes' : 'Untitled'), W, H, paper: pattern ? 'hot' : 'cold', tint: 'white', texture: false, pattern, created: Date.now(), frames: 0, pages: [id], page: 0, pageThumbs: {} };
 }
 
 // ---------- view ----------
@@ -134,30 +139,78 @@ function onResize() {
   // pen); it is refitted when the pen lifts
   if (stroke) { fitPending = true; return; }
   if (!userMovedView) { fit(); return; }
+  layoutPanels();
   // a view you moved yourself: keep what was at the old centre at the new centre
   view.x += box.x + box.w / 2 - cx; view.y += box.y + box.h / 2 - cy; needsRender = true;
 }
 /** Rect of a visible panel, or null. */
 const rectOf = (sel) => { const el = $(sel); if (!el || !el.offsetParent && getComputedStyle(el).position !== 'fixed') return null; const r = el.getBoundingClientRect(); return r.width && r.height ? r : null; };
-/** The sheet goes in the space the floating panels leave: below the top panels, above the
- *  palette / pen bar, beside the tool strip (and the sliders on wide screens). */
-function fit() {
-  if (!sim) return;
-  const W = sim.W, H = sim.H, gap = box.w < 720 ? 8 : 14;
-  const tops = ['#topL', '#topR'].map(rectOf).filter(Boolean), bot = rectOf(S.mode === 'pen' ? '#penBar' : '#palette');
-  let top = Math.max(box.y, ...tops.map((r) => r.bottom)) + gap, bottom = (bot ? bot.top : box.y + box.h) - gap;
-  // side panels (tool strip, sliders): the sheet never goes under them, so every part of it
-  // can be painted without panning
-  const side = ['#tools', '#sliders'].map(rectOf).filter(Boolean);
-  let left = box.x + gap, right = box.x + box.w - gap;
-  for (const r of side) { if (r.left + r.width / 2 < box.x + box.w / 2) left = Math.max(left, r.right + gap); else right = Math.min(right, r.left - gap); }
+/** Move panels that would collide: the page control below the top bars when they leave
+ *  no room for it, the zoom buttons above a tall bottom bar. */
+function layoutPanels() {
+  const pg = $('#pages'), zb = $('#zoomBar');
+  pg.style.top = ''; zb.style.bottom = '';
+  const p = rectOf('#pages');
+  if (p) {
+    const hit = ['#topL', '#topR'].map(rectOf).filter(Boolean).filter((r) => r.left < p.right + 4 && r.right > p.left - 4);
+    if (hit.length) pg.style.top = Math.max(...hit.map((r) => r.bottom)) + 6 + 'px';
+  }
+  const z = rectOf('#zoomBar'), b = rectOf(S.mode === 'pen' ? '#penBar' : '#palette');
+  if (z && b && b.left < z.right && b.right > z.left && b.top < z.bottom) zb.style.bottom = box.y + box.h - b.top + 8 + 'px';
+}
+/** The free rectangle the floating panels leave: wide panels (bars) bound it from above or
+ *  below, tall ones (tool strip, sliders, zoom) from the side. */
+function freeArea() {
+  const gap = box.w < 720 ? 8 : 14;
+  let top = box.y, bottom = box.y + box.h, left = box.x, right = box.x + box.w;
+  for (const sel of ['#topL', '#topR', '#pages', '#tools', '#sliders', '#zoomBar', '#palette', '#penBar']) {
+    const r = rectOf(sel); if (!r) continue;
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    if (r.width >= r.height) { if (cy < box.y + box.h / 2) top = Math.max(top, r.bottom); else bottom = Math.min(bottom, r.top); }
+    else if (cx < box.x + box.w / 2) left = Math.max(left, r.right); else right = Math.min(right, r.left);
+  }
+  top += gap; bottom -= gap; left += gap; right -= gap;
   // on wide screens keep the sheet centred: as much room on the right as the panels take on the left
   if (box.w >= 720) { const inset = Math.max(left - box.x, box.x + box.w - right); left = box.x + inset; right = box.x + box.w - inset; }
   if (bottom - top < 120) { top = box.y + gap; bottom = box.y + box.h - gap; }
-  const aw = Math.max(50, right - left), ah = Math.max(50, bottom - top);
-  const z = Math.min(aw / W, ah / H);
-  view.z = z; view.r = 0; view.x = left + (aw - W * z) / 2; view.y = top + (ah - H * z) / 2;
+  if (right - left < 120) { left = box.x + gap; right = box.x + box.w - gap; }
+  return { left, top, right, bottom, w: right - left, h: bottom - top };
+}
+/** Zoom at which the whole sheet just fits the free area ("100%"). */
+function baseZ() { const A = freeArea(); return Math.min(A.w / sim.W, A.h / sim.H); }
+const startZoom = () => S.zoomStart ?? (S.eink || box.w <= 720 ? 1.25 : 1);
+/**
+ * Put the sheet in the free area at a zoom: 1 = whole page, 1.25 = a quarter closer,
+ * 'width' = as wide as the free area. Larger than the area, it starts at its top left.
+ */
+function fit(mode) {
+  if (!sim) return;
+  if (mode !== 'width' && !(+mode > 0 && +mode < 20)) mode = startZoom(); // also when passed an event or a timestamp
+  layoutPanels();
+  const A = freeArea(), W = sim.W, H = sim.H, z0 = Math.min(A.w / W, A.h / H);
+  const z = mode === 'width' ? A.w / W : z0 * (+mode || 1);
+  view.z = z; view.r = 0;
+  // wider than the free area: start at its left edge (where writing starts), else centred;
+  // taller: start at its top
+  view.x = W * z > A.w + 0.5 ? A.left : A.left + (A.w - W * z) / 2;
+  view.y = H * z > A.h + 0.5 ? A.top : A.top + (A.h - H * z) / 2;
   if (view.f < 0) view.x += W * z;
+  needsRender = true;
+}
+/** Keep some of the sheet on screen however far it is panned. */
+function clampView() {
+  if (!sim) return;
+  const A = freeArea(), cs = [[0, 0], [sim.W, 0], [0, sim.H], [sim.W, sim.H]].map(([x, y]) => toScreen(x, y));
+  const xs = cs.map((p) => p.x), ys = cs.map((p) => p.y), M = 60;
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  if (x1 < A.left + M) view.x += A.left + M - x1; else if (x0 > A.right - M) view.x += A.right - M - x0;
+  if (y1 < A.top + M) view.y += A.top + M - y1; else if (y0 > A.bottom - M) view.y += A.bottom - M - y0;
+}
+/** New page in a notebook: same zoom and column, back to the top of the page. */
+function placeTop() {
+  if (!userMovedView || view.r) { fit(); return; }
+  const A = freeArea(), h = sim.H * view.z;
+  view.y = h > A.h ? A.top : A.top + (A.h - h) / 2;
   needsRender = true;
 }
 // screen = T + z R F sheet, F = diag(f, 1)
@@ -174,6 +227,28 @@ function zoomAt(cx, cy, f) {
   const p = toSheet(cx, cy); view.z = Math.min(12, Math.max(0.1, view.z * f));
   const q = toScreen(p.x, p.y); view.x += cx - q.x; view.y += cy - q.y; needsRender = true; userMovedView = true;
 }
+/** Zoom buttons: about the middle of the free area; landing near the whole page snaps to it. */
+function zoomBy(f) {
+  const A = freeArea(), b = baseZ();
+  let t = view.z * f / b;
+  if (Math.abs(t - 1) < 0.06) { fit(1); userMovedView = true; return; }
+  t = Math.min(12 / b, Math.max(0.5, t));
+  zoomAt(A.left + A.w / 2, A.top + A.h / 2, t * b / view.z); clampView();
+}
+/** The %: whole page, or back to the zoom pages open at. */
+function zoomToggle() {
+  const rel = view.z / baseZ(), st = startZoom();
+  fit(Math.abs(rel - 1) < 0.03 ? (st === 1 ? 'width' : st) : 1); userMovedView = true;
+}
+let lastPct = '';
+function updateZoomLabel() {
+  if (!sim) return;
+  const p = Math.round(view.z / baseZ() * 100) + '%';
+  if (p !== lastPct) { $('#zoomPct').textContent = p; lastPct = p; }
+}
+$('#zoomIn').onclick = (e) => { e.stopPropagation(); zoomBy(1.25); };
+$('#zoomOut').onclick = (e) => { e.stopPropagation(); zoomBy(1 / 1.25); };
+$('#zoomPct').onclick = (e) => { e.stopPropagation(); zoomToggle(); };
 resize();
 addEventListener('resize', onResize);
 window.visualViewport?.addEventListener('resize', onResize);
@@ -454,7 +529,7 @@ canvas.addEventListener('pointermove', (e) => {
       return;
     }
   }
-  if (mouseDrag) { view.x += e.clientX - mouseDrag.x; view.y += e.clientY - mouseDrag.y; mouseDrag = { x: e.clientX, y: e.clientY }; userMovedView = true; needsRender = true; return; }
+  if (mouseDrag) { view.x += e.clientX - mouseDrag.x; view.y += e.clientY - mouseDrag.y; mouseDrag = { x: e.clientX, y: e.clientY }; userMovedView = true; clampView(); needsRender = true; return; }
   hoverPt = { x: e.clientX, y: e.clientY, type: e.pointerType };
   if (stroke && (e.pointerType !== 'touch' || stroke.type === 'touch')) {
     const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
@@ -478,7 +553,7 @@ function pointerEnd(e) {
     if (touches.size === 0) {
       if (tapCand && !tapCand.moved && performance.now() - tapCand.t0 < 320 && tapCand.n >= 2) {
         if (tapCand.n === 2) doUndo(); else if (tapCand.n === 3) doRedo(); else document.body.classList.toggle('ui-hidden');
-      } else if (gesture && !gesture.one && performance.now() - gesture.t0 < 380 && view.z < gesture.z0 * 0.72) { userMovedView = false; fit(); }
+      } else if (gesture && gesture.mode === 'zoom' && performance.now() - gesture.t0 < 380 && view.z < gesture.z0 * 0.72) { fit(1); userMovedView = true; }
       tapCand = null; gesture = null;
     } else if (gesture) startGesture();
     return;
@@ -492,34 +567,57 @@ canvas.addEventListener('pointerleave', (e) => { if (e.pointerType !== 'touch') 
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
 const sheetAng = (a, b) => Math.atan2(b.y - a.y, view.f * (b.x - a.x));
+/*
+ * Two-finger gestures decide what they are from the first ~10 px of movement and keep to
+ * it: fingers moving together pan (no zoom, no rotation), spreading or pinching zooms (and
+ * pans), and only a clear twist rotates (with Prefs → Rotate on). So a pan never tilts
+ * or rescales the page.
+ */
 function startGesture() {
   const pts = [...touches.values()].slice(0, 2);
   if (pts.length === 1) { gesture = { one: true, s: toSheet(pts[0].x, pts[0].y), t0: performance.now(), z0: view.z }; return; }
-  gesture = { a: toSheet(pts[0].x, pts[0].y), b: toSheet(pts[1].x, pts[1].y), ang0: Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x), rotOn: false, t0: gesture?.t0 ?? performance.now(), z0: gesture?.z0 ?? view.z };
+  const [p, q] = pts, m0 = { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 };
+  gesture = {
+    mode: null, m0, d0: Math.max(1, Math.hypot(q.x - p.x, q.y - p.y)), ang0: Math.atan2(q.y - p.y, q.x - p.x),
+    v0: { x: view.x, y: view.y, z: view.z, r: view.r }, s0: toSheet(m0.x, m0.y), a: toSheet(p.x, p.y), b: toSheet(q.x, q.y),
+    t0: gesture?.t0 ?? performance.now(), z0: gesture?.z0 ?? view.z,
+  };
 }
 function moveGesture() {
   const pts = [...touches.values()].slice(0, 2);
   userMovedView = true; needsRender = true;
   if (gesture.one || pts.length < 2) {
     const s = gesture.s || (gesture.s = toSheet(pts[0].x, pts[0].y));
-    const q = toScreen(s.x, s.y); view.x += pts[0].x - q.x; view.y += pts[0].y - q.y; return;
+    const q = toScreen(s.x, s.y); view.x += pts[0].x - q.x; view.y += pts[0].y - q.y; clampView(); return;
   }
-  const { a, b } = gesture;
-  view.z = Math.min(12, Math.max(0.1, Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y) / Math.max(Math.hypot(b.x - a.x, b.y - a.y), 1e-3)));
-  if (S.rotate) {
-    const ang = Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x);
+  const g = gesture, [p, q] = pts, m = { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 }, d = Math.hypot(q.x - p.x, q.y - p.y);
+  const ang = Math.atan2(q.y - p.y, q.x - p.x), dAng = ((ang - g.ang0 + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+  if (!g.mode) {
+    // how far each kind of motion has gone, in px at the fingertips
+    const T = Math.hypot(m.x - g.m0.x, m.y - g.m0.y), D = Math.abs(d - g.d0), A = Math.abs(dAng) * g.d0 / 2;
+    if (Math.max(T, D, A) < 10) return;
+    g.mode = S.rotate && A > 1.6 * Math.max(T, D) ? 'rotate' : D > 0.9 * T ? 'zoom' : 'pan';
+  }
+  if (g.mode === 'pan') { view.x = g.v0.x + m.x - g.m0.x; view.y = g.v0.y + m.y - g.m0.y; }
+  else if (g.mode === 'zoom') {
+    view.r = g.v0.r; view.z = Math.min(12, Math.max(0.1, g.v0.z * d / g.d0));
+    const s = toScreen(g.s0.x, g.s0.y); view.x += m.x - s.x; view.y += m.y - s.y;
+  } else {
+    const { a, b } = g;
+    view.z = Math.min(12, Math.max(0.1, d / Math.max(Math.hypot(b.x - a.x, b.y - a.y), 1e-3)));
     let r = ang - sheetAng(a, b);
-    // rotation only after a deliberate twist, and it snaps to square
-    if (!gesture.rotOn && Math.abs(((ang - gesture.ang0 + Math.PI * 3) % (Math.PI * 2)) - Math.PI) > 0.2) gesture.rotOn = true;
-    if (gesture.rotOn) { const snap = Math.round(r / (Math.PI / 2)) * (Math.PI / 2); if (Math.abs(r - snap) < 0.08) r = snap; view.r = r; }
+    const snap = Math.round(r / (Math.PI / 2)) * (Math.PI / 2); if (Math.abs(r - snap) < 0.08) r = snap;
+    view.r = r;
+    const s = toScreen(a.x, a.y); view.x += p.x - s.x; view.y += p.y - s.y;
   }
-  const q = toScreen(a.x, a.y); view.x += pts[0].x - q.x; view.y += pts[0].y - q.y;
+  clampView();
 }
 
 canvas.addEventListener('wheel', (e) => {
   e.preventDefault(); userMovedView = true;
   if (e.ctrlKey || e.metaKey || (Math.abs(e.deltaY) > 40 && !e.deltaX && e.deltaMode === 0 && !e.shiftKey)) zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)));
   else { view.x -= e.deltaX; view.y -= e.deltaY; needsRender = true; }
+  clampView();
 }, { passive: false });
 addEventListener('gesturestart', (e) => e.preventDefault());
 addEventListener('gesturechange', (e) => e.preventDefault());
@@ -553,9 +651,13 @@ addEventListener('keydown', (e) => {
   if (k === 'c') { togglePop('colPop'); return; }
   if (k === 'i') { setPicking(!picking); return; }
   if (k === '[' || k === ']') { const { cfg, id, mode } = current(); cfg.size = Math.max(0.6, Math.min(160, cfg.size * (k === ']' ? 1.15 : 1 / 1.15))); if (mode >= 5) S.pen.size[id] = cfg.size; syncSliders(); updateCursor(); savePrefs(); return; }
-  if (k === 'p') { setMode(S.mode === 'pen' ? 'paint' : 'pen'); return; }
+  if (k === 'p' && !e.repeat) { setMode(S.mode === 'pen' ? 'paint' : 'pen'); return; }
   if (k === 'f') { dryNow(); return; }
-  if (k === '0') { userMovedView = false; fit(); return; }
+  if (k === '0') { fit(1); userMovedView = true; return; }
+  if (k === '=' || k === '+') { zoomBy(1.25); return; }
+  if (k === '-' || k === '_') { zoomBy(1 / 1.25); return; }
+  if (e.key === 'PageDown') { e.preventDefault(); gotoPage(doc.page + 1, false); return; }
+  if (e.key === 'PageUp') { e.preventDefault(); gotoPage(doc.page - 1); return; }
   if (k === 'tab') { e.preventDefault(); document.body.classList.toggle('ui-hidden'); return; }
   if (/^[1-9]$/.test(k)) { const p = PIGMENTS[+k - 1]; if (p) choosePigment(p.id, e.shiftKey); }
 });
@@ -590,7 +692,7 @@ $$('#tools [data-tool]').forEach((b) => b.addEventListener('click', (e) => {
 function setMode(m) {
   S.mode = m; savePrefs(); applyTheme();
   $$('#modeSeg button').forEach((b) => b.classList.toggle('on', b.dataset.v === m));
-  closePops(); markTools(); syncSliders(); updateCursor(); buildPenBar(); refreshColour(); if (!userMovedView) requestAnimationFrame(fit);
+  closePops(); markTools(); syncSliders(); updateCursor(); buildPenBar(); refreshColour(); if (!userMovedView) requestAnimationFrame(() => fit());
   if (window.__ready) toast(m === 'pen' ? 'Pen: ink for writing notes' : 'Paint: watercolour', 900);
 }
 $$('#modeSeg button').forEach((b) => (b.onclick = (e) => { e.stopPropagation(); setMode(b.dataset.v); }));
@@ -688,7 +790,7 @@ function togglePop(id) {
   const p = document.getElementById(id), open = !p.classList.contains('open');
   closePops(id);
   p.classList.toggle('open', open);
-  if (open) ({ brushPop: buildBrushes, colPop: buildColour, layerPop: buildLayers, actPop: buildActions })[id]?.();
+  if (open) ({ brushPop: buildBrushes, colPop: buildColour, layerPop: buildLayers, actPop: buildActions, pagePop: buildPages })[id]?.();
 }
 document.addEventListener('pointerdown', (e) => {
   if (e.target === canvas || e.target.closest('.pop, .menu, .panel, #gallery, .tl')) return;
@@ -929,10 +1031,12 @@ function buildActions() {
   $('#optPressure').value = S.pressure; $('#optPressure').oninput = (e) => { S.pressure = +e.target.value; savePrefs(); };
   $('#optSmooth').value = S.smooth; $('#optSmooth').oninput = (e) => { S.smooth = +e.target.value; savePrefs(); };
   seg('#fingerSeg', S.fingers, (v) => { S.fingers = v; savePrefs(); });
+  seg('#zoomSeg', startZoom(), (v) => { S.zoomStart = v === 'width' ? 'width' : +v; savePrefs(); fit(); userMovedView = false; });
   buildAdjust();
 }
 $('#menuBtn').onclick = (e) => { e.stopPropagation(); togglePop('actPop'); };
 $('#galItem').onclick = () => { closePops(); openGallery(); };
+$('#addPageItem').onclick = () => { closePops(); insertPage(doc.page + 1); };
 $('#fsItem').onclick = () => { closePops(); setFullscreen(!fsEl()); };
 $('#shareBtn').onclick = (e) => { e.stopPropagation(); exportImage('png'); };
 function showHelp() { if (!$('#actPop').classList.contains('open')) togglePop('actPop'); $('#actTabs [data-t="help"]').click(); }
@@ -1015,28 +1119,133 @@ async function makeThumb() {
 }
 /** Before another painting replaces this one: wait for a save in flight, then save if needed. */
 async function flushSave() {
-  if (!doc || NOSAVE) return;
+  if (!doc) return;
   clearTimeout(saveT);
   while (saving) await new Promise((r) => setTimeout(r, 30));
-  if (dirty) { sim.dryNow(); await save(true); }
+  if (dirty || NOSAVE) { sim.dryNow(); await save(true); }
 }
 async function save(force) {
-  if (NOSAVE || !doc) return;
+  if (!doc || (NOSAVE && !force)) return;
   if (saving) { scheduleSave(); return; }
   if (!force && (stroke || sim.wet)) { saveT = setTimeout(save, 1200); return; } // save once it has dried
   saving = true;
-  const d = doc, s = sim;
+  const d = doc, s = sim, key = d.pages[d.page];
   try {
     const data = await s.readAll();
-    if (s !== sim) return; // another painting was opened meanwhile
+    if (s !== sim || d !== doc || key !== d.pages[d.page]) return; // another painting or page was opened meanwhile
     const frames = await rec.flush();
-    await store.savePainting(d.id, { id: d.id, name: d.name, W: d.W, H: d.H, created: d.created, frames, thumb: await makeThumb() }, { ...data, paper: d.paper, tint: d.tint, texture: d.texture, pattern: d.pattern || 0 });
+    d.pageThumbs[key] = await makeThumb();
+    const meta = { id: d.id, name: d.name, W: d.W, H: d.H, created: d.created, frames, pages: d.pages.slice(), page: d.page, pageThumbs: { ...d.pageThumbs }, thumb: d.pageThumbs[d.pages[0]] || d.pageThumbs[key] };
+    if (NOSAVE) pageCache.set(key, data);
+    else await store.savePainting(key, meta, { ...data, paper: d.paper, tint: d.tint, texture: d.texture, pattern: d.pattern || 0 });
     d.frames = frames;
     dirty = false; window.__saved = (window.__saved || 0) + 1;
   } catch (e) { console.warn('save failed', e); }
   finally { saving = false; }
 }
 addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && dirty) { sim.dryNow(); save(true); } });
+
+// ---------- pages ----------
+// A painting is a notebook of one or more pages. One page is in the simulation at a time;
+// turning saves it (dried) and loads the next. Undo history is per visit to a page.
+let turning = false, wantPage = null;
+const pageCache = new Map(); // ?nosave: pages kept in memory instead of IndexedDB
+async function loadPage(n) {
+  const key = doc.pages[n];
+  const data = pageCache.get(key) || (NOSAVE ? null : await store.loadPainting(key));
+  sim.loadAll(data || { layers: [] });
+  doc.page = n;
+  placeTop(); updatePages(); updateUndo(); buildLayers(); markWet(true); thumbsDirty = true; needsRender = true;
+}
+/** Turn to page n (0-based). Past the last page: a new blank page, if `add`. */
+async function gotoPage(n, add = true) {
+  if (!doc) return;
+  // taps while a page is turning: go where the last one points once it has
+  if (turning) { wantPage = [n - doc.page, add]; return; }
+  if (n < 0 || n === doc.page) return;
+  if (n >= doc.pages.length) { if (add) await insertPage(doc.pages.length); return; }
+  turning = true;
+  try {
+    if (stroke) endStroke();
+    await flushSave();
+    await loadPage(n);
+    dirty = true; save(true); // the new page index; flushSave on the next turn waits for it
+    if (window.__ready) toast(`Page ${n + 1} of ${doc.pages.length}`, 700);
+  } finally { turning = false; afterTurn(); }
+}
+function afterTurn() { if (wantPage) { const [d, add] = wantPage; wantPage = null; gotoPage(doc.page + d, add); } }
+async function insertPage(at) {
+  if (turning || !doc) return;
+  turning = true;
+  try {
+    if (stroke) endStroke();
+    await flushSave();
+    doc.pages.splice(at, 0, store.newPageKey(doc.id));
+    await loadPage(at);
+    dirty = true; save(true);
+    if (window.__ready) toast(`New page ${at + 1} of ${doc.pages.length}`, 900);
+  } finally { turning = false; afterTurn(); }
+}
+async function deletePage(n) {
+  if (turning || !doc) return;
+  if (doc.pages.length < 2) { toast('A notebook keeps at least one page: clear it in Layers instead'); return; }
+  if (!confirm(`Delete page ${n + 1}? This cannot be undone.`)) return;
+  turning = true;
+  try {
+    if (stroke) endStroke();
+    clearTimeout(saveT); while (saving) await new Promise((r) => setTimeout(r, 30));
+    if (n !== doc.page && dirty) await save(true);
+    const [key] = doc.pages.splice(n, 1); delete doc.pageThumbs[key]; pageCache.delete(key);
+    if (!NOSAVE) await store.del('layers', key);
+    if (n === doc.page) { dirty = false; await loadPage(Math.min(n, doc.pages.length - 1)); }
+    else if (n < doc.page) { doc.page--; updatePages(); }
+    dirty = true; save(true);
+  } finally { turning = false; afterTurn(); }
+}
+function movePage(n, to) {
+  if (turning || to < 0 || to >= doc.pages.length) return;
+  const [k] = doc.pages.splice(n, 1); doc.pages.splice(to, 0, k);
+  if (doc.page === n) doc.page = to; else if (n < doc.page && to >= doc.page) doc.page--; else if (n > doc.page && to <= doc.page) doc.page++;
+  updatePages(); scheduleSave(); dirty = true;
+}
+function updatePages() {
+  if (!doc) return;
+  const n = doc.pages.length, i = doc.page;
+  document.body.classList.toggle('single-page', n < 2);
+  $('#pgNum').textContent = `${i + 1} / ${n}`;
+  $('#pgPrev').disabled = i === 0;
+  // on the last page › adds one
+  $('#pgNext use').setAttribute('href', i === n - 1 ? '#i-pageadd' : '#i-next');
+  $('#pgNext').title = i === n - 1 ? 'Add a page' : 'Next page (Page Down)';
+  if ($('#pagePop').classList.contains('open')) buildPages();
+}
+function buildPages() {
+  const g = $('#pageGrid'); g.innerHTML = '';
+  const pr = rectOf('#pages'), pop = $('#pagePop');
+  pop.style.top = (pr ? pr.bottom : box.y + 60) + 6 + 'px';
+  $('#pgCount').textContent = `${doc.page + 1} of ${doc.pages.length}`;
+  const ar = `${sim.W} / ${sim.H}`;
+  doc.pages.forEach((key, i) => {
+    const b = document.createElement('button'); b.className = 'pg' + (i === doc.page ? ' on' : ''); b.dataset.page = i;
+    b.innerHTML = `<span class="pth" style="aspect-ratio:${ar}"></span><span>${i + 1}</span>`;
+    const th = b.querySelector('.pth');
+    if (i === doc.page) {
+      // the open page, as it is now
+      const sc = Math.min(1, 360 / sim.W), w = Math.round(sim.W * sc), h = Math.round(sim.H * sc), c = document.createElement('canvas'); c.width = w; c.height = h;
+      c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(sim.exportPixels({ scale: sc }).buffer), w, h), 0, 0); th.appendChild(c);
+    } else if (doc.pageThumbs[key]) { const im = document.createElement('img'); im.src = URL.createObjectURL(doc.pageThumbs[key]); im.onload = () => URL.revokeObjectURL(im.src); th.appendChild(im); }
+    b.onclick = () => { if (i !== doc.page) { closePops(); gotoPage(i); } };
+    g.appendChild(b);
+  });
+  $('#pgEarlier').disabled = doc.page === 0; $('#pgLater').disabled = doc.page === doc.pages.length - 1;
+}
+$('#pgPrev').onclick = (e) => { e.stopPropagation(); gotoPage(doc.page - 1); };
+$('#pgNext').onclick = (e) => { e.stopPropagation(); gotoPage(doc.page + 1); };
+$('#pgNum').onclick = (e) => { e.stopPropagation(); togglePop('pagePop'); };
+$('#pgAdd').onclick = () => { closePops(); insertPage(doc.page + 1); };
+$('#pgEarlier').onclick = () => { movePage(doc.page, doc.page - 1); };
+$('#pgLater').onclick = () => { movePage(doc.page, doc.page + 1); };
+$('#pgDelete').onclick = () => { closePops(); deletePage(doc.page); };
 
 // ---------- gallery ----------
 async function openGallery() {
@@ -1049,7 +1258,8 @@ async function openGallery() {
   for (const m of list) {
     const card = document.createElement('div'); card.className = 'card' + (doc && m.id === doc.id ? ' cur' : '');
     const url = m.thumb ? URL.createObjectURL(m.thumb) : null;
-    card.innerHTML = `<button class="th">${url ? `<img src="${url}" alt="">` : ''}</button><div class="meta"><div><b></b><small>${m.W} × ${m.H} · ${new Date(m.updated).toLocaleDateString()}</small></div><button class="more">⋯</button></div>`;
+    const np = store.pagesOf(m).length;
+    card.innerHTML = `<button class="th">${url ? `<img src="${url}" alt="">` : ''}</button><div class="meta"><div><b></b><small>${np > 1 ? np + ' pages · ' : ''}${m.W} × ${m.H} · ${new Date(m.updated).toLocaleDateString()}</small></div><button class="more">⋯</button></div>`;
     card.querySelector('b').textContent = m.name;
     card.querySelector('.th').onclick = () => openById(m.id);
     card.querySelector('.more').onclick = (e) => cardMenu(e, m);
@@ -1080,9 +1290,13 @@ function cardMenu(e, m) {
 async function openById(id) {
   if (doc?.id === id) { $('#gallery').classList.remove('open'); return; }
   await flushSave();
-  const meta = await store.get('meta', id), data = await store.loadPainting(id);
-  if (!meta || !data) { toast('Could not open that painting'); return; }
-  openDoc({ id, name: meta.name, W: data.W, H: data.H, paper: data.paper || 'cold', tint: data.tint || 'white', texture: !!data.texture, pattern: data.pattern || 0, created: meta.created, frames: meta.frames || 0 }, data);
+  const meta = await store.get('meta', id);
+  if (!meta) { toast('Could not open that painting'); return; }
+  const pages = store.pagesOf(meta);
+  let page = Math.min(Math.max(0, meta.page || 0), pages.length - 1), data = await store.loadPainting(pages[page]);
+  if (!data && page) { page = 0; data = await store.loadPainting(pages[0]); }
+  if (!data) { toast('Could not open that painting'); return; }
+  openDoc({ id, name: meta.name, W: data.W, H: data.H, paper: data.paper || 'cold', tint: data.tint || 'white', texture: !!data.texture, pattern: data.pattern || 0, created: meta.created, frames: meta.frames || 0, pages: pages.slice(), page, pageThumbs: { ...(meta.pageThumbs || {}) } }, data);
   $('#gallery').classList.remove('open');
 }
 async function createPainting(W, H, name, pattern = 0) {
@@ -1096,8 +1310,9 @@ async function createPainting(W, H, name, pattern = 0) {
 $('#galBtn').onclick = (e) => { e.stopPropagation(); openGallery(); };
 $('#galBack').onclick = () => { if (doc) $('#gallery').classList.remove('open'); };
 $('#newBtn').onclick = (e) => menu(e, [
-  ['Notebook page, lined', async () => { await createPainting(1264, 1680, 'Notes', 1); setMode('pen'); }],
-  ['Notebook page, grid', async () => { await createPainting(1264, 1680, 'Notes', 2); setMode('pen'); }],
+  ['Notebook, lined', async () => { await createPainting(1264, 1680, 'Notes', 1); setMode('pen'); }],
+  ['Notebook, grid', async () => { await createPainting(1264, 1680, 'Notes', 2); setMode('pen'); }],
+  ['Notebook, dotted', async () => { await createPainting(1264, 1680, 'Notes', 3); setMode('pen'); }],
   ...SIZES.filter((s) => !s.note).map((s) => { const [w, h] = s.get(); return [`${s.name}  ${w} × ${h}`, () => createPainting(w, h)]; }),
 ]);
 $('#importBtn').onclick = () => $('#importFile').click();
@@ -1162,7 +1377,7 @@ function frame(t) {
     const stepped = sim.step(dt);
     if (stepped) { needsRender = true; paintTick++; }
     // e-paper: a drying wash is redrawn a few times a second, not every frame (fewer flashes)
-    if (needsRender && (!S.eink || stroke || !sim.wet || t - lastRender > 150)) { render(); needsRender = false; lastRender = t; }
+    if (needsRender && (!S.eink || stroke || !sim.wet || t - lastRender > 150)) { render(); needsRender = false; lastRender = t; updateZoomLabel(); }
     markWet();
     if (S.record && rec.id && rec.due(paintTick !== lastTick)) { lastTick = paintTick; rec.capture(sim); }
     if (thumbsDirty && !sim.wet && $('#layerPop').classList.contains('open')) buildLayers();
@@ -1194,7 +1409,7 @@ if ('serviceWorker' in navigator && !qs.has('nosw') && location.protocol !== 'fi
 // test / debugging hook
 window.__aq = {
   box, get dpr() { return dpr; }, setFullscreen, get sim() { return sim; }, get doc() { return doc; }, view, S, get stroke() { return stroke; }, fit, setTool, selectBrush, choosePigment, useCustom, render,
-  redraw: () => { needsRender = true; }, useBrush, setMode, setNib, setPenColour, exportImage, save, toSheet, toScreen, openGallery, openById, createPainting, rec, togglePop, dupLayer,
+  redraw: () => { needsRender = true; }, baseZ, zoomBy, zoomToggle, freeArea, gotoPage, insertPage, deletePage, movePage, get pageCache() { return pageCache; }, useBrush, setMode, setNib, setPenColour, exportImage, save, toSheet, toScreen, openGallery, openById, createPainting, rec, togglePop, dupLayer,
   get penSeen() { return penSeen; },
 };
 window.__ready = true;

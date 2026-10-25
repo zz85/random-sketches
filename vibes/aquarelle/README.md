@@ -14,7 +14,7 @@ ES modules and WebGL2. Installable PWA, works offline.
 ```
 python3 -m http.server      # any static server (the service worker needs https or localhost)
 bun test                    # pigment optics, mixing, stroke resampling, paper: 10 tests
-node smoke.js               # headless Chromium (SwiftShader), real pen/touch/mouse events through the UI: 65 checks + screenshots
+node smoke.js               # headless Chromium (SwiftShader), real pen/touch/mouse events through the UI: 90 checks + screenshots
                             # SKIP_SCENE=1 skips painting the landscape; PORT= / CDP= / CHROME= to override
 ```
 
@@ -41,19 +41,35 @@ The interface is the first one's floating toolbars, with everything added since.
 - **Top right:** undo, redo, hair dryer (hold to dry faster, double-tap to dry at once),
   tilt the board, layers, share, full screen, help.
 
-The sheet is fitted into the space the panels leave, so no part of it is under a toolbar.
-Right-hand interface (Prefs) mirrors the brushes and sliders.
+- **Bottom right:** zoom: + and −, and the % between them switches between the whole page
+  and the zoom pages open at.
+- **Top centre** (pen mode, or once a painting has more than one page): ‹ page › .
+
+At 100% the sheet fits the space the panels leave, so no part of it is under a toolbar.
+Pages open at 125% on small screens (7" e-readers like the Bigme B7 Pro, phones) and at
+the whole page elsewhere, starting at the top left of the page; Prefs → Open pages at
+picks Page, 125%, 150% or the full width. Right-hand interface (Prefs) mirrors the
+brushes, sliders and zoom.
+
+**Notebooks.** Any painting can have pages. Gallery → + → Notebook (lined, grid or dotted)
+starts one in pen mode. ‹ › at the top turn pages, and › on the last page adds one (so does
+Canvas → Add a page); Page Up / Page Down too. Tap the page number for all pages as
+thumbnails: tap one to go there, + Page, Move earlier / later, Delete page. Turning a page
+dries and saves the one you leave and keeps your zoom and column, back at the top of the
+new page. The notebook reopens at the page you were on, and its gallery card shows the
+page count. Ruling, paper and colour belong to the notebook; layers and undo belong to the
+page, and undo history starts afresh each time you turn to a page.
 
 | Input | Does |
 |---|---|
 | Pencil / stylus | paints. Pressure sets size and load (pressure curve in Prefs), tilt lays the brush on its side. Hover shows the brush outline |
 | Finger | paints until a pen has been used, then navigates (Prefs → Fingers) |
-| Two fingers | pan, pinch-zoom, twist to rotate (snaps square); a quick pinch in fits the canvas |
+| Two fingers | decided by how they start moving, then locked for the gesture: moving together pans (no zoom, no rotation), spreading or pinching zooms, a clear twist rotates (snaps square; Prefs → Rotate with two fingers). A quick pinch in shows the whole page |
 | Two / three / four-finger tap | undo / redo / hide the toolbars |
 | Touch and hold | eyedropper (also the dropper at the bottom of the brushes, Alt-click or I) |
 | Hold at the end of a stroke | QuickShape: the stroke is taken back, with everything its water did, and painted again as a straight line or an ellipse (circle when nearly round) |
 | Mouse | left paints (speed stands in for pressure), middle/right or Space-drag pans, wheel zooms |
-| Keys | B W T R Y X brushes, Q water, K lift, P pen / paint, S smudge, E erase, L layers, C colours, I eyedropper, `[` `]` size, 1–9 pigments (Shift adds to the mix), F dry now, ⌘Z / ⇧⌘Z, 0 fit, Tab hide UI |
+| Keys | Page Up / Page Down pages, + / − zoom, 0 whole page, B W T R Y X brushes, Q water, K lift, P pen / paint, S smudge, E erase, L layers, C colours, I eyedropper, `[` `]` size, 1–9 pigments (Shift adds to the mix), F dry now, ⌘Z / ⇧⌘Z, Tab hide UI |
 
 **Pen mode** (Pen | Paint at the top left, or P) is for writing notes. Ink goes straight into
 the page with a crisp edge and no water, so it is dry the moment you lift the pen and

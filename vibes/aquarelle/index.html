@@ -203,6 +203,29 @@
   #err { display: none; position: fixed; inset: 0; z-index: 100; background: var(--bg); padding: 40px; font-size: 15px; }
   body.ui-hidden .panel, body.ui-hidden .pop { opacity: 0; pointer-events: none; }
 
+
+  /* pages (top centre) and zoom (bottom right) */
+  #pages { top: calc(10px + var(--safe-t)); left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 0; padding: 4px; }
+  #pages .ico { width: 38px; }
+  #pgNum { min-width: 56px; height: 40px; padding: 0 6px; border-radius: 10px; font-weight: 600; font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  #pgNum:hover { background: rgba(255, 255, 255, 0.06); }
+  body.single-page:not(.penmode) #pages { display: none; }
+  #zoomBar { right: calc(10px + var(--safe-r)); bottom: calc(84px + var(--safe-b)); display: flex; flex-direction: column; align-items: center; gap: 0; padding: 4px; }
+  body.penmode #zoomBar { bottom: calc(10px + var(--safe-b)); }
+  body.right #zoomBar { right: auto; left: calc(10px + var(--safe-l)); }
+  #zoomBar .ico { width: 40px; height: 40px; }
+  #zoomPct { width: 44px; height: 30px; border-radius: 8px; font-size: 11.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  #pagePop { left: 50%; transform: translateX(-50%); width: min(440px, calc(100% - 20px)); }
+  #pageGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 12px 10px; padding: 6px 4px; }
+  .pg { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 11.5px; color: var(--dim); }
+  .pg .pth { width: 100%; background: #fff; border-radius: 4px; box-shadow: 0 0 0 1px var(--line); overflow: hidden; display: grid; place-items: center; }
+  .pg .pth img, .pg .pth canvas { width: 100%; height: 100%; display: block; object-fit: contain; }
+  .pg.on .pth { box-shadow: 0 0 0 3px var(--accent); }
+  .pg.on { color: var(--accent); font-weight: 600; }
+  #pageOpts { display: flex; gap: 6px; padding: 8px; border-top: 1px solid var(--line); flex-wrap: wrap; justify-content: center; }
+  body.eink .pg.on .pth { box-shadow: 0 0 0 3px #000; }
+  body.eink .pg .pth { box-shadow: 0 0 0 2px #000; }
+
   /* ---- colour e-paper (Bigme B7 Pro and friends): white, black, thick lines, nothing that moves ---- */
   body.eink { --bg: #e6e6e6; --panel: #fff; --panel2: #fff; --line: #000; --ink: #000; --dim: #333; --accent: #000; --acc-bg: #000; --on-acc: #fff; }
   body.eink *, body.eink *::before, body.eink *::after { transition: none !important; animation: none !important; box-shadow: none !important; text-shadow: none !important; }
@@ -230,7 +253,8 @@
   @media (max-width: 720px), (max-height: 560px) {
     :root { --toph: calc(56px + var(--safe-t)); }
     .ico { width: 40px; height: 40px; }
-    #title, #shareBtn { display: none; }
+    #title, #shareBtn, #tiltBtn, #helpBtn { display: none !important; }
+    #pages .ico { width: 34px; } #pgNum { min-width: 50px; padding: 0 4px; }
     #wet { min-width: 0; padding: 0 6px; } #wet span { display: none; }
     #modeSeg button { padding: 7px 10px; }
     #sliders { left: auto; right: calc(8px + var(--safe-r)); gap: 2px; padding: 24px 4px 26px; }
@@ -265,6 +289,11 @@
 <div id="err"></div>
 
 <svg width="0" height="0" style="position:absolute">
+  <symbol id="i-prev" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></symbol>
+  <symbol id="i-next" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></symbol>
+  <symbol id="i-pageadd" viewBox="0 0 24 24"><path d="M6 3.5h8l4 4v13H6z"/><path d="M14 3.5v4h4M12 11v6M9 14h6"/></symbol>
+  <symbol id="i-zin" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-zout" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
   <symbol id="i-fs" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></symbol>
   <symbol id="i-fsexit" viewBox="0 0 24 24"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></symbol>
   <symbol id="i-round" viewBox="0 0 24 24"><path d="M19 3c-3 1.5-7 6-9.2 9.6"/><path d="M10 12.5c-2.6-.4-4.7 1.6-4.9 4.1C4.9 19 4 20 3 21c3 .3 6.6-.5 7.8-3.3.7-1.7.4-3.6-.8-5.2Z"/></symbol>
@@ -347,6 +376,24 @@
   <div id="wells"></div>
 </div>
 
+<div id="pages" class="panel" title="Pages">
+  <button class="ico" id="pgPrev" title="Previous page (Page Up)"><svg><use href="#i-prev"/></svg></button>
+  <button id="pgNum" title="All pages: add, move, delete">1 / 1</button>
+  <button class="ico" id="pgNext" title="Next page (Page Down); on the last page, a new page"><svg><use href="#i-next"/></svg></button>
+</div>
+
+<div id="zoomBar" class="panel" title="Zoom">
+  <button class="ico" id="zoomIn" title="Zoom in (+)"><svg><use href="#i-zin"/></svg></button>
+  <button id="zoomPct" title="Tap: whole page / your zoom (0)">100%</button>
+  <button class="ico" id="zoomOut" title="Zoom out (−)"><svg><use href="#i-zout"/></svg></button>
+</div>
+
+<div id="pagePop" class="pop">
+  <header><span>Pages <small id="pgCount"></small></span><button class="btn" id="pgAdd">+ Page</button></header>
+  <div class="body"><div id="pageGrid"></div></div>
+  <div id="pageOpts"><button class="btn" id="pgEarlier">Move earlier</button><button class="btn" id="pgLater">Move later</button><button class="btn danger" id="pgDelete">Delete page</button></div>
+</div>
+
 <div id="penBar" class="panel"><div id="nibs"></div><div id="penCols"></div></div>
 
 <div id="brushPop" class="pop">
@@ -385,6 +432,7 @@
     </div>
     <div data-pane="canvas" style="display:none">
       <div class="h3">Paper</div><div id="paperList"></div>
+      <button class="item" id="addPageItem"><span>Add a page<small>this painting becomes a notebook: ‹ › at the top turn pages</small></span></button>
       <div class="row"><span>Page ruling</span><div class="seg" id="patSeg"></div></div>
       <div class="row"><span>Show paper texture</span><input type="checkbox" id="optTexture"></div>
       <div class="row"><span>Paper colour</span><div id="tints" style="display:flex;gap:8px"></div></div>
@@ -407,7 +455,8 @@
       <div class="row"><span>Pressure<small style="display:block;color:var(--dim);font-size:11.5px">soft … firm</small></span><input type="range" id="optPressure" class="slim" min="0.4" max="2.2" step="0.05"></div>
       <div class="row"><span>Stroke smoothing</span><input type="range" id="optSmooth" class="slim" min="0" max="0.9" step="0.05"></div>
       <div class="row"><span>QuickShape (hold at the end of a stroke)</span><input type="checkbox" id="optQuick"></div>
-      <div class="row"><span>Rotate with two fingers</span><input type="checkbox" id="optRotate"></div>
+      <div class="row"><span>Open pages at<small>tap the % by the zoom buttons to switch to the whole page and back</small></span><div class="seg" id="zoomSeg"><button data-v="1">Page</button><button data-v="1.25">125%</button><button data-v="1.5">150%</button><button data-v="width">Width</button></div></div>
+      <div class="row"><span>Rotate with two fingers<small>a twist must start the gesture; two fingers that start moving together only pan</small></span><input type="checkbox" id="optRotate"></div>
       <div class="row"><span>Brush runs dry</span><input type="checkbox" id="optLoad"></div>
     </div>
     <div data-pane="help" class="help" style="display:none">
@@ -418,13 +467,15 @@
         <tr><td>Pen mode</td><td>Pen | Paint at the top. Pen writes ink straight onto the page, with no water: ballpoint, fineliner, brush pen, highlighter, eraser along the bottom, ink colours next to them, + for any colour. Gallery → + → Notebook page gives lined or grid paper</td></tr>
         <tr><td>Pencil / stylus</td><td>paints; pressure sets size and load, tilt lays the brush on its side</td></tr>
         <tr><td>Finger</td><td>paints until a pen is used, then navigates (Prefs)</td></tr>
-        <tr><td>Two fingers</td><td>pan, pinch, twist to rotate; quick pinch in fits the canvas</td></tr>
+        <tr><td>Two fingers</td><td>moving together: pan only (locked, no zoom or rotation); spreading: zoom; twisting: rotate. A quick pinch in shows the whole page</td></tr>
+        <tr><td>Zoom</td><td>+ and − at the bottom right, the % between them switches between the whole page and your zoom (Prefs → Open pages at)</td></tr>
+        <tr><td>Pages</td><td>‹ › at the top turn pages; › on the last page adds one. Tap the page number for all pages: move, delete. Gallery → + → Notebook makes a ruled notebook</td></tr>
         <tr><td>Two-finger tap</td><td>undo — three-finger tap: redo — four-finger tap: full screen</td></tr>
         <tr><td>Touch and hold</td><td>eyedropper (or the dropper in the tools, or Alt-click)</td></tr>
         <tr><td>Hold at stroke end</td><td>QuickShape: snaps to a straight line or an ellipse</td></tr>
         <tr><td>Wet-in-wet</td><td>Clear water brush first, then drop paint in and watch it bloom</td></tr>
         <tr><td>Glazing</td><td>let it dry (hair dryer: hold, or double-tap to dry at once) and paint over: colours multiply like real glazes</td></tr>
-        <tr><td>Keys</td><td>B W T R Y X brushes, Q water, K lift, S smudge, E erase, I eyedropper, P pen / paint, L layers, C colour wheel, [ ] size, 1–9 pigments, F dry, ⌘Z / ⇧⌘Z, Space-drag pan, wheel zoom, 0 fit, Tab hide UI</td></tr>
+        <tr><td>Keys</td><td>Page Up / Page Down pages, + / − zoom, B W T R Y X brushes, Q water, K lift, S smudge, E erase, I eyedropper, P pen / paint, L layers, C colour wheel, [ ] size, 1–9 pigments, F dry, ⌘Z / ⇧⌘Z, Space-drag pan, wheel zoom, 0 fit, Tab hide UI</td></tr>
       </table>
     </div>
   </div>

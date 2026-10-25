@@ -1142,7 +1142,7 @@ export class Sim {
     for (const k of ['W', 'FK', 'FS']) for (const t of this.s[k].t) this.clearTex(t);
     for (const r of [...this.undo, ...this.redo]) this.freeRecord(r, false);
     for (const L of this.layers) this.freeLayer(L);
-    this.layers = []; this.layer = null; this.s.DK = this.s.DS = null;
+    this.layers = []; this.layer = null; this.s.DK = this.s.DS = null; this.nLayers = 0;
     for (const d of data.layers) {
       const L = this.addLayer(this.layers.length, d.name); L.visible = d.visible ?? true; L.opacity = d.opacity ?? 1;
       for (const [t, arr] of [[L.K, d.K], [L.S, d.S]]) {
