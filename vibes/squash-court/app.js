@@ -31,7 +31,7 @@ const S = {
   live: false, procFrame: null, sound: true,
   // players and ball (rally.js in the worker): players [{ id, X, seen, occluded, box }], the live
   // ball pixel, and fitted flights { t0, t1, pts: [{ t, X }], uv, impacts, labels, speed }
-  showRally: true, showHeat: true, showBounces: true, bounces: new Bounces(), comm: new Commentary(), feed: [], speak: false, moveSaid: {}, players: [], ball: null, ballTrail: [], flights: [], rallyMs: {},
+  showRally: true, showHeat: true, showBounces: true, captions: true, bounces: new Bounces(), comm: new Commentary(), feed: [], speak: false, moveSaid: {}, players: [], ball: null, ballTrail: [], flights: [], rallyMs: {},
 };
 // Per player: recent positions (speed), distance covered and time spent per 25 cm floor cell
 // (the heatmap). Kept in the page, fed by the players worker's tracked positions.
@@ -80,7 +80,15 @@ function playersAt(t, X) {
 // Shots are (re)built from the main camera's flights whenever the flight window changes; each
 // keeps its id, so a refit rewrites its line in place instead of adding another. Shots with
 // little evidence behind them (an inferred wall contact and few frames) are shown faded.
-const nameOf = (id) => `P${id}`;
+// Names typed in the Players panel (kept per video file); P1 / P2 until then.
+S.names = { 1: '', 2: '' };
+const nameOf = (id) => (S.names[id] || '').trim() || `P${id}`;
+function setNames(n, note) {
+  S.names = { 1: n[1] ?? '', 2: n[2] ?? '' }; for (const i of [1, 2]) if ($(`name${i}`).value !== S.names[i]) $(`name${i}`).value = S.names[i]; // never under the cursor while typing
+  if (note != null) $('nameNote').textContent = note;
+  if (S.srcName) localStorage.setItem('squashNames:' + S.srcName, JSON.stringify(S.names));
+  renderFeed(); draw();
+}
 function comment() {
   const fl = S.flights.filter((f) => mainView(f.cam));
   if (!fl.length) return;
@@ -88,9 +96,9 @@ function comment() {
   for (const s of changed) {
     if (s.quality < 2) continue;
     const text = describe(s, nameOf), o = S.feed.find((e) => e.id === s.id);
-    if (o) { if (o.text !== text) { o.text = text; o.player = s.player; o.sure = s.quality >= 3; } continue; }
-    S.feed.push({ id: s.id, t: s.t, text, player: s.player, sure: s.quality >= 3, fresh: true });
-    if (S.speak && s.quality >= 3) say(text);
+    if (o) { o.shot = s; o.player = s.player; o.sure = s.quality >= 3; continue; }
+    S.feed.push({ id: s.id, t: s.t, shot: s, player: s.player, sure: s.quality >= 3, fresh: true });
+    if (s.quality >= 3) { if (S.speak) say(text); caption(text); }
   }
   S.feed.sort((a, b) => b.t - a.t); if (S.feed.length > 200) S.feed.length = 200;
   renderFeed();
@@ -100,10 +108,11 @@ function commentMoves() {
   for (const p of S.players) {
     if (!p.seen) continue;
     const st = S.stats[p.id], text = st && movement(p.id, p.X, st.speed, nameOf); if (!text) continue;
+    const id = p.id, X = p.X.slice(), v = st.speed, mk = () => movement(id, X, v, nameOf);
     const key = p.id + text.split(' corner')[0].slice(-10);
     if (t - (S.moveSaid[key] ?? -Infinity) < 6) continue; // once per corner visit
     S.moveSaid[key] = t;
-    S.feed.unshift({ id: `m${p.id}-${t}`, t, text, player: p.id, sure: true, fresh: true, move: true });
+    S.feed.unshift({ id: `m${p.id}-${t}`, t, mk, player: p.id, sure: true, fresh: true, move: true }); caption(text);
   }
   renderFeed();
 }
@@ -113,8 +122,15 @@ function renderFeed() {
   el.replaceChildren(...S.feed.slice(0, 60).map((e) => {
     const li = document.createElement('li'); li.className = (e.fresh ? 'new' : '') + (e.sure ? '' : ' maybe'); e.fresh = false;
     li.style.borderLeftColor = e.player ? PCOL[(e.player - 1) % PCOL.length] : '#666';
-    const t = document.createElement('span'); t.className = 't'; t.textContent = clock(e.t); li.append(t, e.text); return li;
+    const t = document.createElement('span'); t.className = 't'; t.textContent = clock(e.t); li.append(t, e.shot ? describe(e.shot, nameOf) : e.mk ? e.mk() : e.text); return li;
   }));
+}
+// Captions: the newest commentary line over the video for a few seconds (the feed keeps them all).
+let ccTimer = 0;
+function caption(text) {
+  if (!S.captions || !S.live) return;
+  const el = $('cc'); el.textContent = text; el.classList.remove('off');
+  clearTimeout(ccTimer); ccTimer = setTimeout(() => el.classList.add('off'), Math.max(3500, 60 * text.length));
 }
 function say(text) {
   if (!('speechSynthesis' in window)) return;
@@ -261,8 +277,9 @@ const pcol = (p) => PCOL[(p.id - 1) % PCOL.length];
 function useImage(el, w, h) {
   stopLive(); S.src = el; S.srcW = w; S.srcH = h; S.cam = null; S.picks = []; clearRally(); fitStage(); draw(); analyse('detect');
 }
+function loadNames() { let n = null; try { n = JSON.parse(localStorage.getItem('squashNames:' + S.srcName) || 'null'); } catch {} setNames(n ?? { 1: '', 2: '' }, n ? 'saved for this video' : 'type the names, or swap them if they are the wrong way round'); }
 function loadFile(file) {
-  const url = URL.createObjectURL(file);
+  const url = URL.createObjectURL(file); S.srcName = file.name;
   if (file.type.startsWith('video/')) {
     const v = document.createElement('video'); v.src = url; v.muted = !S.sound; v.playsInline = true; v.loop = true;
     v.onloadeddata = () => { useVideo(v); listen(url, v); }; return;
@@ -273,7 +290,12 @@ function loadFile(file) {
 function useVideo(v) {
   stopLive(); S.src = v; S.srcW = v.videoWidth; S.srcH = v.videoHeight; S.cam = null; S.picks = []; clearRally(); S.audio = null; S.match = null; S.live = true; fitStage();
   // with sound if wanted; a browser that refuses unmuted playback without a fresh gesture gets it muted
-  S.frameCb = watchFrames(v);
+  S.frameCb = watchFrames(v); if (!v.srcObject) loadNames();
+  // time slider: seeking starts the ball and the players' tracks afresh (a jump is not a flight)
+  const sc = $('scrub'); sc.hidden = !!v.srcObject || !isFinite(v.duration);
+  $('seek').max = v.duration || 1;
+  v.onseeking = () => { for (const R of rallyW) R.reset = true; S.ballTrail = []; S.ball = null; S.fails = 0; };
+  v.ondurationchange = () => { $('seek').max = v.duration || 1; sc.hidden = !!v.srcObject || !isFinite(v.duration); };
   v.play().catch(() => { v.muted = true; soundLabel(); v.play().catch(() => {}); });
   $('play').hidden = false; $('play').textContent = 'Pause';
   $('sound').hidden = !!v.srcObject; soundLabel();
@@ -287,12 +309,13 @@ async function useCamera() {
   } catch (e) { status(`camera: ${e.message}`); }
 }
 function stopLive() {
-  S.live = false; $('play').hidden = true; $('sound').hidden = true;
+  S.live = false; $('play').hidden = true; $('sound').hidden = true; $('scrub').hidden = true; $('cc').classList.add('off');
   if (S.src instanceof HTMLVideoElement) { S.src.pause(); S.src.srcObject?.getTracks().forEach((t) => t.stop()); }
 }
 function loop() {
   if (!S.live) return;
   draw();
+  if (!S.seeking && S.src instanceof HTMLVideoElement) { $('seek').value = S.src.currentTime; $('tlabel').textContent = `${clock(S.src.currentTime).slice(0, -2)} / ${clock(S.src.duration || 0).slice(0, -2)}`; }
   // a paused video is analysed once, not over and over
   const t = S.src.currentTime, fresh = !S.src.paused || t !== S.lastT || (!S.okay && S.fails < 3);
   if (!S.busy && S.src.readyState >= 2 && fresh) { S.lastT = t; analyse(S.cam && S.fails < 3 ? 'track' : 'detect'); }
@@ -372,7 +395,7 @@ function drawRallyStage(map, dpr) {
     for (let a = 0; a <= 24; a++) { const u = c.project([p.X[0] + 0.28 * Math.cos(a / 24 * 2 * Math.PI), p.X[1] + 0.28 * Math.sin(a / 24 * 2 * Math.PI), 0]); if (!(u[2] > 0)) continue; const [x, y] = map(u); first ? sctx.moveTo(x, y) : sctx.lineTo(x, y); first = false; }
     sctx.stroke(); sctx.setLineDash([]);
     const u = c.project([p.X[0], p.X[1], 0]); if (!(u[2] > 0)) continue; const [x, y] = map(u);
-    sctx.font = `${12 * dpr}px system-ui`; sctx.fillStyle = '#000a'; const sp = S.stats[p.id]?.speed, s = `P${p.id}  ${p.X[0].toFixed(2)}, ${p.X[1].toFixed(2)} m${sp > 0.3 ? `  ${sp.toFixed(1)} m/s` : ''}`;
+    sctx.font = `${12 * dpr}px system-ui`; sctx.fillStyle = '#000a'; const sp = S.stats[p.id]?.speed, s = `${nameOf(p.id)}  ${p.X[0].toFixed(2)}, ${p.X[1].toFixed(2)} m${sp > 0.3 ? `  ${sp.toFixed(1)} m/s` : ''}`;
     sctx.fillRect(x + 14 * dpr, y - 6 * dpr, sctx.measureText(s).width + 6 * dpr, 16 * dpr); sctx.fillStyle = pcol(p); sctx.fillText(s, x + 17 * dpr, y + 6 * dpr);
   }
   sctx.lineWidth = 2.5 * dpr;
@@ -404,27 +427,27 @@ function rectify(ctx, cnv, toWorld) {
 }
 function drawPlan() {
   const s = plan.width / CW; // px per metre; y down the court
-  rectify(pctx, plan, (x, y) => [x / s, y / s, 0]);
+  rectify(pctx, plan, (x, y) => [CW - x / s, y / s, 0]); // seen from above, facing the front wall: the right wall (x = 0) on the right
   pctx.strokeStyle = 'rgba(0,240,255,0.8)'; pctx.lineWidth = 1;
-  for (const l of MODEL.lines) if (l.kind === 'floor') { pctx.beginPath(); pctx.moveTo(l.a[0] * s, l.a[1] * s); pctx.lineTo(l.b[0] * s, l.b[1] * s); pctx.stroke(); }
+  for (const l of MODEL.lines) if (l.kind === 'floor') { pctx.beginPath(); pctx.moveTo((CW - l.a[0]) * s, l.a[1] * s); pctx.lineTo((CW - l.b[0]) * s, l.b[1] * s); pctx.stroke(); }
   pctx.strokeRect(0.5, 0.5, plan.width - 1, plan.height - 1);
-  for (const p of S.picks) if (p.surface === 'floor') { pctx.fillStyle = '#ff2d7a'; pctx.beginPath(); pctx.arc(p.X[0] * s, p.X[1] * s, 4, 0, 7); pctx.fill(); }
+  for (const p of S.picks) if (p.surface === 'floor') { pctx.fillStyle = '#ff2d7a'; pctx.beginPath(); pctx.arc((CW - p.X[0]) * s, p.X[1] * s, 4, 0, 7); pctx.fill(); }
   if (S.showHeat) drawHeat(s);
-  if (S.showBounces) { const F = S.bounces.on('floor'); drawBounces(pctx, F, CW, CL, s, (x, y) => [x * s, y * s], !S.showHeat, (m) => [m.X[0], m.X[1]]); if (F.length) { const L = F[F.length - 1]; ringLast(pctx, L, L.X[0] * s, L.X[1] * s); } }
+  if (S.showBounces) { const F = S.bounces.on('floor'); drawBounces(pctx, F, CW, CL, s, (x, y) => [(CW - x) * s, y * s], !S.showHeat, (m) => [m.X[0], m.X[1]]); if (F.length) { const L = F[F.length - 1]; ringLast(pctx, L, (CW - L.X[0]) * s, L.X[1] * s); } }
   if (S.showRally) {
     // the ball's ground track (shadow), floor bounces, players
     for (const f of recentFlights()) {
       pctx.strokeStyle = 'rgba(255,230,0,0.9)'; pctx.lineWidth = 1.5; pctx.beginPath();
-      f.pts.forEach((q, i) => (i ? pctx.lineTo(q.X[0] * s, q.X[1] * s) : pctx.moveTo(q.X[0] * s, q.X[1] * s))); pctx.stroke();
-      for (const m of f.impacts) { pctx.fillStyle = '#ff8a00'; pctx.beginPath(); pctx.arc(m.X[0] * s, m.X[1] * s, 3, 0, 7); pctx.fill(); }
+      f.pts.forEach((q, i) => (i ? pctx.lineTo((CW - q.X[0]) * s, q.X[1] * s) : pctx.moveTo((CW - q.X[0]) * s, q.X[1] * s))); pctx.stroke();
+      for (const m of f.impacts) { pctx.fillStyle = '#ff8a00'; pctx.beginPath(); pctx.arc((CW - m.X[0]) * s, m.X[1] * s, 3, 0, 7); pctx.fill(); }
     }
     for (const p of S.players) {
-      pctx.fillStyle = pcol(p); pctx.globalAlpha = p.seen ? 1 : 0.5; pctx.beginPath(); pctx.arc(p.X[0] * s, p.X[1] * s, 6, 0, 7); pctx.fill(); pctx.globalAlpha = 1;
-      pctx.fillStyle = '#000'; pctx.font = 'bold 9px system-ui'; pctx.fillText(String(p.id), p.X[0] * s - 2.5, p.X[1] * s + 3);
+      pctx.fillStyle = pcol(p); pctx.globalAlpha = p.seen ? 1 : 0.5; pctx.beginPath(); pctx.arc((CW - p.X[0]) * s, p.X[1] * s, 6, 0, 7); pctx.fill(); pctx.globalAlpha = 1;
+      pctx.fillStyle = '#000'; pctx.font = 'bold 9px system-ui'; pctx.fillText(String(p.id), (CW - p.X[0]) * s - 2.5, p.X[1] * s + 3);
     }
   }
   // where the camera stands, if it is on the plan
-  if (S.cam) { const C = S.cam.C; pctx.fillStyle = '#ffe600'; pctx.fillText(C[1] > CL ? `▼ camera ${(C[1] - CL).toFixed(1)} m behind` : '● camera', Math.max(4, Math.min(plan.width - 90, C[0] * s - 20)), Math.min(plan.height - 6, C[1] * s)); }
+  if (S.cam) { const C = S.cam.C; pctx.fillStyle = '#ffe600'; pctx.fillText(C[1] > CL ? `▼ camera ${(C[1] - CL).toFixed(1)} m behind` : '● camera', Math.max(4, Math.min(plan.width - 90, (CW - C[0]) * s - 20)), Math.min(plan.height - 6, C[1] * s)); }
 }
 // Heatmap: time each player spent per 25 cm cell, blurred, in the player's colour, each scaled to
 // its own busiest cell. Drawn small and scaled up, so the canvas smooths it.
@@ -444,10 +467,10 @@ function drawHeat(s) {
   }
   hc.putImageData(img, 0, 0);
   if (ids.length) { pctx.fillStyle = 'rgba(10,12,16,0.55)'; pctx.fillRect(0, 0, plan.width, plan.height); } // dim the floor so the heat reads
-  pctx.save(); pctx.imageSmoothingEnabled = true; pctx.globalAlpha = 0.9; pctx.drawImage(heatCnv, 0, 0, HX * HM * s, HY * HM * s); pctx.restore();
+  pctx.save(); pctx.imageSmoothingEnabled = true; pctx.globalAlpha = 0.9; pctx.translate(CW * s, 0); pctx.scale(-1, 1); pctx.drawImage(heatCnv, 0, 0, HX * HM * s, HY * HM * s); pctx.restore();
   // the court lines again on top
   pctx.strokeStyle = 'rgba(0,240,255,0.8)'; pctx.lineWidth = 1;
-  for (const l of MODEL.lines) if (l.kind === 'floor') { pctx.beginPath(); pctx.moveTo(l.a[0] * s, l.a[1] * s); pctx.lineTo(l.b[0] * s, l.b[1] * s); pctx.stroke(); }
+  for (const l of MODEL.lines) if (l.kind === 'floor') { pctx.beginPath(); pctx.moveTo((CW - l.a[0]) * s, l.a[1] * s); pctx.lineTo((CW - l.b[0]) * s, l.b[1] * s); pctx.stroke(); }
 }
 // Ball bounces: a heat ramp (clear → orange → pale yellow) scaled to the busiest cell, and a dot per
 // bounce (a ring when it was inferred from a flight ending on the floor rather than fitted inside
@@ -498,7 +521,8 @@ function useMatch(M, name) {
   for (const p of M.players) { const st = statFor(p.id); st.heat = Float32Array.from(p.heatmap.seconds); st.dist = p.distance; st.time = p.seconds; st.top = p.topSpeed; st.series = p.speed.map(([t, v]) => ({ t, v })); }
   S.bounces.list = M.bounces.map((m) => ({ t: m.t, X: [m.x, m.y, m.z], plane: m.plane, inferred: m.inferred, sound: m.sound, player: m.player }));
   S.comm.shots = (M.shots ?? []).map((s, i) => ({ ...s, id: i + 1, measured: s.quality >= 4 }));
-  S.feed = (M.shots ?? []).filter((s) => s.quality >= 2).map((s, i) => ({ id: i + 1, t: s.t, text: s.text, player: s.player, sure: s.quality >= 3 })).reverse(); renderFeed();
+  S.feed = (M.shots ?? []).filter((s) => s.quality >= 2).map((s, i) => ({ id: i + 1, t: s.t, text: s.text, shot: s.kind && s.front ? s : null, player: s.player, sure: s.quality >= 3 })).reverse();
+  S.srcName = 'match:' + M.source; loadNames(); renderFeed();
   status(`${name}: ${(M.duration / 60).toFixed(1)} min, ${M.bounces.length} impacts, ${M.players.length} players`); draw();
 }
 // One player's heatmap on a plain court: time per 25 cm cell, in the player's colour.
@@ -512,13 +536,13 @@ function drawPlayerHeat(cnv, id) {
     const hc = document.createElement('canvas'); hc.width = h.nx; hc.height = h.ny; const hx = hc.getContext('2d'), img = hx.createImageData(h.nx, h.ny);
     const rgb = [1, 3, 5].map((i) => parseInt(PCOL[(id - 1) % PCOL.length].slice(i, i + 2), 16));
     for (let i = 0; i < B.length; i++) { const a = B[i] / mx; if (a < 0.03) continue; const o = i * 4; img.data[o] = rgb[0]; img.data[o + 1] = rgb[1]; img.data[o + 2] = rgb[2]; img.data[o + 3] = Math.min(255, 40 + 215 * a); }
-    hx.putImageData(img, 0, 0); g.save(); g.imageSmoothingEnabled = true; g.drawImage(hc, 0, 0, h.nx * HM * s, h.ny * HM * s); g.restore();
-    if (title) title.textContent = `Player ${id} heatmap — ${st.dist.toFixed(0)} m, top ${st.top.toFixed(1)} m/s`;
-  } else if (title) title.textContent = `Player ${id} heatmap`;
+    hx.putImageData(img, 0, 0); g.save(); g.imageSmoothingEnabled = true; g.translate(CW * s, 0); g.scale(-1, 1); g.drawImage(hc, 0, 0, h.nx * HM * s, h.ny * HM * s); g.restore();
+    if (title) title.textContent = `${nameOf(id)} heatmap — ${st.dist.toFixed(0)} m, top ${st.top.toFixed(1)} m/s`;
+  } else if (title) title.textContent = `${nameOf(id)} heatmap`;
   g.strokeStyle = 'rgba(0,240,255,0.7)'; g.lineWidth = 1;
-  for (const l of MODEL.lines) if (l.kind === 'floor') { g.beginPath(); g.moveTo(l.a[0] * s, l.a[1] * s); g.lineTo(l.b[0] * s, l.b[1] * s); g.stroke(); }
+  for (const l of MODEL.lines) if (l.kind === 'floor') { g.beginPath(); g.moveTo((CW - l.a[0]) * s, l.a[1] * s); g.lineTo((CW - l.b[0]) * s, l.b[1] * s); g.stroke(); }
   g.strokeRect(0.5, 0.5, cnv.width - 1, cnv.height - 1);
-  const p = S.players.find((q) => q.id === id); if (p) { g.fillStyle = '#fff'; g.beginPath(); g.arc(p.X[0] * s, p.X[1] * s, 4, 0, 7); g.fill(); }
+  const p = S.players.find((q) => q.id === id); if (p) { g.fillStyle = '#fff'; g.beginPath(); g.arc((CW - p.X[0]) * s, p.X[1] * s, 4, 0, 7); g.fill(); }
 }
 function blurHeat(a, nx, ny) { let g = Float32Array.from(a); for (let p = 0; p < 2; p++) { const o = new Float32Array(g.length); for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) { let v = 0, w = 0; for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) { const X = x + i, Y = y + j; if (X < 0 || Y < 0 || X >= nx || Y >= ny) continue; const k = (i ? 0.5 : 1) * (j ? 0.5 : 1); v += g[Y * nx + X] * k; w += k; } o[y * nx + x] = v / w; } g = o; } return g; }
 // the most recent mark of a list, ringed in green with its time
@@ -529,14 +553,14 @@ function ringLast(ctx, m, px, py) {
 }
 function drawWall() {
   const s = wall.width / CW; // front wall, 0 … 5 m high
-  rectify(wctx, wall, (x, y) => [x / s, 0, (wall.height - y) / s]);
+  rectify(wctx, wall, (x, y) => [CW - x / s, 0, (wall.height - y) / s]); // facing it from the court: x = 0 on the right
   wctx.strokeStyle = 'rgba(0,240,255,0.8)';
   for (const l of MODEL.lines) if (l.kind === 'front') { const y = wall.height - l.a[2] * s; wctx.beginPath(); wctx.moveTo(0, y); wctx.lineTo(wall.width, y); wctx.stroke(); }
-  for (const p of S.picks) if (p.surface === 'front wall') { wctx.fillStyle = '#ff2d7a'; wctx.beginPath(); wctx.arc(p.X[0] * s, wall.height - p.X[2] * s, 4, 0, 7); wctx.fill(); }
+  for (const p of S.picks) if (p.surface === 'front wall') { wctx.fillStyle = '#ff2d7a'; wctx.beginPath(); wctx.arc((CW - p.X[0]) * s, wall.height - p.X[2] * s, 4, 0, 7); wctx.fill(); }
   // every front-wall contact (one per shot), coloured by hitter; the last one in green
   const C = S.showBounces ? contacts() : [];
-  if (C.length) { drawBounces(wctx, C, CW, wall.height / s, s, (x, z) => [x * s, wall.height - z * s], true, (m) => [m.X[0], m.X[2]]); const L = C[C.length - 1]; ringLast(wctx, L, L.X[0] * s, wall.height - L.X[2] * s); }
-  if (S.showRally) for (const f of recentFlights()) for (const m of f.impacts) if (m.plane === 'front') { wctx.fillStyle = '#ff8a00'; wctx.beginPath(); wctx.arc(m.X[0] * s, wall.height - m.X[2] * s, 4, 0, 7); wctx.fill(); }
+  if (C.length) { drawBounces(wctx, C, CW, wall.height / s, s, (x, z) => [(CW - x) * s, wall.height - z * s], true, (m) => [m.X[0], m.X[2]]); const L = C[C.length - 1]; ringLast(wctx, L, (CW - L.X[0]) * s, wall.height - L.X[2] * s); }
+  if (S.showRally) for (const f of recentFlights()) for (const m of f.impacts) if (m.plane === 'front') { wctx.fillStyle = '#ff8a00'; wctx.beginPath(); wctx.arc((CW - m.X[0]) * s, wall.height - m.X[2] * s, 4, 0, 7); wctx.fill(); }
 }
 // 3D overview rendered with the same camera class: court box, lines, the fitted camera's frustum.
 function draw3d() {
@@ -570,9 +594,9 @@ function readout() {
   if (S.match) {
     const M = S.match, fl = S.bounces.on('floor'), fr = S.bounces.on('front');
     el.textContent = [`match    ${M.source} — ${(M.duration / 60).toFixed(1)} min, court seen ${(M.courtSeconds / 60).toFixed(1)} min`,
-      ...M.players.map((p) => `player ${p.id} ${p.distance.toFixed(0)} m in ${(p.seconds / 60).toFixed(1)} min, top ${p.topSpeed.toFixed(1)} m/s${p.colour ? `, shirt rgb(${p.colour.map(Math.round).join(', ')})` : ''}`),
+      ...M.players.map((p) => `${nameOf(p.id).padEnd(8)} ${p.distance.toFixed(0)} m in ${(p.seconds / 60).toFixed(1)} min, top ${p.topSpeed.toFixed(1)} m/s${p.colour ? `, shirt rgb(${p.colour.map(Math.round).join(', ')})` : ''}`),
       `bounces  ${fl.length} on the floor (${fl.filter((m) => m.X[1] > 5.44).length} behind the short line), ${fr.length} on the front wall, ${S.bounces.list.filter((m) => m.sound).length} found by ear`,
-      ...M.players.map((p) => `         P${p.id} hit ${S.bounces.list.filter((m) => m.player === p.id).length}`)].join('\n');
+      ...M.players.map((p) => `         ${nameOf(p.id)} hit ${S.bounces.list.filter((m) => m.player === p.id).length}`)].join('\n');
     return;
   }
   if (!c) { el.textContent = S.src ? 'looking for the court…' : 'Open a photo or video of a squash court (or a match .json from tools/match.mjs), use the camera, or try a demo frame.'; return; }
@@ -587,11 +611,11 @@ function readout() {
     `time     ${S.ms ? Math.round(S.ms.wall) + ' ms' : ''}${hz ? `   tracking ${hz.toFixed(1)} fps` : ''}${S.live && S.path ? `   ${S.path}${S.mount === 'free' ? ', camera moving' : ', fixed mount'}` : ''}`,
   ];
   if (S.showRally || S.match) {
-    for (const p of S.players) { const st = S.stats[p.id]; lines.push(`player ${p.id} x ${p.X[0].toFixed(2)}  y ${p.X[1].toFixed(2)} m${p.occluded ? '  (feet hidden: from the head)' : ''}${p.seen ? '' : '  (coasting)'}`); if (st && S.live) lines.push(`         ${kmh(st.speed)}, top ${st.top.toFixed(1)} m/s, ${st.dist.toFixed(0)} m covered in ${st.time.toFixed(0)} s`); }
+    for (const p of S.players) { const st = S.stats[p.id]; lines.push(`${nameOf(p.id).padEnd(8)} x ${p.X[0].toFixed(2)}  y ${p.X[1].toFixed(2)} m${p.occluded ? '  (feet hidden: from the head)' : ''}${p.seen ? '' : '  (coasting)'}`); if (st && S.live) lines.push(`         ${kmh(st.speed)}, top ${st.top.toFixed(1)} m/s, ${st.dist.toFixed(0)} m covered in ${st.time.toFixed(0)} s`); }
     const bn = ballNow(); if (bn) lines.push(`ball now ${kmh(bn.speed)}`);
     if (S.bounces.list.length) { const fl = S.bounces.on('floor'), fr = S.bounces.on('front'); lines.push(`bounces  ${fl.length} on the floor${fl.length ? ` (${fl.filter((m) => m.X[1] > 5.44).length} behind the short line)` : ''}, ${fr.length} on the front wall`);
       const by = (id) => S.bounces.list.filter((m) => m.player === id && (m.plane === 'floor' || m.plane === 'front')).length, ids = [...new Set(S.bounces.list.map((m) => m.player).filter(Boolean))].sort();
-      if (ids.length) lines.push(`         shots by ${ids.map((id) => `P${id} ${by(id)}`).join(', ')}, ${S.bounces.list.filter((m) => !m.player).length} unknown`); }
+      if (ids.length) lines.push(`         shots by ${ids.map((id) => `${nameOf(id)} ${by(id)}`).join(', ')}, ${S.bounces.list.filter((m) => !m.player).length} unknown`); }
     if (S.audio) lines.push(S.audio.error ? `sound    not decoded (${S.audio.error})` : `sound    ${S.audio.on.length} impacts heard${S.audio.offset != null ? `, audio ${Math.round(S.audio.offset * 1000)} ms after picture (${S.audio.matched} matched, ${S.audio.chance} by chance)` : ', delay not known yet'}, ${S.bounces.list.filter((m) => m.sound).length} bounces found by ear`);
     const f = recentFlights().slice(-1)[0];
     if (f) { const a = f.pts[0].X, e = f.pts[f.pts.length - 1].X, v = (X) => `${X[0].toFixed(1)}, ${X[1].toFixed(1)}, ${X[2].toFixed(1)}`; lines.push(`ball     ${f.t0.toFixed(2)}–${f.t1.toFixed(2)} s  (${v(a)}) → (${v(e)}) m, ${(f.speed * 3.6).toFixed(0)} km/h off the hit${f.impacts.length ? '  hit ' + f.impacts.map((m) => m.plane).join(', ') : ''}`); }
@@ -636,6 +660,12 @@ $('export').onclick = exportJSON;
 // Clear: measured points and everything gathered so far (heatmaps, bounces, speeds, commentary);
 // a playing video starts gathering again from the current frame
 $('clear').onclick = () => { S.picks = []; const m = S.match; clearRally(); S.match = null; if (m && !S.src) S.cam = null; status('cleared'); draw(); };
+$('seek').addEventListener('input', (e) => { const v = S.src; if (!(v instanceof HTMLVideoElement)) return; S.seeking = true; v.currentTime = +e.target.value; $('tlabel').textContent = `${clock(v.currentTime).slice(0, -2)} / ${clock(v.duration || 0).slice(0, -2)}`; });
+$('seek').addEventListener('change', () => { S.seeking = false; });
+$('seek').addEventListener('pointerup', () => { S.seeking = false; });
+$('cap').onchange = (e) => { S.captions = e.target.checked; if (!S.captions) $('cc').classList.add('off'); };
+for (const i of [1, 2]) $(`name${i}`).addEventListener('input', (e) => { S.names[i] = e.target.value; setNames(S.names, ''); });
+$('swapNames').onclick = () => setNames({ 1: S.names[2], 2: S.names[1] }, 'swapped');
 $('speak').onchange = (e) => { S.speak = e.target.checked; if (!S.speak && 'speechSynthesis' in window) speechSynthesis.cancel(); };
 { // drag the side panel's edge to resize it (kept across reloads)
   const grip = $('grip'), set = (w) => { w = Math.max(300, Math.min(innerWidth - 320, w)); document.body.style.setProperty('--side', `${w}px`); localStorage.setItem('squashSide', w); };

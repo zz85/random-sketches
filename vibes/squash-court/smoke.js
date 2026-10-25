@@ -88,8 +88,15 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
     check('video: bounces collected, ball fed from every video frame', bb.n[0] >= 1 && bb.n[1] >= 1 && bb.fed >= 1, `floor ${bb.n[0]}, front ${bb.n[1]}, ${bb.fed} frames to the ball worker`);
     check('video: players and ball run in their own workers', vp.n > 0 && vp.ms != null && vp.mb != null, `${vp.n} players ${JSON.stringify(vp.X)}, players ${Math.round(vp.ms)} ms, ball ${Math.round(vp.mb)} ms a frame`);
     await shot('video');
+    // the time slider seeks, and typed names reach the labels and the commentary
+    const sk = await b.evaluate(`(async()=>{const v=__sq.src,s=document.getElementById('seek');const shown=!document.getElementById('scrub').hidden;v.pause();s.value=0.5;s.dispatchEvent(new Event('input'));s.dispatchEvent(new Event('change'));await new Promise(r=>setTimeout(r,400));return {shown,t:v.currentTime,max:+s.max}})()`);
+    check('time slider seeks the video', sk.shown && Math.abs(sk.t - 0.5) < 0.1 && sk.max > 1, JSON.stringify(sk));
+    await b.evaluate(`(()=>{const i=document.getElementById('name1');i.value='Elias';i.dispatchEvent(new Event('input'));return 1})()`);
     // commentary feed fills from shots, and Clear empties heatmaps, bounces and the feed
     await b.evaluate(`(()=>{const S=__sq;S.comm.update([{t0:0.2,t1:0.9,cam:[3,17,4],impacts:[{t:0.4,X:[5.9,0.02,1.4],plane:'front'}],pts:[0.2,0.3,0.5,0.7,0.9].map((t,i)=>({t,X:[5.8,[6,3,1,3,6][i],1.2-0.2*i],V:[0,i<2?-30:20,-2]}))}],[],()=>({id:1,dist:0.3,other:3}));return 1})()`);
+    await b.evaluate(`(()=>{const S=__sq;const s=S.comm.shots[0];if(s){S.feed.push({id:s.id,t:s.t,shot:s,player:1,sure:true});}document.getElementById('name1').dispatchEvent(new Event('input'));return 1})()`);
+    const nm = await b.evaluate(`[...document.querySelectorAll('#feed li')].map(l=>l.textContent).join(' | ')`);
+    check('typed name used in the commentary', /Elias plays/.test(nm), nm.slice(0, 120));
     await b.evaluate(`document.getElementById('clear').click();1`);
     const cl = await b.evaluate(`({heat:Object.keys(__sq.stats).length,b:__sq.bounces.list.length,shots:__sq.comm.shots.length,feed:document.querySelectorAll('#feed li').length})`);
     check('Clear resets heatmaps, bounces and commentary', cl.heat === 0 && cl.b === 0 && cl.shots === 0 && cl.feed === 0, JSON.stringify(cl));

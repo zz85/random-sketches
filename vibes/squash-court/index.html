@@ -27,6 +27,17 @@
   #feed li.new { animation: flash 1.2s ease-out; }
   #feed li .t { color: var(--dim); font: 11px ui-monospace, monospace; margin-right: 6px; }
   #feed li.maybe { opacity: 0.6; }
+  #scrub { position: absolute; left: 0; right: 0; bottom: 0; display: flex; gap: 8px; align-items: center; padding: 6px 10px; background: linear-gradient(transparent, rgba(0,0,0,.75)); }
+  #scrub[hidden] { display: none; }
+  #seek { flex: 1; accent-color: var(--acc); }
+  #tlabel { font: 12px ui-monospace, monospace; color: #ddd; min-width: 11ch; text-align: right; }
+  #cc { position: absolute; left: 50%; bottom: 44px; transform: translateX(-50%); max-width: 80%; padding: 6px 12px; background: rgba(0,0,0,.78); color: #fff; font: 600 18px/1.35 system-ui; border-radius: 4px; text-align: center; pointer-events: none; transition: opacity .3s; }
+  #cc.off { opacity: 0; }
+  .names { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .names label { display: flex; gap: 6px; align-items: center; }
+  .names input { width: 13ch; background: #262a33; color: var(--fg); border: 1px solid #333844; border-radius: 4px; padding: 4px 6px; font: inherit; }
+  .sw { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+  #nameNote { color: var(--dim); font-size: 12px; }
   @keyframes flash { from { background: #34404f; } to { background: #1e2128; } }
   aside h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--dim); margin: 4px 0 0; font-weight: 600; }
   canvas.panel { width: 100%; background: #1e1e1e; border-radius: 4px; display: block; image-rendering: auto; }
@@ -52,13 +63,22 @@
   <label class="chk" title="Players' feet and the ball, in metres"><input id="rally" type="checkbox" checked> Players &amp; ball</label>
   <label class="chk" title="Where each player spent their time, on the floor plan"><input id="heat" type="checkbox" checked> Heatmap</label>
   <label class="chk" title="Where the ball bounced on the floor and hit the front wall"><input id="bounces" type="checkbox" checked> Bounces</label>
+  <label class="chk" title="Show the commentary as captions over the video"><input id="cap" type="checkbox" checked> Captions</label>
   <label class="chk" title="Read the commentary aloud"><input id="speak" type="checkbox"> Speak</label>
   <button id="clear" title="Clear measured points, heatmaps, bounces, speeds and commentary">Clear</button>
   <button id="export">Export JSON</button>
 </header>
-<div id="wrap"><canvas id="stage" aria-label="Frame with the fitted court drawn over it; click to measure a point on the court"></canvas></div>
+<div id="wrap"><canvas id="stage" aria-label="Frame with the fitted court drawn over it; click to measure a point on the court"></canvas>
+  <div id="cc" class="off" aria-hidden="true"></div>
+  <div id="scrub" hidden><input id="seek" type="range" min="0" max="1" step="0.04" value="0" aria-label="Video position"><span id="tlabel">0:00 / 0:00</span></div>
+</div>
 <div id="grip" role="separator" aria-orientation="vertical" aria-label="Resize the side panel" tabindex="0"></div>
 <aside>
+  <figure class="wide"><h2>Players</h2><div class="names">
+    <label><span class="sw" style="background:#ff2d7a"></span><input id="name1" placeholder="Player 1" aria-label="Player 1 name"></label>
+    <button id="swapNames" title="Swap the two names">⇄</button>
+    <label><span class="sw" style="background:#2dd4ff"></span><input id="name2" placeholder="Player 2" aria-label="Player 2 name"></label>
+    <span id="nameNote"></span></div></figure>
   <figure class="wide"><h2>Commentary</h2><ol id="feed" aria-live="polite"></ol></figure>
   <figure><h2>Floor, rectified (front wall at the top)</h2><canvas id="plan" class="panel" width="256" height="390"></canvas></figure>
   <figure><h2>Front wall: ball contacts (last in green)</h2><canvas id="wall" class="panel" width="256" height="200"></canvas>

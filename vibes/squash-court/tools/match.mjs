@@ -159,7 +159,7 @@ function merge(parts, meta) {
     ...meta, courtSeconds: parts.reduce((s, p) => s + p.courtSeconds, 0),
     audio: { heard: heard.length, offset: shift, matched: off.matched, chance: off.chance, sure: off.sure },
     players, flights: flights.length, flightsOtherViews: allFlights.length - flights.length,
-    shots: CM.shots.map((s) => ({ t: +s.t.toFixed(3), player: s.player, kind: s.kind, front: s.front.map((v) => +v.toFixed(3)), bounce: s.bounce && s.bounce.X.map((v) => +v.toFixed(3)), speed: s.speed && +s.speed.toFixed(1), quality: s.quality, text: describe(s) })),
+    shots: CM.shots.map((s) => ({ t: +s.t.toFixed(3), player: s.player, kind: s.kind, front: s.front.map((v) => +v.toFixed(3)), bounce: s.bounce && s.bounce.X.map((v) => +v.toFixed(3)), speed: s.speed && +s.speed.toFixed(1), apex: +s.apex.toFixed(2), tight: s.tight, measured: s.measured, quality: s.quality, text: describe(s) })),
     bounces: B.list.map((m) => ({ t: +m.t.toFixed(3), plane: m.plane, x: +m.X[0].toFixed(3), y: +m.X[1].toFixed(3), z: +m.X[2].toFixed(3), inferred: !!m.inferred, sound: !!m.sound, player: m.player ?? null })),
   };
 }
@@ -186,22 +186,22 @@ function render(M, file) {
   const panel = (ox, fill) => {
     for (let y = 0; y < CL * s; y++) for (let x = 0; x < CW * s; x++) { const o = ((y + 30) * w + x + ox) * 4; img.data[o] = 60; img.data[o + 1] = 52; img.data[o + 2] = 44; }
     fill(ox);
-    const m = courtModel(); for (const l of m.lines) if (l.kind === 'floor') line(img, ox + l.a[0] * s, 30 + l.a[1] * s, ox + l.b[0] * s, 30 + l.b[1] * s, [0, 230, 255], 1);
+    const m = courtModel(); for (const l of m.lines) if (l.kind === 'floor') line(img, ox + (CW - l.a[0]) * s, 30 + l.a[1] * s, ox + (CW - l.b[0]) * s, 30 + l.b[1] * s, [0, 230, 255], 1); // x = 0 (the right wall) on the right
   };
   const blend = (ox, X, Y, c, a) => { const x = Math.round(ox + X), y = Math.round(30 + Y); if (x < ox || y < 30 || x >= ox + CW * s || y >= 30 + CL * s) return; const o = (y * w + x) * 4; for (let k = 0; k < 3; k++) img.data[o + k] = img.data[o + k] * (1 - a) + c[k] * a; };
   // left: players' heatmaps
   panel(0, (ox) => {
     for (const p of M.players) {
       const H = p.heatmap, g = blurGrid(H.seconds, H.nx, H.ny), mx = Math.max(...g);
-      for (let y = 0; y < CL * s; y++) for (let x = 0; x < CW * s; x++) { const v = sample(g, H.nx, H.ny, x / s / 0.25 - 0.5, y / s / 0.25 - 0.5) / mx; if (v > 0.05) blend(ox, x, y, col(p.id), Math.min(0.85, 0.9 * v)); }
+      for (let y = 0; y < CL * s; y++) for (let x = 0; x < CW * s; x++) { const v = sample(g, H.nx, H.ny, (CW - x / s) / 0.25 - 0.5, y / s / 0.25 - 0.5) / mx; if (v > 0.05) blend(ox, x, y, col(p.id), Math.min(0.85, 0.9 * v)); }
     }
   });
   // right: bounces, glow and dots by hitter
   const ox2 = Math.round(CW * s) + 30, fl = M.bounces.filter((m) => m.plane === 'floor');
   panel(ox2, (ox) => {
     const H = heatGrid(fl.map((m) => [m.x, m.y]), 0.25, CW, CL), mx = Math.max(1e-9, ...H.g);
-    for (let y = 0; y < CL * s; y++) for (let x = 0; x < CW * s; x++) { const v = sample(H.g, H.nx, H.ny, x / s / 0.25 - 0.5, y / s / 0.25 - 0.5) / mx; if (v > 0.12) blend(ox, x, y, [255, 110 + 140 * v, 40 + 150 * v * v], Math.min(0.85, 0.9 * v)); }
-    for (const m of fl) for (let a = 0; a < 6.28; a += 0.4) for (let r = 0; r <= 3; r++) blend(ox, m.x * s + r * Math.cos(a), m.y * s + r * Math.sin(a), col(m.player), 1);
+    for (let y = 0; y < CL * s; y++) for (let x = 0; x < CW * s; x++) { const v = sample(H.g, H.nx, H.ny, (CW - x / s) / 0.25 - 0.5, y / s / 0.25 - 0.5) / mx; if (v > 0.12) blend(ox, x, y, [255, 110 + 140 * v, 40 + 150 * v * v], Math.min(0.85, 0.9 * v)); }
+    for (const m of fl) for (let a = 0; a < 6.28; a += 0.4) for (let r = 0; r <= 3; r++) blend(ox, (CW - m.x) * s + r * Math.cos(a), m.y * s + r * Math.sin(a), col(m.player), 1);
   });
   writeImage(file, img);
 }

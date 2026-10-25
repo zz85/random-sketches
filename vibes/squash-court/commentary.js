@@ -120,7 +120,7 @@ export function describe(s, name = (id) => `P${id}`) {
   const kmh = ok ? ` (${Math.round(s.speed * 3.6)} km/h)` : '';
   let shot;
   if (k.type === 'drive') shot = `${ok && k.pace === 'hard' ? 'a hard ' : 'a '}${k.direction} drive`;
-  else if (k.type === 'lob') shot = `a ${k.direction === 'crosscourt' ? 'crosscourt' : 'straight'} lob, ${s.apex.toFixed(1)} m high`;
+  else if (k.type === 'lob') shot = `a ${k.direction === 'crosscourt' ? 'crosscourt' : 'straight'} lob${s.apex ? `, ${s.apex.toFixed(1)} m high` : ''}`;
   else if (k.type === 'drop') shot = `a drop${k.nick ? ' into the nick' : ''}, ${Math.round((s.front[2] - 0.45) * 100)} cm above the tin`;
   else if (k.type === 'kill') shot = `a kill${ok && k.pace === 'hard' ? ', hit hard' : ''}, low on the front wall`;
   else shot = 'a boast off the side wall';
