@@ -26,7 +26,11 @@ const S = {
   quality: null, ms: null, busy: false, fails: 0, frames: 0, trackMs: [],
   tin: 0.48, picks: [], showLines: true, orbit: { yaw: -0.5, pitch: 0.45, dist: 19 },
   live: false, procFrame: null,
+  // players and ball (rally.js in the worker): players [{ id, X, seen, occluded, box }], the live
+  // ball pixel, and fitted flights { t0, t1, pts: [{ t, X }], uv, impacts, labels, speed }
+  showRally: true, players: [], ball: null, ballTrail: [], flights: [], rallyMs: {},
 };
+const clearRally = () => { S.players = []; S.ball = null; S.ballTrail = []; S.flights = []; S.rallyMs = {}; for (const R of rallyW) R.reset = true; };
 window.__sq = S;
 
 // ---------- worker ----------
@@ -35,6 +39,27 @@ let reqId = 0; const pending = new Map();
 worker.onmessage = (e) => { const r = pending.get(e.data.id); pending.delete(e.data.id); r && r(e.data); };
 function run(mode, img, prev, opt) {
   return new Promise((res) => { const id = ++reqId; pending.set(id, res); worker.postMessage({ id, mode, rgba: img.data, w: img.width, h: img.height, prev, opt }, [img.data.buffer]); });
+}
+
+// Players and ball run in two more workers, fed frames the court worker has fitted: the player
+// search is slow, the ball wants every frame it can get, so neither waits for the other. A frame is
+// only handed to an idle worker, so nothing queues up behind the video.
+const rallyW = ['players', 'ball'].map((role) => {
+  const wk = new Worker(new URL('./rally-worker.js', import.meta.url), { type: 'module' });
+  const R = { wk, role, busy: false, reset: true, k: 1 };
+  wk.onmessage = (e) => { R.busy = false; const q = e.data; if (q.error) { console.error(q.error); return; } takeRally(q, R.k); if (!S.live) draw(); };
+  return R;
+});
+function runRally(frame, cam, t, video) {
+  if (!S.showRally) return;
+  for (const R of video ? rallyW : rallyW.slice(0, 1)) {
+    if (R.busy) continue;
+    R.busy = true; R.k = frame.k;
+    const data = new Uint8ClampedArray(frame.img.data), seen = S.players.filter((p) => p.box);
+    R.wk.postMessage({ mode: video ? R.role : 'still', rgba: data, w: frame.img.width, h: frame.img.height, cam: { p: cam.p, cx: cam.cx, cy: cam.cy }, t, tin: S.tin, reset: R.reset,
+      boxes: seen.map((p) => p.box.map((v) => v * frame.k)), playerX: seen.map((p) => p.X) }, [data.buffer]);
+    R.reset = false;
+  }
 }
 
 // camera in one pixel grid -> another (same pose, scaled intrinsics)
@@ -56,6 +81,7 @@ async function analyse(mode = 'detect') {
   const { img, k } = grab(tracking ? TRACK_W : DETECT_W);
   S.procFrame = { img: new ImageData(new Uint8ClampedArray(img.data), img.width, img.height), k };
   const prev = tracking ? scaleCam(S.cam, k, img.width, img.height) : null, tGrab = S.src.currentTime;
+  const video = S.src instanceof HTMLVideoElement;
   const t0 = performance.now();
   const r = await run(tracking ? 'track' : 'detect', img, prev && { p: prev.p, cx: prev.cx, cy: prev.cy }, tracking ? { tin: S.tin, dt: Math.abs((S.src.currentTime ?? 0) - (S.tAnalysed ?? 0)), ...TRACK_OPT } : { recall: !!(S.live && S.cam && S.fails < 9) });
   S.busy = false; S.tAnalysed = tGrab;
@@ -67,6 +93,8 @@ async function analyse(mode = 'detect') {
   if (!tracking && r.ok) S.refGood = r.quality.good;
   if (r.cam && (r.ok || !tracking)) { S.cam = scaleCam(fromMsg(r.cam), 1 / k, S.srcW, S.srcH); S.quality = r.quality; S.okay = r.ok; if (r.tin) { S.tin = r.tin; MODEL = courtModel({ tin: r.tin }); } }
   S.fails = r.ok ? 0 : S.fails + 1;
+  if (r.ok && r.cam) { if (r.path === 'detect' || r.path === 'recall') for (const R of rallyW) R.reset = true; runRally(S.procFrame, fromMsg(r.cam), tGrab ?? 0, video); }
+  else if (!r.ok) { S.players = []; S.ball = null; }
   S.ms = { ...r.ms, wall }; S.frames++;
   if (tracking) { S.trackMs.push(wall); if (S.trackMs.length > 30) S.trackMs.shift(); }
   S.path = r.path; S.mount = r.mount;
@@ -75,9 +103,25 @@ async function analyse(mode = 'detect') {
   draw();
 }
 
+// players and ball from the worker, in source pixels (it saw the frame scaled by k)
+function takeRally(q, k) {
+  if (q.dup || !S.showRally) return;
+  S.rallyMs[q.mode === 'ball' ? 'ball' : 'players'] = q.ms;
+  if (q.players) S.players = q.players.map((p) => ({ ...p, box: p.box && p.box.map((v) => v / k) }));
+  if (q.mode !== 'ball') return;
+  S.ball = q.ball && { u: q.ball.u / k, v: q.ball.v / k, t: q.ball.t };
+  if (S.ball) S.ballTrail.push(S.ball);
+  const t = S.src.currentTime ?? 0; S.ballTrail = S.ballTrail.filter((b) => b.t > t - 0.4 && b.t <= t + 0.05);
+  if (q.flights) S.flights = q.flights.map((f) => ({ ...f, uv: f.uv.map(([u, v]) => [u / k, v / k]) }));
+}
+// flights to show at time t: the last 2 s of video (all of them for a still)
+const recentFlights = () => { const t = S.src?.currentTime; return t == null ? S.flights : S.flights.filter((f) => f.t1 > t - 2 && f.t0 <= t + 0.05); };
+const PCOL = ['#ff2d7a', '#2dd4ff', '#b4ff2d'];
+const pcol = (p) => PCOL[(p.id - 1) % PCOL.length];
+
 // ---------- sources ----------
 function useImage(el, w, h) {
-  stopLive(); S.src = el; S.srcW = w; S.srcH = h; S.cam = null; S.picks = []; fitStage(); draw(); analyse('detect');
+  stopLive(); S.src = el; S.srcW = w; S.srcH = h; S.cam = null; S.picks = []; clearRally(); fitStage(); draw(); analyse('detect');
 }
 function loadFile(file) {
   const url = URL.createObjectURL(file);
@@ -88,7 +132,7 @@ function loadFile(file) {
   const im = new Image(); im.onload = () => useImage(im, im.naturalWidth, im.naturalHeight); im.src = url;
 }
 function useVideo(v) {
-  stopLive(); S.src = v; S.srcW = v.videoWidth; S.srcH = v.videoHeight; S.cam = null; S.picks = []; S.live = true; fitStage();
+  stopLive(); S.src = v; S.srcW = v.videoWidth; S.srcH = v.videoHeight; S.cam = null; S.picks = []; clearRally(); S.live = true; fitStage();
   v.play().catch(() => {});
   $('play').hidden = false; $('play').textContent = 'Pause';
   loop();
@@ -119,7 +163,7 @@ function demo() {
   const img = renderCourt(cam, { seed: demoN + 3, style: demoN % 2 ? 'glass' : 'club', players: 2, adverts: 8 });
   demoN++;
   const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').putImageData(new ImageData(img.data, w, h), 0, 0);
-  S.truth = cam; useImage(c, w, h);
+  S.truth = cam; useImage(c, w, h); S.truthPlayers = img.players;
 }
 
 // ---------- geometry helpers ----------
@@ -168,12 +212,36 @@ function draw() {
     // the back wall line is out of sight (or a blur on the glass) for a camera behind the back wall
     for (const l of MODEL.lines) if (!(l.kind === 'back' && S.cam.C[1] > CL - 0.3)) seg3(sctx, S.cam, l.a, l.b, map);
   }
+  if (S.cam && S.showRally) drawRallyStage(map, dpr);
   for (const p of S.picks) {
     if (!S.cam) break; const u = S.cam.project(p.X); if (!(u[2] > 0)) continue; const [x, y] = map(u);
     sctx.fillStyle = '#ff2d7a'; sctx.beginPath(); sctx.arc(x, y, 5 * dpr, 0, 7); sctx.fill();
     sctx.font = `${12 * dpr}px system-ui`; sctx.fillStyle = '#fff'; sctx.fillText(fmtX(p), x + 8 * dpr, y - 6 * dpr);
   }
   drawPlan(); drawWall(); draw3d(); readout();
+}
+// players: a ring on the floor round the feet (dashed when the feet are hidden behind a graphic and
+// placed from the head), the position in metres; the ball: its fitted flights and the live blob
+function drawRallyStage(map, dpr) {
+  const c = S.cam;
+  for (const p of S.players) {
+    sctx.strokeStyle = pcol(p); sctx.lineWidth = 2 * dpr; sctx.setLineDash(p.occluded || !p.seen ? [4 * dpr, 3 * dpr] : []);
+    sctx.beginPath(); let first = true;
+    for (let a = 0; a <= 24; a++) { const u = c.project([p.X[0] + 0.28 * Math.cos(a / 24 * 2 * Math.PI), p.X[1] + 0.28 * Math.sin(a / 24 * 2 * Math.PI), 0]); if (!(u[2] > 0)) continue; const [x, y] = map(u); first ? sctx.moveTo(x, y) : sctx.lineTo(x, y); first = false; }
+    sctx.stroke(); sctx.setLineDash([]);
+    const u = c.project([p.X[0], p.X[1], 0]); if (!(u[2] > 0)) continue; const [x, y] = map(u);
+    sctx.font = `${12 * dpr}px system-ui`; sctx.fillStyle = '#000a'; const s = `P${p.id}  ${p.X[0].toFixed(2)}, ${p.X[1].toFixed(2)} m`;
+    sctx.fillRect(x + 14 * dpr, y - 6 * dpr, sctx.measureText(s).width + 6 * dpr, 16 * dpr); sctx.fillStyle = pcol(p); sctx.fillText(s, x + 17 * dpr, y + 6 * dpr);
+  }
+  sctx.lineWidth = 2.5 * dpr;
+  for (const f of recentFlights()) {
+    sctx.strokeStyle = '#ffe600'; sctx.beginPath(); let first = true;
+    for (const q of f.pts) { const u = c.project(q.X); if (!(u[2] > 0)) { first = true; continue; } const [x, y] = map(u); first ? sctx.moveTo(x, y) : sctx.lineTo(x, y); first = false; }
+    sctx.stroke();
+    for (const m of f.impacts) { const u = c.project(m.X); if (!(u[2] > 0)) continue; const [x, y] = map(u); sctx.fillStyle = '#ff8a00'; sctx.beginPath(); sctx.arc(x, y, 4 * dpr, 0, 7); sctx.fill(); }
+  }
+  sctx.strokeStyle = '#39ff6a'; sctx.lineWidth = 1.5 * dpr;
+  for (const b of S.ballTrail) { const [x, y] = map([b.u, b.v]); sctx.strokeRect(x - 6 * dpr, y - 6 * dpr, 12 * dpr, 12 * dpr); }
 }
 const fmtX = (p) => p.surface === 'floor' ? `${p.X[0].toFixed(2)}, ${p.X[1].toFixed(2)} m` : p.surface === 'front wall' ? `x ${p.X[0].toFixed(2)}, h ${p.X[2].toFixed(2)} m` : `y ${p.X[1].toFixed(2)}, h ${p.X[2].toFixed(2)} m`;
 
@@ -198,6 +266,18 @@ function drawPlan() {
   for (const l of MODEL.lines) if (l.kind === 'floor') { pctx.beginPath(); pctx.moveTo(l.a[0] * s, l.a[1] * s); pctx.lineTo(l.b[0] * s, l.b[1] * s); pctx.stroke(); }
   pctx.strokeRect(0.5, 0.5, plan.width - 1, plan.height - 1);
   for (const p of S.picks) if (p.surface === 'floor') { pctx.fillStyle = '#ff2d7a'; pctx.beginPath(); pctx.arc(p.X[0] * s, p.X[1] * s, 4, 0, 7); pctx.fill(); }
+  if (S.showRally) {
+    // the ball's ground track (shadow), floor bounces, players
+    for (const f of recentFlights()) {
+      pctx.strokeStyle = 'rgba(255,230,0,0.9)'; pctx.lineWidth = 1.5; pctx.beginPath();
+      f.pts.forEach((q, i) => (i ? pctx.lineTo(q.X[0] * s, q.X[1] * s) : pctx.moveTo(q.X[0] * s, q.X[1] * s))); pctx.stroke();
+      for (const m of f.impacts) { pctx.fillStyle = '#ff8a00'; pctx.beginPath(); pctx.arc(m.X[0] * s, m.X[1] * s, 3, 0, 7); pctx.fill(); }
+    }
+    for (const p of S.players) {
+      pctx.fillStyle = pcol(p); pctx.globalAlpha = p.seen ? 1 : 0.5; pctx.beginPath(); pctx.arc(p.X[0] * s, p.X[1] * s, 6, 0, 7); pctx.fill(); pctx.globalAlpha = 1;
+      pctx.fillStyle = '#000'; pctx.font = 'bold 9px system-ui'; pctx.fillText(String(p.id), p.X[0] * s - 2.5, p.X[1] * s + 3);
+    }
+  }
   // where the camera stands, if it is on the plan
   if (S.cam) { const C = S.cam.C; pctx.fillStyle = '#ffe600'; pctx.fillText(C[1] > CL ? `▼ camera ${(C[1] - CL).toFixed(1)} m behind` : '● camera', Math.max(4, Math.min(plan.width - 90, C[0] * s - 20)), Math.min(plan.height - 6, C[1] * s)); }
 }
@@ -207,6 +287,7 @@ function drawWall() {
   wctx.strokeStyle = 'rgba(0,240,255,0.8)';
   for (const l of MODEL.lines) if (l.kind === 'front') { const y = wall.height - l.a[2] * s; wctx.beginPath(); wctx.moveTo(0, y); wctx.lineTo(wall.width, y); wctx.stroke(); }
   for (const p of S.picks) if (p.surface === 'front wall') { wctx.fillStyle = '#ff2d7a'; wctx.beginPath(); wctx.arc(p.X[0] * s, wall.height - p.X[2] * s, 4, 0, 7); wctx.fill(); }
+  if (S.showRally) for (const f of recentFlights()) for (const m of f.impacts) if (m.plane === 'front') { wctx.fillStyle = '#ff8a00'; wctx.beginPath(); wctx.arc(m.X[0] * s, wall.height - m.X[2] * s, 4, 0, 7); wctx.fill(); }
 }
 // 3D overview rendered with the same camera class: court box, lines, the fitted camera's frustum.
 function draw3d() {
@@ -228,6 +309,12 @@ function draw3d() {
     for (const p of S.picks) seg3(vctx, vc, c.C, p.X, id, 2);
     for (const p of S.picks) { const u = vc.project(p.X); if (u[2] > 0) { vctx.fillStyle = '#ff2d7a'; vctx.beginPath(); vctx.arc(u[0], u[1], 3.5, 0, 7); vctx.fill(); } }
   }
+  if (S.showRally) {
+    vctx.lineWidth = 3; for (const p of S.players) { vctx.strokeStyle = pcol(p); seg3(vctx, vc, [p.X[0], p.X[1], 0], [p.X[0], p.X[1], p.height ?? 1.75], id, 2); }
+    vctx.lineWidth = 1.5; vctx.strokeStyle = '#ffe600';
+    for (const f of recentFlights()) for (let i = 1; i < f.pts.length; i++) seg3(vctx, vc, f.pts[i - 1].X, f.pts[i].X, id, 1);
+    vctx.lineWidth = 1;
+  }
 }
 function readout() {
   const c = S.cam, el = $('readout');
@@ -242,6 +329,12 @@ function readout() {
     `fit      coverage ${(S.quality.coverage * 100).toFixed(0)}%  residual ${S.quality.rms.toFixed(2)} px  ${S.okay ? 'good' : 'LOW CONFIDENCE'}`,
     `time     ${S.ms ? Math.round(S.ms.wall) + ' ms' : ''}${hz ? `   tracking ${hz.toFixed(1)} fps` : ''}${S.live && S.path ? `   ${S.path}${S.mount === 'free' ? ', camera moving' : ', fixed mount'}` : ''}`,
   ];
+  if (S.showRally) {
+    for (const p of S.players) lines.push(`player ${p.id} x ${p.X[0].toFixed(2)}  y ${p.X[1].toFixed(2)} m${p.occluded ? '  (feet hidden: from the head)' : ''}${p.seen ? '' : '  (coasting)'}`);
+    const f = recentFlights().slice(-1)[0];
+    if (f) { const a = f.pts[0].X, e = f.pts[f.pts.length - 1].X, v = (X) => `${X[0].toFixed(1)}, ${X[1].toFixed(1)}, ${X[2].toFixed(1)}`; lines.push(`ball     ${f.t0.toFixed(2)}–${f.t1.toFixed(2)} s  (${v(a)}) → (${v(e)}) m, ${f.speed.toFixed(0)} m/s${f.impacts.length ? '  hit ' + f.impacts.map((m) => m.plane).join(', ') : ''}`); }
+    if (S.rallyMs.players != null) lines.push(`         players ${Math.round(S.rallyMs.players)} ms${S.rallyMs.ball != null ? `, ball ${Math.round(S.rallyMs.ball)} ms` : ''} a frame`);
+  }
   if (S.truth && !S.live) lines.push(`truth    x ${S.truth.C[0].toFixed(2)}  y ${S.truth.C[1].toFixed(2)}  z ${S.truth.C[2].toFixed(2)} m, f ${S.truth.f.toFixed(0)} px`);
   el.textContent = lines.join('\n');
 }
@@ -258,8 +351,11 @@ function exportJSON() {
     extrinsics: { R: c.R, C: c.C, rodrigues: c.p.slice(0, 3) },
     P: c.matrix(), H_floor: c.homography('floor'), H_frontWall: c.homography('front'),
     angles: c.angles(), quality: S.quality,
+    time: S.src?.currentTime ?? null,
+    players: S.players.map((p) => ({ id: p.id, x: p.X[0], y: p.X[1], seen: p.seen, feetHidden: p.occluded })),
+    ball: S.flights.map((f) => ({ t0: f.t0, t1: f.t1, speed: f.speed, impacts: f.impacts, points: f.pts })),
   };
-  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })); a.download = 'squash-camera.json'; a.click();
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })); a.download = 'squash-court.json'; a.click();
 }
 
 // ---------- events ----------
@@ -269,6 +365,7 @@ $('camera').onclick = useCamera;
 $('demo').onclick = demo;
 $('redetect').onclick = () => { S.fails = 9; if (!S.live) analyse('detect'); };
 $('lines').onchange = (e) => { S.showLines = e.target.checked; draw(); };
+$('rally').onchange = (e) => { S.showRally = e.target.checked; clearRally(); if (S.showRally && !S.live && S.cam && S.procFrame) runRally(S.procFrame, scaleCam(S.cam, S.procFrame.k, S.procFrame.img.width, S.procFrame.img.height), 0, false); draw(); };
 $('export').onclick = exportJSON;
 $('clear').onclick = () => { S.picks = []; draw(); };
 $('play').onclick = () => { const v = S.src; if (!(v instanceof HTMLVideoElement)) return; v.paused ? v.play() : v.pause(); $('play').textContent = v.paused ? 'Play' : 'Pause'; };

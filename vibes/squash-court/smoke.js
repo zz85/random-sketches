@@ -44,11 +44,16 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
     check('click lifts a pixel onto the floor in metres', pick && pick.s === 'floor' && Math.hypot(pick.X[0] - 3.2, pick.X[1] - 5.44) < 0.08, JSON.stringify(pick && { s: pick.s, X: pick.X.map((v) => +v.toFixed(3)) }));
     const plan = await b.evaluate(`(()=>{const c=document.getElementById('plan'),g=c.getContext('2d'),d=g.getImageData(0,0,c.width,c.height).data;let n=0;for(let i=0;i<d.length;i+=4)if(d[i]+d[i+1]+d[i+2]>120)n++;return n/(d.length/4)})()`);
     check('rectified floor drawn', plan > 0.3, `${(plan * 100).toFixed(0)}% lit`);
+    // players: the demo's two people (cylinders) found on the floor, in metres
+    await waitFor(() => b.evaluate('__sq.players.length > 0'), 20000).catch(() => {});
+    const pl = await b.evaluate(`(()=>{const S=__sq;return {got:S.players.map(p=>p.X),truth:S.truthPlayers,ms:S.rallyMs.players}})()`);
+    const errs = pl.truth.map((T) => Math.min(...pl.got.map((X) => Math.hypot(X[0] - T[0], X[1] - T[1]))));
+    check('demo frame: players in metres (within 15 cm)', pl.got.length >= 1 && errs.filter((e) => e < 0.15).length >= 1, `${pl.got.length} found, errors ${errs.map((e) => (e * 100).toFixed(0) + ' cm').join(', ')}, ${Math.round(pl.ms)} ms`);
     await shot('demo');
     const json = await b.evaluate(`(()=>{let out=null;const o=URL.createObjectURL;URL.createObjectURL=(blob)=>{blob.text().then(t=>window.__exp=t);return 'blob:x'};document.getElementById('export').click();URL.createObjectURL=o;return true})()`);
     await waitFor(() => b.evaluate('!!window.__exp'), 3000);
     const exp = JSON.parse(await b.evaluate('window.__exp'));
-    check('export has K, R, P and homographies', json && exp.intrinsics.K.length === 9 && exp.P.length === 12 && exp.H_floor.length === 9);
+    check('export has K, R, P, homographies and players', json && exp.intrinsics.K.length === 9 && exp.P.length === 12 && exp.H_floor.length === 9 && Array.isArray(exp.players) && exp.players.length === pl.got.length);
 
     // 3. video, tracked
     await b.send('DOM.enable');
@@ -74,6 +79,8 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
     const fps = v.trk.length ? 1000 / (v.trk.reduce((s, x) => s + x, 0) / v.trk.length) : 0;
     check('video tracked frame to frame', v.trk.length >= 2 && fps > 8, `${v.frames - f0} frames analysed in the last 1 s, tracking ${fps.toFixed(1)} fps (last: worker ${v.wms?.total?.toFixed(1)} ms of ${v.wms?.wall?.toFixed(1)} ms)`);
     check('tracked camera follows the clip (within 25 cm)', best < 0.25 && v.ok, `${(best * 100).toFixed(1)} cm at ${v.t.toFixed(2)} s (${v.path}, ${v.mount} mount, analysed ${v.tA?.toFixed(2)} s)`);
+    const vp = await b.evaluate(`({n:__sq.players.length,ms:__sq.rallyMs.players,mb:__sq.rallyMs.ball,X:__sq.players.map(p=>p.X.map(v=>+v.toFixed(2)))})`);
+    check('video: players and ball run in their own workers', vp.n > 0 && vp.ms != null && vp.mb != null, `${vp.n} players ${JSON.stringify(vp.X)}, players ${Math.round(vp.ms)} ms, ball ${Math.round(vp.mb)} ms a frame`);
     await shot('video');
     const errors = [];
     for (const e of b.events) if (e.method === 'Runtime.exceptionThrown') errors.push(e.params.exceptionDetails.exception?.description || e.params.exceptionDetails.text);

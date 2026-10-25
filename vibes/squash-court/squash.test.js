@@ -148,3 +148,55 @@ describe('sparse tracking (track.js)', () => {
     expect(sparseTrack(blank, w, h, cam, st).ok).toBe(false);
   });
 });
+
+// ---------- players and ball ----------
+import { detectPlayers, PlayerTracker } from './players.js';
+import { simulate, fitFlight, fitFlights, cutTrack, ballCandidates, toGray } from './ball.js';
+
+describe('players and ball', () => {
+  test('players on the floor within 10 cm (true camera)', () => {
+    const cam = Camera.fromLookAt([3.2, 13.5, 4], [3.2, 4.5, 0.6], 0, 900, 960, 540);
+    const truth = [{ x: 2.0, y: 5.0 }, { x: 4.5, y: 7.0 }];
+    const img = renderCourt(cam, { seed: 3, style: 'glass', players: truth, adverts: 4 });
+    const P = detectPlayers(img.data, 960, 540, cam, { tin: 0.48 });
+    for (const T of truth) {
+      const e = Math.min(...P.players.map((p) => Math.hypot(p.X[0] - T.x, p.X[1] - T.y)));
+      expect(e).toBeLessThan(0.10);
+    }
+  });
+  test('player identities survive crossing paths', () => {
+    const T = new PlayerTracker();
+    // two players run past each other 0.6 m apart; detections arrive in either order
+    let idA = null;
+    for (let i = 0; i <= 20; i++) {
+      const t = i / 10, a = 1 + 0.2 * i, b = 5 - 0.2 * i, dets = i % 2 ? [{ X: [b, 5.6] }, { X: [a, 5] }] : [{ X: [a, 5] }, { X: [b, 5.6] }];
+      const out = T.update(dets, t);
+      if (i === 0) idA = out.find((k) => k.X[0] < 3).id;
+    }
+    expect(T.tracks.find((k) => k.id === idA).X[0]).toBeCloseTo(5, 0); // the player who started at x = 1
+  });
+  test('one flight in 3D from its pixels (within 5 cm)', () => {
+    const cam = Camera.fromLookAt([3.2, 14, 4.5], [3.2, 4, 0.8], 0, 1300, 1280, 720);
+    const sim = simulate([2, 7, 0.9], [1.5, -20, 4], 0.25, 50);
+    const pts = sim.frames.map((f) => { const u = cam.project(f.X); return { t: f.t, u: u[0], v: u[1], X: f.X }; });
+    const f = fitFlight(pts, cam);
+    for (let i = 0; i < pts.length; i++) expect(Math.hypot(...f.pts3[i].X.map((v, j) => v - pts[i].X[j]))).toBeLessThan(0.05);
+  });
+  test('a drive is cut at the front wall and labelled', () => {
+    const cam = Camera.fromLookAt([3.2, 14, 4.5], [3.2, 4, 0.8], 0, 1300, 1280, 720);
+    const sim = simulate([2, 7, 0.9], [1, -24, 4], 0.6, 50);
+    const pts = sim.frames.map((f) => { const u = cam.project(f.X); return { t: f.t, u: u[0], v: u[1], X: f.X }; });
+    const segs = cutTrack(pts, cam);
+    expect(segs.length).toBeGreaterThanOrEqual(2);
+    const F = fitFlights(pts, segs, cam);
+    expect(F.labels[0]).toBe('front');
+    expect(Math.abs(F.impacts[0].X[1])).toBeLessThan(0.1);
+  });
+  test('ball candidates: a moving dot is found, a still one is not', () => {
+    const cam = Camera.fromLookAt([3.2, 14, 4.5], [3.2, 4, 0.8], 0, 1300, 640, 360);
+    const frame = (u) => { const d = new Uint8ClampedArray(640 * 360 * 4).fill(90); for (let y = -2; y <= 2; y++) for (let x = -2; x <= 2; x++) { const o = ((180 + y) * 640 + u + x) * 4; d[o] = d[o + 1] = d[o + 2] = 250; } for (let y = -2; y <= 2; y++) for (let x = -2; x <= 2; x++) { const o = ((60 + y) * 640 + 500 + x) * 4; d[o] = d[o + 1] = d[o + 2] = 250; } return toGray(d, 640, 360, 640); };
+    const c = ballCandidates(frame(200), frame(230), frame(260), cam, { fps: 25 });
+    expect(c.some((q) => Math.abs(q.u - 230.5) < 2 && Math.abs(q.v - 180.5) < 2)).toBe(true);
+    expect(c.some((q) => Math.abs(q.u - 500.5) < 5)).toBe(false);
+  });
+});

@@ -15,9 +15,11 @@ export function renderCourt(cam, opt = {}) {
   const wallC = style === 'glass' ? [40, 50, 110] : [235, 235, 232];
   const out = new Uint8ClampedArray(w * H * 4);
   // players: vertical ellipsoids standing on the floor (world), plus some 2D advert text boxes on the front wall
-  // players: a number (placed at random) or [{ x, y, c? }]
+  // players: a number (placed at random) or [{ x, y, c? }]; drawn as cylinders r 0.15 m, 1.8 m tall
   const players = Array.isArray(opt.players) ? opt.players.map((p) => ({ c: [rng() * 255, rng() * 255, rng() * 255], ...p }))
     : (opt.players ?? 2) > 0 ? Array.from({ length: opt.players ?? 2 }, () => ({ x: 1 + rng() * 4.4, y: 3 + rng() * 5, c: [rng() * 255, rng() * 255, rng() * 255] })) : [];
+  // ball: { a: [x, y, z], b?: [x, y, z] } — a 40 mm ball, or the capsule a..b it sweeps during the exposure
+  const ball = opt.ball ? { a: opt.ball.a, b: opt.ball.b || opt.ball.a, r: 0.02, c: opt.ball.c || [20, 20, 20] } : null;
   const adverts = Array.from({ length: opt.adverts ?? 6 }, () => ({ x: rng() * 5.5, z: 0.6 + rng() * 3.6, w: 0.3 + rng() * 1.2, h: 0.08 + rng() * 0.25, c: [rng() * 255, rng() * 255, rng() * 255], f: 6 + rng() * 20 }));
   const grain = (a, b) => { const v = Math.sin(a * 12.9898 + b * 78.233) * 43758.5453; return v - Math.floor(v); };
   const ss = opt.supersample ?? 2;
@@ -32,9 +34,18 @@ export function renderCourt(cam, opt = {}) {
     };
     // players: cylinders r 0.25 m, height 1.8, in front of everything they hide
     for (const pl of players) {
-      const ox = o[0] - pl.x, oy = o[1] - pl.y, a = d[0] * d[0] + d[1] * d[1], b = 2 * (ox * d[0] + oy * d[1]), c = ox * ox + oy * oy - 0.25 * 0.25, disc = b * b - 4 * a * c;
+      const ox = o[0] - pl.x, oy = o[1] - pl.y, a = d[0] * d[0] + d[1] * d[1], b = 2 * (ox * d[0] + oy * d[1]), c = ox * ox + oy * oy - 0.15 * 0.15, disc = b * b - 4 * a * c;
       if (disc < 0) continue; const t = (-b - Math.sqrt(disc)) / (2 * a); const z = o[2] + t * d[2];
       if (t > 0 && t < best && z > 0 && z < 1.8) { best = t; col = pl.c.map((v) => v * (0.6 + 0.4 * (z / 1.8))); }
+    }
+    if (ball) { // capsule: closest approach of the ray to the segment
+      const ab = ball.b.map((v, i) => v - ball.a[i]), ao = o.map((v, i) => v - ball.a[i]);
+      const L2 = ab[0] ** 2 + ab[1] ** 2 + ab[2] ** 2, dd = d[0] * ab[0] + d[1] * ab[1] + d[2] * ab[2];
+      const da = d[0] * ao[0] + d[1] * ao[1] + d[2] * ao[2], ba = ab[0] * ao[0] + ab[1] * ao[1] + ab[2] * ao[2];
+      const den = L2 - dd * dd; let s = den > 1e-12 ? (ba - dd * da) / den : 0; s = Math.max(0, Math.min(1, s));
+      const q = ball.a.map((v, i) => v + ab[i] * s), oq = q.map((v, i) => v - o[i]), t = oq[0] * d[0] + oq[1] * d[1] + oq[2] * d[2];
+      const dist = Math.hypot(o[0] + t * d[0] - q[0], o[1] + t * d[1] - q[1], o[2] + t * d[2] - q[2]);
+      if (t > 0 && dist < ball.r && t < best) { best = t; col = ball.c; }
     }
     tryPlane(2, 0, (p) => { // floor
       if (p[0] < 0 || p[0] > W || p[1] < 0 || p[1] > L) return null;
@@ -77,7 +88,7 @@ export function renderCourt(cam, opt = {}) {
     const n = ss * ss, k = (y * w + x) * 4, nz = (opt.noise ?? 6) * (rng() - 0.5) * 2;
     out[k] = r / n + nz; out[k + 1] = g / n + nz; out[k + 2] = b / n + nz; out[k + 3] = 255;
   }
-  return { data: out, width: w, height: H };
+  return { data: out, width: w, height: H, players: players.map(({ x, y }) => [x, y]), ball: ball && ball.a };
 }
 
 // A random plausible broadcast camera (seeded), the kind the detector must handle.
