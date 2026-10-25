@@ -12,8 +12,12 @@ const plan = $('plan'), pctx = plan.getContext('2d');
 const wall = $('wall'), wctx = wall.getContext('2d');
 const view = $('view3d'), vctx = view.getContext('2d');
 let MODEL = courtModel();
-// frames are grabbed at these widths; the detector itself works at 640 and 480 px, tracking at 480
-const DETECT_W = 1280, TRACK_W = 960;
+// frames are grabbed at these widths; the detector works at 640 and 480 px, the sparse tracker at
+// the grabbed resolution (its cost is per line sample, not per pixel), the full tracker at 480
+const DETECT_W = 1280, TRACK_W = 1280;
+// ?track=full uses the full tracker every frame, ?mount=moving drops the fixed-mount assumption
+const QS = new URLSearchParams(location.search);
+const TRACK_OPT = { ...(QS.get('track') === 'full' ? { sparse: false } : {}), ...(QS.get('mount') === 'moving' ? { fixedMount: false } : {}) };
 
 const S = {
   src: null, // HTMLImageElement | HTMLVideoElement | ImageData-backed canvas
@@ -51,10 +55,10 @@ async function analyse(mode = 'detect') {
   const tracking = mode === 'track' && S.cam;
   const { img, k } = grab(tracking ? TRACK_W : DETECT_W);
   S.procFrame = { img: new ImageData(new Uint8ClampedArray(img.data), img.width, img.height), k };
-  const prev = tracking ? scaleCam(S.cam, k, img.width, img.height) : null;
+  const prev = tracking ? scaleCam(S.cam, k, img.width, img.height) : null, tGrab = S.src.currentTime;
   const t0 = performance.now();
-  const r = await run(tracking ? 'track' : 'detect', img, prev && { p: prev.p, cx: prev.cx, cy: prev.cy }, tracking ? { tin: S.tin } : {});
-  S.busy = false;
+  const r = await run(tracking ? 'track' : 'detect', img, prev && { p: prev.p, cx: prev.cx, cy: prev.cy }, tracking ? { tin: S.tin, dt: Math.abs((S.src.currentTime ?? 0) - (S.tAnalysed ?? 0)), ...TRACK_OPT } : { recall: !!(S.live && S.cam && S.fails < 9) });
+  S.busy = false; S.tAnalysed = tGrab;
   if (r.error) { status(`error: ${r.error.split('\n')[0]}`); console.error(r.error); return; }
   const wall = performance.now() - t0;
   // a cut to another camera can still give a tracked fit that passes on its own; one that explains
@@ -65,7 +69,9 @@ async function analyse(mode = 'detect') {
   S.fails = r.ok ? 0 : S.fails + 1;
   S.ms = { ...r.ms, wall }; S.frames++;
   if (tracking) { S.trackMs.push(wall); if (S.trackMs.length > 30) S.trackMs.shift(); }
-  status(`${tracking ? 'tracked' : 'detected'} ${r.ok ? '' : '(low confidence) '}in ${Math.round(wall)} ms — coverage ${(r.quality.coverage * 100 | 0)}%, residual ${r.quality.rms?.toFixed(2)} px`);
+  S.path = r.path; S.mount = r.mount;
+  const how = { static: 'held (camera still)', moving: 'tracked', full: 'tracked (full)', recall: 'back to an earlier camera', detect: 'detected' }[r.path] || (tracking ? 'tracked' : 'detected');
+  status(`${how} ${r.ok ? '' : '(low confidence) '}in ${Math.round(wall)} ms — coverage ${(r.quality.coverage * 100 | 0)}%, residual ${r.quality.rms?.toFixed(2)} px${tracking && r.mount === 'free' ? ' — camera position moving' : ''}`);
   draw();
 }
 
@@ -234,7 +240,7 @@ function readout() {
     `lens     f ${c.f.toFixed(0)} px  (h-fov ${c.hfov().toFixed(1)}°, ${(36 / 2 / Math.tan(c.hfov() * Math.PI / 360)).toFixed(0)} mm full-frame equiv.)  k1 ${c.k1.toFixed(3)}`,
     `tin      ${S.tin.toFixed(2)} m (${S.tin < 0.45 ? 'PSA men' : 'WSF / women'})`,
     `fit      coverage ${(S.quality.coverage * 100).toFixed(0)}%  residual ${S.quality.rms.toFixed(2)} px  ${S.okay ? 'good' : 'LOW CONFIDENCE'}`,
-    `time     ${S.ms ? Math.round(S.ms.wall) + ' ms' : ''}${hz ? `   tracking ${hz.toFixed(1)} fps` : ''}`,
+    `time     ${S.ms ? Math.round(S.ms.wall) + ' ms' : ''}${hz ? `   tracking ${hz.toFixed(1)} fps` : ''}${S.live && S.path ? `   ${S.path}${S.mount === 'free' ? ', camera moving' : ', fixed mount'}` : ''}`,
   ];
   if (S.truth && !S.live) lines.push(`truth    x ${S.truth.C[0].toFixed(2)}  y ${S.truth.C[1].toFixed(2)}  z ${S.truth.C[2].toFixed(2)} m, f ${S.truth.f.toFixed(0)} px`);
   el.textContent = lines.join('\n');

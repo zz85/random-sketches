@@ -7,6 +7,7 @@ import { distanceTransform, detectCourt, trackCourt, mulberry32 } from './detect
 import { renderCourt, randomBroadcastCamera } from './synth.js';
 import { homography4, cameraFromFloorH, boxSeeds } from './boxes.js';
 import { features } from './detect.js';
+import { createTracker, resetTracker, sparseTrack, trackFrame, recallShot } from './track.js';
 
 describe('camera', () => {
   test('rodrigues round trip, including 180°', () => {
@@ -102,5 +103,48 @@ describe('detection on synthetic frames', () => {
     expect(r.ok).toBe(true);
     expect(Math.hypot(...r.cam.C.map((v, k) => v - cam.C[k]))).toBeLessThan(0.1);
     expect(r.ms.total).toBeLessThan(400);
+  });
+});
+
+describe('sparse tracking (track.js)', () => {
+  const w = 960, h = 540, C = [3.5, 14.5, 3.7];
+  const at = (T, f) => Camera.fromLookAt(C, T, 0.005, f, w, h);
+  const frame = (cam, t) => renderCourt(cam, { seed: 9, style: 'glass', players: [{ x: 2 + t, y: 6 }, { x: 4.2, y: 5 - t }], supersample: 1 });
+  test('a camera that holds still is held exactly, while players move', () => {
+    const cam = at([3.2, 2.6, 1.1], 1100), st = createTracker(); resetTracker(st, cam, 0.48);
+    let c = cam;
+    for (let i = 0; i < 4; i++) c = sparseTrack(frame(cam, i * 0.3).data, w, h, c, st).cam;
+    const r = sparseTrack(frame(cam, 1.5).data, w, h, c, st);
+    expect(r.ok).toBe(true); expect(r.mode).toBe('static'); expect(r.cam).toBe(c);
+    expect(Math.hypot(...r.cam.C.map((v, k) => v - C[k]))).toBeLessThan(0.03);
+  });
+  test('a pan and zoom on a fixed mount is followed, the position held', () => {
+    const c0 = at([3.2, 2.6, 1.1], 1100), st = createTracker(); resetTracker(st, c0, 0.48);
+    let c = sparseTrack(frame(c0, 0).data, w, h, c0, st).cam;
+    for (let i = 1; i <= 6; i++) {
+      const truth = at([3.2 + 0.08 * i, 2.6 + 0.05 * i, 1.1 - 0.02 * i], 1100 + 40 * i);
+      const r = sparseTrack(frame(truth, i * 0.2).data, w, h, c, st);
+      expect(r.ok).toBe(true); c = r.cam;
+      const u = c.project([3.2, 5.44, 0]), v = truth.project([3.2, 5.44, 0]);
+      expect(Math.hypot(u[0] - v[0], u[1] - v[1])).toBeLessThan(1);
+      expect(r.ms).toBeLessThan(60);
+    }
+    expect(Math.hypot(...c.C.map((v, k) => v - C[k]))).toBeLessThan(0.03);
+    expect(st.mount).toBe('fixed');
+  });
+  test('after a cut away and back, the camera is picked up again without a detection', () => {
+    const cam = at([3.2, 2.6, 1.1], 1100), st = createTracker(); resetTracker(st, cam, 0.48);
+    let c = cam; for (let i = 0; i < 12; i++) c = sparseTrack(frame(cam, i * 0.1).data, w, h, c, st).cam;
+    const blank = new Uint8ClampedArray(w * h * 4).fill(90);
+    expect(trackFrame(blank, w, h, c, st).ok).toBe(false);
+    const r = recallShot(frame(cam, 2).data, w, h, st);
+    expect(r && r.ok).toBe(true); expect(r.path).toBe('recall');
+    expect(Math.hypot(...r.cam.C.map((v, k) => v - C[k]))).toBeLessThan(0.03);
+  });
+  test('a cut to a frame with no court is reported lost', () => {
+    const cam = at([3.2, 2.6, 1.1], 1100), st = createTracker(); resetTracker(st, cam, 0.48);
+    sparseTrack(frame(cam, 0).data, w, h, cam, st);
+    const blank = new Uint8ClampedArray(w * h * 4).fill(90);
+    expect(sparseTrack(blank, w, h, cam, st).ok).toBe(false);
   });
 });

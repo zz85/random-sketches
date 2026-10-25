@@ -15,7 +15,9 @@ export function renderCourt(cam, opt = {}) {
   const wallC = style === 'glass' ? [40, 50, 110] : [235, 235, 232];
   const out = new Uint8ClampedArray(w * H * 4);
   // players: vertical ellipsoids standing on the floor (world), plus some 2D advert text boxes on the front wall
-  const players = (opt.players ?? 2) > 0 ? Array.from({ length: opt.players ?? 2 }, () => ({ x: 1 + rng() * 4.4, y: 3 + rng() * 5, c: [rng() * 255, rng() * 255, rng() * 255] })) : [];
+  // players: a number (placed at random) or [{ x, y, c? }]
+  const players = Array.isArray(opt.players) ? opt.players.map((p) => ({ c: [rng() * 255, rng() * 255, rng() * 255], ...p }))
+    : (opt.players ?? 2) > 0 ? Array.from({ length: opt.players ?? 2 }, () => ({ x: 1 + rng() * 4.4, y: 3 + rng() * 5, c: [rng() * 255, rng() * 255, rng() * 255] })) : [];
   const adverts = Array.from({ length: opt.adverts ?? 6 }, () => ({ x: rng() * 5.5, z: 0.6 + rng() * 3.6, w: 0.3 + rng() * 1.2, h: 0.08 + rng() * 0.25, c: [rng() * 255, rng() * 255, rng() * 255], f: 6 + rng() * 20 }));
   const grain = (a, b) => { const v = Math.sin(a * 12.9898 + b * 78.233) * 43758.5453; return v - Math.floor(v); };
   const ss = opt.supersample ?? 2;

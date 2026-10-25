@@ -30,7 +30,7 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
   const shot = async (name) => { const r = await b.send('Page.captureScreenshot', { format: 'png' }); fs.writeFileSync(path.join(DIR, `smoke_${name}.png`), Buffer.from(r.result.data, 'base64')); };
   try {
     // 1. demo frame
-    await b.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/?demo` });
+    await b.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/?demo${process.env.QS ? "&" + process.env.QS : ""}` });
     await waitFor(() => b.evaluate('!!(window.__sq && __sq.cam && !__sq.busy)'), 30000);
     const d = await b.evaluate(`(()=>{const S=__sq,c=S.cam,t=S.truth;return {dC:Math.hypot(...c.C.map((v,i)=>v-t.C[i])),df:c.f/t.f-1,ok:S.okay,ms:S.ms.wall,txt:document.getElementById('readout').textContent}})()`);
     check('demo frame: camera within 15 cm', d.dC < 0.15, `${(d.dC * 100).toFixed(1)} cm, f ${(d.df * 100).toFixed(2)}%, ${Math.round(d.ms)} ms`);
@@ -66,14 +66,14 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
     await b.evaluate(`__sq.src.pause();1`); await sleep(100);
     await waitFor(() => b.evaluate('!__sq.busy'), 5000);
     await b.evaluate(`new Promise(r=>{const S=__sq;const go=()=>{if(S.busy)return setTimeout(go,30);S.fails=0;r()};go()})`);
-    const v = await b.evaluate(`(async()=>{const S=__sq; await new Promise(r=>{const t=setInterval(()=>{if(!S.busy){clearInterval(t);r()}},20)}); return {frames:S.frames,t:S.src.currentTime,C:S.cam.C,f:S.cam.f,w:S.srcW,trk:S.trackMs.slice(),ok:S.okay}})()`);
+    const v = await b.evaluate(`(async()=>{const S=__sq; await new Promise(r=>{const t=setInterval(()=>{if(!S.busy){clearInterval(t);r()}},20)}); return {frames:S.frames,t:S.src.currentTime,C:S.cam.C,f:S.cam.f,w:S.srcW,trk:S.trackMs.slice(),ok:S.okay,path:S.path,mount:S.mount,tA:S.tAnalysed,wms:S.ms}})()`);
     // the last analysed frame may lag the paused frame by one tracking interval: accept the closest truth within 0.4 s
     const fi = Math.min(truthCams.length - 1, Math.round(v.t * 25));
     let best = Infinity;
     for (let j = Math.max(0, fi - 10); j <= Math.min(truthCams.length - 1, fi + 1); j++) { const p = truthCams[j].p; best = Math.min(best, Math.hypot(p[3] - v.C[0], p[4] - v.C[1], p[5] - v.C[2])); }
     const fps = v.trk.length ? 1000 / (v.trk.reduce((s, x) => s + x, 0) / v.trk.length) : 0;
-    check('video tracked frame to frame', v.trk.length >= 2 && fps > 8, `${v.frames - f0} frames analysed in the last 1 s, tracking ${fps.toFixed(1)} fps`);
-    check('tracked camera follows the clip (within 25 cm)', best < 0.25 && v.ok, `${(best * 100).toFixed(1)} cm at ${v.t.toFixed(2)} s`);
+    check('video tracked frame to frame', v.trk.length >= 2 && fps > 8, `${v.frames - f0} frames analysed in the last 1 s, tracking ${fps.toFixed(1)} fps (last: worker ${v.wms?.total?.toFixed(1)} ms of ${v.wms?.wall?.toFixed(1)} ms)`);
+    check('tracked camera follows the clip (within 25 cm)', best < 0.25 && v.ok, `${(best * 100).toFixed(1)} cm at ${v.t.toFixed(2)} s (${v.path}, ${v.mount} mount, analysed ${v.tA?.toFixed(2)} s)`);
     await shot('video');
     const errors = [];
     for (const e of b.events) if (e.method === 'Runtime.exceptionThrown') errors.push(e.params.exceptionDetails.exception?.description || e.params.exceptionDetails.text);
