@@ -33,6 +33,7 @@
 //
 // perform() returns notes in seconds ({ t, dur, midi, vel, event, fragment, cursor }), a
 // trace of which score span each cursor played when (for playheads), and the duration.
+// Trace segments carry the `marker` of the play node they belong to (for colouring playheads).
 // A note's velocity is its event's `vel` (an adapter sets it from dynamics) or 0.75.
 // Every par branch is its own cursor, so several selections can sound at once.
 
@@ -40,8 +41,9 @@ import { r, ZERO, add, sub, cmp, lt, le, max as rmax, min as rmin, parse, toFloa
 import { MAIN, active, endOf, altOptions } from './ir.js';
 import { interpret } from './interpret.js';
 import { resolveAnchor, fragmentEnd, positionAt, findById, AnchorError } from './anchors.js';
+import { cursorsAt } from './playheads.js';
 
-const INHERIT = ['tempo', 'transpose', 'gaps', 'minConf', 'alts', 'articulate'];
+const INHERIT = ['tempo', 'transpose', 'gaps', 'minConf', 'alts', 'articulate', 'marker'];
 
 export const ACCENT_BOOST = { accent: 0.18, marcato: 0.26 };
 const has = (e, m) => !!e.marks && e.marks.includes(m);
@@ -172,7 +174,7 @@ export function perform(score, program) {
     const edges = [a, ...cuts.flat(), b];
     for (let i = 0; i + 1 < edges.length; i += 2) {
       const s0 = edges[i], s1 = edges[i + 1];
-      if (lt(s0, s1)) out.trace.push({ cursor: ctx.cursor, fragment, t0: t0 + sec(map(s0), ctx), t1: t0 + sec(map(s1), ctx), s0, s1 });
+      if (lt(s0, s1)) out.trace.push({ cursor: ctx.cursor, fragment, t0: t0 + sec(map(s0), ctx), t1: t0 + sec(map(s1), ctx), s0, s1, ...(ctx.marker ? { marker: ctx.marker } : {}) });
     }
     return t0 + sec(map(b), ctx);
   }
@@ -237,12 +239,9 @@ export function perform(score, program) {
   return out;
 }
 
-/** Where every cursor is at T seconds: [{ cursor, fragment, at (score time, float), pos }]. */
+/** Where every cursor is at T seconds: [{ cursor, fragment, at (score time, float), marker, pos }]. */
 export function playheadsAt(score, perf, T) {
-  return perf.trace.filter((s) => s.t0 <= T && T < s.t1).map((s) => {
-    const f = (T - s.t0) / (s.t1 - s.t0), at = toFloat(s.s0) + f * (toFloat(s.s1) - toFloat(s.s0));
-    return { cursor: s.cursor, fragment: s.fragment, at, pos: positionAt(score, s.fragment, r(Math.round(at * 384), 384)) };
-  });
+  return cursorsAt(perf, T).map((c) => ({ ...c, pos: positionAt(score, c.fragment, r(Math.round(c.at * 384), 384)) }));
 }
 
 function mulberry(seed) {

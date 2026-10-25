@@ -2,7 +2,7 @@
 // transposed page, let the user correct recognition, export.
 import { INSTRUMENTS, keyName, CLEFS, instrument, midiOf } from './theory.js';
 import { buildScore, evTicks } from './score.js';
-import { toMusicXML, toMidi } from './export.js';
+import { toMusicXML, toMidi, performance as performanceOf } from './export.js';
 import { Player } from './player.js';
 import { markOriginal, collectEdits, applyEdits, makeProject, readProject, fileKey } from './edits.js';
 import { interpret, yOfP, lineY, spaceAt } from './omr.js';
@@ -10,9 +10,11 @@ import { Renderer, plan, describe, drawOverlay } from './render.js';
 import { layoutMarkers, markersOf, drawMarkers, hitMarker } from '../notation-ir/markers.js';
 import { emptyArrangement, hasMarkers, addClip, addJump, removeMarker, markerById, compileArrangement, arrangementMarkers, rangeOfIR } from '../notation-ir/arrangement.js';
 import { findById, parsePageId } from '../notation-ir/anchors.js';
+import { timeMap, headsAt, drawPlayheads, HEAD_COLORS } from '../notation-ir/playheads.js';
 
 const $ = (id) => document.getElementById(id);
 const cv = $('cv'), ov = $('ov'), ctx = cv.getContext('2d'), octx = ov.getContext('2d');
+const ph = $('ph'), phx = ph.getContext('2d'); // playhead lines, redrawn every frame on their own canvas
 const store = JSON.parse(localStorage.getItem('scoreshift') || '{}');
 const S = { edits: new Map(), programs: new Map(), source: null, speed: store.speed || 1, metro: !!store.metro, startTick: 0, from: store.from || 'C', to: store.to || 'Bb-clarinet', octave: 'auto', clef: store.clef || 'auto', view: 'transposed', labels: !!store.labels, zoom: 1, model: null, rend: null, name: 'score', sel: null, tempo: store.tempo || 100, score: null, sounding: null };
 const save = () => localStorage.setItem('scoreshift', JSON.stringify({ from: S.from, to: S.to, clef: S.clef, labels: S.labels, tempo: S.tempo, show: S.show, speed: S.speed, metro: S.metro }));
@@ -427,11 +429,65 @@ function startPlay(fromTick) {
   $('play').textContent = '■ Stop'; $('play').setAttribute('aria-pressed', 'true');
   let last = '';
   player.speed = S.speed; player.metronome = S.metro;
+  const maps = tickMaps();
   player.play(S.model, S.score, musicOpts(), (on, now) => {
     S.startTick = now; showPos(now);
     const key = on.map((o) => o.tick).join();
     if (key !== last) { last = key; redrawPlay(on); }
+    S.heads = maps.map((f) => f(now)).filter(Boolean).map((h) => ({ ...h, color: HEAD_COLORS[0] }));
+    drawHeads();
   }, fromTick);
+}
+
+// ---------- playhead lines ----------
+// One line per part across its staff, gliding with the music (through rests and long notes),
+// perpendicular to the staff on a tilted photo; one per cursor for programs, coloured like
+// their clip. Drawn on their own canvas so a frame costs one line, not the overlay.
+/** The page's staves as markers.js / playheads.js lines (photo pixels, following the tilt). */
+function pageLines() {
+  const partOf = new Map(); S.score.parts.forEach((p, k) => p.staves.forEach((st) => partOf.set(st.index, k)));
+  const lines = [];
+  for (const st of S.model.staves) { const xm = (st.x0 + st.x1) / 2; lines[st.index] = { x0: st.x0, x1: st.x1, top: lineY(st, 0, xm), bottom: lineY(st, 4, xm), group: partOf.get(st.index) ?? 0, topAt: (x) => lineY(st, 0, x), bottomAt: (x) => lineY(st, 4, x) }; }
+  return lines;
+}
+/** Per part: ticks -> photo position, from the performance's events and each bar's end. */
+function tickMaps() {
+  const lines = (S.headLines = pageLines()), { events } = performanceOf(S.model, S.score, musicOpts());
+  return S.score.parts.map((part) => {
+    const pts = [];
+    for (const o of events) if (o.part === part.index && o.dur > 0 && !o.e.grace && !o.e.removed) pts.push({ t: o.tick, line: o.m.st.index, x: o.e.x });
+    let t0 = 0;
+    for (const m of part.measures) { t0 += m.status === 'rest' ? m.cap : m.ticks; pts.push({ t: t0, line: m.st.index, x: Math.min(m.x1, m.st.x1), end: true }); }
+    return timeMap(pts, lines);
+  });
+}
+/** Per part of an IR score: score time (whole notes) -> photo position. */
+function irMaps(score) {
+  const lines = (S.headLines = pageLines()), staffPart = new Map();
+  score.parts.forEach((p, k) => p.staves.forEach((st) => staffPart.set(st.id, k)));
+  const voicePart = new Map(score.voices.map((v) => [v.id, staffPart.get(v.staff)]));
+  return score.parts.map((p, k) => {
+    const pts = [];
+    for (const e of score.events) if (!e.fragment && e.src && voicePart.get(e.voice) === k) pts.push({ t: e.onset.n / e.onset.d, line: e.src.line, x: e.src.x });
+    if (k === 0) for (const d of score.directions) if (d.kind === 'barline' && d.src) pts.push({ t: d.at.n / d.at.d, line: d.src.line, x: Math.min(d.src.x, lines[d.src.line]?.x1 ?? d.src.x), end: true });
+    return timeMap(pts, lines);
+  });
+}
+function drawHeads() {
+  const R = S.rend; if (!R) return;
+  if (ph.width !== R.W || ph.height !== R.H) { ph.width = R.W; ph.height = R.H; }
+  phx.clearRect(0, 0, R.W, R.H);
+  if (!S.heads?.length || !S.model) return;
+  drawPlayheads(phx, S.heads, S.headLines || pageLines(), mkView());
+  followHead();
+}
+/** Keep the first playhead in view while playing. */
+function followHead() {
+  const h = S.heads[0], st = h && S.model.staves[h.line]; if (!st) return;
+  const k = (S.rend.r / devicePixelRatio) * S.zoom, w = $('wrap'), sg = $('stage'), sp = spaceAt(st, h.x);
+  const y0 = sg.offsetTop + (lineY(st, 0, h.x) - 3 * sp) * k, y1 = sg.offsetTop + (lineY(st, 4, h.x) + 3 * sp) * k, x = sg.offsetLeft + h.x * k;
+  if (y0 < w.scrollTop || y1 > w.scrollTop + w.clientHeight) w.scrollTop = y0 - w.clientHeight / 4;
+  if (x < w.scrollLeft + 20 || x > w.scrollLeft + w.clientWidth - 20) w.scrollLeft = x - w.clientWidth / 3;
 }
 $('play').onclick = () => {
   if (!S.model) return;
@@ -494,9 +550,12 @@ async function playProgram(program, { keep = true } = {}) {
   $('play').textContent = '■ Stop'; $('play').setAttribute('aria-pressed', 'true');
   player.speed = S.speed; player.metronome = S.metro;
   let last = '';
-  player.playPerformance(p, (on) => {
+  const maps = irMaps(score);
+  player.playPerformance(p, (on, now) => {
     const key = [...on].join();
     if (key !== last) { last = key; redrawPlay([...on].map((id) => byId.get(id)).filter(Boolean)); }
+    S.heads = headsAt(p, now, (f, at) => (f === 'main' ? maps.map((m) => m(at)).filter(Boolean) : null), MK);
+    drawHeads();
   }, undefined, { clicks: clicksFor(score, p) });
   return p;
 }
@@ -746,7 +805,7 @@ async function editInStaffInk({ open = true } = {}) {
 }
 $('editInk').onclick = () => editInStaffInk();
 
-function onPlayStop() { S.sounding = null; $('play').textContent = '▶ Play'; $('play').setAttribute('aria-pressed', 'false'); update(); }
+function onPlayStop() { S.heads = []; drawHeads(); S.sounding = null; $('play').textContent = '▶ Play'; $('play').setAttribute('aria-pressed', 'false'); update(); }
 player.onStop = onPlayStop;
 const download = (data, type, name) => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([data], { type })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 10000); };
 const exportName = (ext) => `${S.name}${S.pdf ? `-p${S.pdf.page}` : ''}-${S.view === 'transposed' ? S.to : 'as-written'}.${ext}`;
@@ -761,7 +820,7 @@ function fitZoom() {
 function layoutStage() {
   if (!S.rend) return;
   const w = (S.rend.W / devicePixelRatio) * S.zoom, h = (S.rend.H / devicePixelRatio) * S.zoom;
-  for (const c of [cv, ov]) { c.style.width = w + 'px'; c.style.height = h + 'px'; }
+  for (const c of [cv, ov, ph]) { c.style.width = w + 'px'; c.style.height = h + 'px'; }
   $('stage').style.width = w + 'px'; $('stage').style.height = h + 'px';
   chips();
 }
@@ -963,4 +1022,4 @@ $('export').onclick = () => {
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
 // test hook
-window.__ss = { S, load, saveProject, idb, update, plan, openPage, exportPdf, player, setFix, eventOf, toMusicXML, toMidi, musicOpts, playProgram, editInStaffInk, toIR, markers: () => MK, refreshMarkers, MKS, rangeNow, markerTap, arrOf }; window.__yOfP = yOfP;
+window.__ss = { S, load, saveProject, idb, update, plan, openPage, exportPdf, player, setFix, eventOf, toMusicXML, toMidi, musicOpts, playProgram, editInStaffInk, toIR, markers: () => MK, refreshMarkers, heads: () => S.heads, MKS, rangeNow, markerTap, arrOf }; window.__yOfP = yOfP;

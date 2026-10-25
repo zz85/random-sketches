@@ -30,7 +30,7 @@
   #wrap { position:relative; overflow:auto; height:calc(100vh - 9.5rem); touch-action:pan-x pan-y pinch-zoom; }
   #stage { position:relative; transform-origin:0 0; }
   #stage canvas { display:block; }
-  #ov { position:absolute; left:0; top:0; pointer-events:none; }
+  #ov, #ph { position:absolute; left:0; top:0; pointer-events:none; }
   #empty { padding:2.5rem 1.25rem; max-width:44rem; margin:0 auto; text-align:center; color:var(--mut); }
   #empty h2 { color:var(--ink); }
   #empty .big { display:flex; gap:.75rem; justify-content:center; flex-wrap:wrap; margin:1.25rem 0; }
@@ -112,7 +112,7 @@
     <p>Best results: printed music, flat page, whole width of the staff in frame, even light. Check the
       <b>Interpreted</b> view and tap anything it got wrong.</p>
   </div>
-  <div id="stage" hidden><canvas id="cv"></canvas><canvas id="ov"></canvas></div>
+  <div id="stage" hidden><canvas id="cv"></canvas><canvas id="ov"></canvas><canvas id="ph"></canvas></div>
 </div>
 <div id="pop" role="dialog" aria-modal="false"></div>
 <div id="busy" role="status"><div>Reading the music…</div></div>

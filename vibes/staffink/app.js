@@ -1,12 +1,13 @@
 // StaffInk UI: pointer capture, ink grouping, recognition feedback, editing, playback.
 import { loadModel, bbox, pathLength, straightness, reversals, makeUserTemplate, packStrokes, unpackStrokes, CLASSES } from './recognizer.js';
-import { newScore, newMeasure, ensureTrailingMeasure, findEvent, describe, tupletWindows, clearTuplet, hasArtic, setArtic } from './theory.js';
+import { newScore, newMeasure, ensureTrailingMeasure, findEvent, describe, tupletWindows, clearTuplet, hasArtic, setArtic, DIV } from './theory.js';
 import { buildExtraTemplates } from './extras.js';
 import { layoutScore, locate } from './layout.js';
 import { renderScore } from './render.js';
 import { interpret, detectGesture, removeEvent, isScribble, makeTuplet, articShapes, eraseHits, applyErase } from './parser.js';
 import { Player } from './audio.js';
-import { toMusicXML, toMidi } from './export.js';
+import { toMusicXML, toMidi, performance as performanceOf } from './export.js';
+import { timeMap, headsAt, drawPlayheads, HEAD_COLORS } from '../notation-ir/playheads.js';
 import { timeline, rangeOf, stepFocus, addClip, addJump, removeMarker, markerById, pruneProgram, compile, markers as programMarkers, hasMarkers, emptyProgram } from './arrange.js';
 import { layoutMarkers, drawMarkers, hitMarker } from '../notation-ir/markers.js';
 
@@ -31,6 +32,7 @@ const S = {
   selected: null, playing: new Set(), model: null, lastEdit: null, inkHistory: [], player: new Player(),
   range: null, // text-editor-like selection: { a, b } event ids (anchor, focus)
   marker: null, pickJump: null, loopSel: false, ML: null,
+  heads: [], // playhead lines while playing: [{ line (system), x, color }]
 };
 for (const u of load('staffink.user') || []) { try { S.user.push(makeUserTemplate(u.label, unpackStrokes(u.strokes))); } catch (e) { /* skip bad entry */ } }
 if (params.get('delay')) S.settings.delay = +params.get('delay');
@@ -113,6 +115,7 @@ function drawScore() {
       gS.fillStyle = 'rgba(37,99,235,0.85)'; gS.fillRect(x - 1, y, 2, h); gS.fillRect(x + w - 1, y, 2, h);
     }
     if (S.ML) drawMarkers(gS, S.ML, markerView(), { selected: S.marker });
+    if (S.heads.length) drawPlayheads(gS, S.heads, sysLines(), markerView());
     if (S.settings.showInk) for (const st of S.inkHistory) drawStroke(gS, st, 'rgba(37,99,235,0.35)');
     for (const a of S.pending) for (const st of a.strokes) drawStroke(gS, st, 'rgba(29,28,26,0.45)');
   });
@@ -596,13 +599,38 @@ function togglePlay() {
   if (r) { playProgram(compile(S.score, { range: r, loop: S.loopSel ? 64 : 1 })); return; }
   if (hasMarkers(S.score.program)) { playProgram(compile(S.score)); return; }
   $('playIc').textContent = '■'; $('playLbl').textContent = 'Stop';
-  S.player.onStop = () => { S.playing = new Set(); $('playIc').textContent = '▶'; $('playLbl').textContent = 'Play'; drawScore(); };
-  S.player.play(S.score, (on) => {
-    S.playing = on; drawScore();
-    const id = on.values().next().value;
-    const p = id && S.L.evPos.get(id);
-    if (p) { const y = p.top; if (y - 3 < S.scrollY || y + 8 > S.scrollY + S.h / S.scale) { S.scrollY = clamp(y - 6, 0, maxScroll()); } }
+  S.player.onStop = onStopPlay;
+  // the playhead runs in the player's own (fermata-stretched) ticks
+  const { onsets } = performanceOf(S.score);
+  const map = staffInkMap(onsets.map((o) => ({ t: o.tick, end: o.tick + o.dur, id: o.id })));
+  S.player.play(S.score, (on, now) => {
+    S.playing = on; const h = map(now); S.heads = h ? [{ ...h, color: HEAD_COLORS[0] }] : [];
+    followHeads(); drawScore();
   });
+}
+function onStopPlay() { S.playing = new Set(); S.heads = []; $('playIc').textContent = '▶'; $('playLbl').textContent = 'Play'; drawScore(); }
+
+// ---------------------------------------------------------------- playheads
+const evCenter = (p) => (p.hw ? p.x + p.hw / 2 : (p.bbox.x0 + p.bbox.x1) / 2);
+/**
+ * time -> page position, from [{ t, end, id }] (any time unit): each event's onset at its
+ * notehead, and each bar's end at its barline, so the head crosses rests and empty beats.
+ */
+function staffInkMap(list) {
+  const pts = [], ends = new Map();
+  for (const q of list) {
+    const p = S.L.evPos.get(q.id); if (!p) continue;
+    pts.push({ t: q.t, line: p.sys, x: evCenter(p) });
+    ends.set(p.mi, Math.max(ends.get(p.mi) ?? -Infinity, q.end));
+  }
+  for (const m of S.L.measures) if (ends.has(m.mi)) pts.push({ t: ends.get(m.mi), line: m.sys, x: m.x1 - 0.15, end: true });
+  return timeMap(pts, sysLines());
+}
+/** Keep the first playhead's system in view. */
+function followHeads() {
+  const h = S.heads[0], sys = h && S.L.systems[h.line]; if (!sys) return;
+  const top = sys.staffTops[0], bot = sys.staffTops[sys.staffTops.length - 1] + 4;
+  if (top - 3 < S.scrollY || bot + 4 > S.scrollY + S.h / S.scale) S.scrollY = clamp(top - 6, 0, maxScroll());
 }
 
 /**
@@ -628,8 +656,13 @@ async function playProgram(program = {}) {
   try { p = perform(ir, { tempo: S.score.tempo, root: { walk: {} }, ...program }); } catch (e) { toast(`can't play: ${e.message}`, 3000); return null; }
   if (!p.notes.length) { toast('nothing to play there', 1200); return p; }
   $('playIc').textContent = '■'; $('playLbl').textContent = 'Stop';
-  S.player.onStop = () => { S.playing = new Set(); $('playIc').textContent = '▶'; $('playLbl').textContent = 'Play'; drawScore(); };
-  S.player.playPerformance(p, (on) => { S.playing = on; drawScore(); }, inkId);
+  S.player.onStop = onStopPlay;
+  // the playheads run in score time (whole notes), one per cursor, coloured like their clip
+  const W = 4 * DIV, map = staffInkMap(timeline(S.score).map((q) => ({ t: q.onset / W, end: q.end / W, id: q.id })));
+  S.player.playPerformance(p, (on, now) => {
+    S.playing = on; S.heads = headsAt(p, now, (f, at) => (f === 'main' ? map(at) : null), S.ML);
+    followHeads(); drawScore();
+  }, inkId);
   return p;
 }
 
@@ -873,6 +906,7 @@ window.StaffInk = {
   pageToClient(x, y) { const r = stage.getBoundingClientRect(); return { x: r.left + x * S.scale, y: r.top + (y - S.scrollY) * S.scale }; },
   togglePlay, undo, redo, commitGroup,
   playProgram, async ir() { return (await loadIR()).fromStaffInk(S.score); },
+  get heads() { return S.heads; },
   setRange, clearRange, get range() { return S.range && rangeOf(S.score, S.range.a, S.range.b); }, rangeBands, markerLayout: () => S.ML, selectMarker, markerEdit, tapAt,
   pageToCanvas(x, y) { return { x: x * S.scale, y: (y - S.scrollY) * S.scale }; },
 };

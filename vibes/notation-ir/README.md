@@ -32,6 +32,11 @@ breaks, stacked when they overlap), loop counts, jumps as arrows, and lost marke
 dashed. It covers layout, hit testing and drawing. Each app supplies its lines and a
 `place(anchor)` function.
 
+`playheads.js` draws the playhead lines. `timeMap(points, lines)` maps time to a page
+position, running across line breaks. `headsAt(perf, T, map, markerLayout)` gives one head per
+cursor, coloured like the clip it's playing. `drawPlayheads` draws them perpendicular to the
+staff, which matters on a tilted photo. Both apps use it for normal Play and for programs.
+
 Events and directions belong to **fragments** (default `main`), each with its own local time, so an idea sketched off to the side doesn't need a place in the main timeline.
 
 `adapters/scoreshift.js` converts a recognised page (as written or transposed). Printed bars

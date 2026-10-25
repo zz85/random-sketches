@@ -254,6 +254,16 @@ const server = http.createServer((req, res) => {
     check('Select: drag across notes selects them like text, plays them, keeps them as a clip', rg.n === 3 && rg.bar && rg.playing && rg.clips.length === 1 && rg.clips[0][1] === ids[0] && rg.clips[0][2] === ids[2] && rg.label[0] === 'A', JSON.stringify(rg));
     fs.writeFileSync(path.join(DIR, 'smoke_markers.png'), Buffer.from((await c.send('Page.captureScreenshot', { format: 'png' })).result.data, 'base64'));
     await ev('StaffInk.selectMarker(null), StaffInk.score.program = null, StaffInk.commitGroup(), document.getElementById("tWrite").click(), true');
+    // a playhead line glides through the bar, through a rest too, and goes when playback stops
+    const ph = await ev(`(async () => { const sc = StaffInk.score, keep = JSON.stringify(sc); let id = 900;
+      sc.tempo = 120; sc.measures[0].staves[0].events = [{ id: id++, kind: 'note', dur: 2, dots: 0, heads: [{ pos: 0, acc: null }] }, { id: id++, kind: 'rest', dur: 2, dots: 0, heads: [] }];
+      window.dispatchEvent(new Event('resize')); await new Promise((q) => setTimeout(q, 150));
+      StaffInk.togglePlay(); const xs = [];
+      for (let k = 0; k < 6; k++) { await new Promise((q) => setTimeout(q, 250)); const h = StaffInk.heads[0]; xs.push(h ? +h.x.toFixed(2) : null); }
+      const inRest = StaffInk.S.playing.size; StaffInk.S.player.stop(); const after = StaffInk.heads.length;
+      Object.keys(sc).forEach((k) => delete sc[k]); Object.assign(sc, JSON.parse(keep)); window.dispatchEvent(new Event('resize'));
+      return { xs, inRest, after }; })()`);
+    check('a playhead line moves through notes and rests, and goes on stop', ph.xs.every((x, i) => x != null && (i === 0 || x > ph.xs[i - 1])) && ph.after === 0, JSON.stringify(ph));
 
     // ---------------------------------------------------------- scene 2d: offline
     await ev('navigator.serviceWorker.ready.then(() => new Promise((r) => { if (navigator.serviceWorker.controller) r(true); else navigator.serviceWorker.addEventListener("controllerchange", () => r(true)); setTimeout(() => r(!!navigator.serviceWorker.controller), 5000); }))');

@@ -171,6 +171,16 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
       document.getElementById('play').click();await new Promise(r=>setTimeout(r,50));
       return {notes:p.notes.length,cursors:new Set(p.notes.map(n=>n.cursor)).size,on,playing,after:__ss.player.playing,label:document.getElementById('play').textContent}})()`);
     check('authored playback: two bars at once, both on the playhead', pp.cursors === 2 && pp.playing && pp.on.includes(2) && pp.on.includes(5) && !pp.after && /Play/.test(pp.label), JSON.stringify(pp));
+    // playhead lines: one gliding through the page on Play (drawn on its own canvas), one per cursor for a program
+    const hd = await b.evaluate(`(async()=>{const S=__ss.S;S.programs.clear();__ss.update();S.startTick=0;document.getElementById('play').click();const xs=[];
+      for(let k=0;k<5;k++){await new Promise(r=>setTimeout(r,220));const h=__ss.heads()?.[0];xs.push(h?h.line*1e5+h.x:null);}
+      const h=__ss.heads()[0],r=S.rend.r,g=document.getElementById('ph').getContext('2d'),y=__yOfP(S.model.staves[h.line],4,h.x);
+      const d=g.getImageData(Math.round(h.x*r)-4,Math.round(y*r)-4,9,9).data;let ink=0;for(let i=3;i<d.length;i+=4)if(d[i]>0)ink++;
+      document.getElementById('play').click();await new Promise(r=>setTimeout(r,50));const after=(__ss.heads()||[]).length;
+      await __ss.playProgram({root:{par:[{play:{from:{bar:2},to:{bar:2,edge:'end'}}},{play:{from:{bar:5},to:{bar:5,edge:'end'}}}]}},{keep:false});
+      await new Promise(r=>setTimeout(r,300));const prog=__ss.heads().map(h=>h.color);__ss.player.stop();
+      return {xs,ink,after,prog}})()`);
+    check('playhead lines: glide on Play, one per cursor for a program', hd.xs.every((x, i) => x != null && (i === 0 || x > hd.xs[i - 1])) && hd.ink > 0 && hd.after === 0 && hd.prog.length === 2 && hd.prog[0] !== hd.prog[1], JSON.stringify(hd));
     // hand-off to StaffInk: the transposed (cello) part opens there, ready to edit with a pen
     const hand = await b.evaluate(`(async()=>{const h=await __ss.editInStaffInk({open:false});const f=document.createElement('iframe');f.style.cssText='position:fixed;left:0;top:0;width:900px;height:600px';
       document.body.appendChild(f);f.src='../staffink/?import&nohelp&nosw';
