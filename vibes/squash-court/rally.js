@@ -68,7 +68,7 @@ export class Rally {
       // finished tracks are fitted one per frame, longest first, so a burst of them (a cut, a
       // crowd) spreads its cost instead of stalling one frame
       this.queue = (this.queue || []).concat(this.ballT.done.splice(0).filter((tr) => tr.pts.length >= 6)).sort((a, b) => b.pts.length - a.pts.length).slice(0, 6);
-      const tr = this.queue.shift(); if (tr) { const f = this.fit(tr, cam, W); if (f) flights.push(f); }
+      const tr = this.queue.shift(); if (tr) flights.push(...(this.fit(tr, cam, W) || []));
     }
     ms.total = now() - t0;
     this.last = { players, ball };
@@ -76,42 +76,71 @@ export class Rally {
     return { dup: false, players, ball, flights: changed ? this.flights : null, ms };
   }
   // flush the open tracks (end of a clip)
-  finish(cam, W) { const out = []; for (const tr of [...(this.queue || []), ...this.ballT.finish()]) { const f = this.fit(tr, cam, W); if (f) out.push(f); } this.ballT = new BallTracker({ gate: 12, slack: 0.6, maxMiss: 3, impacts: false, first: 40 }); this.add(out); return this.flights; }
+  finish(cam, W) { const out = []; for (const tr of [...(this.queue || []), ...this.ballT.finish()]) { out.push(...(this.fit(tr, cam, W) || [])); } this.ballT = new BallTracker({ gate: 12, slack: 0.6, maxMiss: 3, impacts: false, first: 40 }); this.add(out); return this.flights; }
   // There is one ball: of flights that overlap in time (the ball and its reflection in the glass,
-  // or one track split in two) the better supported one stays. Returns whether the list changed.
+  // one track split in two, a racket swung beside it) the better supported one stays. Support is
+  // its length in frames, less its fit error, plus a bonus when it starts where the ball can be
+  // expected to start: off a player's racket, or where a kept flight ended just before (a bounce).
+  // Returns whether the list changed.
   add(flights) {
     let changed = false;
+    const players = this.dets.map((p) => p.X).filter(Boolean);
+    const startsWell = (f) => {
+      const a = f.pts[0]; if (!a) return false;
+      if (a.X[2] < 2.5 && players.some((X) => Math.hypot(a.X[0] - X[0], a.X[1] - X[1]) < 1.5)) return true;
+      return this.flights.some((g) => g !== f && f.t0 - g.t1 > -0.05 && f.t0 - g.t1 < 0.2 && Math.hypot(...g.pts[g.pts.length - 1].X.map((v, j) => v - a.X[j])) < 1.0);
+    };
+    const support = (g) => g.uv.length - 2 * g.rms + (g.startsWell ? 8 : 0);
     for (const f of flights) {
-      const rivals = this.flights.filter((g) => Math.min(f.t1, g.t1) - Math.max(f.t0, g.t0) > 0.5 * Math.min(f.t1 - f.t0, g.t1 - g.t0));
-      const support = (g) => g.uv.length - 2 * g.rms;
+      f.startsWell = startsWell(f);
+      const rivals = this.flights.filter((g) => Math.min(f.t1, g.t1) - Math.max(f.t0, g.t0) > 0.06);
       if (rivals.some((g) => support(g) >= support(f))) continue;
       this.flights = this.flights.filter((g) => !rivals.includes(g)); this.flights.push(f); changed = true;
     }
     this.flights.sort((a, b) => a.t0 - b.t0); if (this.flights.length > 40) this.flights.splice(0, this.flights.length - 40);
     return changed;
   }
-  // A finished 2D track becomes flights in metres if it is one: it moves, the flight model explains
-  // its pixels, and it stays in the court at a ball's speeds. Spectators, players' limbs and
-  // reflections mostly fail one of those.
+  // rejected tracks, with why, when this.debug is an array (diagnostics only)
+  why(tr, reason) { if (this.debug) this.debug.push({ reason, pts: tr.pts.map((q) => ({ t: q.t, u: q.u, v: q.v })) }); return null; }
+  // A finished 2D track becomes flights in metres (an array, possibly empty) if it is one: it
+  // moves, the flight model explains its pixels, and it stays in the court at a ball's speeds.
+  // Spectators, players' limbs and reflections mostly fail one of those.
   fit(tr, cam, W) {
     const pts = tr.pts.map((q) => ({ t: q.t, u: q.u, v: q.v })), s = W / 1280;
-    if (pts.length < 6) return null;
+    if (pts.length < 6) return this.why(tr, 'short');
     const span = Math.hypot(pts[pts.length - 1].u - pts[0].u, pts[pts.length - 1].v - pts[0].v);
     let path = 0; for (let i = 1; i < pts.length; i++) path += Math.hypot(pts[i].u - pts[i - 1].u, pts[i].v - pts[i - 1].v);
-    if (span < 12 * s || span / (pts[pts.length - 1].t - pts[0].t) < 150 * s) return null; // still, or drifting: a spectator, a reflection, a racket held up
-    // cheap first: a flight's image path is smooth in time (a quadratic fits it to a few px; tracks
-    // here do not join across impacts), a jittering limb or reflection is not. Only those go to 3D.
-    if (smooth2D(pts) > 8 * Math.max(1, s)) return null;
+    if (span < 12 * s || span / (pts[pts.length - 1].t - pts[0].t) < 150 * s) return this.why(tr, 'still'); // still, or drifting: a spectator, a reflection, a racket held up
+    // cheap first: a flight's image path is smooth in time between impacts (a quadratic fits each
+    // piece to a few px), a jittering limb or reflection is not. A track can run on through a wall
+    // or floor bounce, so it is split where one quadratic stops fitting: a ball gives a few long
+    // pieces, a limb many short ones. Only those go to 3D.
+    const pieces = smoothPieces(pts, 3 * Math.max(1, s));
+    const covered = pieces.reduce((n, [a, b]) => n + b - a + 1, 0);
+    if (covered < 0.7 * pts.length || pieces.length > Math.max(2, pts.length / 8)) return this.why(tr, 'jitter');
+    // each piece is then its own flight (or two, where the flight model finds a soft bounce or the
+    // frames next to an impact inside it), fitted on its own: the fit's cost grows with the number
+    // of flights chained, and a 1 s track fitted as one chain would stall the ball worker for a
+    // second. A piece that is not a flight is dropped without taking the rest of the track with it.
+    const out = [];
+    for (const [a, e] of pieces) { const f = this.fitPiece(tr, pts.slice(a, e + 1), cam, s); if (f) out.push(f); }
+    return out;
+  }
+  fitPiece(tr, pts, cam, s) {
     const segs = cutTrack(pts, cam, { tol: 2.5 * Math.max(1, s) });
-    if (!segs.length) return null;
+    if (!segs.length) return this.why(tr, 'nosegs');
     const used = segs.reduce((n, [a, b]) => n + b - a + 1, 0);
-    if (used < 6 || used < 0.6 * pts.length) return null;
+    if (used < 5 || used < 0.6 * pts.length) return this.why(tr, 'fewused');
     const F = fitFlights(pts, segs, cam, { players: this.dets.map((p) => p.X).filter(Boolean), beam: 3 });
-    if (!(F.rms < 2 * Math.max(1, s))) return null;
+    if (!(F.rms < 2 * Math.max(1, s))) return this.why(tr, 'rms');
     const P3 = F.flights.flatMap((f) => f.pts3);
-    if (P3.some((q) => outside(q.X) > 0.3)) return null;
+    if (P3.some((q) => outside(q.X) > 0.3)) return this.why(tr, 'outside');
+    // a racket or a hand: every point of it next to a player (a real flight leaves the player it
+    // came off within a few frames)
+    const near = this.dets.map((p) => p.X).filter(Boolean);
+    if (near.length && P3.every((q) => q.X[2] < 2.4 && near.some((X) => Math.hypot(q.X[0] - X[0], q.X[1] - X[1]) < 1.0))) return this.why(tr, 'player');
     const speeds = F.flights.map((f) => Math.hypot(...f.V0));
-    if (speeds.some((v) => v > 75) || Math.max(...speeds) < 4) return null; // slower than a drop shot: a spectator through the glass
+    if (speeds.some((v) => v > 75) || Math.max(...speeds) < 4) return this.why(tr, 'speed'); // slower than a drop shot: a spectator through the glass
     return {
       cam: cam.C.map((v) => +v.toFixed(2)), // where the camera stood: shots are named from the main view only
       t0: pts[0].t, t1: pts[pts.length - 1].t, rms: F.rms, labels: F.labels, speed: Math.max(...speeds),
@@ -121,6 +150,19 @@ export class Rally {
   }
 }
 
+// Split a 2D track into pieces each fitted by one quadratic in time to within tol px rms (grown
+// greedily, at least 5 points); points that start no piece are left out. Returns [first, last]
+// index pairs.
+function smoothPieces(pts, tol, minLen = 5) {
+  const out = []; let s = 0;
+  while (s + minLen <= pts.length) {
+    let e = s + minLen - 1;
+    if (smooth2D(pts.slice(s, e + 1)) > tol) { s++; continue; }
+    while (e + 1 < pts.length && smooth2D(pts.slice(s, e + 2)) <= tol) e++;
+    out.push([s, e]); s = e + 1;
+  }
+  return out;
+}
 // rms (px) of the best quadratic in time through a track's u and v
 function smooth2D(pts) {
   const t0 = pts[0].t, T = pts.map((p) => p.t - t0), n = pts.length;
