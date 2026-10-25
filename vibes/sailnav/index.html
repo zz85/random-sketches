@@ -12,6 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="vendor/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="vendor/icon-192.png">
+<script src="../pwa/install.js"></script>
 <style>
   *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   :root {
@@ -195,6 +196,7 @@
     <button id="btn-units" class="iconbtn" title="Depth units">m</button>
     <button id="btn-follow" class="iconbtn active" title="Follow boat">FOLLOW</button>
     <button id="btn-theme" class="iconbtn">NIGHT</button>
+    <button id="btn-install" class="iconbtn" data-pwa-install style="display:none" title="Install SailNav as an app">INSTALL</button>
   </div>
 
   <div id="mob-banner">

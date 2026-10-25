@@ -8,6 +8,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-192.png">
+<script src="../pwa/install.js"></script>
 <style>
   :root { --bg:#f3f1ec; --ink:#1d2b3a; --mut:#5d6b78; --acc:#c2410c; --card:#fff; --line:#d9d4ca; }
   * { box-sizing: border-box; }
@@ -72,6 +73,7 @@
   <button id="xml" disabled title="MusicXML of the current view: transposed, or as written">⬇ MusicXML</button>
   <button id="midi" disabled>⬇ MIDI</button>
   <button id="editInk" disabled title="Open the music as shown (as written or transposed) in StaffInk, to edit it with a pen">✎ Edit in StaffInk</button>
+  <button id="install" data-pwa-install style="display:none" title="Install ScoreShift as an app: own icon, works offline">📲 Install</button>
   <button id="saveProject" disabled title="The file you opened with all your corrections and settings; open it again to carry on">💾 Save project</button>
 </header>
 <div id="bar">

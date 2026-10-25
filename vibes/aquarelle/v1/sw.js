@@ -4,8 +4,8 @@
  * load fetches the new build for next time). Bump VERSION when the file list changes.
  */
 // own cache prefix: the current app's worker deletes every other 'aquarelle-' cache, and this one would delete its
-const VERSION = 'aqclassic-v1';
-const SHELL = ['./', './index.html', './app.js', './sim.js', './km.js', './paper.js', './brush.js', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png'];
+const VERSION = 'aqclassic-v2';
+const SHELL = ['./', './index.html', './app.js', './sim.js', './km.js', './paper.js', './brush.js', './manifest.webmanifest', '../../pwa/install.js', './icon.svg', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => {

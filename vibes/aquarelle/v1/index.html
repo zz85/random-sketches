@@ -10,6 +10,7 @@
 <meta name="description" content="Watercolour painting with a fluid simulation: wet-in-wet blooms, edge darkening, granulation, glazing and lifting, for Apple Pencil, stylus, finger or mouse.">
 <title>Aquarelle classic</title>
 <link rel="manifest" href="manifest.webmanifest">
+<script src="../../pwa/install.js"></script>
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-192.png">
 <style>
@@ -192,6 +193,7 @@
 <div id="menu" class="panel pop">
   <h3>Painting</h3>
   <button class="item" id="newBtn"><span>New sheet</span></button>
+  <button class="item" id="installItem" data-pwa-install style="display:none"><span>Install app<small>own icon, opens full screen, works offline</small></span></button>
   <button class="item" id="exportBtn"><span>Export PNG<small>full resolution, dried</small></span></button>
   <h3>Paper</h3>
   <div id="paperList"></div>

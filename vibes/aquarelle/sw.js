@@ -3,8 +3,8 @@
  * precached on install and served stale-while-revalidate (instant, offline, and an online
  * load fetches the new build for next time). Bump VERSION when the file list changes.
  */
-const VERSION = 'aquarelle-v3';
-const SHELL = ['./', './index.html', './app.js', './sim.js', './km.js', './paper.js', './brush.js', './colour.js', './store.js', './timelapse.js', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png'];
+const VERSION = 'aquarelle-v4';
+const SHELL = ['./', './index.html', './app.js', './sim.js', './km.js', './paper.js', './brush.js', './colour.js', './store.js', './timelapse.js', './manifest.webmanifest', '../pwa/install.js', './icon.svg', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => {

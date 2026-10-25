@@ -10,6 +10,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-192.png">
+<script src="../pwa/install.js"></script>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="StaffInk">
@@ -129,6 +130,7 @@
     <div class="row"><label>Ink<small>Low latency draws the ink straight to the screen, ahead of the page. Switch to compare how closely ink follows the pen. <span id="inkNow" style="display:block;color:var(--ink)"></span></small></label><select id="sInk"><option value="auto">Auto</option><option value="low">Low latency</option><option value="standard">Standard</option></select></div>
     <div class="row"><label>Show my ink under the notation<small>debug: see what the recogniser saw</small></label><input type="checkbox" id="sShowInk"></div>
     <div class="row"><label>Handwriting I taught it<small id="userCount"></small></label><button id="forget">Forget</button></div>
+    <div class="row" data-pwa-install style="display:none"><label>Install app<small>own icon, opens full screen, works offline</small></label><button>Install</button></div>
     <div class="row"><label>New score<small>clears the page (undo still works)</small></label><button id="newScore">New</button></div>
   </div>
   <div class="foot"><button class="primary" id="settingsDone">Done</button></div>

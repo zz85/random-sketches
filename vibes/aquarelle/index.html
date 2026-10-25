@@ -10,6 +10,7 @@
 <meta name="description" content="Watercolour painting with a fluid simulation: wet-in-wet blooms, edge darkening, granulation, glazing, layers and time-lapse, for Apple Pencil, stylus, finger or mouse.">
 <title>Aquarelle</title>
 <link rel="manifest" href="manifest.webmanifest">
+<script src="../pwa/install.js"></script>
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-192.png">
 <style>
@@ -425,6 +426,7 @@
   <div class="body">
     <div data-pane="share">
       <button class="item" id="fsItem"><span>Full screen<small>also the corners button at the top right; a four-finger tap hides the toolbars</small></span></button>
+      <button class="item" id="installItem" data-pwa-install style="display:none"><span>Install app<small>own icon, opens full screen, works offline</small></span></button>
       <button class="item" id="galItem"><span>Gallery<small>all your paintings and notes; + for a new one</small></span></button>
       <button class="item" id="exportPng"><span>PNG<small>full resolution, as it will look dry</small></span></button>
       <button class="item" id="exportJpg"><span>JPEG<small>smaller file</small></span></button>
