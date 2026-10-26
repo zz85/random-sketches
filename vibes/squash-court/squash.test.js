@@ -90,6 +90,16 @@ describe('detection on synthetic frames', () => {
     const best = Math.min(...seeds.map((s) => Math.hypot(...s.C.map((v, k) => v - cam.C[k]))));
     expect(best).toBeLessThan(1.5);
   });
+  // the front camera: in the tin, or in a front corner, low, looking back down the court (no front
+  // wall lines in view, the floor pattern squeezed near the horizon)
+  for (const [name, C, T, hf] of [['in the tin', [3.2, -0.1, 0.45], [3.2, 8, 0.2], 65], ['in a front corner', [0.3, -0.3, 0.8], [4.5, 9, 0.3], 75]]) {
+    test(`front camera ${name}`, () => {
+      const cam = Camera.fromLookAt(C, T, 0, 1920 / 2 / Math.tan(hf * Math.PI / 360), 1920, 1080);
+      const img = renderCourt(cam, { seed: 3, style: 'club', players: 2 }), r = detectCourt(img.data, 1920, 1080);
+      expect(r.ok).toBe(true);
+      expect(Math.hypot(...r.cam.C.map((v, k) => v - cam.C[k]))).toBeLessThan(0.05);
+    }, 30000);
+  }
   test('PSA men\'s tin (0.43 m) is told from the WSF one', () => {
     const { cam } = cases[4], img = renderCourt(cam, { seed: 5, style: 'glass', players: 2, adverts: 8, tin: 0.43 });
     const r = detectCourt(img.data, W, H);

@@ -17,13 +17,12 @@
 //   lost    too few lines found where expected (a cut, a replay graphic): the caller falls back to the
 //           full tracker or a fresh detection.
 import { Camera, solve } from './camera.js';
-import { modelSamples, plausible, KIND_W, trackCourt } from './detect.js';
+import { modelSamples, plausible, skip, KIND_W, trackCourt } from './detect.js';
 
 const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 // across-line direction in each surface: the line direction crossed with the surface normal
 const NORMAL = { floor: [0, 0, 1], front: [0, 1, 0], back: [0, 1, 0], side: [1, 0, 0] };
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-const skip = (cam, kind) => kind === 'back' && cam.C[1] > 9.45;
 
 export function createTracker(opt = {}) {
   return {
@@ -69,7 +68,7 @@ export function searchLines(rgba, W, H, cam, S, R, opt = {}) {
   const thr = opt.thr ?? 10, margin = 4, corr = [];
   let seen = 0, found = 0;
   for (let i = 0; i < S.length; i++) {
-    const s = S[i]; if (skip(cam, s.kind)) continue;
+    const s = S[i]; if (skip(cam, s.kind, s.name)) continue;
     const u = cam.project(s.X); if (!(u[2] > 0)) continue;
     if (u[0] < margin + R || u[1] < margin + R || u[0] > W - margin - R || u[1] > H - margin - R) continue;
     const X = s.X, d = s.dir, a = s.across;

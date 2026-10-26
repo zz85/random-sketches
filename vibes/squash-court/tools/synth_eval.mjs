@@ -1,7 +1,7 @@
 // node tools/synth_eval.mjs [n] [--save]  — render synthetic frames with known cameras, detect,
-// and report pose errors: camera position (cm), view direction (°), focal (%), and the mean
+// and report pose errors (FRONT=1: front cameras, in the tin or a front corner, looking back): camera position (cm), view direction (°), focal (%), and the mean
 // reprojection error of court points (px at the rendered size).
-import { renderCourt, randomBroadcastCamera } from '../synth.js';
+import { renderCourt, randomBroadcastCamera, randomFrontCamera } from '../synth.js';
 import { detectCourt, mulberry32, total, toWorkCam, modelSamples, refine } from '../detect.js';
 import { writeImage, drawCourt } from './nodeimg.js';
 import fs from 'fs';
@@ -14,7 +14,7 @@ for (let x = 0; x <= 6.4; x += 0.8) for (let z = 0; z <= 4.5; z += 0.5) probe.pu
 const rows = [];
 if (save) fs.mkdirSync('/tmp/squash/synth', { recursive: true });
 for (let i = 0; i < n; i++) {
-  const cam = randomBroadcastCamera(rng, W, H);
+  const cam = process.env.FRONT ? randomFrontCamera(rng, W, H) : randomBroadcastCamera(rng, W, H);
   const style = i % 2 ? 'glass' : 'club';
   const img = renderCourt(cam, { seed: i + 1, style, players: 2, adverts: 8 });
   const r = detectCourt(img.data, W, H, JSON.parse(process.env.OPT || '{}'));

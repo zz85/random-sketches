@@ -4,6 +4,7 @@
 // the floor homography, and with the principal point known it decomposes into a full camera
 // (focal, rotation, position). Each matching pair of boxes in the image becomes one exact seed.
 import { Camera, rotToRodrigues, solve } from './camera.js';
+import { plausible } from './detect.js';
 
 // Centre lines of the box geometry (court.js: lines are 50 mm, positions to the measured edge).
 const H2 = 0.025;
@@ -177,7 +178,7 @@ export function boxSeeds(F, { max = 48, gap = 6, probe = 14 } = {}) {
         // a focal other than the homography's own leaves the pose only roughly on the corners:
         // put it back on them, so every rung of the ladder starts with the boxes in place
         if (cam && f !== f0) cam = fitCorners(cam, Wp, I);
-        if (cam && cam.C[2] > 0.3 && (cam.C[1] > 0.3 || cam.C[2] > 4.7)) seeds.push({ cam, support, quad: I });
+        if (cam && plausible(cam)) seeds.push({ cam, support, quad: I });
       }
     }
   }

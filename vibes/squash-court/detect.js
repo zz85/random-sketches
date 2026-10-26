@@ -273,13 +273,26 @@ export function modelSamples(tin, step = 0.08, noTin = false) {
 const MARGIN = 7;
 const inside = (F, x, y) => x >= MARGIN && y >= MARGIN && x < F.w - MARGIN && y < F.h - MARGIN;
 
-// Physically possible cameras: above the floor, and in front of the front wall unless above it (the
-// reverse-angle camera on top of a show court's front wall).
-export const plausible = (cam) => (cam.C[1] > 0.3 || cam.C[2] > 4.7) && cam.C[2] > 0.2 && cam.f > 30 && Math.abs(cam.k1) < 0.5;
+// Physically possible cameras: above the floor, and not inside the front wall: in front of it, above
+// it (the reverse-angle camera on top of a show court's front wall), behind it (looking back through
+// a glass front wall), or in the tin (the PSA front camera, set into the tin a few tens of cm above
+// the floor and looking back down the court).
+export const FRONT_CAM_Z = 0.6;
+// Behind the front wall a camera sees the floor over the tin, which is opaque on every court, so
+// one more than 0.6 m behind it is at least tin height.
+export const plausible = (cam) => (cam.C[1] > 0.3 || cam.C[2] > 4.7 || (cam.C[1] < -0.05 && cam.C[2] > 0.5) || (cam.C[2] < FRONT_CAM_Z && cam.C[1] > -0.6)) && cam.C[2] > 0.3 && cam.f > 30 && Math.abs(cam.k1) < 0.5
+  // a camera at or behind the front wall looks through it, or through a front corner, so stands about within its width
+  && !(cam.C[1] < 0.3 && cam.C[2] < 4.7 && (cam.C[0] < -1 || cam.C[0] > 7.4));
 
-// The back wall line is on the glass right in front of a camera behind the back wall: out of
-// frame or a blur, never usable. Skip it for such cameras.
-const skip = (cam, kind) => kind === 'back' && cam.C[1] > 9.45;
+// The wall line on the glass right in front of a camera behind that wall is out of frame or a blur,
+// never usable: the back wall line for a camera behind the back wall, the front wall lines (out line,
+// service line, tin) for a front camera in or just behind the front wall. Further back, through a
+// glass front wall, the tin (opaque on every court) and the lines are in view and count.
+// A camera in a side wall's plane (a front-corner camera) sees that wall's out line edge-on: skip it too.
+export const skip = (cam, kind, name) => (kind === 'back' && cam.C[1] > 9.45) || (kind === 'front' && cam.C[1] < 0.3 && cam.C[1] > -0.6 && cam.C[2] < 4.7)
+  || (kind === 'side' && Math.abs(cam.C[0] - (name === 'side-out-R' ? 0 : 6.4)) < 0.08);
+// The front / corner camera: at the front wall and low, looking back down the court.
+export const isFront = (cam) => cam.C[1] < 1 && cam.C[2] < 2.5 && cam.R[7] > 0.5;
 
 // Score a camera: weighted length (px) of model line that lands on image line pixels, minus a
 // fraction of the length that lands on nothing, over in-frame samples. Higher is better.
@@ -308,7 +321,7 @@ export function scoreCamera(cam, F, S, tau = 3, lambda = 0.5, angTol = 0.26, mod
   if (!plausible(cam)) return { score: -1e9, good: 0, bad: 0, inFrame: 0 };
   const segL = segLengths(S), claim = claims(F), stamp = ++claim.n;
   for (let i = 0; i < S.length; i++) {
-    const s = S[i]; if (skip(cam, s.kind)) { prev = null; continue; }
+    const s = S[i]; if (skip(cam, s.kind, s.name)) { prev = null; continue; }
     const u = cam.project(s.X);
     if (prev && prev.seg === s.seg && u[2] > 0 && prev.u[2] > 0) {
       const mx = (u[0] + prev.u[0]) / 2, my = (u[1] + prev.u[1]) / 2;
@@ -350,7 +363,7 @@ export function refine(cam0, F, S, { iters = 12, tau = 4, free = [1, 1, 1, 1, 1,
     // correspondences under the current camera
     const corr = [];
     for (let i = 0; i < S.length; i++) {
-      const s = S[i]; if (skip(cam, s.kind)) continue;
+      const s = S[i]; if (skip(cam, s.kind, s.name)) continue;
       const u = cam.project(s.X);
       if (!(u[2] > 0) || !inside(F, u[0], u[1])) continue;
       const k = (u[1] | 0) * w + (u[0] | 0), d = dt.dist[k];
@@ -430,6 +443,13 @@ function* seeds(w, h, n, rng, cx, cy) {
   }
 }
 
+function* frontGrid(w, h, cx, cy) {
+  for (const x of [0.05, 0.6, 1.8, 3.2, 4.6, 5.8, 6.35]) for (const y of [-0.3, 0.2]) for (const z of [0.35, 0.6, 1]) for (const tx of [-1, 0.5, 2, 3.2, 4.4, 5.9, 7.4]) for (const ty of [7, 9.75]) for (const hf of [55, 75, 95]) {
+    const cam = Camera.fromLookAt([x, y, z], [tx, ty, 0.3], 0, w / 2 / Math.tan(hf * Math.PI / 360), w, h, 0, cx, cy);
+    cam.front = true; yield cam;
+  }
+}
+
 export function mulberry32(a) { return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 
 // Full detection: features + global search + refinement. Returns { cam (in original pixels), score, ... }
@@ -437,7 +457,7 @@ export function mulberry32(a) { return () => { a |= 0; a = (a + 0x6d2b79f5) | 0;
 export function projectLines(cam, model, pieces = 6) {
   const out = [];
   for (const s of model.lines) {
-    if (skip(cam, s.kind)) continue;
+    if (skip(cam, s.kind, s.name)) continue;
     let a = s.a, b = s.b;
     const za = cam.toCam(a)[2], zb = cam.toCam(b)[2], near = 0.2;
     if (za < near && zb < near) continue;
@@ -504,7 +524,26 @@ export function detectCourt(rgba, W, H, opt = {}) {
   res.ms = { features: fine.ms, total: now() - t0 };
   res.features = fine; res.workWidth = best.ww; res.candidates = best.r.candidates; res.tin = best.r.tin;
   res.path = 'search';
-  return res;
+  return opt.fine !== false && isFront(res.workCam) ? polishFine(rgba, W, H, res, opt) : res;
+}
+
+// A front camera sees the whole floor pattern squeezed into a thin band near the horizon (a box is
+// a few pixels tall at 640 px), so its fit is polished again on the frame at up to 1280 px.
+function polishFine(rgba, W, H, res, opt) {
+  const t0 = now(), ww = Math.min(W, opt.fineWidth ?? 1280);
+  if (ww <= res.features.w * 1.3) return res;
+  const F = features(rgba, W, H, { ...opt, workWidth: ww });
+  let best = null;
+  for (const tin of opt.tin ? [opt.tin] : TINS) {
+    const M = modelSamples(tin, 0.08), c0 = toWorkCam(res.cam, F);
+    let c = refine(c0, F, M.pts, { tau: 4, iters: 12, minTau: 1, free: [1, 1, 1, 1, 1, 1, 1, 0] }).cam;
+    c = refine(c, F, M.pts, { tau: 2.5, iters: 12, minTau: 1, free: [1, 1, 1, 1, 1, 1, 1, opt.distortion === false ? 0 : 1] }).cam;
+    for (const cc of [c0, c]) { const sc = total(cc, F, M.pts, M.model); if (!best || sc.score > best.score) best = { cam: cc, ...sc, tin, M }; }
+  }
+  const out = finish(best, F, best.M.pts, opt);
+  if (!out.ok && res.ok) return res;
+  Object.assign(out, { ms: { ...res.ms, fine: now() - t0, total: res.ms.total + now() - t0 }, features: F, workWidth: ww, candidates: res.candidates, tin: best.tin, path: res.path });
+  return out;
 }
 
 // Fast path: the camera from the service boxes alone (boxes.js), refined, probed along the zoom /
@@ -565,11 +604,20 @@ function detectAt(rgba, W, H, opt = {}) {
   // coarse: many seeds scored with a forgiving tolerance
   const nSeeds = opt.seeds ?? 6000, keep = opt.keep ?? 60;
   let top = [];
+  // front cameras get their own short list: their lines are all far away and small in the image,
+  // so on the pixel score they rarely make the overall one
+  const topF = [], keepF = opt.keepFront ?? 16;
+  const add = (L, n, cam, sc) => { if (n > 0 && (L.length < n || sc > L[L.length - 1].sc)) { L.push({ cam, sc }); L.sort((a, b) => b.sc - a.sc); if (L.length > n) L.pop(); } };
   for (const cam of seeds(F.w, F.h, nSeeds, rng, F.cx, F.cy)) {
     const sc = sc0(cam);
-    if (top.length < keep || sc > top[top.length - 1].sc) { top.push({ cam, sc }); top.sort((a, b) => b.sc - a.sc); if (top.length > keep) top.pop(); }
+    add(top, keep, cam, sc);
   }
-  // local stochastic search around each survivor (shrinking steps), still on the coarse score
+  // and a fixed grid of them (in or behind the front wall, across its width, aimed anywhere down the
+  // court): the basin of a low front camera is narrow, and a few hundred random seeds can all miss it
+  if (opt.frontGrid !== false) for (const cam of frontGrid(F.w, F.h, F.cx, F.cy)) add(topF, keepF, cam, sc0(cam));
+  for (const t of topF) t.front = true;
+  // local stochastic search around each survivor (shrinking steps), still on the coarse score. Not
+  // for the front short list: steps of tens of cm walk a camera at the front wall right off its basin
   const sd = [0.03, 0.03, 0.03, 0.4, 0.6, 0.4, 0.08, 0];
   for (const t of top) {
     for (let it = 0, scale = 1, n = opt.localIters ?? 90; it < n; it++) {
@@ -586,6 +634,7 @@ function detectAt(rgba, W, H, opt = {}) {
   const n = opt.refineN ?? 12, pick = new Set(distinct.slice(0, n));
   for (const t of distinct.slice().sort((a, b) => b.fr - a.fr).slice(0, n)) pick.add(t);
   top = [...pick];
+  for (const t of topF) if (!top.includes(t)) top.push(t);
   const tCoarse = now() - t0;
   // refine each, re-score both ways (model on image lines, image lines on the model)
   let best = null;
@@ -596,7 +645,11 @@ function detectAt(rgba, W, H, opt = {}) {
   if (pre) for (const t of pre) { tried.push({ ...t, box: true }); if (!best || t.score > best.score) best = { ...t }; }
   const boxes = pre || opt.boxes === false ? [] : boxSeeds(F).seeds.map((cam) => ({ cam, box: true }));
   for (const { cam, box } of [...boxes, ...top]) {
-    let c = refine(cam, F, Sc, { tau: tauC * (box ? 1.5 : 2.5), iters: 14, minTau: tauC / 2 }).cam;
+    // a camera at the front, low (in the tin or a front corner), sees every line far away and at a
+    // grazing angle, so a free first step trades position against rotation and walks off: turn it
+    // and zoom it first with the position held, then free everything
+    const low = isFront(cam);
+    let c = refine(cam, F, Sc, { tau: tauC * (box ? 1.5 : 2.5), iters: 14, minTau: tauC / 2, ...(low && { free: [1, 1, 1, 0, 0, 0, 1, 0] }) }).cam;
     c = refine(c, F, S, { tau: tauC, iters: 10, minTau: 1.2 }).cam;
     const sc = total(c, F, S, model);
     tried.push({ cam: c, ...sc, box });
@@ -608,7 +661,9 @@ function detectAt(rgba, W, H, opt = {}) {
   if (best) {
     const lead = [];
     for (const t of tried.slice().sort((a, b) => b.score - a.score)) { if (!lead.some((u) => same(u.cam, t.cam))) lead.push(t); if (lead.length >= 3) break; }
-    for (const t of lead) for (const k of [0.72, 0.85, 1.15, 1.3, 1.5]) {
+    // not for a front camera: it stands at the front wall, and walking it back along its view would
+    // put it behind the wall, where only the lines it already fits are in view to argue
+    for (const t of lead) if (!isFront(t.cam)) for (const k of [0.72, 0.85, 1.15, 1.3, 1.5]) {
       let c = refine(dolly(t.cam, k), F, Sc, { tau: tauC * 2, iters: 12, minTau: tauC / 2 }).cam;
       c = refine(c, F, S, { tau: tauC, iters: 10, minTau: 1.2 }).cam;
       const sc = total(c, F, S, model); tried.push({ cam: c, ...sc });

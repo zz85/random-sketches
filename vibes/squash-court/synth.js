@@ -56,7 +56,8 @@ export function renderCourt(cam, opt = {}) {
       const g = style === 'club' ? 0.92 + 0.12 * grain(Math.floor(p[0] / 0.07), Math.floor(p[1] / 1.3)) : 0.95 + 0.1 * grain(p[0] * 40 | 0, p[1] * 40 | 0);
       return floorC.map((v) => v * g);
     });
-    tryPlane(1, 0, (p) => { // front wall
+    // a front camera (in the tin, or behind a glass front wall) does not see the front wall
+    if (o[1] > 0.3) tryPlane(1, 0, (p) => { // front wall
       if (p[0] < 0 || p[0] > W || p[2] < 0 || p[2] > 5.6) return null;
       if (p[2] < tin - 2 * h) return style === 'glass' ? [30, 30, 40] : [240, 240, 240];
       if (Math.abs(p[2] - (4.57 - h)) < h || Math.abs(p[2] - (1.78 - h)) < h || Math.abs(p[2] - (tin - h)) < h) return line;
@@ -99,4 +100,14 @@ export function randomBroadcastCamera(rng, w = 1280, hgt = 720) {
   const dist = Math.hypot(C[0] - T[0], C[1] - T[1], C[2] - T[2]);
   const hfov = 2 * Math.atan((W * (0.55 + rng() * 0.5)) / dist);
   return Camera.fromLookAt(C, T, (rng() - 0.5) * 0.06, w / 2 / Math.tan(hfov / 2), w, hgt);
+}
+
+// A random front camera: in the tin or a front corner, low, looking back down the court (the PSA
+// front-wall camera), seeded.
+export function randomFrontCamera(rng, w = 1280, hgt = 720) {
+  const corner = rng() < 0.5, side = rng() < 0.5 ? 0 : 1;
+  const C = corner ? [side ? W - 0.05 - rng() * 0.3 : 0.05 + rng() * 0.3, -0.4 + rng() * 0.4, 0.5 + rng() * 0.5] : [1 + rng() * (W - 2), -0.3 + rng() * 0.3, 0.35 + rng() * 0.25];
+  const T = [corner ? (side ? 0.5 + rng() * 2.5 : W - 0.5 - rng() * 2.5) : W / 2 + (rng() - 0.5) * 2, 6.5 + rng() * 3.2, 0.1 + rng() * 0.4];
+  const hfov = (50 + rng() * 40) * Math.PI / 180;
+  return Camera.fromLookAt(C, T, (rng() - 0.5) * 0.04, w / 2 / Math.tan(hfov / 2), w, hgt);
 }
