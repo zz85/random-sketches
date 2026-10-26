@@ -53,6 +53,7 @@ export function fromScoreShift(model, sscore, { plan = null, from = null, title 
     // measures: meter, key and clef where they change, a barline at each printed bar
     let t0 = 0, time = null, fifths = null, clef = null;
     for (const m of part.measures) {
+      if (m.at != null) t0 = m.at; // a part on only some systems (ScoreShift alignParts)
       const len = m.status === 'rest' ? m.cap : m.ticks;
       const sw = W.staves.get(m.st);
       const mf = plan ? sw.fifths : m.fifths, mc = plan ? sw.clef : m.clef;

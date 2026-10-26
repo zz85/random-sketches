@@ -478,6 +478,27 @@ test('a flat touching its half note is still that note\'s (Sibelius 2, viola, ba
   expect(bar(2)).toEqual(['A4', 'B♭4', 'C5', 'D5', 'E♭5', 'D5']);
 });
 
+// An orchestral part that goes divisi on two braced staves for a few lines (Sibelius 2, viola,
+// p. 2, bars 117-127): the lower staves are a second part only on those systems. Its bars must
+// sound with the bars they stand under, not from the top of the page at the same time as them.
+test('a divisi staff plays with the bars it stands under (Sibelius 2, viola)', () => {
+  const r = analyze(normalize(decodeGray(fs.readFileSync(new URL('./fixtures/scan_sibelius2_va_divisi.png', import.meta.url)))));
+  const sc = buildScore(r);
+  expect(sc.parts.length).toBe(2);
+  const [upper, lower] = sc.parts;
+  const starts = new Map(); let t = 0;
+  for (const m of upper.measures) { starts.set(m, t); t += m.status === 'rest' ? m.cap : m.ticks; }
+  // every divisi bar starts where the upper bar of its system starts
+  for (const m of lower.measures) {
+    const over = upper.measures.find((q) => q.st.system === m.st.system && (m.x0 + m.x1) / 2 >= q.x0 && (m.x0 + m.x1) / 2 < q.x1);
+    expect(m.at).toBe(starts.get(over));
+  }
+  const firstDivisi = Math.min(...upper.measures.filter((q) => lower.staves.some((st) => st.system === q.st.system)).map((q) => starts.get(q)));
+  const notes = performance(r, sc).notes;
+  expect(Math.min(...notes.filter((n) => n.part === 1).map((n) => n.tick))).toBeGreaterThanOrEqual(firstDivisi);
+  expect(firstDivisi).toBeGreaterThan(0);
+});
+
 // Opening key signatures that begin with naturals, and the key carried over from the previous
 // page (a part's next page, or a key change at the page turn). Fixtures spliced from the
 // Telemann crops above by tools/make_key_fixtures.mjs: the key change in each crop moved to the

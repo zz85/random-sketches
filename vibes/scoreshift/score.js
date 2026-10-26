@@ -167,9 +167,31 @@ export function buildScore(model) {
     for (const m of part.measures) checkMeasure(m, part, S);
     all.push(...part.measures);
   }
+  alignParts(parts, S);
   const counts = { ok: 0, pickup: 0, end: 0, rest: 0, under: 0, over: 0, repaired: 0 };
   for (const m of all) { counts[m.status]++; if (m.repairs.length) counts.repaired++; }
   return { parts, measures: all, stats: counts };
+}
+
+// A part that is only on some of the page's systems (an orchestral part that goes divisi on two
+// staves for a few lines, an ossia) is not a part from the top of the page: its bars sound with
+// the bars of the first part they stand under. m.at is then their start tick on the first part's
+// clock (timeline() uses it); parts on every system keep their own running count.
+function alignParts(parts, S) {
+  const ref = parts[0]; if (!ref || parts.length < 2) return;
+  const refSystems = new Set(ref.staves.map((st) => st.system));
+  const starts = new Map(); let t0 = 0;
+  for (const m of ref.measures) { starts.set(m, t0); t0 += m.status === 'rest' ? m.cap : m.ticks; }
+  for (const part of parts.slice(1)) {
+    const systems = new Set(part.staves.map((st) => st.system));
+    if ([...refSystems].every((s) => systems.has(s))) continue;
+    for (const m of part.measures) {
+      const mid = (m.x0 + m.x1) / 2;
+      const under = ref.measures.filter((q) => q.st.system === m.st.system);
+      const r = under.find((q) => mid >= q.x0 - S && mid < q.x1 + S) || under.reduce((a, q) => (!a || Math.abs(q.x0 - m.x0) < Math.abs(a.x0 - m.x0) ? q : a), null);
+      if (r) m.at = starts.get(r);
+    }
+  }
 }
 
 // When no time signature was read, or the one read fits few bars while another fits most,
@@ -369,6 +391,7 @@ function repair(evs, cap) {
 export function timeline(part) {
   const out = []; let t0 = 0;
   for (const m of part.measures) {
+    if (m.at != null) t0 = m.at; // a part on only some systems: under the first part's bars (alignParts)
     const at = new Map();
     for (const e of m.events) { if (e.removed) continue; const v = e.voice ?? 0, t = at.get(v) ?? t0; out.push({ e, m, tick: t, ticks: evTicks(e), voice: v }); at.set(v, t + evTicks(e)); }
     t0 += m.status === 'rest' ? m.cap : m.ticks;
