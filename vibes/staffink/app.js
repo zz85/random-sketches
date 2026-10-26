@@ -7,10 +7,11 @@ import { renderScore } from './render.js';
 import { interpret, detectGesture, removeEvent, isScribble, makeTuplet, articShapes, eraseHits, applyErase } from './parser.js';
 import { Player } from './audio.js';
 import { toMusicXML, toMidi, performance as performanceOf } from './export.js';
-import { timeMap, headsAt, drawPlayheads, HEAD_COLORS } from '../notation-ir/playheads.js';
+import { headsAt, HEAD_COLORS } from '../notation-ir/playheads.js';
 import { timeline, rangeOf, stepFocus, addClip, addJump, removeMarker, markerById, moveClip, pruneProgram, compile, markers as programMarkers, hasMarkers, emptyProgram } from './arrange.js';
 import { renderClipOrder } from '../notation-ir/cliporder.js';
-import { layoutMarkers, drawMarkers, hitMarker } from '../notation-ir/markers.js';
+import { layoutMarkersOn, drawMarkersOn, hitMarkerOn, selectionBands, drawBands, headMaps, drawHeadsOn } from '../notation-ir/surface.js';
+import { engravedSurface } from './surface.js';
 
 const $ = (id) => document.getElementById(id);
 const stage = $('stage'), cScore = $('score');
@@ -80,6 +81,7 @@ function resize() {
 function relayout() {
   ensureTrailingMeasure(S.score);
   S.L = layoutScore(S.score, { width: S.w / S.scale, font: S.settings.font });
+  S.surf = engravedSurface(S.L, markerView); // the page as a notation-ir surface: markers, playheads, selection
   S.scrollY = clamp(S.scrollY, 0, maxScroll());
   const gone = pruneProgram(S.score);
   if (gone.length) toast(`marker${gone.length > 1 ? 's' : ''} ${gone.join(', ')} removed: ${gone.length > 1 ? 'their' : 'its'} note was erased`, 2400);
@@ -90,38 +92,15 @@ function relayout() {
 }
 
 // ---------------------------------------------------------------- markers & range geometry
-const sysLines = () => S.L.systems.map((sys) => ({ x0: sys.x0, x1: sys.x1, top: sys.staffTops[0], bottom: sys.staffTops[sys.staffTops.length - 1] + 4 }));
-function placeAnchor(a, edge) {
-  const id = a.event && Number(String(a.event).replace(/^si/, ''));
-  const p = id && S.L.evPos.get(id);
-  if (!p) return null;
-  return { line: p.sys, x: edge === 'end' || a.edge === 'end' ? p.bbox.x1 + 0.35 : p.bbox.x0 - 0.25 };
-}
-function layoutProgram() { S.ML = hasMarkers(S.score.program) ? layoutMarkers(programMarkers(S.score), { lines: sysLines(), place: placeAnchor }) : null; }
-const markerView = () => ({ X: (x) => x * S.scale, Y: (y) => (y - S.scrollY) * S.scale, sp: S.scale });
+// Everything that needs to know where music is on the page goes through S.surf
+// (./surface.js, the notation-ir surface interface), so the same feature code serves
+// ScoreShift's photos.
+function layoutProgram() { S.ML = hasMarkers(S.score.program) ? layoutMarkersOn(S.surf, programMarkers(S.score)) : null; }
+function markerView() { return { X: (x) => x * S.scale, Y: (y) => (y - S.scrollY) * S.scale, sp: S.scale }; }
 /** Bands of the range selection, one per system: { sys, x0, x1, y0, y1 } in page units. */
 function rangeBands() {
   const r = S.range && rangeOf(S.score, S.range.a, S.range.b); if (!r) return [];
-  const by = new Map();
-  for (const id of r.ids) {
-    const p = S.L.evPos.get(id); if (!p) continue;
-    const b = by.get(p.sys) || { sys: p.sys, x0: Infinity, x1: -Infinity };
-    b.x0 = Math.min(b.x0, p.bbox.x0 - 0.35); b.x1 = Math.max(b.x1, p.bbox.x1 + 0.35); by.set(p.sys, b);
-  }
-  return [...by.values()].map((b) => { const sys = S.L.systems[b.sys]; return { ...b, y0: sys.staffTops[0] - 1.2, y1: sys.staffTops[sys.staffTops.length - 1] + 5.2 }; });
-}
-/** The event nearest a page point, for range selection: by system, then x. */
-function nearestEvent(p) {
-  let sys = null, sd = Infinity;
-  for (const s of S.L.systems) { const t = s.staffTops[0] - 3, b = s.staffTops[s.staffTops.length - 1] + 7; const d = p.y < t ? t - p.y : p.y > b ? p.y - b : 0; if (d < sd) { sd = d; sys = s; } }
-  if (!sys) return null;
-  let best = null, bd = Infinity;
-  for (const [id, e] of S.L.evPos) {
-    if (e.sys !== sys.index) continue;
-    const cx = (e.bbox.x0 + e.bbox.x1) / 2, d = Math.abs(cx - p.x) + 0.05 * Math.abs(e.top + 2 - p.y);
-    if (d < bd) { bd = d; best = id; }
-  }
-  return best;
+  return selectionBands(S.surf, r.ids).map((b) => { const sys = S.L.systems[b.line]; return { ...b, sys: b.line, y0: sys.staffTops[0] - 1.2, y1: sys.staffTops[sys.staffTops.length - 1] + 5.2 }; });
 }
 const maxScroll = () => Math.max(0, S.L.height + 6 - S.h / S.scale);
 
@@ -131,13 +110,10 @@ function drawScore() {
   requestAnimationFrame(() => {
     scoreQueued = false;
     renderScore(gS, S.L, { scale: S.scale, scrollY: S.scrollY, width: S.w, height: S.h, title: S.score.title }, { selected: new Set(S.selected ? [S.selected.id] : []), playing: S.playing });
-    for (const b of rangeBands()) {
-      const x = b.x0 * S.scale, y = (b.y0 - S.scrollY) * S.scale, w = (b.x1 - b.x0) * S.scale, h = (b.y1 - b.y0) * S.scale;
-      gS.fillStyle = 'rgba(37,99,235,0.13)'; gS.fillRect(x, y, w, h);
-      gS.fillStyle = 'rgba(37,99,235,0.85)'; gS.fillRect(x - 1, y, 2, h); gS.fillRect(x + w - 1, y, 2, h);
-    }
-    if (S.ML) drawMarkers(gS, S.ML, markerView(), { selected: S.marker });
-    if (S.heads.length) drawPlayheads(gS, S.heads, sysLines(), markerView());
+    const bands = rangeBands();
+    if (bands.length) drawBands(gS, S.surf, bands, { pad: 1.2, fill: 'rgba(37,99,235,0.13)' });
+    if (S.ML) drawMarkersOn(gS, S.surf, S.ML, { selected: S.marker });
+    if (S.heads.length) drawHeadsOn(gS, S.surf, S.heads);
     if (S.settings.showInk) for (const st of S.inkHistory) drawStroke(gS, st, 'rgba(37,99,235,0.35)');
     for (const a of S.pending) for (const st of a.strokes) drawStroke(gS, st, 'rgba(29,28,26,0.45)');
   });
@@ -463,11 +439,11 @@ stage.addEventListener('pointerdown', (e) => {
   }
   const eraser = e.pointerType === 'pen' && ((e.buttons & 32) || e.button === 5);
   if (eraser || S.tool === 'erase') { rec.role = 'erase'; rec.before = JSON.stringify(S.score); rec.erased = 0; rec.pts.push(p); hideAlts(); return; }
-  const mk = S.ML && hitMarker(S.ML, markerView(), p.x * S.scale, (p.y - S.scrollY) * S.scale);
+  const mk = hitMarkerOn(S.surf, S.ML, p);
   // a marker: its label anywhere, its bracket when not writing (writing near it stays writing)
   if (mk && e.button === 0 && !S.pickJump && (mk.onLabel || S.tool !== 'write')) { rec.role = 'marker'; rec.marker = mk.id; return; }
   if (e.shiftKey && e.button === 0) { // shift-click extends the selection, like text
-    const id = nearestEvent(p), a = S.range ? S.range.a : S.selected ? S.selected.id : null;
+    const id = S.surf.eventAt(p), a = S.range ? S.range.a : S.selected ? S.selected.id : null;
     if (id != null && a != null) { setRange(a, id); rec.role = 'range'; rec.anchor = a; rec.moved = 1; return; }
   }
   if (S.tool === 'select' || (e.pointerType === 'touch' && fingerNavigates()) || e.button === 1 || e.button === 2) {
@@ -475,9 +451,9 @@ stage.addEventListener('pointerdown', (e) => {
     if (hit && S.selected && hit.id === S.selected.id) { rec.role = 'drag'; rec.before = JSON.stringify(S.score); rec.dpos = 0; return; }
     // Select tool: a pen or mouse drag selects a range like text; a finger scrolls, or
     // selects after holding still for a moment
-    if (S.tool === 'select' && e.pointerType !== 'touch' && e.button === 0) { rec.role = 'range'; rec.anchor = nearestEvent(p); rec.hit = hit; return; }
+    if (S.tool === 'select' && e.pointerType !== 'touch' && e.button === 0) { rec.role = 'range'; rec.anchor = S.surf.eventAt(p); rec.hit = hit; return; }
     rec.role = 'nav'; rec.hit = hit;
-    if (S.tool === 'select' && e.pointerType === 'touch') rec.hold = setTimeout(() => { if (rec.role === 'nav' && rec.moved < 0.4) { rec.role = 'range'; rec.anchor = nearestEvent(p); rec.moved = 1; setRange(rec.anchor, rec.anchor); navigator.vibrate?.(10); } }, 450);
+    if (S.tool === 'select' && e.pointerType === 'touch') rec.hold = setTimeout(() => { if (rec.role === 'nav' && rec.moved < 0.4) { rec.role = 'range'; rec.anchor = S.surf.eventAt(p); rec.moved = 1; setRange(rec.anchor, rec.anchor); navigator.vibrate?.(10); } }, 450);
     return;
   }
   rec.role = 'ink';
@@ -530,7 +506,7 @@ window.addEventListener('pointermove', (e) => {
     }
   } else if (rec.role === 'range') {
     if (rec.moved > 0.4 && rec.anchor != null) {
-      const id = nearestEvent(p);
+      const id = S.surf.eventAt(p);
       if (id != null && (!S.range || S.range.b !== id || S.range.a !== rec.anchor)) setRange(rec.anchor, id);
       // scroll when the pen reaches the top or bottom edge
       const sy = (p.y - S.scrollY) * S.scale;
@@ -626,30 +602,15 @@ function togglePlay() {
   S.player.onStop = onStopPlay;
   // the playhead runs in the player's own (fermata-stretched) ticks
   const { onsets } = performanceOf(S.score);
-  const map = staffInkMap(onsets.map((o) => ({ t: o.tick, end: o.tick + o.dur, id: o.id })));
+  const map = headMaps(S.surf, onsets.map((o) => ({ t: o.tick, end: o.tick + o.dur, id: o.id })));
   S.player.play(S.score, (on, now) => {
-    S.playing = on; const h = map(now); S.heads = h ? [{ ...h, color: HEAD_COLORS[0] }] : [];
+    S.playing = on; S.heads = map(now).slice(0, 1).map((h) => ({ ...h, color: HEAD_COLORS[0] }));
     followHeads(); drawScore();
   });
 }
 function onStopPlay() { S.playing = new Set(); S.heads = []; $('playIc').textContent = '▶'; $('playLbl').textContent = 'Play'; drawScore(); }
 
 // ---------------------------------------------------------------- playheads
-const evCenter = (p) => (p.hw ? p.x + p.hw / 2 : (p.bbox.x0 + p.bbox.x1) / 2);
-/**
- * time -> page position, from [{ t, end, id }] (any time unit): each event's onset at its
- * notehead, and each bar's end at its barline, so the head crosses rests and empty beats.
- */
-function staffInkMap(list) {
-  const pts = [], ends = new Map();
-  for (const q of list) {
-    const p = S.L.evPos.get(q.id); if (!p) continue;
-    pts.push({ t: q.t, line: p.sys, x: evCenter(p) });
-    ends.set(p.mi, Math.max(ends.get(p.mi) ?? -Infinity, q.end));
-  }
-  for (const m of S.L.measures) if (ends.has(m.mi)) pts.push({ t: ends.get(m.mi), line: m.sys, x: m.x1 - 0.15, end: true });
-  return timeMap(pts, sysLines());
-}
 /** Keep the first playhead's system in view. */
 function followHeads() {
   const h = S.heads[0], sys = h && S.L.systems[h.line]; if (!sys) return;
@@ -682,7 +643,7 @@ async function playProgram(program = {}) {
   $('playIc').textContent = '■'; $('playLbl').textContent = 'Stop';
   S.player.onStop = onStopPlay;
   // the playheads run in score time (whole notes), one per cursor, coloured like their clip
-  const W = 4 * DIV, map = staffInkMap(timeline(S.score).map((q) => ({ t: q.onset / W, end: q.end / W, id: q.id })));
+  const W = 4 * DIV, map = headMaps(S.surf, timeline(S.score).map((q) => ({ t: q.onset / W, end: q.end / W, id: q.id })));
   S.player.playPerformance(p, (on, now) => {
     S.playing = on; S.heads = headsAt(p, now, (f, at) => (f === 'main' ? map(at) : null), S.ML);
     followHeads(); drawScore();
@@ -700,7 +661,7 @@ function clearRange() { if (!S.range) return; S.range = null; hideRangeBar(); dr
 /** A tap: completes a jump, selects a note, or clears the selection. */
 function tapAt(p, hit) {
   if (S.pickJump != null) {
-    const to = hit ? hit.id : nearestEvent(p), from = S.pickJump;
+    const to = hit ? hit.id : S.surf.eventAt(p), from = S.pickJump;
     S.pickJump = null;
     if (to == null) { toast('jump cancelled', 900); return; }
     scoreChange((s) => { const j = addJump(s, from, to); S.marker = j.id; });
@@ -949,7 +910,7 @@ window.StaffInk = {
   pageToClient(x, y) { const r = stage.getBoundingClientRect(); return { x: r.left + x * S.scale, y: r.top + (y - S.scrollY) * S.scale }; },
   togglePlay, undo, redo, commitGroup,
   playProgram, async ir() { return (await loadIR()).fromStaffInk(S.score); },
-  get heads() { return S.heads; },
+  get heads() { return S.heads; }, get surface() { return S.surf; },
   setRange, clearRange, get range() { return S.range && rangeOf(S.score, S.range.a, S.range.b); }, rangeBands, markerLayout: () => S.ML, selectMarker, markerEdit, tapAt,
   pageToCanvas(x, y) { return { x: x * S.scale, y: (y - S.scrollY) * S.scale }; },
 };

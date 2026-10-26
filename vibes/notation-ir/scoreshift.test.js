@@ -190,3 +190,37 @@ describe('stable ids: a saved program survives corrections', async () => {
     expect(() => perform(C, program)).toThrow(AnchorError);
   });
 });
+
+describe('the photo surface (ScoreShift)', async () => {
+  const { photoSurface } = await import('../scoreshift/surface.js');
+  const { checkSurface, headMaps, layoutMarkersOn, selectionBands } = await import('./surface.js');
+  const { lineY } = await import('../scoreshift/omr.js');
+  const irc = fromScoreShift(minuet.model, minuet.sc, { from: instrument('C') });
+  const surf = checkSurface(photoSurface({ model: minuet.model, score: minuet.sc, irc, view: () => ({ X: (x) => x, Y: (y) => y, sp: 16 }) }));
+  const ev = irc.score.events.filter((e) => e.src.line === 0).sort((a, b) => a.src.x - b.src.x);
+  test('lines follow the staves on the photo; events are where they were printed', () => {
+    const st = minuet.model.staves[0], L = surf.lines()[0];
+    expect(L.topAt(st.x0 + 100)).toBe(lineY(st, 0, st.x0 + 100));
+    expect(surf.place(ev[3].id, 'center')).toEqual([{ line: 0, x: ev[3].src.x }]);
+    expect(surf.place('ss:L99:q1:v1')).toEqual([]);
+  });
+  test('the note under a point, the bar under a point, the bar an event is in', () => {
+    const st = minuet.model.staves[0], x = ev[5].src.x;
+    expect(surf.eventAt({ x: x + 2, y: lineY(st, 2, x) })).toBe(ev[5].id);
+    expect(surf.eventAt({ x, y: lineY(st, 0, x) - 400 })).toBe(null);
+    const m = minuet.sc.measures[2], bar = surf.barAt({ x: (m.x0 + m.x1) / 2, y: lineY(m.st, 2, (m.x0 + m.x1) / 2) });
+    expect(irc.byId.get(bar.first).m).toBe(m); expect(irc.byId.get(bar.last).m).toBe(m);
+    expect(surf.barOf(bar.first)).toEqual({ key: m.index, line: m.st.index, x: Math.min(m.x1, m.st.x1) });
+  });
+  test('markers, selection and playheads through the surface', () => {
+    const L = layoutMarkersOn(surf, { clips: [{ id: 'a', name: 'A', from: { event: ev[2].id }, to: { event: ev[6].id, edge: 'end' } }], jumps: [{ id: 'j', name: 'J1', at: { barline: irc.score.directions.find((d) => d.kind === 'barline').id }, to: { event: ev[0].id } }] });
+    expect(L.items[0].pieces[0].x0).toBeCloseTo(ev[2].src.x - 0.7 * surf.space);
+    expect(L.lost).toEqual([]);
+    expect(selectionBands(surf, [ev[2].id, ev[6].id])[0]).toMatchObject({ line: 0 });
+    const items = irc.score.events.map((e) => ({ id: e.id, t: e.onset.n / e.onset.d, end: (e.onset.n / e.onset.d) + e.dur.n / e.dur.d }));
+    const m = headMaps(surf, items);
+    expect(m(0)).toEqual([{ line: 0, x: ev[0].src.x }]);
+    const t = ev[4].onset.n / ev[4].onset.d;
+    expect(m(t)[0].x).toBeCloseTo(ev[4].src.x, 1);
+  });
+});

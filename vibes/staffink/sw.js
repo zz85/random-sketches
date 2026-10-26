@@ -4,13 +4,13 @@
  * and offline, while an online load quietly fetches the new build for next time.
  * Bump VERSION when the file list changes.
  */
-const VERSION = 'staffink-v10';
+const VERSION = 'staffink-v11';
 const SHELL = [
   './', './index.html', './app.js', './recognizer.js', './extras.js', './parser.js', './theory.js', './layout.js',
   './render.js', './export.js', './audio.js', './smufl.js', './model.json', './digits.json',
   './fonts/Bravura.woff2', './fonts/Petaluma.woff2', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png', '../pwa/install.js',
   // shared with ScoreShift: pitch, duration and the audio player
-  '../notation-ir/rational.js', '../notation-ir/pitch.js', '../notation-ir/duration.js', '../notation-ir/player.js', '../notation-ir/markers.js', '../notation-ir/playheads.js',
+  '../notation-ir/rational.js', '../notation-ir/pitch.js', '../notation-ir/duration.js', '../notation-ir/player.js', '../notation-ir/markers.js', '../notation-ir/playheads.js', '../notation-ir/surface.js', './surface.js',
   '../notation-ir/arrangement.js', '../notation-ir/cliporder.js', '../notation-ir/anchors.js', '../notation-ir/ir.js', './arrange.js',
 ];
 // Authored playback (the timeline IR), loaded on demand from app.js: cached best-effort, so

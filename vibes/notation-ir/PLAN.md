@@ -116,6 +116,14 @@ Every adapter is `from<App>(…) → IR` plus, where useful, `to<App>(IR) → { 
      its colour (taken from its letter) when it moves.
    - Done: finger selection in ScoreShift. Hold still for a moment, then drag; a quick swipe
      still scrolls the page.
+3b. **Surfaces.** Done: `surface.js` defines the interface, and both apps' page geometry
+   moved behind it (`staffink/surface.js`, `scoreshift/surface.js`) with no change in
+   behaviour (all smoke checks unchanged). Next on it:
+   - two surfaces of one IR side by side (the photo and an engraved view), with selection,
+     markers and the playhead in sync;
+   - an ink surface: pen annotations anchored to events, shown on every surface;
+   - live geometry only: ScoreShift's `src` stays as the photo surface's identity, and
+     engraved positions are never copied into the IR.
 4. **Return trip StaffInk → ScoreShift.** Rewrite the page from corrected pitches by matching
    IR events back through `src` and changing `note.fix`.
    - *Done when* a pitch edited in StaffInk shows up moved on the photo.

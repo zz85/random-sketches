@@ -106,3 +106,36 @@ describe('reordering clips', async () => {
     expect(play(s, compile(s))).toEqual([72, 47, 60]);
   });
 });
+
+describe('the engraved surface', async () => {
+  const { engravedSurface } = await import('./surface.js');
+  const { layoutScore } = await import('./layout.js');
+  const { checkSurface, headMaps, selectionBands, placeAnchor } = await import('../notation-ir/surface.js');
+  const s = piece(), L = layoutScore(s, { width: 60 });
+  const surf = checkSurface(engravedSurface(L, () => ({ X: (x) => x, Y: (y) => y, sp: 1 })));
+  const p = (id) => L.evPos.get(id);
+  test('places events where the layout drew them; StaffInk and IR ids both work', () => {
+    expect(surf.lines().length).toBe(L.systems.length);
+    expect(surf.place(2, 'start')).toEqual([{ line: p(2).sys, x: p(2).bbox.x0 - 0.25 }]);
+    expect(surf.place('si2', 'end')).toEqual(surf.place(2, 'end'));
+    expect(surf.place(999)).toEqual([]);
+    expect(placeAnchor(surf, { event: 'si3', edge: 'end' }).x).toBe(p(3).bbox.x1 + 0.35);
+  });
+  test('the event under a point, and the bar under it', () => {
+    const q = p(7);
+    expect(surf.eventAt({ x: (q.bbox.x0 + q.bbox.x1) / 2, y: q.top + 2 })).toBe(7);
+    const bar = surf.barAt({ x: (q.bbox.x0 + q.bbox.x1) / 2, y: q.top + 2 });
+    expect([...rangeOf(s, bar.first, bar.last).ids].sort((a, b) => a - b)).toEqual([6, 7, 8, 9, 10]); // the whole bar, both staves
+  });
+  test('playheads run to the barline of each bar; selection bands span both staves of the system', () => {
+    const W = 384, items = timeline(s).map((q) => ({ id: q.id, t: q.onset / W, end: q.end / W }));
+    const m = headMaps(surf, items);
+    expect(m(0)[0].x).toBeCloseTo((p(1).hw ? p(1).x + p(1).hw / 2 : (p(1).bbox.x0 + p(1).bbox.x1) / 2));
+    const m0 = L.measures[0];
+    expect(m(0.999)[0].x).toBeGreaterThan(p(4).x); // the last beat of bar 1 glides on towards its barline
+    expect(m(0.999)[0].x).toBeLessThanOrEqual(m0.x1);
+    const b = selectionBands(surf, [1, 5]);
+    expect(b.length).toBe(1);
+    expect(b[0].x0).toBeCloseTo(Math.min(p(1).bbox.x0, p(5).bbox.x0) - 0.25);
+  });
+});

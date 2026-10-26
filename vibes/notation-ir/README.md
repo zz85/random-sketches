@@ -28,6 +28,15 @@ order). It compiles them to a program and selects ranges over the IR like text. 
 ScoreShift both build on it. `moveClip` changes the playing order, and `cliporder.js` renders
 the order as chips you can drag (browser only). `clicksFor(score, perf)` gives metronome clicks for any program.
 
+**Surfaces** (`surface.js`) are anywhere the music is visible. A surface answers `lines()`,
+`place(id, edge)`, `eventAt(point)` and `view()`, plus optionally `barOf`, `barAt`,
+`placeAnchor` and `lostAt`. Notation features (marker layout and hit testing, selection
+bands, playhead maps, time from a point) are written once against it, so they don't know
+whether the page is engraved, photographed or handwritten. StaffInk supplies an engraved
+surface (`staffink/surface.js`) and ScoreShift a photo surface (`scoreshift/surface.js`); a
+new surface gets every feature, and a new feature works on every surface. Positions are
+computed live by the surface; the IR keeps identity, not geometry.
+
 `markers.js` draws playback markers on either app's page: clips as brackets (split at line
 breaks, stacked when they overlap), loop counts, jumps as arrows, and lost markers red and
 dashed. It covers layout, hit testing and drawing. Each app supplies its lines and a
