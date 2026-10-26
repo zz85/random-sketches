@@ -512,13 +512,26 @@ export function detectCourt(rgba, W, H, opt = {}) {
     opt = { ...opt, boxTried: r };
   }
   for (const ww of sizes) {
-    const r = detectAt(rgba, W, H, { ...opt, workWidth: ww, features: ww === sizes[0] ? fine : undefined });
+    const r = detectAt(rgba, W, H, { ...opt, workWidth: ww, features: ww === sizes[0] ? fine : undefined, front: false });
     // judge on the fine features (polished there first)
     const { model, pts: S } = modelSamples(r.tin, 0.08);
     let c = toWorkCam(r.cam, fine);
     if (ww !== sizes[0]) c = refine(c, fine, S, { tau: 3, iters: 10, minTau: 1, free: [1, 1, 1, 1, 1, 1, 1, 0] }).cam;
     const sc = total(c, fine, S, model);
     if (!best || sc.score > best.sc.score) best = { r, c, sc, ww, S };
+  }
+  // front cameras (in the tin, a front corner) are searched only when the usual cameras leave the
+  // frame in doubt, at both sizes like the rest
+  const sure = (x) => x.ok && x.matched >= 5 && x.coverage >= 0.5;
+  if (opt.front !== false && !sure(finish({ cam: best.c, ...best.sc }, fine, best.S, opt))) for (const ww of sizes) {
+    const r = detectAt(rgba, W, H, { ...opt, workWidth: ww, features: ww === sizes[0] ? fine : undefined, front: 'only' });
+    if (r.cam) {
+      const { model, pts: S } = modelSamples(r.tin, 0.08);
+      let c = toWorkCam(r.cam, fine);
+      if (ww !== sizes[0]) c = refine(c, fine, S, { tau: 3, iters: 10, minTau: 1, free: [1, 1, 1, 1, 1, 1, 1, 0] }).cam;
+      const sc = total(c, fine, S, model);
+      if (sc.score > best.sc.score) best = { r, c, sc, ww, S };
+    }
   }
   const res = finish({ cam: best.c, ...best.sc }, fine, best.S, opt);
   res.ms = { features: fine.ms, total: now() - t0 };
@@ -602,11 +615,11 @@ function detectAt(rgba, W, H, opt = {}) {
   const tauC = Math.max(4, F.w / 80);
   const sc0 = (cam) => scoreCamera(cam, F, Sc, tauC, 0.35, 1.01, 'px').score;
   // coarse: many seeds scored with a forgiving tolerance
-  const nSeeds = opt.seeds ?? 6000, keep = opt.keep ?? 60;
+  const only = opt.front === 'only', nSeeds = only ? 0 : opt.seeds ?? 6000, keep = opt.keep ?? 60;
   let top = [];
   // front cameras get their own short list: their lines are all far away and small in the image,
   // so on the pixel score they rarely make the overall one
-  const topF = [], keepF = opt.keepFront ?? 16;
+  const topF = [], keepF = opt.front === false ? 0 : opt.keepFront ?? 16;
   const add = (L, n, cam, sc) => { if (n > 0 && (L.length < n || sc > L[L.length - 1].sc)) { L.push({ cam, sc }); L.sort((a, b) => b.sc - a.sc); if (L.length > n) L.pop(); } };
   for (const cam of seeds(F.w, F.h, nSeeds, rng, F.cx, F.cy)) {
     const sc = sc0(cam);
@@ -614,7 +627,7 @@ function detectAt(rgba, W, H, opt = {}) {
   }
   // and a fixed grid of them (in or behind the front wall, across its width, aimed anywhere down the
   // court): the basin of a low front camera is narrow, and a few hundred random seeds can all miss it
-  if (opt.frontGrid !== false) for (const cam of frontGrid(F.w, F.h, F.cx, F.cy)) add(topF, keepF, cam, sc0(cam));
+  if (keepF && opt.frontGrid !== false) for (const cam of frontGrid(F.w, F.h, F.cx, F.cy)) add(topF, keepF, cam, sc0(cam));
   for (const t of topF) t.front = true;
   // local stochastic search around each survivor (shrinking steps), still on the coarse score. Not
   // for the front short list: steps of tens of cm walk a camera at the front wall right off its basin
@@ -642,8 +655,8 @@ function detectAt(rgba, W, H, opt = {}) {
   // seeds from the service boxes go first: when the boxes are visible they are close to exact.
   // When the fast path already refined them on these features, its results are reused as they are
   const pre = opt.boxTried?.features === F ? opt.boxTried.tried : null;
-  if (pre) for (const t of pre) { tried.push({ ...t, box: true }); if (!best || t.score > best.score) best = { ...t }; }
-  const boxes = pre || opt.boxes === false ? [] : boxSeeds(F).seeds.map((cam) => ({ cam, box: true }));
+  if (pre && !only) for (const t of pre) { tried.push({ ...t, box: true }); if (!best || t.score > best.score) best = { ...t }; }
+  const boxes = pre || only || opt.boxes === false ? [] : boxSeeds(F).seeds.map((cam) => ({ cam, box: true }));
   for (const { cam, box } of [...boxes, ...top]) {
     // a camera at the front, low (in the tin or a front corner), sees every line far away and at a
     // grazing angle, so a free first step trades position against rotation and walks off: turn it
