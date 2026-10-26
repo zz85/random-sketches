@@ -25,7 +25,8 @@ adapter contract, known gaps and next steps.
 `arrangement.js` holds the playback markers a user places (clips with repeat, octave, delay
 and "with previous"; jumps; a mode that is either the score taking its jumps or the clips in
 order). It compiles them to a program and selects ranges over the IR like text. StaffInk and
-ScoreShift both build on it. `clicksFor(score, perf)` gives metronome clicks for any program.
+ScoreShift both build on it. `moveClip` changes the playing order, and `cliporder.js` renders
+the order as chips you can drag (browser only). `clicksFor(score, perf)` gives metronome clicks for any program.
 
 `markers.js` draws playback markers on either app's page: clips as brackets (split at line
 breaks, stacked when they overlap), loop counts, jumps as arrows, and lost markers red and

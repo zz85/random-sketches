@@ -8,7 +8,8 @@ import { markOriginal, collectEdits, applyEdits, makeProject, readProject, fileK
 import { interpret, yOfP, lineY, spaceAt } from './omr.js';
 import { Renderer, plan, describe, drawOverlay } from './render.js';
 import { layoutMarkers, markersOf, drawMarkers, hitMarker } from '../notation-ir/markers.js';
-import { emptyArrangement, hasMarkers, addClip, addJump, removeMarker, markerById, compileArrangement, arrangementMarkers, rangeOfIR } from '../notation-ir/arrangement.js';
+import { emptyArrangement, hasMarkers, addClip, addJump, removeMarker, markerById, moveClip, compileArrangement, arrangementMarkers, rangeOfIR } from '../notation-ir/arrangement.js';
+import { renderClipOrder } from '../notation-ir/cliporder.js';
 import { findById, parsePageId } from '../notation-ir/anchors.js';
 import { timeMap, headsAt, drawPlayheads, HEAD_COLORS } from '../notation-ir/playheads.js';
 
@@ -579,7 +580,7 @@ const beatUnit = (score) => score.directions.find((d) => d.kind === 'meter')?.un
 // ✂ Markers mode: tap a bar to select it, Shift+tap or "Extend" to grow the selection, drag
 // across notes with a mouse; then play or loop just that passage (speed and metronome apply),
 // keep it as a clip, or add a jump from its end to a note you tap.
-const MKS = { on: false, range: null, loop: false, sel: null, pick: null, extend: false, irc: null, drag: null, swallow: false };
+const MKS = { on: false, range: null, loop: false, sel: null, pick: null, extend: false, irc: null, drag: null, hold: null, swallowUntil: 0 };
 let MK = null, mkSeq = 0;
 const arrOf = () => S.programs.get(pageNo())?.arrangement || null;
 function ensureArr() {
@@ -674,7 +675,7 @@ function rangePop(e) {
   showPop(`<h3>${b0 === b1 ? `Bar ${b0}` : `Bars ${b0}–${b1}`} · ${R.n} note${R.n === 1 ? '' : 's'}</h3>
     <div class="row"><button id="rPlay">▶ Play</button><button id="rLoop" aria-pressed="${MKS.loop}">⟳ Loop</button><button id="rExt" aria-pressed="${MKS.extend}" title="Tap another bar to extend the selection to it">⇢ Extend</button></div>
     <div class="row"><button id="rClip" title="Keep this passage as a clip marker">＋ Clip</button><button id="rJump" title="After this passage, continue at a note you tap">⤳ Jump</button><button id="rX">✕</button></div>
-    <p class="hint">Speed and metronome apply. Shift+tap a bar (or Extend) grows the selection; with a mouse, drag across notes.</p>`, e);
+    <p class="hint">Speed and metronome apply. Shift+tap a bar (or Extend) grows the selection; or drag across notes (with a finger: hold, then drag).</p>`, e);
   $('rPlay').onclick = () => { playRange(); };
   $('rLoop').onclick = () => { MKS.loop = !MKS.loop; $('rLoop').setAttribute('aria-pressed', MKS.loop); };
   $('rExt').onclick = () => { MKS.extend = !MKS.extend; $('rExt').setAttribute('aria-pressed', MKS.extend); };
@@ -688,7 +689,7 @@ function playRange() {
   playProgram(compileArrangement(null, { range: R, loop: MKS.loop ? 64 : 1 }), { keep: false });
 }
 function markerPop(id, e) {
-  MKS.sel = id; redrawPlay(S.sounding);
+  MKS.sel = id; redrawPlay(S.sounding); arrUi();
   const arr = arrOf(), m = markerById(arr, id), item = MK?.items.find((x) => x.id === id);
   if (!m) { // a marker from a program set in code: show what it is, offer to remove the program
     showPop(`<h3>${item?.label || 'Marker'}</h3><p class="hint">Set from a program; remove the page's program to clear it.</p><div class="row"><button id="mClear">Remove the program</button><button id="mX">Close</button></div>`, e);
@@ -703,7 +704,8 @@ function markerPop(id, e) {
     ? `<div class="row"><button id="mPlay">▶</button><span>repeat</span><button id="mL-">−</button><b>×${m.loop}</b><button id="mL+">+</button></div>
        <div class="row"><span>octave</span><button id="mT-">8vb</button><b>${m.transpose ? (m.transpose > 0 ? '+' : '') + m.transpose : '±0'}</b><button id="mT+">8va</button>
        <span>delay</span><button id="mD-">−</button><b>${m.delay || 0}</b><button id="mD+">+</button></div>
-       ${arr.clips[0] === m ? '' : `<div class="row"><button id="mW" aria-pressed="${!!m.withPrev}" title="Play together with the clip before it">⧉ with previous</button></div>`}`
+       <div class="row">${arr.clips[0] === m ? '' : `<button id="mW" aria-pressed="${!!m.withPrev}" title="Play together with the clip before it">⧉ with previous</button>`}
+       ${arr.clips.length > 1 ? `<button id="mO-" ${arr.clips[0] === m ? 'disabled' : ''} title="Play this clip earlier">⇠ earlier</button><button id="mO+" ${arr.clips.at(-1) === m ? 'disabled' : ''} title="Play this clip later">later ⇢</button>` : ''}</div>`
     : `<div class="row"><span>taken</span><button id="mJ-">−</button><b>×${m.times}</b><button id="mJ+">+</button></div>`;
   showPop(`<h3>${name}</h3>${lostRows}${body}<div class="row"><button id="mDel">✕ Remove</button><button id="mX">Close</button></div>`, e);
   const edit = (fn) => () => { fn(markerById(arrOf(), id)); changed(); markerPop(id, e); };
@@ -717,11 +719,13 @@ function markerPop(id, e) {
   on('mJ-', edit((x) => { x.times = Math.max(1, x.times - 1); }));
   on('mJ+', edit((x) => { x.times = Math.min(16, x.times + 1); }));
   on('mW', edit((x) => { x.withPrev = !x.withPrev; if (x.withPrev) arrOf().mode = 'clips'; }));
+  on('mO-', edit((x) => { moveClip(arrOf(), x.id, arrOf().clips.indexOf(x) - 1); }));
+  on('mO+', edit((x) => { moveClip(arrOf(), x.id, arrOf().clips.indexOf(x) + 1); }));
   on('mPlay', () => { if (player.playing) player.stop(); playProgram(compileArrangement({ ...emptyArrangement(), mode: 'clips', clips: [{ ...m, withPrev: false }] }, { beat: beatUnit(MKS.irc.score) }), { keep: false }); });
   on('mNear', edit((x) => { reattach(x, null); }));
   on('mPick', () => { MKS.pick = { kind: 'repair', id }; hidePop(); setStatus(`<b>Tap the note ${name} should use</b> (Esc cancels)`); });
   on('mDel', () => { removeMarker(arrOf(), id); MKS.sel = null; hidePop(); changed(); });
-  on('mX', () => { MKS.sel = null; hidePop(); redrawPlay(S.sounding); });
+  on('mX', () => { MKS.sel = null; hidePop(); redrawPlay(S.sounding); arrUi(); });
 }
 /** Re-attach a marker's lost ends: to `to` (an IR event id), or each to the nearest note on its staff. */
 function reattach(m, to) {
@@ -743,14 +747,20 @@ function arrUi() {
   if (!hasMarkers(arr)) { box.hidden = true; return; }
   box.hidden = false;
   box.querySelectorAll('[data-am]').forEach((b) => b.setAttribute('aria-pressed', b.dataset.am === (arr.mode || 'page')));
-  box.querySelector('[data-am=clips]').textContent = `clips ${arr.clips.map((c) => (c.withPrev ? '‖' : '') + c.name).join(' ') || '–'}`;
+  box.querySelector('[data-am=clips]').textContent = arr.clips.length ? 'clips' : 'clips –';
   box.querySelector('[data-am=score]').textContent = `page + jumps${arr.jumps.length ? ` (${arr.jumps.length})` : ''}`;
+  // the clips in playing order: tap to edit, drag sideways to reorder
+  renderClipOrder($('clipOrder'), arr, {
+    selected: MKS.sel,
+    onSelect: (id) => { const c = $('clipOrder').querySelector(`[data-clip="${id}"]`).getBoundingClientRect(); markerPop(id, { clientX: c.left + c.width / 2, clientY: c.bottom }); },
+    onMove: (id, to) => { moveClip(arrOf(), id, to); changed(); setStatus(`<b>Clip order</b> ${arrOf().clips.map((c) => c.name).join(' ')}`); },
+  });
 }
 $('arrMode').addEventListener('click', (e) => { const b = e.target.closest('[data-am]'); if (!b || !arrOf()) return; arrOf().mode = b.dataset.am; changed(); });
 $('markMode').onclick = () => {
   MKS.on = !MKS.on; MKS.pick = null; MKS.extend = false; if (!MKS.on) clearRange();
   hidePop(); refreshMarkers();
-  setStatus(MKS.on ? '<b>Markers</b>: tap a bar to select it (Shift+tap or Extend grows it; drag across notes with a mouse), then play or loop it, keep it as a clip or add a jump. Tap a marker to change it.' : 'Markers off: tap notes to correct them');
+  setStatus(MKS.on ? '<b>Markers</b>: tap a bar to select it (Shift+tap or Extend grows it); or drag across notes, with a finger hold first. Then play or loop it, keep it as a clip or add a jump. Tap a marker to change it.' : 'Markers off: tap notes to correct them');
 };
 
 // --- pointer: mouse drag selects across notes in Markers mode
@@ -768,11 +778,40 @@ window.addEventListener('pointermove', (e) => {
 });
 window.addEventListener('pointerup', (e) => {
   const d = MKS.drag; MKS.drag = null;
-  if (d?.moved) { MKS.swallow = true; rangePop(e); }
+  if (d?.moved) { MKS.swallowUntil = performance.now() + 500; rangePop(e); }
 });
+// --- fingers: hold still for a moment, then drag to select (a quick swipe still scrolls)
+const HOLD_MS = 380;
+function cancelHold() { if (MKS.hold) clearTimeout(MKS.hold.timer); MKS.hold = null; }
+$('stage').addEventListener('touchstart', (e) => {
+  cancelHold();
+  if (!MKS.on || !S.model || MKS.pick || e.touches.length !== 1) return;
+  const t = e.touches[0], pt = imgAt(t), r = S.rend.r;
+  if (MK && hitMarker(MK, mkView(), pt.x * r, pt.y * r)) return; // a tap on a marker
+  const ev = eventAt(pt); if (!ev) return;
+  const h = (MKS.hold = { x: t.clientX, y: t.clientY, a: ev.id, on: false, last: t });
+  h.timer = setTimeout(() => { h.on = true; hidePop(); setRange(ev.id, ev.id); navigator.vibrate?.(12); }, HOLD_MS);
+}, { passive: true });
+$('stage').addEventListener('touchmove', (e) => {
+  const h = MKS.hold; if (!h) return;
+  const t = e.touches[0]; h.last = t;
+  if (!h.on) { if (Math.hypot(t.clientX - h.x, t.clientY - h.y) > 10) cancelHold(); return; } // moved first: a scroll
+  e.preventDefault(); // selecting: hold the page still
+  const ev = eventAt(imgAt(t), 6);
+  if (ev && (!MKS.range || MKS.range.b !== ev.id)) setRange(h.a, ev.id);
+  const w = $('wrap'), wr = w.getBoundingClientRect(); // near an edge: scroll on
+  if (t.clientY > wr.bottom - 40) w.scrollTop += 10; else if (t.clientY < wr.top + 40) w.scrollTop -= 10;
+}, { passive: false });
+$('stage').addEventListener('touchend', () => {
+  const h = MKS.hold; cancelHold();
+  if (h?.on) { MKS.swallowUntil = performance.now() + 600; rangePop({ clientX: h.last.clientX, clientY: h.last.clientY }); }
+});
+$('stage').addEventListener('touchcancel', cancelHold);
+$('stage').addEventListener('contextmenu', (e) => { if (MKS.on) e.preventDefault(); }); // a long press is a selection here
+
 /** Taps in Markers mode, and on markers / pending picks in any mode. true = handled. */
 function markerTap(e) {
-  if (MKS.swallow) { MKS.swallow = false; return true; }
+  if (performance.now() < MKS.swallowUntil) return true; // the click that ends a drag-select
   const pt = imgAt(e), r = S.rend.r;
   if (MKS.pick) {
     const ev = eventAt(pt, 5), pick = MKS.pick; MKS.pick = null;

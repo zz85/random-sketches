@@ -95,3 +95,14 @@ describe('arrangements', () => {
     expect(tl.slice(0, 3).map((q) => [q.id, q.onset])).toEqual([[1, 0], [5, 0], [2, 96]]);
   });
 });
+
+describe('reordering clips', async () => {
+  const { moveClip } = await import('./arrange.js');
+  test('moveClip on a score changes the playing order', () => {
+    const s = piece();
+    addClip(s, rangeOf(s, 1, 1)); const b = addClip(s, rangeOf(s, 9, 9));
+    s.program.mode = 'clips';
+    expect(moveClip(s, b.id, 0)).toBe(true);
+    expect(play(s, compile(s))).toEqual([72, 47, 60]);
+  });
+});

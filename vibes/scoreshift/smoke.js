@@ -263,6 +263,32 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
     const au = await b.evaluate(`(async()=>{const a=__ss.arrOf();const p=await __ss.playProgram();__ss.player.stop();const ir=await __ss.toIR();
       return {clips:a.clips.map(c=>c.name),jumps:a.jumps.length,mode:a.mode,labels:__ss.markers().items.map(i=>i.label),bars:p.notes.map(n=>ir.byId.get(n.event).m.number).filter((v,i,x)=>i===0||v!==x[i-1]).slice(0,9).join()}})()`);
     check('authoring on the photo: select bars, loop them, keep a clip, add a jump that Play takes', sel.h === 'Bars 3–4 · 8 notes' && looping.playing && looping.bars.every((n) => n === 3 || n === 4) && au.clips.join() === 'A' && au.jumps === 1 && au.mode === 'score' && au.bars === '1,2,3,4,5,6,2,3,4', JSON.stringify({ sel, looping, au }));
+    // fingers: a quick swipe leaves the page to scroll; hold, then drag selects (and holds the page still)
+    await b.evaluate(`(()=>{__ss.MKS.range=null;document.getElementById('pop').style.display='none';window.scrollTo(0,0);document.getElementById('wrap').scrollTop=0;window.__prev=[];window.addEventListener('touchmove',(e)=>__prev.push(e.defaultPrevented));return 1})()`);
+    await b.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+    const nxy = (i) => b.evaluate("(()=>{const S=__ss.S,st=S.model.staves[0],k=(S.rend.r/devicePixelRatio)*S.zoom,r=document.getElementById('cv').getBoundingClientRect();const n=st.notes.slice().sort((a,b)=>a.x-b.x)[" + i + "];return {x:r.left+n.x*k,y:r.top+n.y*k}})()");
+    const tch = (type, pt) => b.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x: pt.x, y: pt.y }] });
+    let t0 = await nxy(1), t1 = await nxy(6);
+    await tch('touchStart', t0); for (let k = 1; k <= 6; k++) { await tch('touchMove', { x: t0.x, y: t0.y - 20 * k }); await sleep(16); } await tch('touchEnd', t0); await sleep(300);
+    const swipe = await b.evaluate(`({range:!!__ss.rangeNow(),prevented:__prev.some(Boolean)})`);
+    await b.evaluate(`__prev=[];1`);
+    await tch('touchStart', t0); await sleep(500);
+    for (let k = 1; k <= 8; k++) { await tch('touchMove', { x: t0.x + (t1.x - t0.x) * k / 8, y: t0.y + (t1.y - t0.y) * k / 8 }); await sleep(20); }
+    await tch('touchEnd', t1); await sleep(300);
+    const held = await b.evaluate(`({n:__ss.rangeNow()?.n,h:document.querySelector('#pop h3')?.textContent,prevented:__prev.length>0&&__prev.every(Boolean)})`);
+    await b.send('Emulation.setTouchEmulationEnabled', { enabled: false });
+    check('fingers: a swipe scrolls, a hold then drag selects notes', !swipe.range && !swipe.prevented && held.n >= 4 && /^Bars \d+–\d+ · /.test(held.h) && held.prevented, JSON.stringify({ swipe, held }));
+    // clip order chips in the transport: drag the last clip to the front
+    await b.evaluate(`(async()=>{__ss.MKS.range=null;document.getElementById('pop').style.display='none';const m=await import('../notation-ir/arrangement.js');const ir=(await __ss.toIR()).score;
+      const ev=ir.events.filter(e=>e.src.line===0).sort((a,b)=>a.src.x-b.src.x);const a={...m.emptyArrangement(),mode:'clips'};
+      for(const k of [0,4,8])m.addClip(a,{first:ev[k].id,last:ev[k+1].id});__ss.S.programs.set(1,{arrangement:a});await __ss.refreshMarkers();return 1})()`); await sleep(300);
+    const cxy = await b.evaluate(`(()=>{const c=[...document.querySelectorAll('#clipOrder .clipchip')];c[0].scrollIntoView({block:'center'});const r=(x)=>x.getBoundingClientRect();return {from:{x:r(c[2]).left+r(c[2]).width/2,y:r(c[2]).top+r(c[2]).height/2},to:{x:r(c[0]).left-4,y:r(c[0]).top+r(c[0]).height/2}}})()`);
+    await b.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: cxy.from.x, y: cxy.from.y, button: 'left', buttons: 1, clickCount: 1 });
+    for (let k = 1; k <= 8; k++) await b.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: cxy.from.x + (cxy.to.x - cxy.from.x) * k / 8, y: cxy.from.y, button: 'left', buttons: 1 });
+    await b.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: cxy.to.x, y: cxy.to.y, button: 'left', buttons: 0, clickCount: 1 }); await sleep(300);
+    const order = await b.evaluate(`(async()=>{const o=__ss.arrOf().clips.map(c=>c.name).join();const p=await __ss.playProgram();__ss.player.stop();const ir=(await __ss.toIR()).score;
+      const xs=p.notes.map(n=>ir.events.find(e=>e.id===n.event).src.x);return {o,firstIsC:xs[0]>xs[2]&&xs[2]<xs[4]}})()`);
+    check('clip order chips: drag a clip to play it first', order.o === 'C,A,B' && order.firstIsC, JSON.stringify(order));
     await press('#markMode'); await b.evaluate(`(()=>{__ss.S.programs.clear();__ss.update();return 1})()`);
 
     // the CODA audition sheet, if present locally (not committed): every bar adds up

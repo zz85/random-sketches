@@ -111,7 +111,11 @@ Every adapter is `from<App>(…) → IR` plus, where useful, `to<App>(IR) → { 
      (`arrangement.js`), and programs autosave per page as well as going into the project.
    - Done: playhead lines in both apps (`playheads.js`), one per cursor, coloured like their
      clip, for normal Play as well as programs.
-   - Still to do: reordering clips, and drag-selecting with a finger in ScoreShift (it scrolls the page).
+   - Done: reordering clips. Both apps show the clips in playing order as chips: drag one
+     sideways, or use earlier / later on the selected clip (Alt+←/→ in StaffInk). A clip keeps
+     its colour (taken from its letter) when it moves.
+   - Done: finger selection in ScoreShift. Hold still for a moment, then drag; a quick swipe
+     still scrolls the page.
 4. **Return trip StaffInk → ScoreShift.** Rewrite the page from corrected pitches by matching
    IR events back through `src` and changing `note.fix`.
    - *Done when* a pitch edited in StaffInk shows up moved on the photo.

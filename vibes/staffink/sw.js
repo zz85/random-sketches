@@ -11,7 +11,7 @@ const SHELL = [
   './fonts/Bravura.woff2', './fonts/Petaluma.woff2', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png', '../pwa/install.js',
   // shared with ScoreShift: pitch, duration and the audio player
   '../notation-ir/rational.js', '../notation-ir/pitch.js', '../notation-ir/duration.js', '../notation-ir/player.js', '../notation-ir/markers.js', '../notation-ir/playheads.js',
-  '../notation-ir/arrangement.js', '../notation-ir/anchors.js', '../notation-ir/ir.js', './arrange.js',
+  '../notation-ir/arrangement.js', '../notation-ir/cliporder.js', '../notation-ir/anchors.js', '../notation-ir/ir.js', './arrange.js',
 ];
 // Authored playback (the timeline IR), loaded on demand from app.js: cached best-effort, so
 // only playProgram fails if a deployment lacks it.

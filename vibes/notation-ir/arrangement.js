@@ -15,6 +15,7 @@
 import { lt, le, cmp } from './rational.js';
 import { MAIN, endOf } from './ir.js';
 import { findById } from './anchors.js';
+import { COLORS } from './markers.js';
 
 export const emptyArrangement = () => ({ mode: 'score', clips: [], jumps: [], next: 1 });
 export const hasMarkers = (a) => !!a && (a.clips.length > 0 || a.jumps.length > 0);
@@ -39,6 +40,23 @@ export function removeMarker(arr, id) {
   arr.clips = arr.clips.filter((c) => c.id !== id); arr.jumps = arr.jumps.filter((j) => j.id !== id);
   return arr.clips.length + arr.jumps.length < n;
 }
+/**
+ * Move a clip to position `to` in the playing order (clamped). The first clip plays on its
+ * own, so it loses `withPrev`. Returns true when the order changed.
+ */
+export function moveClip(arr, id, to) {
+  const i = arr ? arr.clips.findIndex((c) => c.id === id) : -1;
+  if (i < 0) return false;
+  const j = Math.max(0, Math.min(arr.clips.length - 1, to));
+  if (j === i) return false;
+  const [c] = arr.clips.splice(i, 1);
+  arr.clips.splice(j, 0, c);
+  if (arr.clips[0]) arr.clips[0].withPrev = false;
+  return true;
+}
+/** A clip's colour index: by its letter, so it keeps its colour when the order changes. */
+export const clipHue = (c) => Math.max(0, (c.name || 'A').charCodeAt(0) - 65) + 26 * (parseInt(c.name.slice(1), 10) || 0);
+
 export const markerById = (arr, id) => (arr && (arr.clips.find((c) => c.id === id) || arr.jumps.find((j) => j.id === id))) || null;
 /** The event ids a marker is attached to, by role: { from, to }. */
 export const markerEnds = (m) => ({ from: m.from, to: m.to });
@@ -74,7 +92,7 @@ export function compileArrangement(arr, { range = null, loop = 1, beat = 4, idOf
 export function arrangementMarkers(arr, { idOf = ident } = {}) {
   const a = arr || emptyArrangement();
   return {
-    clips: a.clips.map((c) => ({ id: c.id, name: c.name, loop: c.loop, transpose: c.transpose, from: { event: idOf(c.from) }, to: { event: idOf(c.to), edge: 'end' }, withPrev: c.withPrev })),
+    clips: a.clips.map((c) => ({ id: c.id, name: c.name, loop: c.loop, transpose: c.transpose, from: { event: idOf(c.from) }, to: { event: idOf(c.to), edge: 'end' }, withPrev: c.withPrev, color: COLORS[clipHue(c) % COLORS.length] })),
     jumps: a.jumps.map((j, k) => ({ id: j.id, name: `J${k + 1}`, at: { event: idOf(j.from), edge: 'end' }, to: { event: idOf(j.to) }, times: j.times })),
   };
 }

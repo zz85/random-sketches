@@ -71,3 +71,33 @@ describe('metronome clicks for programs', () => {
     expect(clicksFor(s, p).map((x) => [x.t, x.accent])).toEqual([[0, false], [0.5, false]]);
   });
 });
+
+describe('clip order', async () => {
+  const { moveClip, clipHue } = await import('./arrangement.js');
+  const { COLORS } = await import('./markers.js');
+  test('moving a clip changes what plays first; the first clip never plays "with previous"', () => {
+    const { s } = piece(), a = emptyArrangement();
+    const A = addClip(a, rangeOfIR(s, 't0', 't0')), B = addClip(a, rangeOfIR(s, 't5', 't5')), C = addClip(a, rangeOfIR(s, 't3', 't3'));
+    a.mode = 'clips'; B.withPrev = true;
+    expect(moveClip(a, C.id, 0)).toBe(true);
+    expect(a.clips.map((c) => c.name)).toEqual(['C', 'A', 'B']);
+    expect(midis(s, compileArrangement(a)).filter((m) => m > 59)).toEqual([65, 60, 69]); // B still layered on A
+    expect(moveClip(a, B.id, 0)).toBe(true);
+    expect([a.clips[0].name, a.clips[0].withPrev]).toEqual(['B', false]);
+    expect(a.clips.map((c) => c.name)).toEqual(['B', 'C', 'A']);
+    expect(moveClip(a, C.id, 99)).toBe(true); // clamped to the end
+    expect(a.clips.map((c) => c.name)).toEqual(['B', 'A', 'C']);
+    expect(moveClip(a, C.id, 2)).toBe(false);
+    expect(moveClip(a, 'nope', 0)).toBe(false);
+  });
+  test('a clip keeps its colour when the order changes', () => {
+    const { s } = piece(), a = emptyArrangement();
+    addClip(a, rangeOfIR(s, 't0', 't0')); const B = addClip(a, rangeOfIR(s, 't1', 't1'));
+    const colour = () => arrangementMarkers(a).clips.find((c) => c.name === 'B').color;
+    const before = colour();
+    moveClip(a, B.id, 0);
+    expect(colour()).toBe(before);
+    expect(before).toBe(COLORS[1]);
+    expect(clipHue({ name: 'A2' })).toBe(52);
+  });
+});

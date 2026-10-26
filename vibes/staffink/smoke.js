@@ -254,6 +254,21 @@ const server = http.createServer((req, res) => {
     check('Select: drag across notes selects them like text, plays them, keeps them as a clip', rg.n === 3 && rg.bar && rg.playing && rg.clips.length === 1 && rg.clips[0][1] === ids[0] && rg.clips[0][2] === ids[2] && rg.label[0] === 'A', JSON.stringify(rg));
     fs.writeFileSync(path.join(DIR, 'smoke_markers.png'), Buffer.from((await c.send('Page.captureScreenshot', { format: 'png' })).result.data, 'base64'));
     await ev('StaffInk.selectMarker(null), StaffInk.score.program = null, StaffInk.commitGroup(), document.getElementById("tWrite").click(), true');
+    // clips in playing order as chips: drag the last one to the front, then "later" on the selected clip
+    const ord = await ev(`(async () => { const sc = StaffInk.score, keep = JSON.stringify(sc), ids = sc.measures[0].staves[0].events.map((e) => e.id);
+      for (const k of [0, 1, 2]) { StaffInk.setRange(ids[k], ids[k]); document.querySelector('#rangebar [data-r=clip]').click(); await new Promise((q) => setTimeout(q, 60)); }
+      StaffInk.selectMarker(null); const chips = [...document.querySelectorAll('#progbar .clipchip')];
+      const r = (c) => c.getBoundingClientRect(), c = r(chips[2]), a = r(chips[0]);
+      return { names: chips.map((x) => x.textContent), from: { x: c.left + c.width / 2, y: c.top + c.height / 2 }, to: { x: a.left - 4, y: a.top + a.height / 2 }, keep }; })()`);
+    await c.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: ord.from.x, y: ord.from.y, button: 'left', buttons: 1, clickCount: 1 });
+    for (let k = 1; k <= 8; k++) await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: ord.from.x + (ord.to.x - ord.from.x) * k / 8, y: ord.from.y, button: 'left', buttons: 1 });
+    await c.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: ord.to.x, y: ord.to.y, button: 'left', buttons: 0, clickCount: 1 }); await sleep(200);
+    const ord2 = await ev(`(async () => { const sc = StaffInk.score, after = sc.program.clips.map((x) => x.name), chips = [...document.querySelectorAll('#progbar .clipchip')].map((x) => x.textContent);
+      StaffInk.selectMarker(sc.program.clips[0].id); document.querySelector('#markbar [data-m="ord+"]').click(); await new Promise((q) => setTimeout(q, 60));
+      const later = StaffInk.score.program.clips.map((x) => x.name); StaffInk.selectMarker(null);
+      Object.keys(sc).forEach((k) => delete sc[k]); Object.assign(sc, JSON.parse(${JSON.stringify(ord.keep)})); window.dispatchEvent(new Event('resize'));
+      return { after, chips, later }; })()`);
+    check('clips reorder: drag a chip in the playing order, or earlier / later', ord.names.join() === 'A,B,C' && ord2.after.join() === 'C,A,B' && ord2.chips.join() === 'C,A,B' && ord2.later.join() === 'A,C,B', JSON.stringify({ names: ord.names, ...ord2 }));
     // a playhead line glides through the bar, through a rest too, and goes when playback stops
     const ph = await ev(`(async () => { const sc = StaffInk.score, keep = JSON.stringify(sc); let id = 900;
       sc.tempo = 120; sc.measures[0].staves[0].events = [{ id: id++, kind: 'note', dur: 2, dots: 0, heads: [{ pos: 0, acc: null }] }, { id: id++, kind: 'rest', dur: 2, dots: 0, heads: [] }];

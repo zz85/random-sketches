@@ -9,7 +9,7 @@ const SHELL = ['./', './index.html', './app.js', './worker.js', './omr.js', './i
   './vendor/pdfjs/wasm/jbig2.wasm', './vendor/pdfjs/wasm/openjpeg.wasm', './vendor/pdfjs/wasm/qcms_bg.wasm',
   // shared with StaffInk: pitch, duration and the audio player
   '../notation-ir/rational.js', '../notation-ir/pitch.js', '../notation-ir/duration.js', '../notation-ir/player.js', '../notation-ir/markers.js', '../notation-ir/playheads.js',
-  '../notation-ir/arrangement.js', '../notation-ir/anchors.js', '../notation-ir/ir.js'];
+  '../notation-ir/arrangement.js', '../notation-ir/cliporder.js', '../notation-ir/anchors.js', '../notation-ir/ir.js'];
 // The timeline IR (authored playback, Edit in StaffInk), loaded on demand: best-effort.
 const OPTIONAL = ['../notation-ir/interpret.js', '../notation-ir/playback.js',
   '../notation-ir/adapters/scoreshift.js', '../notation-ir/adapters/staffink.js',

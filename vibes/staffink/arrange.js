@@ -15,7 +15,7 @@
 import { resolveAttrs, measureCapacity, evTicks, findEvent } from './theory.js';
 import {
   emptyArrangement, hasMarkers, addClip as sharedAddClip, addJump as sharedAddJump, removeMarker as sharedRemove,
-  markerById as sharedById, compileArrangement, arrangementMarkers,
+  markerById as sharedById, compileArrangement, arrangementMarkers, moveClip as sharedMove,
 } from '../notation-ir/arrangement.js';
 
 export const siId = (id) => `si${id}`;
@@ -67,6 +67,8 @@ export const addClip = (score, range) => sharedAddClip(ensure(score), range);
 export const addJump = (score, from, to) => sharedAddJump(ensure(score), from, to);
 export const removeMarker = (score, id) => sharedRemove(score.program, id);
 export const markerById = (score, id) => sharedById(score.program, id);
+/** Move a clip to index `to` in the playing order. */
+export const moveClip = (score, id, to) => sharedMove(score.program, id, to);
 
 /** Drop markers whose notes are gone; returns their names. */
 export function pruneProgram(score) {

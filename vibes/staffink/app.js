@@ -8,7 +8,8 @@ import { interpret, detectGesture, removeEvent, isScribble, makeTuplet, articSha
 import { Player } from './audio.js';
 import { toMusicXML, toMidi, performance as performanceOf } from './export.js';
 import { timeMap, headsAt, drawPlayheads, HEAD_COLORS } from '../notation-ir/playheads.js';
-import { timeline, rangeOf, stepFocus, addClip, addJump, removeMarker, markerById, pruneProgram, compile, markers as programMarkers, hasMarkers, emptyProgram } from './arrange.js';
+import { timeline, rangeOf, stepFocus, addClip, addJump, removeMarker, markerById, moveClip, pruneProgram, compile, markers as programMarkers, hasMarkers, emptyProgram } from './arrange.js';
+import { renderClipOrder } from '../notation-ir/cliporder.js';
 import { layoutMarkers, drawMarkers, hitMarker } from '../notation-ir/markers.js';
 
 const $ = (id) => document.getElementById(id);
@@ -743,8 +744,8 @@ bar('rangebar').addEventListener('click', (e) => {
 
 function selectMarker(id, quiet) {
   S.marker = id || null;
-  if (!id) { hideMarkBar(); if (!quiet) drawScore(); return; }
-  clearRange(); S.selected = null; hideSel(); showMarkBar(); drawScore();
+  if (!id) { hideMarkBar(); progBar(); if (!quiet) drawScore(); return; }
+  clearRange(); S.selected = null; hideSel(); showMarkBar(); progBar(); drawScore();
 }
 function showMarkBar() {
   const m = markerById(S.score, S.marker); if (!m) { hideMarkBar(); return; }
@@ -756,6 +757,7 @@ function showMarkBar() {
       + (first ? '' : `<button data-m="with" class="${m.withPrev ? 'on' : ''}" title="Play together with the clip before it (arrangement: clips)">⧉ with previous</button>`)
       + `<button data-m="tr-" title="Down an octave">8vb</button><span class="hint" style="width:auto">${m.transpose ? (m.transpose > 0 ? '+' : '') + m.transpose : '±0'}</span><button data-m="tr+" title="Up an octave">8va</button>`
       + `<button data-m="dl-" title="Start earlier">◂</button><span class="hint" style="width:auto">delay ${m.delay || 0}</span><button data-m="dl+" title="Start a beat later">▸</button>`
+      + (S.score.program.clips.length > 1 ? `<button data-m="ord-" ${first ? 'disabled' : ''} title="Play this clip earlier (Alt+←)">⇠ earlier</button><button data-m="ord+" ${S.score.program.clips.at(-1) === m ? 'disabled' : ''} title="Play this clip later (Alt+→)">later ⇢</button>` : '')
       + '<button data-m="del" title="Remove the marker">✕ Remove</button>';
   } else {
     box.innerHTML = `<span class="hint" style="width:auto;padding:0 6px"><b>jump</b></span><button data-m="times-">−</button><span class="hint" style="width:auto">×${m.times}</span><button data-m="times+">+</button><button data-m="del" title="Remove the jump">✕ Remove</button>`;
@@ -787,6 +789,7 @@ function markerEdit(a) {
     else if (a === 'dl+') m.delay = (m.delay || 0) + 1;
     else if (a === 'times-') m.times = Math.max(1, m.times - 1);
     else if (a === 'times+') m.times = Math.min(16, m.times + 1);
+    else if (a === 'ord-' || a === 'ord+') moveClip(s, id, s.program.clips.indexOf(m) + (a === 'ord-' ? -1 : 1));
     if (a === 'with' && m.withPrev) s.program.mode = 'clips';
   });
   if (a === 'del') { selectMarker(null); toast('marker removed', 900); } else showMarkBar();
@@ -798,7 +801,14 @@ function progBar() {
   if (!hasMarkers(p)) { box.classList.remove('show'); return; }
   box.innerHTML = '<span class="hint" style="width:auto;padding:0 4px">Play:</span>'
     + `<button data-p="score" class="${p.mode !== 'clips' ? 'on' : ''}" title="Play through the score, taking the jumps">score${p.jumps.length ? ' + jumps' : ''}</button>`
-    + `<button data-p="clips" class="${p.mode === 'clips' ? 'on' : ''}" title="Play the clips in order (⧉ layers play together)">clips ${p.clips.map((c) => (c.withPrev ? '‖' : '') + c.name).join(' ')}</button>`;
+    + `<button data-p="clips" class="${p.mode === 'clips' ? 'on' : ''}" title="Play the clips in this order (‖ plays together with the one before)">clips</button>`
+    + '<span class="order" style="display:inline-flex;align-items:center;padding:0 2px"></span>';
+  // the clips in playing order: tap one to edit it, drag it sideways to reorder
+  renderClipOrder(box.querySelector('.order'), p, {
+    selected: S.marker,
+    onSelect: (id) => selectMarker(id),
+    onMove: (id, to) => { scoreChange((s) => { moveClip(s, id, to); }); if (S.marker) showMarkBar(); toast(`<b>order</b> ${S.score.program.clips.map((c) => c.name).join(' ')}`, 1200); },
+  });
   box.classList.add('show');
 }
 bar('progbar').addEventListener('pointerdown', (e) => e.stopPropagation());
@@ -894,6 +904,7 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if (S.marker && (e.key === 'Delete' || e.key === 'Backspace')) { e.preventDefault(); markerEdit('del'); return; }
+  if (S.marker && e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && markerById(S.score, S.marker)?.loop !== undefined) { e.preventDefault(); markerEdit(e.key === 'ArrowLeft' ? 'ord-' : 'ord+'); return; }
   if (!S.selected) return;
   if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); editSelected('del'); }
   else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); editSelected('move', (e.key === 'ArrowUp' ? 1 : -1) * (e.shiftKey ? 7 : 1)); }
