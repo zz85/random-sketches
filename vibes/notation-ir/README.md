@@ -37,6 +37,19 @@ surface (`staffink/surface.js`) and ScoreShift a photo surface (`scoreshift/surf
 new surface gets every feature, and a new feature works on every surface. Positions are
 computed live by the surface; the IR keeps identity, not geometry.
 
+**Pen annotations** (`annotations.js`) attach ink to the music instead of the page.
+`attachStrokes(surface, items, strokes)` decides what a mark belongs to:
+- one note (a fingering or breath mark);
+- a span of notes on one staff (a circle or bracket, which stretches when the notes move
+  apart while its margins stay a fixed size);
+- a moment on the staff (a mark in the margin).
+
+It stores the points in staff spaces relative to that, so `resolveAnnotation(surface, ann,
+items)` redraws the mark on any surface: after a correction, on the transposed page, at any
+zoom, re-engraved onto other lines (a span is split at a line break). If its note is
+deleted, the mark is drawn where the note was and flagged lost; `reattachAnnotation` moves
+it to another note. Annotations are plain JSON kept next to the IR, never notation.
+
 `markers.js` draws playback markers on either app's page: clips as brackets (split at line
 breaks, stacked when they overlap), loop counts, jumps as arrows, and lost markers red and
 dashed. It covers layout, hit testing and drawing. Each app supplies its lines and a

@@ -121,7 +121,10 @@ Every adapter is `from<App>(…) → IR` plus, where useful, `to<App>(IR) → { 
    behaviour (all smoke checks unchanged). Next on it:
    - two surfaces of one IR side by side (the photo and an engraved view), with selection,
      markers and the playhead in sync;
-   - an ink surface: pen annotations anchored to events, shown on every surface;
+   - pen annotations anchored to events, shown on every surface. The model and its tests are
+     done (`annotations.js`); next is ScoreShift's ✎ Annotate mode (pen capture, colour and
+     width, eraser, undo, saving per page and in the project), then carrying the marks into
+     StaffInk;
    - live geometry only: ScoreShift's `src` stays as the photo surface's identity, and
      engraved positions are never copied into the IR.
 4. **Return trip StaffInk → ScoreShift.** Rewrite the page from corrected pitches by matching

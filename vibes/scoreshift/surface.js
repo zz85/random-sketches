@@ -28,7 +28,8 @@ export function photoSurface({ model, score, irc, view }) {
     lines: () => lines,
     place(id, edge = 'start') {
       const e = evOf(id); if (!e?.src) return [];
-      return [{ line: e.src.line, x: e.src.x + (edge === 'end' ? 0.9 : edge === 'center' ? 0 : -0.7) * sp }];
+      const x = e.src.x + (edge === 'end' ? 0.9 : edge === 'center' ? 0 : -0.7) * sp;
+      return [{ line: e.src.line, x, top: lines[e.src.line].topAt(x) }];
     },
     eventAt(pt, reach = 3) {
       const st = staffAt(pt, reach); if (!st) return null;

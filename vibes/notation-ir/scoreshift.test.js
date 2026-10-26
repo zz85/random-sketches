@@ -201,7 +201,7 @@ describe('the photo surface (ScoreShift)', async () => {
   test('lines follow the staves on the photo; events are where they were printed', () => {
     const st = minuet.model.staves[0], L = surf.lines()[0];
     expect(L.topAt(st.x0 + 100)).toBe(lineY(st, 0, st.x0 + 100));
-    expect(surf.place(ev[3].id, 'center')).toEqual([{ line: 0, x: ev[3].src.x }]);
+    expect(surf.place(ev[3].id, 'center')).toEqual([{ line: 0, x: ev[3].src.x, top: lineY(st, 0, ev[3].src.x) }]);
     expect(surf.place('ss:L99:q1:v1')).toEqual([]);
   });
   test('the note under a point, the bar under a point, the bar an event is in', () => {
@@ -222,5 +222,47 @@ describe('the photo surface (ScoreShift)', async () => {
     expect(m(0)).toEqual([{ line: 0, x: ev[0].src.x }]);
     const t = ev[4].onset.n / ev[4].onset.d;
     expect(m(t)[0].x).toBeCloseTo(ev[4].src.x, 1);
+  });
+});
+
+describe('pen annotations on a photographed page', async () => {
+  const { photoSurface } = await import('../scoreshift/surface.js');
+  const { attachStrokes, resolveAnnotation, itemsOf } = await import('./annotations.js');
+  const { loadFixture } = await import('../scoreshift/eval.js');
+  const { analyze, normalize, interpret: respell } = await import('../scoreshift/omr.js');
+  const { markOriginal } = await import('../scoreshift/edits.js');
+  const { lineY } = await import('../scoreshift/omr.js');
+  const read = () => markOriginal(analyze(normalize(loadFixture('minuet').img)));
+  const view = () => ({ X: (x) => x, Y: (y) => y, sp: 16 });
+  const surfOf = (model, opts = {}) => { const sc = buildScore(model), irc = fromScoreShift(model, sc, opts); return { surf: photoSurface({ model, score: sc, irc, view }), items: itemsOf(irc.score), irc }; };
+  const a = read(), A = surfOf(a);
+  const ev = A.irc.score.events.filter((e) => e.src.line === 0).sort((x, y) => x.src.x - y.src.x);
+  const target = ev[8], st = a.staves[0], top = lineY(st, 0, target.src.x), sp = a.space || 16;
+  // a "3" written a space and a half above the staff over the 9th note
+  const ink = [[{ x: target.src.x - 4, y: top - 2 * sp }, { x: target.src.x + 4, y: top - 1.5 * sp }, { x: target.src.x - 3, y: top - sp }]];
+  const ann = attachStrokes(A.surf, A.items, ink, { id: 'f1' });
+  const at = (S) => resolveAnnotation(S.surf, ann, S.items);
+  test('a fingering written on the photo is attached to the note under it', () => {
+    expect(ann.anchor).toEqual({ kind: 'event', id: target.id });
+    expect(at(A).pieces[0].points.map((q) => [Math.round(q.x), Math.round(q.y)])).toEqual(ink[0].map((q) => [Math.round(q.x), Math.round(q.y)]));
+  });
+  test('it stays on its note after a correction elsewhere rebuilds the page', () => {
+    const b = read(); b.staves[0].notes.splice(1, 1); respell(b.staves[0]);
+    const r = at(surfOf(b));
+    expect(r.lost).toBe(false);
+    expect(r.pieces[0].points[0].x).toBeCloseTo(ink[0][0].x, 0);
+  });
+  test('and on the transposed page (the note moved up a step, the fingering did not move off it)', async () => {
+    const { plan } = await import('../scoreshift/render.js');
+    const T = surfOf(a, { plan: plan(a, { from: 'C', to: 'Bb-clarinet', octave: 'auto', clef: 'auto' }) });
+    expect(T.irc.score.events.find((e) => e.id === target.id).heads[0].d).toBe(target.heads[0].d + 1);
+    expect(at(T).pieces[0].points[0]).toEqual(at(A).pieces[0].points[0]);
+  });
+  test('its note deleted: drawn where the note was, flagged lost', () => {
+    const c = read(), sc = c.staves[0];
+    sc.notes.splice(sc.notes.findIndex((n) => Math.abs(n.x - target.src.x) < 1), 1); respell(sc);
+    const r = at(surfOf(c));
+    expect(r.lost).toBe(true);
+    expect(Math.abs(r.pieces[0].points[0].x - ink[0][0].x)).toBeLessThan(sp / 2);
   });
 });

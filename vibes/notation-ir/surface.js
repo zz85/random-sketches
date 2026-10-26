@@ -9,9 +9,11 @@
 //   lines()    [{ x0, x1, top, bottom, group?, topAt?(x), bottomAt?(x) }] the staves or
 //              systems in reading order; group = part (one playhead per group); topAt /
 //              bottomAt follow a staff that is not level (a photo)
-//   place(id, edge)  where an event is: [{ line, x }], several places when it shows in several
-//              (a note continued over a line break), [] when it is not on this surface.
-//              edge 'start' | 'end' | 'center'; ids are IR event ids or the app's own
+//   place(id, edge)  where an event is: [{ line, x, top? }], several places when it shows in
+//              several (a note continued over a line break), [] when it is not on this surface.
+//              edge 'start' | 'end' | 'center'; ids are IR event ids or the app's own.
+//              top = y of the top line of the event's own staff (a line can hold several
+//              staves, e.g. a grand-staff system); without it the line's top is used
 //   eventAt(pt, reach?)  the id of the event under / nearest to a point on the line under it,
 //              or null; reach = how far off the staff still counts, in staff spaces
 //   view()     { X(x), Y(y), sp } surface units -> canvas pixels; sp = a staff space in pixels

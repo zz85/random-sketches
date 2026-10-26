@@ -116,7 +116,7 @@ describe('the engraved surface', async () => {
   const p = (id) => L.evPos.get(id);
   test('places events where the layout drew them; StaffInk and IR ids both work', () => {
     expect(surf.lines().length).toBe(L.systems.length);
-    expect(surf.place(2, 'start')).toEqual([{ line: p(2).sys, x: p(2).bbox.x0 - 0.25 }]);
+    expect(surf.place(2, 'start')).toEqual([{ line: p(2).sys, x: p(2).bbox.x0 - 0.25, top: p(2).top }]);
     expect(surf.place('si2', 'end')).toEqual(surf.place(2, 'end'));
     expect(surf.place(999)).toEqual([]);
     expect(placeAnchor(surf, { event: 'si3', edge: 'end' }).x).toBe(p(3).bbox.x1 + 0.35);
@@ -137,5 +137,33 @@ describe('the engraved surface', async () => {
     const b = selectionBands(surf, [1, 5]);
     expect(b.length).toBe(1);
     expect(b[0].x0).toBeCloseTo(Math.min(p(1).bbox.x0, p(5).bbox.x0) - 0.25);
+  });
+});
+
+describe('pen annotations on the engraved page', async () => {
+  const { engravedSurface } = await import('./surface.js');
+  const { layoutScore } = await import('./layout.js');
+  const { attachStrokes, resolveAnnotation } = await import('../notation-ir/annotations.js');
+  const s = piece(), W = 384;
+  const items = timeline(s).map((q) => ({ id: q.id, t: q.onset / W, end: q.end / W }));
+  const surfAt = (width) => { const L = layoutScore(s, { width }); return { L, S: engravedSurface(L, () => ({ X: (x) => x, Y: (y) => y, sp: 1 })) }; };
+  const wide = surfAt(80);
+  const p7 = wide.L.evPos.get(7);
+  const ann = attachStrokes(wide.S, items, [[{ x: p7.x, y: p7.top - 2 }, { x: p7.x + 0.6, y: p7.top - 2.4 }]]); // above note 7
+  const circ = attachStrokes(wide.S, items, [[{ x: wide.L.evPos.get(2).bbox.x0 - 1, y: wide.L.evPos.get(2).top - 1 }, { x: wide.L.evPos.get(7).bbox.x1 + 1, y: wide.L.evPos.get(2).top - 1 }, { x: wide.L.evPos.get(7).bbox.x1 + 1, y: wide.L.evPos.get(2).top + 5 }]]);
+  test('re-engraved narrower, the note moves to another system: the mark goes with it', () => {
+    expect(ann.anchor).toEqual({ kind: 'event', id: 7 });
+    const narrow = surfAt(30), q = narrow.L.evPos.get(7);
+    expect(q.sys).not.toBe(p7.sys); // it did move
+    const r = resolveAnnotation(narrow.S, ann, items);
+    expect(r.pieces[0].line).toBe(q.sys);
+    const mid = (e) => (e.hw ? e.x + e.hw / 2 : (e.bbox.x0 + e.bbox.x1) / 2); // where the surface places a note
+    expect(r.pieces[0].points[0].x - mid(q)).toBeCloseTo(p7.x - mid(p7)); // same offset from the note
+    expect(r.pieces[0].points[0].y).toBeCloseTo(q.top - 2);
+  });
+  test('a bracket over bars 1-2 splits at the line break it now crosses', () => {
+    expect(circ.anchor).toEqual({ kind: 'span', first: 2, last: 7 });
+    const narrow = surfAt(30), r = resolveAnnotation(narrow.S, circ, items);
+    expect(new Set(r.pieces.map((p) => p.line)).size).toBeGreaterThan(1);
   });
 });

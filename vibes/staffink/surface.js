@@ -21,7 +21,7 @@ export function engravedSurface(L, view) {
     lines: () => lines,
     place(id, edge = 'start') {
       const p = pos(id); if (!p) return [];
-      return [{ line: p.sys, x: edge === 'end' ? p.bbox.x1 + 0.35 : edge === 'center' ? center(p) : p.bbox.x0 - 0.25 }];
+      return [{ line: p.sys, x: edge === 'end' ? p.bbox.x1 + 0.35 : edge === 'center' ? center(p) : p.bbox.x0 - 0.25, top: p.top }];
     },
     eventAt(pt, reach = 3) {
       const sys = systemAt(pt, reach); if (!sys) return null;
