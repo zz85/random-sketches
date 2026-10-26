@@ -241,12 +241,15 @@ async function analyse(mode = 'detect') {
   if (!S.src || S.busy) return;
   S.busy = true;
   const tracking = mode === 'track' && S.cam;
+  // the shot memory survives losing the court (close-ups, replays); only a new source or the
+  // Re-detect button starts from scratch
+  const redetect = !tracking && S.redetect; if (!tracking) S.redetect = false;
   const { img, k } = grab(tracking ? TRACK_W : DETECT_W);
   S.procFrame = { img: new ImageData(new Uint8ClampedArray(img.data), img.width, img.height), k };
   const prev = tracking ? scaleCam(S.cam, k, img.width, img.height) : null, tGrab = S.src.currentTime;
   const video = S.src instanceof HTMLVideoElement;
   const t0 = performance.now();
-  const r = await run(tracking ? 'track' : 'detect', img, prev && { p: prev.p, cx: prev.cx, cy: prev.cy }, tracking ? { tin: S.tin, dt: Math.abs((S.src.currentTime ?? 0) - (S.tAnalysed ?? 0)), ...TRACK_OPT } : { recall: !!(S.live && S.cam && S.fails < 9) });
+  const r = await run(tracking ? 'track' : 'detect', img, prev && { p: prev.p, cx: prev.cx, cy: prev.cy }, tracking ? { tin: S.tin, dt: Math.abs((S.src.currentTime ?? 0) - (S.tAnalysed ?? 0)), ...TRACK_OPT } : { recall: !!(S.live && S.cam && !redetect) });
   S.busy = false; S.tAnalysed = tGrab;
   if (r.error) { status(`error: ${r.error.split('\n')[0]}`); console.error(r.error); return; }
   const wall = performance.now() - t0;
@@ -367,8 +370,8 @@ function loop() {
   draw();
   if (!S.seeking && S.src instanceof HTMLVideoElement) { $('seek').value = S.src.currentTime; $('tlabel').textContent = `${clock(S.src.currentTime).slice(0, -2)} / ${clock(S.src.duration || 0).slice(0, -2)}`; }
   // a paused video is analysed once, not over and over
-  const t = S.src.currentTime, fresh = !S.src.paused || t !== S.lastT || (!S.okay && S.fails < 3);
-  if (!S.busy && S.src.readyState >= 2 && fresh) { S.lastT = t; analyse(S.cam && S.fails < 3 ? 'track' : 'detect'); }
+  const t = S.src.currentTime, fresh = !S.src.paused || t !== S.lastT || (!S.okay && S.fails < 3) || S.redetect;
+  if (!S.busy && S.src.readyState >= 2 && fresh) { S.lastT = t; analyse(S.cam && S.fails < 3 && !S.redetect ? 'track' : 'detect'); }
   requestAnimationFrame(loop);
 }
 let demoN = 1;
@@ -847,7 +850,7 @@ $('file').onchange = (e) => e.target.files[0] && loadFile(e.target.files[0]);
 $('open').onclick = () => $('file').click();
 $('camera').onclick = useCamera;
 $('demo').onclick = demo;
-$('redetect').onclick = () => { S.fails = 9; if (!S.live) analyse('detect'); };
+$('redetect').onclick = () => { S.fails = 3; S.redetect = true; if (!S.live) analyse('detect'); };
 $('lines').onchange = (e) => { S.showLines = e.target.checked; draw(); };
 $('predict').onchange = (e) => { S.showPredict = e.target.checked; draw(); };
 $('frustum').onchange = (e) => { S.showFrustum = e.target.checked; draw3d(); };
