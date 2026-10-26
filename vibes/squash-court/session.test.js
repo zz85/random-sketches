@@ -1,5 +1,5 @@
 import { test, expect } from 'bun:test';
-import { keepFlights, toMatch, fromRecorded, playersAt } from './session.js';
+import { keepFlights, toMatch, fromRecorded, playersAt, rallyList } from './session.js';
 
 const fl = (t0, t1, x = 1) => ({ cam: [3.2, 14, 4], t0, t1, speed: 20, labels: [], impacts: [{ t: (t0 + t1) / 2, X: [x, 0, 1], plane: 'front' }], pts: [{ t: t0, X: [x, 5, 1], V: [0, -20, 2] }, { t: t1, X: [x, 1, 1.2], V: [0, -18, 0] }], uv: [[1, 2]] });
 
@@ -26,4 +26,14 @@ test('a session becomes a match file with a replay', () => {
   expect([R.t0, R.t1]).toEqual([0, 1.4]);
   expect(playersAt(R.logs, 0.15)).toEqual([{ id: 1, X: [3.1, 5.2], seen: true }]);
   expect(playersAt(R.logs, 1.4)).toEqual([]); // not seen near then
+});
+
+test('rallies of a recording, with who hit how many', () => {
+  const sh = (t, player, type = 'drive', q = 3) => ({ t, player, quality: q, kind: { type }, struck: { t: t - 0.4 }, bounceT: t + 0.8 });
+  const M = { shots: [sh(10, 1), sh(11.5, 2), sh(13, 1, 'drop'), sh(13.5, null, 'drive', 1), sh(30, 2), sh(31.2, null, 'lob')],
+    coach: { shots: [{ t: 31.2, hitter: 1 }] } };
+  const R = rallyList(M);
+  expect(R.map((r) => [r.n, r.shots, r.by[1], r.by[2]])).toEqual([[1, 3, 2, 1], [2, 2, 1, 1]]);
+  expect(R[0]).toMatchObject({ t0: 9.6, t1: 13.8 });
+  expect(R[1].last).toMatchObject({ hitter: 1, kind: { type: 'lob' } });
 });

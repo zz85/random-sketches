@@ -9,8 +9,12 @@
 //   toMatch({ ... }) -> match object with .recorded = { positions, flights }
 //   fromRecorded(M) -> { flights, logs: { id: [{ t, X }] }, t0, t1 } for the replay
 //   playersAt(logs, t) -> [{ id, X, seen }] where each player was at t (null if not seen near then)
+//   rallyList(M) -> [{ n, t0, t1, shots, by: { 1: n, 2: n }, last: shot }] the session's rallies
 //   Store: IndexedDB list / get / put / remove of { id, date, source, duration, shots, data }
+//   Video: the optional recorded picture, in ~10 s segments (each a whole playable file):
+//     put(id, seg, { t0, t1, mime, cam, w, h }, blob), segments(id), remove(id)
 import { W as CW, L as CL } from './court.js';
+import { rallies } from './coaching.js';
 
 const r3 = (v) => Math.round(v * 1000) / 1000, r2 = (v) => Math.round(v * 100) / 100;
 
@@ -53,6 +57,19 @@ export function fromRecorded(M) {
   return { flights, logs, t0: ts.length ? Math.min(...ts) : 0, t1: ts.length ? Math.max(...ts) : 0 };
 }
 
+// Rallies from the named shots (coaching.js: the next front-wall contact within 2.3 s), each from
+// a little before its first hit to its last bounce, with who hit how many (the coaching rows' hitter,
+// which labels a whole rally from the shots that say who hit them).
+export function rallyList(M, { gap = 2.3 } = {}) {
+  const shots = (M.shots ?? []).filter((s) => s.quality == null || s.quality >= 2).sort((a, b) => a.t - b.t);
+  const rows = M.coach?.shots ?? [], hitter = (s) => rows.find((r) => Math.abs(r.t - s.t) < 0.01)?.hitter ?? s.player ?? null;
+  return rallies(shots, gap).map((R, i) => {
+    const a = R[0], z = R[R.length - 1], by = { 1: 0, 2: 0 };
+    for (const s of R) { const h = hitter(s); if (h === 1 || h === 2) by[h]++; }
+    return { n: i + 1, t0: a.struck?.t ?? a.t - 0.6, t1: z.bounceT ?? z.t + 1.2, shots: R.length, by, last: { ...z, hitter: hitter(z) } };
+  });
+}
+
 export function playersAt(logs, t, near = 0.5) {
   const out = [];
   for (const [id, L] of Object.entries(logs)) {
@@ -65,15 +82,28 @@ export function playersAt(logs, t, near = 0.5) {
 }
 
 // ---------- storage (IndexedDB, browser only) ----------
-const DB = 'squash-court', ST = 'sessions';
+const DB = 'squash-court', ST = 'sessions', VS = 'video';
 function db() {
-  return new Promise((ok, bad) => { const q = indexedDB.open(DB, 1); q.onupgradeneeded = () => q.result.createObjectStore(ST, { keyPath: 'id' }); q.onsuccess = () => ok(q.result); q.onerror = () => bad(q.error); });
+  return new Promise((ok, bad) => {
+    const q = indexedDB.open(DB, 2);
+    q.onupgradeneeded = () => { const d = q.result; if (!d.objectStoreNames.contains(ST)) d.createObjectStore(ST, { keyPath: 'id' }); if (!d.objectStoreNames.contains(VS)) d.createObjectStore(VS, { keyPath: 'k' }); };
+    q.onsuccess = () => ok(q.result); q.onerror = () => bad(q.error);
+  });
 }
-const tx = async (mode, fn) => { const d = await db(); return new Promise((ok, bad) => { const t = d.transaction(ST, mode), r = fn(t.objectStore(ST)); t.oncomplete = () => ok(r?.result); t.onerror = () => bad(t.error); }); };
+const tx = async (mode, fn, store = ST) => { const d = await db(); return new Promise((ok, bad) => { const t = d.transaction(store, mode), r = fn(t.objectStore(store)); t.oncomplete = () => ok(r?.result); t.onerror = () => bad(t.error); }); };
+// a session's video segments: keys `${id}|0003`, so one key range is the whole session
+const range = (id) => IDBKeyRange.bound(`${id}|`, `${id}|\uffff`);
+export const Video = {
+  put: (id, seg, meta, blob) => tx('readwrite', (s) => s.put({ k: `${id}|${String(seg).padStart(4, '0')}`, id, seg, ...meta, size: blob.size, blob }), VS),
+  segments: async (id) => (await tx('readonly', (s) => s.getAll(range(id)), VS)).sort((a, b) => a.seg - b.seg),
+  remove: (id) => tx('readwrite', (s) => s.delete(range(id)), VS),
+  // bytes per session, without reading the blobs' contents
+  sizes: async () => { const out = {}; for (const r of await tx('readonly', (s) => s.getAll(), VS)) out[r.id] = (out[r.id] ?? 0) + r.size; return out; },
+};
 export const Store = {
   put: (rec) => tx('readwrite', (s) => s.put(rec)),
   get: (id) => tx('readonly', (s) => s.get(id)),
-  remove: (id) => tx('readwrite', (s) => s.delete(id)),
+  remove: async (id) => { await Video.remove(id); return tx('readwrite', (s) => s.delete(id)); },
   // newest first, metadata only (each record is read whole: fine for tens of sessions)
   list: async () => (await tx('readonly', (s) => s.getAll())).map(({ data, ...m }) => (void data, m)).sort((a, b) => b.date - a.date),
 };

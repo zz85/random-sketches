@@ -44,9 +44,10 @@ Things we found worth doing but haven't done yet. The first item in each section
 
 ## Live and recordings
 
-- **Record the video with the session.** A recording today keeps what was analysed (positions, flights, bounces, shots), not the picture, so a camera session can't be watched back or re-analysed with a better tracker. `MediaRecorder` on the camera stream (WebM / MP4 by browser) would keep it; store it next to the session in IndexedDB, and on Open play it with the recorded analysis instead of the 3D replay alone. Check the phone keeps its frame rate while encoding, and the storage it needs (about 1 MB per 10 s at 720p).
+- **Take the recorded video out of the browser.** It is kept in IndexedDB only; Download writes the analysis without it. The segments are separate WebM / MP4 files (one recorder each), so a download needs them joined (remux, or a zip of the segments with the `.json`). Also: a storage meter and old-recording clean-up when the browser's quota runs low.
+- **Check video recording on phones.** Frame rate of the analysis while encoding, and Safari's MP4 segments seeking and playing back to back.
 - **Still frames at each shot.** A cheaper alternative: one JPEG per named shot (or per floor bounce), shown next to its line in the commentary feed of a recording.
-- **A rally-by-rally list in a recording.** Jump the replay to each rally, with its shots.
+- **Rally winners in the rally list.** It shows the last shot, not who won the point; that needs the score bug read between points (OCR) or the ball's last bounce judged.
 
 ## Data
 

@@ -12,7 +12,8 @@ import { Commentary, describe, movement, mainView } from './commentary.js';
 import { TControl, tLabel, T_POINT } from './tcontrol.js';
 import { coachStats, posAtFromLogs, responsePatterns, ZONE_X, ZONE_Y } from './coaching.js';
 import { zoomOptions, currentOption } from './camzoom.js';
-import { keepFlights, toMatch, fromRecorded, playersAt as replayPlayersAt, Store } from './session.js';
+import { keepFlights, toMatch, fromRecorded, playersAt as replayPlayersAt, rallyList, Store, Video } from './session.js';
+import { SegmentRecorder } from './recorder.js';
 
 const $ = (id) => document.getElementById(id);
 const stage = $('stage'), sctx = stage.getContext('2d');
@@ -170,7 +171,7 @@ function ballNow() {
   return null;
 }
 const kmh = (v) => `${v.toFixed(1)} m/s (${(v * 3.6).toFixed(0)} km/h)`;
-const clearRally = () => { S.coach = null; S.stats = newStats(); S.tctl = new TControl(); S.bounces.clear(); S.comm.clear(); S.feed = []; S.moveSaid = {}; renderFeed(); S.players = []; S.ball = null; S.ballTrail = []; S.flights = []; S.allFlights = []; S.replay = null; S.rallyMs = {}; for (const R of rallyW) R.reset = true; };
+const clearRally = () => { S.coach = null; S.stats = newStats(); S.tctl = new TControl(); S.bounces.clear(); S.comm.clear(); S.feed = []; S.moveSaid = {}; renderFeed(); S.players = []; S.ball = null; S.ballTrail = []; S.flights = []; S.allFlights = []; S.replay = null; S.replayStop = null; dropReplayVideo(); S.rallyMs = {}; for (const R of rallyW) R.reset = true; };
 window.__sq = S;
 
 // ---------- worker ----------
@@ -326,6 +327,7 @@ async function useCamera() {
     const v = document.createElement('video'); v.srcObject = st; v.muted = true; v.playsInline = true;
     await v.play(); useVideo(v);
     S.sessionId = `cam-${Date.now()}`; if (narrow()) setMode('live');
+    if (S.recVideo) startVideoRec();
     camZoom = []; zoomSel = null; await refreshZoom();
     // the zoom chosen last time, if this camera offers it
     const want = localStorage.getItem('squash.zoom'), o = camZoom.find((q) => q.label === want);
@@ -341,7 +343,7 @@ async function useCamera() {
 let camZoom = [], zoomSel = null;
 async function refreshZoom() {
   const bar = $('zoomBar'), tr = S.src?.srcObject?.getVideoTracks?.()[0];
-  if (!tr || !navigator.mediaDevices?.enumerateDevices) { bar.hidden = true; camZoom = []; return; }
+  if (!S.live || !tr || !navigator.mediaDevices?.enumerateDevices) { bar.hidden = true; camZoom = []; return; }
   const set = tr.getSettings?.() ?? {};
   if (!camZoom.length) {
     const devices = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput');
@@ -349,7 +351,7 @@ async function refreshZoom() {
   }
   const cur = zoomSel ?? currentOption(camZoom, set);
   bar.replaceChildren(...camZoom.map((o) => { const el = document.createElement('button'); el.textContent = o.label; el.title = o.title; el.setAttribute('aria-pressed', String(o === cur)); el.onclick = () => setZoom(o); return el; }));
-  bar.hidden = camZoom.length < 2;
+  bar.hidden = camZoom.length < 2 || !S.live || S.src?.srcObject?.getVideoTracks?.()[0] !== tr; // (the camera may have been left meanwhile)
 }
 async function setZoom(o) {
   const v = S.src, st = v?.srcObject, tr = st?.getVideoTracks?.()[0]; if (!tr) return;
@@ -363,12 +365,14 @@ async function setZoom(o) {
       S.srcW = v.videoWidth; S.srcH = v.videoHeight; fitStage();
     } else if (o.zoom != null) await tr.applyConstraints({ advanced: [{ zoom: o.zoom }] });
     localStorage.setItem('squash.zoom', o.label); zoomSel = o;
+    S.vrec?.restart(); // the next video segment on the new lens (and with its camera)
     S.cam = null; S.fails = 9; S.ballTrail = []; S.ball = null; S.players = []; for (const R of rallyW) R.reset = true;
     status(`camera ${o.label}: finding the court again`);
   } catch (e) { status(`zoom ${o.label}: ${e.message}`); }
   await refreshZoom();
 }
 function stopLive() {
+  stopVideoRec();
   if (S.live && S.src?.srcObject && S.sessionId) saveSession(); // leaving a camera session keeps it
   S.live = false; $('zoomBar').hidden = true; $('play').hidden = true; $('sound').hidden = true; $('scrub').hidden = true; $('cc').classList.add('off');
   if (S.src instanceof HTMLVideoElement) { S.src.pause(); S.src.srcObject?.getTracks().forEach((t) => t.stop()); }
@@ -411,7 +415,7 @@ function pickCourt(u, v) {
 // ---------- drawing ----------
 let disp = { k: 1, ox: 0, oy: 0 };
 function fitStage() {
-  document.body.classList.toggle('nosrc', !S.src); // a match or a recording: no picture, the panels take the room
+  document.body.classList.toggle('nosrc', !S.src && !S.rv); // a match or a recording: no picture, the panels take the room
   const box = stage.parentElement.getBoundingClientRect(), dpr = devicePixelRatio || 1;
   stage.width = Math.round(box.width * dpr); stage.height = Math.round(box.height * dpr);
   if (!S.srcW) return;
@@ -429,7 +433,7 @@ function seg3(ctx, cam, a, b, map, n = 24) {
 function draw() {
   sctx.setTransform(1, 0, 0, 1, 0, 0); sctx.fillStyle = '#111'; sctx.fillRect(0, 0, stage.width, stage.height);
   hud();
-  if (!S.src) { if (S.match) { if (S.replay) { S.players = replayPlayersAt(S.replay.logs, S.replayT); draw3d(); } drawPlan(); drawWall(); drawSpeed(); drawPlayerHeat($('heat1'), 1); drawPlayerHeat($('heat2'), 2); drawCoach(); drawResp(); readout(); } return; }
+  if (!S.src) { if (S.match) { if (S.replay) { S.players = replayPlayersAt(S.replay.logs, S.replayT); draw3d(); drawReplayVideo(); } drawPlan(); drawWall(); drawSpeed(); drawPlayerHeat($('heat1'), 1); drawPlayerHeat($('heat2'), 2); drawCoach(); drawResp(); readout(); } return; }
   sctx.drawImage(S.src, disp.ox, disp.oy, S.srcW * disp.k, S.srcH * disp.k);
   const map = (u) => [disp.ox + u[0] * disp.k, disp.oy + u[1] * disp.k];
   const dpr = devicePixelRatio || 1;
@@ -591,7 +595,7 @@ function drawSpeed() {
   }
 }
 // A whole match analysed by tools/match.mjs: its players' heatmaps and speeds, every bounce.
-function useMatch(M, name) {
+function useMatch(M, name, recId = null) {
   stopLive(); S.src = null; S.cam = null; clearRally(); S.match = M;
   for (const p of M.players) { const st = statFor(p.id); st.heat = Float32Array.from(p.heatmap.seconds); st.dist = p.distance; st.time = p.seconds; st.top = p.topSpeed; st.series = p.speed.map(([t, v]) => ({ t, v })); }
   S.tctl = TControl.fromSummaries(Object.fromEntries(M.players.map((p) => [p.id, p.tControl ?? null])));
@@ -603,6 +607,8 @@ function useMatch(M, name) {
   // a recorded session also replays in 3D: every player position and every ball flight
   S.replay = fromRecorded(M); if (S.replay) { S.flights = S.replay.flights; S.replayT = S.replay.t1; }
   if (M.names && (M.names[1] || M.names[2])) setNames(M.names, 'from the recording');
+  renderRallies();
+  if (recId && S.replay) Video.segments(recId).then((segs) => { if (segs.length && S.match === M) setupReplayVideo(segs); });
   replayUI(); setMode('analyse');
   status(`${name}: ${(M.duration / 60).toFixed(1)} min, ${M.bounces.length} impacts, ${M.players.length} players`); draw();
 }
@@ -879,9 +885,9 @@ function hud() {
   const el = $('hud'), on = S.mode === 'live' && S.live; el.hidden = !on; if (!on) return;
   const rec = !!(S.src?.srcObject && S.sessionId), t = vt() ?? 0, shots = S.comm.shots.filter((s) => s.quality >= 2).length, fl = S.bounces.on('floor').length;
   const who = Object.entries(S.stats).map(([id, st]) => `${nameOf(+id)} ${st.dist.toFixed(0)} m`).join('  ·  ');
-  const key = `${rec}|${clock(t).slice(0, -2)}|${shots}|${fl}|${who}`; if (key === S.hudKey) return; S.hudKey = key;
+  const key = `${rec}|${!!S.vrec}|${clock(t).slice(0, -2)}|${shots}|${fl}|${who}`; if (key === S.hudKey) return; S.hudKey = key;
   $('hudRec').hidden = !rec;
-  $('hudA').textContent = `${rec ? 'REC ' : ''}${clock(t).slice(0, -2)}  ·  ${shots} shot${shots === 1 ? '' : 's'}  ·  ${fl} bounce${fl === 1 ? '' : 's'}`;
+  $('hudA').textContent = `${rec ? (S.vrec ? 'REC + video ' : 'REC ') : ''}${clock(t).slice(0, -2)}  ·  ${shots} shot${shots === 1 ? '' : 's'}  ·  ${fl} bounce${fl === 1 ? '' : 's'}`;
   $('hudB').textContent = who || 'looking for players…';
 }
 
@@ -903,13 +909,13 @@ async function saveSession() {
   return rec;
 }
 async function refreshRecordings() {
-  let list = []; try { list = await Store.list(); } catch (e) { $('recNote').textContent = `recordings unavailable: ${e.message}`; }
+  let list = [], sizes = {}; try { list = await Store.list(); sizes = await Video.sizes(); } catch (e) { $('recNote').textContent = `recordings unavailable: ${e.message}`; }
   const when = (d) => new Date(d).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
   $('recList').replaceChildren(...list.map((r) => {
     const li = document.createElement('li'), txt = document.createElement('span'), mk = (label, title, fn) => { const b = document.createElement('button'); b.textContent = label; b.title = title; b.onclick = fn; return b; };
-    txt.textContent = `${when(r.date)} · ${r.source} · ${clock(r.duration).slice(0, -2)} · ${r.shots} shots${r.id === S.sessionId && S.live && S.src?.srcObject ? ' (recording)' : ''}`;
+    txt.textContent = `${when(r.date)} · ${r.source} · ${clock(r.duration).slice(0, -2)} · ${r.shots} shots${sizes[r.id] ? ` · video ${(sizes[r.id] / 1e6).toFixed(1)} MB` : ''}${r.id === S.sessionId && S.live && S.src?.srcObject ? ' (recording)' : ''}`;
     li.append(txt,
-      mk('Open', 'Heatmaps, bounces, coaching and a 3D replay of this session', async () => { const x = await Store.get(r.id); if (x) useMatch(x.data, `${when(r.date)}, ${r.source}`); }),
+      mk('Open', 'Heatmaps, bounces, coaching and a 3D replay of this session', async () => { const x = await Store.get(r.id); if (x) useMatch(x.data, `${when(r.date)}, ${r.source}`, r.id); }),
       mk('Download', 'As a .json file (Open… reads it back)', async () => { const x = await Store.get(r.id); if (!x) return; const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(x.data)], { type: 'application/json' })); a.download = `squash-session-${new Date(r.date).toISOString().slice(0, 16).replace(':', '')}.json`; a.click(); }),
       mk('Delete', 'Delete this recording', async () => { if (!confirm(`Delete the recording from ${when(r.date)}?`)) return; await Store.remove(r.id); refreshRecordings(); }));
     return li;
@@ -928,15 +934,104 @@ function replayUI() {
   $('replayT').textContent = `${clock(S.replayT - R.t0).slice(0, -2)} / ${clock(R.t1 - R.t0).slice(0, -2)}`;
   $('replayPlay').textContent = S.replayRaf ? '❚❚' : '▶'; $('replayPlay').setAttribute('aria-label', S.replayRaf ? 'Pause the replay' : 'Play the replay');
 }
-$('replaySeek').oninput = (e) => { S.replayT = +e.target.value; replayUI(); draw(); };
+$('replaySeek').oninput = (e) => { S.replayT = +e.target.value; S.replayStop = null; seekReplayVideo(S.replayT, false); replayUI(); draw(); };
 $('replayPlay').onclick = () => {
   const R = S.replay; if (!R) return;
-  if (S.replayRaf) { cancelAnimationFrame(S.replayRaf); S.replayRaf = 0; replayUI(); return; }
-  if (S.replayT >= R.t1 - 0.05) S.replayT = R.t0;
-  let last = performance.now();
-  const step = (now) => { S.replayT = Math.min(R.t1, S.replayT + (now - last) / 1000); last = now; if (S.replayT >= R.t1) S.replayRaf = 0; else S.replayRaf = requestAnimationFrame(step); replayUI(); draw(); };
-  S.replayRaf = requestAnimationFrame(step); replayUI();
+  if (S.replayRaf) { pauseReplay(); return; }
+  S.replayStop = null; playReplay();
 };
+function pauseReplay() { cancelAnimationFrame(S.replayRaf); S.replayRaf = 0; seekReplayVideo(S.replayT, false); replayUI(); renderRallies(); draw(); }
+function playReplay() {
+  const R = S.replay; if (!R) return;
+  if (S.replayT >= R.t1 - 0.05) S.replayT = R.t0;
+  cancelAnimationFrame(S.replayRaf);
+  let last = performance.now();
+  const step = (now) => {
+    const end = Math.min(R.t1, S.replayStop ?? Infinity);
+    S.replayT = Math.min(end, S.replayT + (now - last) / 1000); last = now;
+    if (S.replayT >= end) { S.replayRaf = 0; S.replayStop = null; seekReplayVideo(S.replayT, false); } else { S.replayRaf = requestAnimationFrame(step); seekReplayVideo(S.replayT, true); }
+    replayUI(); renderRallies(); draw();
+  };
+  S.replayRaf = requestAnimationFrame(step); replayUI();
+}
+
+// ---------- rallies of a recording (session.js rallyList) ----------
+// One line per rally: when, how long, the shots and who hit how many, and the shot it ended on.
+// A click plays that rally in the replay (and its video, when recorded) and stops at its end.
+function renderRallies() {
+  const M = S.match, fig = $('ralliesFig'); if (!M) { fig.hidden = true; return; }
+  const list = rallyList(M), base = S.replay?.t0 ?? 0, T = S.replayT ?? -1;
+  fig.hidden = !list.length; if (!list.length) return;
+  const key = `${list.length}|${list.findIndex((r) => T >= r.t0 && T <= r.t1)}|${!!S.replay}|${nameOf(1)}|${nameOf(2)}`; if (key === S.ralliesKey) return; S.ralliesKey = key;
+  const kind = (s) => [s.kind?.direction === 'crosscourt' ? 'crosscourt' : '', s.kind?.type ?? 'shot'].filter(Boolean).join(' ');
+  $('rallyList').replaceChildren(...list.map((r) => {
+    const li = document.createElement('li'), bt = document.createElement('button');
+    bt.textContent = `Rally ${r.n} · ${clock(Math.max(0, r.t0 - base)).slice(0, -2)} · ${Math.max(1, Math.round(r.t1 - r.t0))} s · ${r.shots} shot${r.shots === 1 ? '' : 's'} · ${r.by[1] + r.by[2] ? `${nameOf(1)} ${r.by[1]}, ${nameOf(2)} ${r.by[2]}` : 'hitters not known'} · last: ${r.last.hitter ? nameOf(r.last.hitter) + ' ' : ''}${kind(r.last)}`;
+    if (T >= r.t0 && T <= r.t1) bt.setAttribute('aria-current', 'true');
+    if (S.replay) { bt.title = 'Play this rally'; bt.onclick = () => { S.replayT = Math.max(S.replay.t0, r.t0 - 0.3); S.replayStop = r.t1 + 0.3; seekReplayVideo(S.replayT, false); playReplay(); }; }
+    else { bt.disabled = true; bt.title = 'This file has no replay (a recorded session has)'; }
+    li.append(bt); return li;
+  }));
+}
+
+// ---------- recording the picture (recorder.js) ----------
+// Optional: the camera stream in ~10 s segments, each saved to IndexedDB as it ends, with the
+// camera fitted on it, so the replay can show the video with the analysis drawn over it.
+S.recVideo = localStorage.getItem('squash.recVideo') === '1' && !!SegmentRecorder.supported();
+$('recVideo').checked = S.recVideo; $('recVideo').disabled = !SegmentRecorder.supported();
+if (!SegmentRecorder.supported()) $('recVideoNote').textContent = 'this browser cannot record video';
+$('recVideo').onchange = (e) => {
+  S.recVideo = e.target.checked; localStorage.setItem('squash.recVideo', S.recVideo ? '1' : '0');
+  if (S.recVideo) { navigator.storage?.persist?.(); if (S.live && S.src?.srcObject && S.sessionId) startVideoRec(); } else stopVideoRec();
+};
+function startVideoRec() {
+  if (S.vrec || !SegmentRecorder.supported() || !S.sessionId) return;
+  const id = S.sessionId;
+  S.vrec = new SegmentRecorder({
+    stream: () => S.src?.srcObject ?? null, now: () => vt() ?? 0,
+    meta: () => ({ w: S.srcW, h: S.srcH, cam: S.cam && S.okay ? { p: S.cam.p.slice(), w: S.cam.w, h: S.cam.h, cx: S.cam.cx, cy: S.cam.cy } : null }),
+    save: (seg, meta, blob) => Video.put(id, seg, meta, blob),
+  });
+  S.vrec.start(); S.hudKey = '';
+}
+function stopVideoRec() { const r = S.vrec; if (!r) return; S.vrec = null; S.hudKey = ''; r.stop().then(refreshRecordings); }
+// the replay's video: the segment holding the replay time, kept in step with it
+function setupReplayVideo(segs) {
+  const el = document.createElement('video'); el.muted = true; el.playsInline = true; el.preload = 'auto';
+  S.rv = { segs, el, cur: -1, url: null, loading: false };
+  if (S.replay) S.replayT = Math.max(S.replay.t0, segs[0].t0);
+  fitStage(); seekReplayVideo(S.replayT, false).then(() => { replayUI(); draw(); });
+}
+function dropReplayVideo() { const R = S.rv; if (!R) return; R.el.pause(); R.el.removeAttribute('src'); if (R.url) URL.revokeObjectURL(R.url); S.rv = null; fitStage(); }
+async function seekReplayVideo(T, play) {
+  const R = S.rv; if (!R || R.loading) return;
+  const i = R.segs.findIndex((s) => T >= s.t0 - 0.05 && T < s.t1);
+  if (i < 0) { R.gap = true; R.el.pause(); return; }
+  R.gap = false; const s = R.segs[i];
+  if (i !== R.cur) {
+    R.loading = true; R.cur = i; if (R.url) URL.revokeObjectURL(R.url); R.url = URL.createObjectURL(s.blob); R.el.src = R.url;
+    await new Promise((ok) => { R.el.addEventListener('loadeddata', ok, { once: true }); R.el.addEventListener('error', ok, { once: true }); });
+    R.loading = false; if (S.rv !== R) return;
+    S.srcW = R.el.videoWidth || s.w; S.srcH = R.el.videoHeight || s.h; fitStage();
+  }
+  const want = Math.max(0, T - s.t0);
+  if (Math.abs(R.el.currentTime - want) > (play ? 0.35 : 0.03)) {
+    R.el.currentTime = want;
+    // a still replay shows the frame once it is there
+    if (!play) { R.loading = true; await new Promise((ok) => { R.el.addEventListener('seeked', ok, { once: true }); setTimeout(ok, 1000); }); R.loading = false; draw(); }
+  }
+  if (play) { if (R.el.paused) R.el.play().catch(() => {}); } else if (!R.el.paused) R.el.pause();
+}
+function drawReplayVideo() {
+  const R = S.rv; if (!R || R.gap || R.cur < 0 || R.el.readyState < 2) return;
+  const s = R.segs[R.cur], dpr = devicePixelRatio || 1, map = (u) => [disp.ox + u[0] * disp.k, disp.oy + u[1] * disp.k];
+  sctx.drawImage(R.el, disp.ox, disp.oy, S.srcW * disp.k, S.srcH * disp.k);
+  if (!s.cam) return;
+  const keep = S.cam; S.cam = new Camera(s.cam.p, s.cam.w, s.cam.h, s.cam.cx, s.cam.cy);
+  if (S.showLines) { sctx.lineWidth = 1.5 * dpr; sctx.strokeStyle = 'rgba(0,240,255,0.8)'; for (const l of MODEL.lines) if (!(l.kind === 'back' && S.cam.C[1] > CL - 0.3)) seg3(sctx, S.cam, l.a, l.b, map); }
+  if (S.showRally) drawRallyStage(map, dpr);
+  S.cam = keep;
+}
 
 // ---------- events ----------
 $('file').onchange = (e) => e.target.files[0] && loadFile(e.target.files[0]);

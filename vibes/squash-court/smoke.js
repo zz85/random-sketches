@@ -166,6 +166,25 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
       btn('Lens 2').click(); await new Promise(r=>setTimeout(r,600)); const afterLens=[...bar.querySelectorAll('button')].map(x=>x.textContent+(x.getAttribute('aria-pressed')==='true'?'*':'')).join(' ');
       return {first,after2,afterLens,log,saved:localStorage.getItem('squash.zoom'),hidden:bar.hidden,live:__sq.live}})()`);
     check('camera zoom: 0.5× … 5× and other lenses', cz.first === '0.5× 1×* 2× 3× 5× Lens 2' && cz.after2 === '2×' && cz.log.includes('zoom 2') && cz.log.includes('zoom 0.5') && cz.log.includes('open back2') && /Lens 2\*/.test(cz.afterLens) && cz.saved === 'Lens 2' && !cz.hidden, `${cz.first} | then ${cz.afterLens} | ${cz.log.join(', ')}`);
+    // video with the session: switch it on during the (fake) camera session, stop, open the
+    // recording: its video plays on the stage, and its rallies list and play
+    const rv = await b.evaluate(`(async()=>{const w=(ms)=>new Promise(r=>setTimeout(r,ms)),S=__sq;
+      for(const li of document.querySelectorAll('#recList li')){window.confirm=()=>true;li.querySelectorAll('button')[2].click();} await w(300);
+      const cb=document.getElementById('recVideo'); cb.checked=true; cb.dispatchEvent(new Event('change')); const started=!!S.vrec, hud=S.hudKey;
+      await w(2600);
+      const B=S.src.currentTime+(S.tShift||0); S.allFlights=[{cam:[3,17,4],t0:B-2.2,t1:B-1,speed:20,labels:[],impacts:[],pts:[B-2.2,B-1.6,B-1].map((t,i)=>({t,X:[3,5-i,1+i*0.3],V:[0,-9,1]}))}];
+      const sh=(t,p)=>({t,player:p,quality:3,kind:{type:'drive'},front:[3,0,1.2],struck:{t:t-0.3,X:[3,8,1],V:[0,-20,2]},bounce:{t:t+0.7,X:[3,9,0]},speed:30,apex:2,tight:false,measured:true});
+      S.comm.shots=[sh(B-2,1),sh(B-1.4,2),sh(B+1.5,1)];
+      document.getElementById('demo').click(); for(let i=0;i<40&&!/video/.test(document.getElementById('recList').textContent);i++) await w(150);
+      const txt=document.getElementById('recList').textContent;
+      document.querySelector('#recList li button').click(); for(let i=0;i<40&&!(S.rv&&S.rv.el.readyState>=2);i++) await w(150);
+      await w(300);
+      const st=document.getElementById('stage'),g=st.getContext('2d'),px=g.getImageData(st.width>>1,st.height>>1,1,1).data;
+      const rl=[...document.querySelectorAll('#rallyList button')].map(x=>x.textContent);
+      document.querySelector('#rallyList button').click(); await w(500);
+      return {meta:S.rv?.segs.map(s=>[s.t0,s.t1,s.size,s.mime,!!s.cam]),err:S.rv?.el.error?.message,cur:S.rv?.cur,gap:S.rv?.gap,rt:[S.replay?.t0,S.replay?.t1],started,txt,segs:S.rv?.segs.length??0,ready:S.rv?.el.readyState,px:[...px],rl,playing:!!S.replayRaf,t:S.replayT,stop:S.replayStop,vplaying:S.rv&&!S.rv.el.paused}})()`);
+    check('video with the session: recorded in segments, played back on the stage; rallies listed and played', rv.started && /video [0-9.]+ MB/.test(rv.txt) && rv.segs >= 1 && rv.ready >= 2 && rv.px[0] > 60 && rv.rl.length === 2 && /Rally 1 .* 2 shots .*P1 1, P2 1/.test(rv.rl[0]) && rv.playing && rv.vplaying && rv.t >= rv.rt[0] && rv.t < rv.rt[1], JSON.stringify(rv));
+    await b.evaluate(`(async()=>{for(const li of document.querySelectorAll('#recList li')){window.confirm=()=>true;li.querySelectorAll('button')[2].click();}await new Promise(r=>setTimeout(r,300));return 1})()`);
     await b.evaluate(`document.getElementById('zoomBar').scrollIntoView();1`); await new Promise((r) => setTimeout(r, 200)); await shot('zoom');
     const errors = [];
     for (const e of b.events) if (e.method === 'Runtime.exceptionThrown') errors.push(e.params.exceptionDetails.exception?.description || e.params.exceptionDetails.text);
