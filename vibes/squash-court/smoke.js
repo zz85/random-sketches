@@ -133,6 +133,25 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
     await b.evaluate(`document.getElementById('resp').closest('figure').scrollIntoView();1`); await new Promise((r) => setTimeout(r, 200)); await shot('response');
     await shot('match');
     await b.evaluate(`document.getElementById('coachText').closest('figure').scrollIntoView();1`); await new Promise((r) => setTimeout(r, 200)); await shot('coach');
+    // camera zoom: a fake phone camera (a canvas stream with a zoom range of 0.5-5 and a second,
+    // unnamed back lens): the bar offers the steps, a step applies the zoom, a lens switches device
+    const cz = await b.evaluate(`(async()=>{
+      const log=[]; const mk=(id)=>{const c=document.createElement('canvas');c.width=640;c.height=360;const g=c.getContext('2d');g.fillStyle='#865';g.fillRect(0,0,640,360);
+        const s=c.captureStream(10),t=s.getVideoTracks()[0];let z=1;setInterval(()=>{g.fillStyle='#'+(Math.random()*4095|0).toString(16).padStart(3,'0');g.fillRect(0,0,8,8)},100);
+        t.getCapabilities=()=>(id==='back0'?{deviceId:id,zoom:{min:0.5,max:5,step:0.1}}:{deviceId:id});t.getSettings=()=>({deviceId:id,width:640,height:360,...(id==='back0'?{zoom:z}:{})});
+        t.applyConstraints=async(c)=>{const v=c.advanced?.[0]?.zoom??c.zoom;if(v!=null){z=v;log.push('zoom '+v)}};return s;};
+      navigator.mediaDevices.enumerateDevices=async()=>[{kind:'videoinput',deviceId:'back0',label:'camera2 0, facing back'},{kind:'videoinput',deviceId:'front1',label:'camera2 1, facing front'},{kind:'videoinput',deviceId:'back2',label:'camera2 2, facing back'}];
+      navigator.mediaDevices.getUserMedia=async(c)=>{const id=c.video?.deviceId?.exact??'back0';log.push('open '+id);return mk(id)};
+      localStorage.removeItem('squash.zoom');
+      document.getElementById('camera').click(); await new Promise(r=>setTimeout(r,800));
+      const bar=document.getElementById('zoomBar'),btn=(l)=>[...bar.querySelectorAll('button')].find(x=>x.textContent===l);
+      const first=[...bar.querySelectorAll('button')].map(x=>x.textContent+(x.getAttribute('aria-pressed')==='true'?'*':'')).join(' ');
+      btn('2×').click(); await new Promise(r=>setTimeout(r,300)); const after2=[...bar.querySelectorAll('button')].find(x=>x.getAttribute('aria-pressed')==='true')?.textContent;
+      btn('0.5×').click(); await new Promise(r=>setTimeout(r,300));
+      btn('Lens 2').click(); await new Promise(r=>setTimeout(r,600)); const afterLens=[...bar.querySelectorAll('button')].map(x=>x.textContent+(x.getAttribute('aria-pressed')==='true'?'*':'')).join(' ');
+      return {first,after2,afterLens,log,saved:localStorage.getItem('squash.zoom'),hidden:bar.hidden,live:__sq.live}})()`);
+    check('camera zoom: 0.5× … 5× and other lenses', cz.first === '0.5× 1×* 2× 3× 5× Lens 2' && cz.after2 === '2×' && cz.log.includes('zoom 2') && cz.log.includes('zoom 0.5') && cz.log.includes('open back2') && /Lens 2\*/.test(cz.afterLens) && cz.saved === 'Lens 2' && !cz.hidden, `${cz.first} | then ${cz.afterLens} | ${cz.log.join(', ')}`);
+    await b.evaluate(`document.getElementById('zoomBar').scrollIntoView();1`); await new Promise((r) => setTimeout(r, 200)); await shot('zoom');
     const errors = [];
     for (const e of b.events) if (e.method === 'Runtime.exceptionThrown') errors.push(e.params.exceptionDetails.exception?.description || e.params.exceptionDetails.text);
     for (const e of b.events) if (e.method === 'Runtime.consoleAPICalled' && e.params.type === 'error') errors.push(e.params.args.map((a) => a.value || a.description).join(' '));

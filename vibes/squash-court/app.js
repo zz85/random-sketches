@@ -11,6 +11,7 @@ import { onsets as findOnsets, audioOffset, decodeAudio } from './audio.js';
 import { Commentary, describe, movement, mainView } from './commentary.js';
 import { TControl, tLabel, T_POINT } from './tcontrol.js';
 import { coachStats, posAtFromLogs, responsePatterns, ZONE_X, ZONE_Y } from './coaching.js';
+import { zoomOptions, currentOption } from './camzoom.js';
 
 const $ = (id) => document.getElementById(id);
 const stage = $('stage'), sctx = stage.getContext('2d');
@@ -316,10 +317,49 @@ async function useCamera() {
     const st = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1280 } }, audio: false });
     const v = document.createElement('video'); v.srcObject = st; v.muted = true; v.playsInline = true;
     await v.play(); useVideo(v);
+    camZoom = []; zoomSel = null; await refreshZoom();
+    // the zoom chosen last time, if this camera offers it
+    const want = localStorage.getItem('squash.zoom'), o = camZoom.find((q) => q.label === want);
+    if (o && o !== currentOption(camZoom, st.getVideoTracks()[0].getSettings?.() ?? {})) await setZoom(o);
   } catch (e) { status(`camera: ${e.message}`); }
 }
+// ---------- camera zoom (camzoom.js) ----------
+// 0.5× / 1× / 2× … like a phone camera app: the camera's own zoom where the browser offers it, else
+// switching to another lens. A new zoom is a new camera, so the court is found again; the players'
+// and ball's tracks start afresh, the heatmaps and the commentary carry on.
+// The steps are built once from the camera the page opened first (the main lens) and stay put
+// while the user moves between them.
+let camZoom = [], zoomSel = null;
+async function refreshZoom() {
+  const bar = $('zoomBar'), tr = S.src?.srcObject?.getVideoTracks?.()[0];
+  if (!tr || !navigator.mediaDevices?.enumerateDevices) { bar.hidden = true; camZoom = []; return; }
+  const set = tr.getSettings?.() ?? {};
+  if (!camZoom.length) {
+    const devices = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput');
+    camZoom = zoomOptions({ devices, current: set.deviceId ?? null, caps: tr.getCapabilities?.() ?? {} });
+  }
+  const cur = zoomSel ?? currentOption(camZoom, set);
+  bar.replaceChildren(...camZoom.map((o) => { const el = document.createElement('button'); el.textContent = o.label; el.title = o.title; el.setAttribute('aria-pressed', String(o === cur)); el.onclick = () => setZoom(o); return el; }));
+  bar.hidden = camZoom.length < 2;
+}
+async function setZoom(o) {
+  const v = S.src, st = v?.srcObject, tr = st?.getVideoTracks?.()[0]; if (!tr) return;
+  try {
+    if (o.deviceId && o.deviceId !== tr.getSettings?.().deviceId) {
+      // another lens: a new stream on the same video element
+      const ns = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: o.deviceId }, width: { ideal: 1280 }, ...(o.zoom != null ? { zoom: o.zoom } : {}) }, audio: false });
+      st.getTracks().forEach((t) => t.stop()); v.srcObject = ns; await v.play();
+      if (!v.videoWidth) await new Promise((r) => v.addEventListener('loadedmetadata', r, { once: true }));
+      S.srcW = v.videoWidth; S.srcH = v.videoHeight; fitStage();
+    } else if (o.zoom != null) await tr.applyConstraints({ advanced: [{ zoom: o.zoom }] });
+    localStorage.setItem('squash.zoom', o.label); zoomSel = o;
+    S.cam = null; S.fails = 9; S.ballTrail = []; S.ball = null; S.players = []; for (const R of rallyW) R.reset = true;
+    status(`camera ${o.label}: finding the court again`);
+  } catch (e) { status(`zoom ${o.label}: ${e.message}`); }
+  await refreshZoom();
+}
 function stopLive() {
-  S.live = false; $('play').hidden = true; $('sound').hidden = true; $('scrub').hidden = true; $('cc').classList.add('off');
+  S.live = false; $('zoomBar').hidden = true; $('play').hidden = true; $('sound').hidden = true; $('scrub').hidden = true; $('cc').classList.add('off');
   if (S.src instanceof HTMLVideoElement) { S.src.pause(); S.src.srcObject?.getTracks().forEach((t) => t.stop()); }
 }
 function loop() {

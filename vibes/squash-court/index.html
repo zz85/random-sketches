@@ -11,6 +11,9 @@
   body { display: grid; grid-template-columns: 1fr 6px var(--side, 620px); grid-template-rows: auto 1fr auto; height: 100dvh; }
   header { grid-column: 1 / 4; display: flex; gap: 8px; align-items: center; padding: 8px 10px; background: var(--panel); flex-wrap: wrap; }
   header h1 { font-size: 15px; margin: 0 10px 0 0; font-weight: 600; }
+  .zoom { display: inline-flex; gap: 2px; background: #1b1e25; border: 1px solid #333844; border-radius: 16px; padding: 2px; }
+  .zoom button { border-radius: 14px; padding: 4px 9px; border: 0; min-width: 3.2em; }
+  .zoom button[aria-pressed="true"] { background: #ffe600; color: #111; font-weight: 600; }
   button, label.chk { background: #262a33; color: var(--fg); border: 1px solid #333844; border-radius: 6px; padding: 6px 10px; font: inherit; cursor: pointer; }
   button:hover { border-color: var(--acc); }
   button:focus-visible { outline: 2px solid var(--acc); outline-offset: 1px; }
@@ -72,6 +75,7 @@
   <button id="open" title="Photo or video (or drop / paste one anywhere)">Open…</button>
   <input id="file" type="file" accept="image/*,video/*,.json" hidden>
   <button id="camera">Camera</button>
+  <span id="zoomBar" class="zoom" role="group" aria-label="Camera zoom" hidden></span>
   <button id="demo" title="A synthetic frame with a known camera">Demo frame</button>
   <button id="play" hidden>Pause</button>
   <button id="sound" hidden title="The video's audio">Sound on</button>

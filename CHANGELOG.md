@@ -1,6 +1,7 @@
 # Logs
 
 26 Oct 2026
+- Squash Court camera zoom: a 0.5× / 1× / 2× / 3× / 5× bar in camera mode (`camzoom.js`), from the track's zoom range where the browser exposes one (Chrome on Android, Safari 17+), else the phone's other back lenses (Safari's Ultra Wide and Telephoto by name; unnamed Android lenses as Lens 2, 3 to try). Switching lens keeps the video element and the heatmaps; the court is found again. Remembered per browser. `bun test` (61), `node smoke.js` (fake phone camera: steps, zoom applied, lens switch).
 - Squash Court ball: heard impacts help pick the ball among rival flights (a flight scores for a heard hit just before its first frame, a heard wall or floor just after its last, a heard fitted impact). The page sends its heard impacts to the ball worker, `tools/match.mjs` passes each chunk's own. Measured on two files: with good sound kept flights start on a heard hit 2.3× as often as chance, changing ~4% of kept flights; on a highlights soundtrack without the hits, nothing. Earlier today: long ball tracks fitted piece by piece instead of rejected whole at their first bounce, flights entirely next to a player dropped, one ball at a time (green-box-on-flight 1–16% → 5–67% on cc.mp4); older flights fade on the video and the 3D view. `bun test` (55), `node smoke.js` (all ok).
 
 25 Oct 2026
