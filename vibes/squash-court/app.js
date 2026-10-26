@@ -211,8 +211,11 @@ function feedBall(v, mediaTime) {
   ballGrab.width = w; ballGrab.height = h; bgc.drawImage(v, 0, 0, w, h);
   const img = bgc.getImageData(0, 0, w, h), cam = scaleCam(S.cam, k, w, h), seen = S.players.filter((p) => p.box);
   R.inFlight++; R.k = k;
+  // heard impacts (in video time) go along when they change, so the ball worker can prefer the
+  // flight the soundtrack agrees with
+  const on = heardTimes(), onKey = on ? `${on.length}:${S.audio.offset ?? 0}` : '', onsets = onKey !== R.onKey ? on ?? [] : undefined; R.onKey = onKey;
   R.wk.postMessage({ mode: 'ball', rgba: img.data, w, h, cam: { p: cam.p, cx: cam.cx, cy: cam.cy }, t: mediaTime, tin: S.tin, reset: R.reset,
-    boxes: seen.map((p) => p.box.map((x) => x * k)), playerX: seen.map((p) => p.X) }, [img.data.buffer]);
+    boxes: seen.map((p) => p.box.map((x) => x * k)), playerX: seen.map((p) => p.X), onsets }, [img.data.buffer]);
   R.reset = false; (S.ballTs ??= []).push(mediaTime);
 }
 function watchFrames(v) {
@@ -277,6 +280,8 @@ function takeRally(q, k) {
 const recentFlights = () => { const t = S.src?.currentTime; return t == null ? S.flights : S.flights.filter((f) => f.t1 > t - 2 && f.t0 <= t + 0.05); };
 const PCOL = ['#ff2d7a', '#2dd4ff', '#b4ff2d'];
 const pcol = (p) => PCOL[(p.id - 1) % PCOL.length];
+// a flight fades as it gets older, so the one the ball is on (or just left) stands out
+const flightAlpha = (f) => { const t = S.live ? S.src?.currentTime : null; return t == null || t <= f.t1 ? 1 : Math.max(0.15, 1 - (t - f.t1) / 1.5); };
 
 // ---------- sources ----------
 function useImage(el, w, h) {
@@ -405,7 +410,7 @@ function drawRallyStage(map, dpr) {
   }
   sctx.lineWidth = 2.5 * dpr;
   for (const f of recentFlights()) {
-    sctx.strokeStyle = '#ffe600'; sctx.beginPath(); let first = true;
+    sctx.globalAlpha = flightAlpha(f); sctx.strokeStyle = '#ffe600'; sctx.beginPath(); let first = true;
     for (const q of f.pts) { const u = c.project(q.X); if (!(u[2] > 0)) { first = true; continue; } const [x, y] = map(u); first ? sctx.moveTo(x, y) : sctx.lineTo(x, y); first = false; }
     sctx.stroke();
     for (const m of f.impacts) { const u = c.project(m.X); if (!(u[2] > 0)) continue; const [x, y] = map(u); sctx.fillStyle = '#ff8a00'; sctx.beginPath(); sctx.arc(x, y, 4 * dpr, 0, 7); sctx.fill(); }
@@ -413,6 +418,7 @@ function drawRallyStage(map, dpr) {
   // where the latest flight goes next, dashed (as in the 3D view); the part the ball has already
   // passed is faint, and the whole prediction fades once the ball is past its end
   const P = S.showPredict && predicted(recentFlights());
+  sctx.globalAlpha = 1;
   if (P) {
     const pp = predParts(P), line = (pts) => { sctx.beginPath(); let first = true; for (const q of pts) { const u = c.project(q.X); if (!(u[2] > 0)) { first = true; continue; } const [x, y] = map(u); first ? sctx.moveTo(x, y) : sctx.lineTo(x, y); first = false; } sctx.stroke(); };
     sctx.save(); sctx.strokeStyle = '#ff8a00'; sctx.lineWidth = 2 * dpr; sctx.setLineDash([6 * dpr, 5 * dpr]);
@@ -699,7 +705,8 @@ function draw3d() {
     const dot = (X, r, fill) => { const u = vc.project(X); if (u[2] > 0.05) { vctx.fillStyle = fill; vctx.beginPath(); vctx.arc(u[0], u[1], r, 0, 7); vctx.fill(); } };
     const fl = recentFlights();
     vctx.lineWidth = 1.5;
-    for (const f of fl) { vctx.strokeStyle = 'rgba(255,230,0,0.25)'; path(f.pts.map((q) => [q.X[0], q.X[1], 0])); vctx.strokeStyle = '#ffe600'; path(f.pts.map((q) => q.X)); }
+    for (const f of fl) { vctx.globalAlpha = flightAlpha(f); vctx.strokeStyle = 'rgba(255,230,0,0.25)'; path(f.pts.map((q) => [q.X[0], q.X[1], 0])); vctx.strokeStyle = '#ffe600'; path(f.pts.map((q) => q.X)); }
+    vctx.globalAlpha = 1;
     const P = S.showPredict && predicted(fl);
     if (P) {
       const pp = predParts(P);

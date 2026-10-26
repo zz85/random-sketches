@@ -152,8 +152,22 @@ describe('sparse tracking (track.js)', () => {
 // ---------- players and ball ----------
 import { detectPlayers, PlayerTracker } from './players.js';
 import { simulate, fitFlight, fitFlights, cutTrack, ballCandidates, toGray, predictPath } from './ball.js';
+import { Rally } from './rally.js';
 
 describe('players and ball', () => {
+  test('of two rival flights, the one the soundtrack agrees with is kept', () => {
+    // equally long and equally well fitted; one starts 50 ms after a heard hit and ends just before
+    // a heard wall impact, the other (a reflection, a racket) lines up with nothing
+    const fl = (t0, x) => ({ t0, t1: t0 + 0.4, rms: 1, uv: Array(20).fill([0, 0]), impacts: [], pts: [{ t: t0, X: [x, 5, 3] }, { t: t0 + 0.4, X: [x, 1, 2] }] });
+    for (const order of [0, 1]) {
+      const R = new Rally(); R.onsets = [9.5, 10.0, 10.47];
+      const ball = fl(10.05, 2), other = fl(10.2, 5);
+      R.add(order ? [ball] : [other]); R.add(order ? [other] : [ball]);
+      expect(R.flights).toEqual([ball]);
+      expect(ball.heard).toBe(2);
+    }
+    const R = new Rally(); const a = fl(10.05, 2), b = fl(10.2, 5); R.add([a]); R.add([b]); expect(R.flights).toEqual([a]); // no sound: the first stays
+  });
   test('players on the floor within 10 cm (true camera)', () => {
     const cam = Camera.fromLookAt([3.2, 13.5, 4], [3.2, 4.5, 0.6], 0, 900, 960, 540);
     const truth = [{ x: 2.0, y: 5.0 }, { x: 4.5, y: 7.0 }];

@@ -20,6 +20,7 @@ export class Rally {
     this.grays = []; // last three distinct frames: { g, t }
     this.ballT = new BallTracker({ gate: 12, slack: 0.6, maxMiss: 3, impacts: false, first: 40 });
     this.playerT = new PlayerTracker(); this.dets = []; this.tPlayers = -Infinity; this.flights = []; this.queue = [];
+    // (this.onsets survives a reset: it is the whole soundtrack)
     this.last = null; this.fgN = null; this.fgFrames = 0;
   }
   // Fixed things the colour model calls foreground (glass-door brackets, the bars under a score
@@ -80,7 +81,10 @@ export class Rally {
   // There is one ball: of flights that overlap in time (the ball and its reflection in the glass,
   // one track split in two, a racket swung beside it) the better supported one stays. Support is
   // its length in frames, less its fit error, plus a bonus when it starts where the ball can be
-  // expected to start: off a player's racket, or where a kept flight ended just before (a bounce).
+  // expected to start (off a player's racket, or where a kept flight ended just before: a bounce)
+  // and when the soundtrack agrees: an impact heard just before its first frame (the hit), just
+  // after its last (the wall or floor it was heading for) or at a fitted impact inside it.
+  // this.onsets: heard impact times in the same clock as the frames (sorted), or null.
   // Returns whether the list changed.
   add(flights) {
     let changed = false;
@@ -90,15 +94,21 @@ export class Rally {
       if (a.X[2] < 2.5 && players.some((X) => Math.hypot(a.X[0] - X[0], a.X[1] - X[1]) < 1.5)) return true;
       return this.flights.some((g) => g !== f && f.t0 - g.t1 > -0.05 && f.t0 - g.t1 < 0.2 && Math.hypot(...g.pts[g.pts.length - 1].X.map((v, j) => v - a.X[j])) < 1.0);
     };
-    const support = (g) => g.uv.length - 2 * g.rms + (g.startsWell ? 8 : 0);
+    const support = (g) => g.uv.length - 2 * g.rms + (g.startsWell ? 8 : 0) + 4 * (g.heard ?? 0);
     for (const f of flights) {
-      f.startsWell = startsWell(f);
+      f.startsWell = startsWell(f); f.heard = this.heardFor(f);
       const rivals = this.flights.filter((g) => Math.min(f.t1, g.t1) - Math.max(f.t0, g.t0) > 0.06);
       if (rivals.some((g) => support(g) >= support(f))) continue;
       this.flights = this.flights.filter((g) => !rivals.includes(g)); this.flights.push(f); changed = true;
     }
     this.flights.sort((a, b) => a.t0 - b.t0); if (this.flights.length > 40) this.flights.splice(0, this.flights.length - 40);
     return changed;
+  }
+  // how many of a flight's ends and impacts have a heard impact where one belongs (0-3)
+  heardFor(f) {
+    const on = this.onsets; if (!on || !on.length) return 0;
+    const any = (a, b) => { let lo = 0, hi = on.length; while (lo < hi) { const m = (lo + hi) >> 1; if (on[m] < a) lo = m + 1; else hi = m; } return lo < on.length && on[lo] <= b; };
+    return (any(f.t0 - 0.12, f.t0 + 0.02) ? 1 : 0) + (any(f.t1 - 0.02, f.t1 + 0.12) ? 1 : 0) + (f.impacts.some((m) => any(m.t - 0.04, m.t + 0.04)) ? 1 : 0);
   }
   // rejected tracks, with why, when this.debug is an array (diagnostics only)
   why(tr, reason) { if (this.debug) this.debug.push({ reason, pts: tr.pts.map((q) => ({ t: q.t, u: q.u, v: q.v })) }); return null; }

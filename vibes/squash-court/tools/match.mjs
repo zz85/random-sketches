@@ -70,6 +70,7 @@ async function chunk(file, ss, len, json) {
   const heard = abuf.length ? onsets(new Float32Array(abuf.buffer, abuf.byteOffset, abuf.length / 4), 32000).map((o) => +(o.t + ss).toFixed(4)) : [];
   const ff = spawn('ffmpeg', ['-v', 'error', '-ss', String(ss), '-t', String(len), '-i', file, '-an', '-vf', `scale=${W}:${H}`, '-f', 'rawvideo', '-pix_fmt', 'rgba', '-']);
   const tr = createTracker(), R = new Rally({ playerEvery: 0.2 }), dets = [], flights = [];
+  R.onsets = heard; // the ball flights the soundtrack agrees with are preferred (delay not known yet: raw)
   let stretch = 0, cam = null, lastCam = null, idx = 0, lastTry = -Infinity, courtSeconds = 0, lastOk = null, pending = Buffer.alloc(0);
   const keep = (win) => { // the rally's flight window replaces what it covers
     if (!win || !win.length) return;

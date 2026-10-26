@@ -2,7 +2,8 @@
 // tracking. The page runs two of these: one finds the players (slow, ~150-300 ms a frame), the
 // other the ball on every frame it can get (~20 ms), with the players' boxes passed in.
 // in:  { id, mode: 'players' | 'ball' | 'still', rgba (transferred), w, h, cam: { p, cx, cy }, t, tin,
-//        reset, boxes?, playerX? }   ('still': one player detection on a photo)
+//        reset, boxes?, playerX?, onsets? }   ('still': one player detection on a photo; onsets:
+//        heard impact times, sent when they change)
 // out: { id, players?, ball?, flights?, ms, dup } or { id, error }
 import { Camera } from './camera.js';
 import { Rally } from './rally.js';
@@ -12,7 +13,8 @@ const rally = new Rally({ playerEvery: 0 });
 const pack = (p, id) => ({ id: p.id ?? id, X: p.X, seen: p.seen ?? true, occluded: !!p.occluded, box: p.box ?? null, height: p.height });
 
 self.onmessage = (e) => {
-  const { id, mode, rgba, w, h, cam: c, t, tin, reset, boxes, playerX } = e.data;
+  const { id, mode, rgba, w, h, cam: c, t, tin, reset, boxes, playerX, onsets } = e.data;
+  if (onsets) rally.onsets = onsets; // heard impacts, video time, sent when they change
   try {
     const cam = new Camera(c.p, w, h, c.cx, c.cy), t0 = performance.now();
     if (mode === 'still') {
