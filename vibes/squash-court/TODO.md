@@ -41,6 +41,12 @@ Things we found worth doing but haven't done yet. The first item in each section
 - **Check T domination against results.** Run `match.mjs` on single full matches with a known winner, and see whether T control (share of the time each player is the nearer to the T) predicts it, as SquashAI set out to measure. On the Rehman v Hosny semifinal it is 56% / 44%; that result hasn't been looked up.
 - **T over time.** Each player's T share per rally or per minute, next to the speed chart.
 
+## Live and recordings
+
+- **Record the video with the session.** A recording today keeps what was analysed (positions, flights, bounces, shots), not the picture, so a camera session can't be watched back or re-analysed with a better tracker. `MediaRecorder` on the camera stream (WebM / MP4 by browser) would keep it; store it next to the session in IndexedDB, and on Open play it with the recorded analysis instead of the 3D replay alone. Check the phone keeps its frame rate while encoding, and the storage it needs (about 1 MB per 10 s at 720p).
+- **Still frames at each shot.** A cheaper alternative: one JPEG per named shot (or per floor bounce), shown next to its line in the commentary feed of a recording.
+- **A rally-by-rally list in a recording.** Jump the replay to each rally, with its shots.
+
 ## Data
 
 - **More labelled real footage.** SquashAI is 1,253 stills from 8 videos (2017–2020), with no ball labels and with gaps between frames too long to test tracking. A small labelling mode in the page, to click players' feet and ball positions on consecutive frames and export them, would give tracking ground truth.

@@ -91,12 +91,27 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
     // the time slider seeks, and typed names reach the labels and the commentary
     const sk = await b.evaluate(`(async()=>{const v=__sq.src,s=document.getElementById('seek');const shown=!document.getElementById('scrub').hidden;v.pause();s.value=0.5;s.dispatchEvent(new Event('input'));s.dispatchEvent(new Event('change'));await new Promise(r=>setTimeout(r,400));return {shown,t:v.currentTime,max:+s.max}})()`);
     check('time slider seeks the video', sk.shown && Math.abs(sk.t - 0.5) < 0.1 && sk.max > 1, JSON.stringify(sk));
+    // Live hides the panels behind a HUD over the full-width video; Analyse brings them back
+    const md = await b.evaluate(`(async()=>{const q=(m)=>document.querySelector('#modeBar [data-mode="'+m+'"]'),w=(ms)=>new Promise(r=>setTimeout(r,ms));
+      q('live').click(); await w(300); const a={aside:getComputedStyle(document.querySelector('aside')).display,hud:!document.getElementById('hud').hidden,hudTxt:document.getElementById('hud').textContent,stageW:Math.round(document.getElementById('stage').getBoundingClientRect().width)};
+      document.getElementById('hud').click(); await w(300); a.aside2=getComputedStyle(document.querySelector('aside')).display; a.hud2=!document.getElementById('hud').hidden; a.stageW2=Math.round(document.getElementById('stage').getBoundingClientRect().width); return a})()`);
+    check('Live / Analyse: Live is the video full width with a HUD, the HUD opens Analyse', md.aside === 'none' && md.hud && /shot/.test(md.hudTxt) && md.stageW >= 1390 && md.aside2 !== 'none' && !md.hud2 && md.stageW2 < 1000, JSON.stringify(md));
     await b.evaluate(`(()=>{const i=document.getElementById('name1');i.value='Elias';i.dispatchEvent(new Event('input'));return 1})()`);
     // commentary feed fills from shots, and Clear empties heatmaps, bounces and the feed
     await b.evaluate(`(()=>{const S=__sq;S.comm.update([{t0:0.2,t1:0.9,cam:[3,17,4],impacts:[{t:0.4,X:[5.9,0.02,1.4],plane:'front'}],pts:[0.2,0.3,0.5,0.7,0.9].map((t,i)=>({t,X:[5.8,[6,3,1,3,6][i],1.2-0.2*i],V:[0,i<2?-30:20,-2]}))}],[],()=>({id:1,dist:0.3,other:3}));return 1})()`);
     await b.evaluate(`(()=>{const S=__sq;const s=S.comm.shots[0];if(s){S.feed.push({id:s.id,t:s.t,shot:s,player:1,sure:true});}document.getElementById('name1').dispatchEvent(new Event('input'));return 1})()`);
     const nm = await b.evaluate(`[...document.querySelectorAll('#feed li')].map(l=>l.textContent).join(' | ')`);
     check('typed name used in the commentary', /Elias plays/.test(nm), nm.slice(0, 120));
+    // the session is saved, listed, and opens as a match with a 3D replay of the recorded flights
+    const rc = await b.evaluate(`(async()=>{const w=(ms)=>new Promise(r=>setTimeout(r,ms)),S=__sq;S.allFlights=[{cam:[3,17,4],t0:0.2,t1:0.5,speed:20,labels:['front'],impacts:[{t:0.3,X:[2,0,1.2],plane:'front'}],pts:[0.2,0.3,0.4,0.5].map((t,i)=>({t,X:[3-0.3*i,[5,0.1,2,3][i],1+0.2*i],V:[0,i?8:-9,1]}))}];const live={flights:S.allFlights.length,players:Object.keys(S.stats).length};
+      document.getElementById('recSave').click(); for(let i=0;i<50&&!document.querySelector('#recList li');i++) await w(100);
+      const li=document.querySelector('#recList li'); if(!li) return {live,none:true}; const txt=li.querySelector('span').textContent; li.querySelector('button').click(); await w(600);
+      const sk=document.getElementById('replaySeek'),yellow=()=>{const c=document.getElementById('view3d').getContext('2d').getImageData(0,0,480,300).data; let n=0; for(let i=0;i<c.length;i+=4) if(c[i]>200&&c[i+1]>180&&c[i+2]<80) n++; return n};
+      sk.value=0.45; sk.dispatchEvent(new Event('input')); await w(100); const yel=yellow(); sk.value=sk.max; sk.dispatchEvent(new Event('input')); await w(100); const yelLate=yellow();
+      sk.value=sk.min; sk.dispatchEvent(new Event('input')); await w(100);
+      return {live,txt,kind:S.match?.kind,replay:!document.getElementById('replayBar').hidden,flights:S.flights.length,players:S.match?.players?.length,heat:Object.keys(S.stats).length,yel,yelLate,mode:S.mode,t:+S.replayT.toFixed(2),t0:+S.replay.t0.toFixed(2)}})()`);
+    check('recordings: save the session, open it as a match with a 3D replay', rc.kind === 'session' && rc.replay && rc.players >= 1 && rc.heat >= 1 && rc.flights === 1 && rc.yel > 30 && rc.yel > rc.yelLate && /shots/.test(rc.txt) && rc.t === rc.t0 && rc.mode === 'analyse', JSON.stringify(rc));
+    await b.evaluate(`(async()=>{for(const li of document.querySelectorAll('#recList li')){window.confirm=()=>true;li.querySelectorAll('button')[2].click();}await new Promise(r=>setTimeout(r,300));return 1})()`);
     await b.evaluate(`document.getElementById('clear').click();1`);
     const cl = await b.evaluate(`({heat:Object.keys(__sq.stats).length,b:__sq.bounces.list.length,shots:__sq.comm.shots.length,feed:document.querySelectorAll('#feed li').length})`);
     check('Clear resets heatmaps, bounces and commentary', cl.heat === 0 && cl.b === 0 && cl.shots === 0 && cl.feed === 0, JSON.stringify(cl));

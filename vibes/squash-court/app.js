@@ -12,6 +12,7 @@ import { Commentary, describe, movement, mainView } from './commentary.js';
 import { TControl, tLabel, T_POINT } from './tcontrol.js';
 import { coachStats, posAtFromLogs, responsePatterns, ZONE_X, ZONE_Y } from './coaching.js';
 import { zoomOptions, currentOption } from './camzoom.js';
+import { keepFlights, toMatch, fromRecorded, playersAt as replayPlayersAt, Store } from './session.js';
 
 const $ = (id) => document.getElementById(id);
 const stage = $('stage'), sctx = stage.getContext('2d');
@@ -110,7 +111,7 @@ function comment() {
   S.coach = coachStats(S.comm.shots, posAtFromLogs(Object.fromEntries(Object.entries(S.stats).map(([id, st]) => [id, st.log]))));
 }
 function commentMoves() {
-  const t = S.src?.currentTime ?? 0;
+  const t = vt() ?? 0;
   for (const p of S.players) {
     if (!p.seen) continue;
     const st = S.stats[p.id], text = st && movement(p.id, p.X, st.speed, nameOf); if (!text) continue;
@@ -164,12 +165,12 @@ async function listen(url, v) {
 }
 // the ball's speed now: the fitted flight's velocity at the frame nearest the current time
 function ballNow() {
-  const t = S.src?.currentTime; if (t == null) return null;
+  const t = vt(); if (t == null) return null;
   for (const f of S.flights) if (t >= f.t0 - 0.02 && t <= f.t1 + 0.02) { const q = f.pts.reduce((a, b) => (Math.abs(b.t - t) < Math.abs(a.t - t) ? b : a)); if (q.V) return { X: q.X, speed: Math.hypot(...q.V) }; }
   return null;
 }
 const kmh = (v) => `${v.toFixed(1)} m/s (${(v * 3.6).toFixed(0)} km/h)`;
-const clearRally = () => { S.coach = null; S.stats = newStats(); S.tctl = new TControl(); S.bounces.clear(); S.comm.clear(); S.feed = []; S.moveSaid = {}; renderFeed(); S.players = []; S.ball = null; S.ballTrail = []; S.flights = []; S.rallyMs = {}; for (const R of rallyW) R.reset = true; };
+const clearRally = () => { S.coach = null; S.stats = newStats(); S.tctl = new TControl(); S.bounces.clear(); S.comm.clear(); S.feed = []; S.moveSaid = {}; renderFeed(); S.players = []; S.ball = null; S.ballTrail = []; S.flights = []; S.allFlights = []; S.replay = null; S.rallyMs = {}; for (const R of rallyW) R.reset = true; };
 window.__sq = S;
 
 // ---------- worker ----------
@@ -215,7 +216,7 @@ function feedBall(v, mediaTime) {
   // heard impacts (in video time) go along when they change, so the ball worker can prefer the
   // flight the soundtrack agrees with
   const on = heardTimes(), onKey = on ? `${on.length}:${S.audio.offset ?? 0}` : '', onsets = onKey !== R.onKey ? on ?? [] : undefined; R.onKey = onKey;
-  R.wk.postMessage({ mode: 'ball', rgba: img.data, w, h, cam: { p: cam.p, cx: cam.cx, cy: cam.cy }, t: mediaTime, tin: S.tin, reset: R.reset,
+  R.wk.postMessage({ mode: 'ball', rgba: img.data, w, h, cam: { p: cam.p, cx: cam.cx, cy: cam.cy }, t: mediaTime + (S.tShift || 0), tin: S.tin, reset: R.reset,
     boxes: seen.map((p) => p.box.map((x) => x * k)), playerX: seen.map((p) => p.X), onsets }, [img.data.buffer]);
   R.reset = false; (S.ballTs ??= []).push(mediaTime);
 }
@@ -246,7 +247,7 @@ async function analyse(mode = 'detect') {
   const redetect = !tracking && S.redetect; if (!tracking) S.redetect = false;
   const { img, k } = grab(tracking ? TRACK_W : DETECT_W);
   S.procFrame = { img: new ImageData(new Uint8ClampedArray(img.data), img.width, img.height), k };
-  const prev = tracking ? scaleCam(S.cam, k, img.width, img.height) : null, tGrab = S.src.currentTime;
+  const prev = tracking ? scaleCam(S.cam, k, img.width, img.height) : null, tGrab = vt();
   const video = S.src instanceof HTMLVideoElement;
   const t0 = performance.now();
   const r = await run(tracking ? 'track' : 'detect', img, prev && { p: prev.p, cx: prev.cx, cy: prev.cy }, tracking ? { tin: S.tin, dt: Math.abs((S.src.currentTime ?? 0) - (S.tAnalysed ?? 0)), ...TRACK_OPT } : { recall: !!(S.live && S.cam && !redetect) });
@@ -273,19 +274,23 @@ async function analyse(mode = 'detect') {
 function takeRally(q, k) {
   if (q.dup || !S.showRally) return;
   S.rallyMs[q.mode === 'ball' ? 'ball' : 'players'] = q.ms;
-  if (q.players) { S.players = q.players.map((p) => ({ ...p, box: p.box && p.box.map((v) => v / k) })); addPlayerStats(S.players, S.src.currentTime ?? 0); commentMoves(); }
+  if (q.players) { S.players = q.players.map((p) => ({ ...p, box: p.box && p.box.map((v) => v / k) })); addPlayerStats(S.players, vt() ?? 0); commentMoves(); }
   if (q.mode !== 'ball') return;
   S.ball = q.ball && { u: q.ball.u / k, v: q.ball.v / k, t: q.ball.t };
   if (S.ball) S.ballTrail.push(S.ball);
-  const t = S.src.currentTime ?? 0; S.ballTrail = S.ballTrail.filter((b) => b.t > t - 0.4 && b.t <= t + 0.05);
-  if (q.flights) { S.flights = q.flights.map((f) => ({ ...f, uv: f.uv.map(([u, v]) => [u / k, v / k]) })); S.bounces.update(S.flights, { onsets: heardTimes(), players: playersAt }); comment(); }
+  const t = vt() ?? 0; S.ballTrail = S.ballTrail.filter((b) => b.t > t - 0.4 && b.t <= t + 0.05);
+  if (q.flights) { S.flights = q.flights.map((f) => ({ ...f, uv: f.uv.map(([u, v]) => [u / k, v / k]) })); S.bounces.update(S.flights, { onsets: heardTimes(), players: playersAt }); comment(); S.allFlights = keepFlights(S.allFlights, S.flights); }
 }
 // flights to show at time t: the last 2 s of video (all of them for a still)
-const recentFlights = () => { const t = S.src?.currentTime; return t == null ? S.flights : S.flights.filter((f) => f.t1 > t - 2 && f.t0 <= t + 0.05); };
+function vt() {
+  if (S.match) return S.replayT ?? null;
+  const t = S.src?.currentTime; return t == null ? null : t + (S.tShift || 0);
+}
+const recentFlights = () => { const t = vt(); return t == null ? S.flights : S.flights.filter((f) => f.t1 > t - 2 && f.t0 <= t + 0.05); };
 const PCOL = ['#ff2d7a', '#2dd4ff', '#b4ff2d'];
 const pcol = (p) => PCOL[(p.id - 1) % PCOL.length];
 // a flight fades as it gets older, so the one the ball is on (or just left) stands out
-const flightAlpha = (f) => { const t = S.live ? S.src?.currentTime : null; return t == null || t <= f.t1 ? 1 : Math.max(0.15, 1 - (t - f.t1) / 1.5); };
+const flightAlpha = (f) => { const t = S.live || S.match ? vt() : null; return t == null || t <= f.t1 ? 1 : Math.max(0.15, 1 - (t - f.t1) / 1.5); };
 
 // ---------- sources ----------
 function useImage(el, w, h) {
@@ -302,7 +307,7 @@ function loadFile(file) {
   const im = new Image(); im.onload = () => useImage(im, im.naturalWidth, im.naturalHeight); im.src = url;
 }
 function useVideo(v) {
-  stopLive(); S.src = v; S.srcW = v.videoWidth; S.srcH = v.videoHeight; S.cam = null; S.picks = []; clearRally(); S.audio = null; S.match = null; S.live = true; fitStage();
+  stopLive(); S.sessionId = null; S.sessionStart = Date.now(); S.tShift = 0; S.src = v; S.srcW = v.videoWidth; S.srcH = v.videoHeight; S.cam = null; S.picks = []; clearRally(); S.audio = null; S.match = null; S.live = true; fitStage();
   // with sound if wanted; a browser that refuses unmuted playback without a fresh gesture gets it muted
   S.frameCb = watchFrames(v); if (!v.srcObject) loadNames();
   // time slider: seeking starts the ball and the players' tracks afresh (a jump is not a flight)
@@ -320,6 +325,7 @@ async function useCamera() {
     const st = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1280 } }, audio: false });
     const v = document.createElement('video'); v.srcObject = st; v.muted = true; v.playsInline = true;
     await v.play(); useVideo(v);
+    S.sessionId = `cam-${Date.now()}`; if (narrow()) setMode('live');
     camZoom = []; zoomSel = null; await refreshZoom();
     // the zoom chosen last time, if this camera offers it
     const want = localStorage.getItem('squash.zoom'), o = camZoom.find((q) => q.label === want);
@@ -351,6 +357,7 @@ async function setZoom(o) {
     if (o.deviceId && o.deviceId !== tr.getSettings?.().deviceId) {
       // another lens: a new stream on the same video element
       const ns = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: o.deviceId }, width: { ideal: 1280 }, ...(o.zoom != null ? { zoom: o.zoom } : {}) }, audio: false });
+      S.tShift = (S.tShift || 0) + v.currentTime; // the new stream's clock starts at 0
       st.getTracks().forEach((t) => t.stop()); v.srcObject = ns; await v.play();
       if (!v.videoWidth) await new Promise((r) => v.addEventListener('loadedmetadata', r, { once: true }));
       S.srcW = v.videoWidth; S.srcH = v.videoHeight; fitStage();
@@ -362,6 +369,7 @@ async function setZoom(o) {
   await refreshZoom();
 }
 function stopLive() {
+  if (S.live && S.src?.srcObject && S.sessionId) saveSession(); // leaving a camera session keeps it
   S.live = false; $('zoomBar').hidden = true; $('play').hidden = true; $('sound').hidden = true; $('scrub').hidden = true; $('cc').classList.add('off');
   if (S.src instanceof HTMLVideoElement) { S.src.pause(); S.src.srcObject?.getTracks().forEach((t) => t.stop()); }
 }
@@ -403,6 +411,7 @@ function pickCourt(u, v) {
 // ---------- drawing ----------
 let disp = { k: 1, ox: 0, oy: 0 };
 function fitStage() {
+  document.body.classList.toggle('nosrc', !S.src); // a match or a recording: no picture, the panels take the room
   const box = stage.parentElement.getBoundingClientRect(), dpr = devicePixelRatio || 1;
   stage.width = Math.round(box.width * dpr); stage.height = Math.round(box.height * dpr);
   if (!S.srcW) return;
@@ -419,7 +428,8 @@ function seg3(ctx, cam, a, b, map, n = 24) {
 }
 function draw() {
   sctx.setTransform(1, 0, 0, 1, 0, 0); sctx.fillStyle = '#111'; sctx.fillRect(0, 0, stage.width, stage.height);
-  if (!S.src) { if (S.match) { drawPlan(); drawWall(); drawSpeed(); drawPlayerHeat($('heat1'), 1); drawPlayerHeat($('heat2'), 2); drawCoach(); drawResp(); readout(); } return; }
+  hud();
+  if (!S.src) { if (S.match) { if (S.replay) { S.players = replayPlayersAt(S.replay.logs, S.replayT); draw3d(); } drawPlan(); drawWall(); drawSpeed(); drawPlayerHeat($('heat1'), 1); drawPlayerHeat($('heat2'), 2); drawCoach(); drawResp(); readout(); } return; }
   sctx.drawImage(S.src, disp.ox, disp.oy, S.srcW * disp.k, S.srcH * disp.k);
   const map = (u) => [disp.ox + u[0] * disp.k, disp.oy + u[1] * disp.k];
   const dpr = devicePixelRatio || 1;
@@ -436,6 +446,7 @@ function draw() {
     sctx.fillStyle = '#ff2d7a'; sctx.beginPath(); sctx.arc(x, y, 5 * dpr, 0, 7); sctx.fill();
     sctx.font = `${12 * dpr}px system-ui`; sctx.fillStyle = '#fff'; sctx.fillText(fmtX(p), x + 8 * dpr, y - 6 * dpr);
   }
+  if (S.mode === 'live') return; // the panels are hidden: not drawing them leaves the phone more time for the camera
   drawPlan(); drawWall(); draw3d(); drawSpeed(); drawPlayerHeat($('heat1'), 1); drawPlayerHeat($('heat2'), 2); drawCoach(); drawResp(); readout();
 }
 // players: a ring on the floor round the feet (dashed when the feet are hidden behind a graphic and
@@ -568,7 +579,7 @@ function drawSpeed() {
   const c = $('speed'), g = c.getContext('2d'), w = c.width, h = c.height;
   g.fillStyle = '#16181d'; g.fillRect(0, 0, w, h);
   const all = Object.entries(S.stats).filter(([, st]) => st.series && st.series.length);
-  const tEnd = S.match ? Math.max(1, ...all.map(([, st]) => st.series.at(-1).t)) : S.src?.currentTime ?? 0, span = S.match ? tEnd - Math.min(...all.map(([, st]) => st.series[0].t)) : 30, t0 = tEnd - span;
+  const tEnd = S.match ? Math.max(1, ...all.map(([, st]) => st.series.at(-1).t)) : vt() ?? 0, span = S.match ? tEnd - Math.min(...all.map(([, st]) => st.series[0].t)) : 30, t0 = tEnd - span;
   const vMax = 6, X = (t) => 28 + (t - t0) / span * (w - 34), Y = (v) => h - 14 - Math.min(v, vMax) / vMax * (h - 22);
   g.strokeStyle = '#333'; g.fillStyle = '#888'; g.font = '10px system-ui'; g.lineWidth = 1;
   for (let v = 0; v <= vMax; v += 2) { g.beginPath(); g.moveTo(28, Y(v)); g.lineTo(w - 6, Y(v)); g.stroke(); g.fillText(`${v}`, 8, Y(v) + 3); }
@@ -589,6 +600,10 @@ function useMatch(M, name) {
   S.feed = (M.shots ?? []).filter((s) => s.quality >= 2).map((s, i) => ({ id: i + 1, t: s.t, text: s.text, shot: s.kind && s.front ? s : null, player: s.player, sure: s.quality >= 3 })).reverse();
   S.coach = M.coach ?? null;
   S.srcName = 'match:' + M.source; loadNames(); renderFeed();
+  // a recorded session also replays in 3D: every player position and every ball flight
+  S.replay = fromRecorded(M); if (S.replay) { S.flights = S.replay.flights; S.replayT = S.replay.t1; }
+  if (M.names && (M.names[1] || M.names[2])) setNames(M.names, 'from the recording');
+  replayUI(); setMode('analyse');
   status(`${name}: ${(M.duration / 60).toFixed(1)} min, ${M.bounces.length} impacts, ${M.players.length} players`); draw();
 }
 // One player's heatmap on a plain court: time per 25 cm cell, in the player's colour.
@@ -773,7 +788,7 @@ function draw3d() {
 // still image (no time) shows it all ahead.
 const PASSED = 0.2, FADE = 0.6;
 function predParts(P) {
-  const now = S.live && S.src?.currentTime != null ? S.src.currentTime : -Infinity, end = P.pts[P.pts.length - 1].t;
+  const now = (S.live || S.match) && vt() != null ? vt() : -Infinity, end = P.pts[P.pts.length - 1].t;
   const k = P.pts.findIndex((q) => q.t > now), i = k < 0 ? P.pts.length : k;
   return { now, past: P.pts.slice(0, Math.min(P.pts.length, i + 1)), ahead: P.pts.slice(Math.max(0, i - 1)), alpha: now > end ? Math.max(0, 1 - (now - end) / FADE) : 1 };
 }
@@ -844,6 +859,84 @@ function exportJSON() {
   };
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })); a.download = 'squash-court.json'; a.click();
 }
+
+// ---------- Live / Analyse ----------
+// Live: the camera full screen with a small HUD of what is being recorded (on a phone there is no
+// room for the panels, and not drawing them leaves more time for the analysis). Analyse: the panels
+// (heatmaps, bounces, coaching, 3D replay). The analysis runs in both; a phone opens a camera in
+// Live and a recording in Analyse.
+S.mode = 'analyse';
+const narrow = () => matchMedia('(max-width: 800px), (max-height: 500px)').matches;
+function setMode(m) {
+  S.mode = m; document.body.classList.toggle('live', m === 'live');
+  for (const el of document.querySelectorAll('#modeBar button')) el.setAttribute('aria-pressed', String(el.dataset.mode === m));
+  fitStage(); draw();
+}
+for (const el of document.querySelectorAll('#modeBar button')) el.onclick = () => setMode(el.dataset.mode);
+$('hud').onclick = () => setMode('analyse');
+$('optsBtn').onclick = () => { const h = document.querySelector('header'), o = h.classList.toggle('opts-open'); $('optsBtn').setAttribute('aria-expanded', String(o)); fitStage(); draw(); };
+function hud() {
+  const el = $('hud'), on = S.mode === 'live' && S.live; el.hidden = !on; if (!on) return;
+  const rec = !!(S.src?.srcObject && S.sessionId), t = vt() ?? 0, shots = S.comm.shots.filter((s) => s.quality >= 2).length, fl = S.bounces.on('floor').length;
+  const who = Object.entries(S.stats).map(([id, st]) => `${nameOf(+id)} ${st.dist.toFixed(0)} m`).join('  ·  ');
+  const key = `${rec}|${clock(t).slice(0, -2)}|${shots}|${fl}|${who}`; if (key === S.hudKey) return; S.hudKey = key;
+  $('hudRec').hidden = !rec;
+  $('hudA').textContent = `${rec ? 'REC ' : ''}${clock(t).slice(0, -2)}  ·  ${shots} shot${shots === 1 ? '' : 's'}  ·  ${fl} bounce${fl === 1 ? '' : 's'}`;
+  $('hudB').textContent = who || 'looking for players…';
+}
+
+// ---------- recordings (session.js) ----------
+// Everything analysed so far, kept in the browser (IndexedDB): a camera session saves itself every
+// 20 s, when the page is hidden and when it ends; any other session on Save this session. A
+// recording opens as a match (heatmaps, bounces, coaching) with a 3D replay, and downloads as a
+// .json that Open… reads back.
+async function saveSession() {
+  if (S.match || !(Object.keys(S.stats).length || S.allFlights.length || S.bounces.list.length)) return null;
+  S.sessionId ??= `file-${Date.now()}`;
+  const M = toMatch({
+    source: S.src?.srcObject ? 'camera' : S.srcName || 'video', names: { ...S.names }, started: S.sessionStart ?? Date.now(), duration: vt() ?? 0,
+    stats: S.stats, tctl: Object.fromEntries(Object.keys(S.stats).map((id) => [id, S.tctl.summary(id)])), bounces: S.bounces.list, shots: S.comm.shots,
+    coach: S.coach, flights: S.allFlights, camera: S.cam, text: (s) => describe(s, nameOf),
+  });
+  const rec = { id: S.sessionId, date: M.started, source: M.source, duration: M.duration, shots: M.shots.filter((s) => s.quality >= 2).length, data: M };
+  try { await Store.put(rec); $('recNote').textContent = `saved ${new Date().toLocaleTimeString()}`; await refreshRecordings(); } catch (e) { $('recNote').textContent = `not saved: ${e.message}`; }
+  return rec;
+}
+async function refreshRecordings() {
+  let list = []; try { list = await Store.list(); } catch (e) { $('recNote').textContent = `recordings unavailable: ${e.message}`; }
+  const when = (d) => new Date(d).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  $('recList').replaceChildren(...list.map((r) => {
+    const li = document.createElement('li'), txt = document.createElement('span'), mk = (label, title, fn) => { const b = document.createElement('button'); b.textContent = label; b.title = title; b.onclick = fn; return b; };
+    txt.textContent = `${when(r.date)} · ${r.source} · ${clock(r.duration).slice(0, -2)} · ${r.shots} shots${r.id === S.sessionId && S.live && S.src?.srcObject ? ' (recording)' : ''}`;
+    li.append(txt,
+      mk('Open', 'Heatmaps, bounces, coaching and a 3D replay of this session', async () => { const x = await Store.get(r.id); if (x) useMatch(x.data, `${when(r.date)}, ${r.source}`); }),
+      mk('Download', 'As a .json file (Open… reads it back)', async () => { const x = await Store.get(r.id); if (!x) return; const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(x.data)], { type: 'application/json' })); a.download = `squash-session-${new Date(r.date).toISOString().slice(0, 16).replace(':', '')}.json`; a.click(); }),
+      mk('Delete', 'Delete this recording', async () => { if (!confirm(`Delete the recording from ${when(r.date)}?`)) return; await Store.remove(r.id); refreshRecordings(); }));
+    return li;
+  }));
+  $('recEmpty').hidden = list.length > 0;
+}
+$('recSave').onclick = () => saveSession().then((r) => { if (!r) $('recNote').textContent = 'nothing analysed yet'; });
+setInterval(() => { if (S.live && S.src?.srcObject && S.sessionId) saveSession(); }, 20000);
+document.addEventListener('visibilitychange', () => { if (document.hidden && S.live && S.src?.srcObject && S.sessionId) saveSession(); });
+refreshRecordings();
+// the replay: a time slider and play / pause for the 3D view of a recording
+function replayUI() {
+  const R = S.replay; $('replayBar').hidden = !R;
+  if (!R) { cancelAnimationFrame(S.replayRaf); S.replayRaf = 0; return; }
+  const sk = $('replaySeek'); sk.min = R.t0; sk.max = R.t1; sk.value = S.replayT;
+  $('replayT').textContent = `${clock(S.replayT - R.t0).slice(0, -2)} / ${clock(R.t1 - R.t0).slice(0, -2)}`;
+  $('replayPlay').textContent = S.replayRaf ? '❚❚' : '▶'; $('replayPlay').setAttribute('aria-label', S.replayRaf ? 'Pause the replay' : 'Play the replay');
+}
+$('replaySeek').oninput = (e) => { S.replayT = +e.target.value; replayUI(); draw(); };
+$('replayPlay').onclick = () => {
+  const R = S.replay; if (!R) return;
+  if (S.replayRaf) { cancelAnimationFrame(S.replayRaf); S.replayRaf = 0; replayUI(); return; }
+  if (S.replayT >= R.t1 - 0.05) S.replayT = R.t0;
+  let last = performance.now();
+  const step = (now) => { S.replayT = Math.min(R.t1, S.replayT + (now - last) / 1000); last = now; if (S.replayT >= R.t1) S.replayRaf = 0; else S.replayRaf = requestAnimationFrame(step); replayUI(); draw(); };
+  S.replayRaf = requestAnimationFrame(step); replayUI();
+};
 
 // ---------- events ----------
 $('file').onchange = (e) => e.target.files[0] && loadFile(e.target.files[0]);
