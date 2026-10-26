@@ -136,7 +136,9 @@ try {
   await pen(line(200, 300, 700, 260, 60, 6));
   await sleep(1500);
   check(await ev('__aq.sim.wet'), 'pen stroke makes the paper wet');
-  const s1 = await stat(200, 230, 700, 330);
+  let s1 = await stat(200, 230, 700, 330);
+  // under heavy CPU load the first read can come before the frame that composites the stroke
+  for (let i = 0; i < 10 && s1.mean >= s0.mean - 4; i++) { await sleep(300); s1 = await stat(200, 230, 700, 330); }
   check(s1.mean < s0.mean - 4, 'stroke lays down pigment', `${s0.mean.toFixed(1)} -> ${s1.mean.toFixed(1)}`);
 
   // 2. wet-in-wet: wet a patch with the clear water brush, drop rose and yellow into it
@@ -493,14 +495,21 @@ try {
   check((await ev('__aq.S.brush.round.size')) > size0 * 1.2, 'dragging on the size chip changes the size', `${size0.toFixed(1)} -> ${(await ev('__aq.S.brush.round.size')).toFixed(1)}`);
   // zoom slider
   await ev('__aq.fit(1); true'); await sleep(150);
-  const zt = await ev(`(() => { const r = document.querySelector('#zoomTrack .track').getBoundingClientRect(); return [r.left + r.width / 2, r.top, r.bottom]; })()`);
+  const zt = await ev(`(() => { const r = document.querySelector('#zoomPct').getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
   const zr0 = await ev('__aq.view.z / __aq.baseZ()');
-  await c.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: zt[0], y: zt[1] + (zt[2] - zt[1]) * 0.15, button: 'left', buttons: 1, clickCount: 1 });
-  await c.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: zt[0], y: zt[1] + (zt[2] - zt[1]) * 0.15, button: 'left', buttons: 0, clickCount: 1 });
+  await c.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: zt[0], y: zt[1], button: 'left', buttons: 1, clickCount: 1 });
+  for (let i = 1; i <= 10; i++) await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: zt[0], y: zt[1] - i * 8, button: 'left', buttons: 1 });
+  await c.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: zt[0], y: zt[1] - 80, button: 'left', buttons: 0, clickCount: 1 });
   await sleep(150);
   const zr1 = await ev('__aq.view.z / __aq.baseZ()');
-  check(zr1 > zr0 * 2, 'zoom slider zooms in', `${(zr0 * 100).toFixed(0)}% -> ${(zr1 * 100).toFixed(0)}%`);
+  check(zr1 > zr0 * 2, 'dragging up on the % zooms in', `${(zr0 * 100).toFixed(0)}% -> ${(zr1 * 100).toFixed(0)}%`);
   check(await ev(`document.querySelector('#zoomPct').textContent`) === Math.round(zr1 * 100) + '%', 'and the % follows it');
+  const zh = await ev(`document.querySelector('#zoomBar').getBoundingClientRect().height`);
+  check(zh < 140, 'the zoom bar is compact', zh.toFixed(0) + ' px tall');
+  for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x: zt[0], y: zt[1], button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1 });
+  await sleep(150);
+  const zr2 = await ev('__aq.view.z / __aq.baseZ()');
+  check(zr2 < zr1 * 0.8, 'tapping the % goes back to the page', `${(zr2 * 100).toFixed(0)}%`);
   await ev('__aq.fit(1); true');
   // tapping a tool shows its name
   await c.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });

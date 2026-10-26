@@ -259,31 +259,35 @@ function updateZoomLabel() {
   const rel = view.z / baseZ(), p = Math.round(rel * 100) + '%';
   if (p !== lastPct) {
     $('#zoomPct').textContent = p; lastPct = p;
-    const [lo, hi] = zoomRange(), t = Math.min(1, Math.max(0, Math.log(rel / lo) / Math.log(hi / lo)));
-    $('#zoomTrack .fill').style.height = t * 100 + '%'; $('#zoomTrack .knob').style.top = (1 - t) * 100 + '%';
   }
 }
+// the % is the zoom slider: drag up / down on it to zoom (logarithmic, finer when dragging
+// sideways, a detent at the whole page); a tap toggles whole page / your zoom
 {
   let drag = null;
-  const el = $('#zoomTrack'), relAt = (t) => { const [lo, hi] = zoomRange(); return lo * Math.pow(hi / lo, Math.min(1, Math.max(0, t))); };
-  const setT = (t) => {
-    let rel = relAt(t); if (Math.abs(rel - 1) < 0.04) rel = 1; // a detent at the whole page
-    const A = freeArea(); zoomAt(A.left + A.w / 2, A.top + A.h / 2, rel * baseZ() / view.z); clampView(); updateZoomLabel();
-  };
+  const el = $('#zoomPct');
   el.addEventListener('pointerdown', (e) => {
     e.preventDefault(); e.stopPropagation(); el.setPointerCapture(e.pointerId);
-    const r = el.querySelector('.track').getBoundingClientRect(), [lo, hi] = zoomRange();
-    let t = Math.log(view.z / baseZ() / lo) / Math.log(hi / lo);
-    if (Math.abs(e.clientY - (r.top + (1 - t) * r.height)) > 22) { t = 1 - (e.clientY - r.top) / r.height; setT(t); }
-    drag = { y: e.clientY, t, h: r.height };
+    drag = { y: e.clientY, x: e.clientX, rel: view.z / baseZ(), moved: false };
   });
-  el.addEventListener('pointermove', (e) => { if (drag) setT(drag.t - (e.clientY - drag.y) / drag.h); });
-  const up = () => { drag = null; };
+  el.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const dy = e.clientY - drag.y; if (Math.abs(dy) > 4) drag.moved = true;
+    if (!drag.moved) return;
+    const [lo, hi] = zoomRange(), fine = 1 / (1 + Math.abs(e.clientX - drag.x) / 50);
+    // 200 px of drag covers the whole range
+    let rel = Math.min(hi, Math.max(lo, drag.rel * Math.pow(hi / lo, -dy / 200 * fine)));
+    if (Math.abs(rel - 1) < 0.04) rel = 1;
+    const A = freeArea(); zoomAt(A.left + A.w / 2, A.top + A.h / 2, rel * baseZ() / view.z); clampView(); updateZoomLabel(); userMovedView = true; needsRender = true;
+  });
+  let viaPointer = 0;
+  const up = (e) => { const d = drag; drag = null; if (d) viaPointer = performance.now(); if (d && !d.moved && e.type === 'pointerup') zoomToggle(); };
   el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
+  // keyboard (Enter / Space) and other clicks without a pointer still toggle
+  el.onclick = (e) => { e.stopPropagation(); if (performance.now() - viaPointer > 400) zoomToggle(); };
 }
 $('#zoomIn').onclick = (e) => { e.stopPropagation(); zoomBy(1.25); };
 $('#zoomOut').onclick = (e) => { e.stopPropagation(); zoomBy(1 / 1.25); };
-$('#zoomPct').onclick = (e) => { e.stopPropagation(); zoomToggle(); };
 resize();
 addEventListener('resize', onResize);
 window.visualViewport?.addEventListener('resize', onResize);

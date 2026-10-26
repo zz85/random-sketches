@@ -218,9 +218,10 @@
   body.penmode #zoomBar { bottom: calc(10px + var(--safe-b)); }
   body.right #zoomBar { right: auto; left: calc(10px + var(--safe-l)); }
   #zoomBar .ico { width: 40px; height: 40px; }
-  #zoomTrack { height: 110px; margin: 6px 0; }
-  #zoomTrack .fill { background: rgba(255, 255, 255, 0.22); }
-  #zoomPct { width: 44px; height: 30px; border-radius: 8px; font-size: 11.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  #zoomPct { width: 44px; height: 34px; border-radius: 8px; font-size: 11.5px; font-weight: 600; font-variant-numeric: tabular-nums; touch-action: none; cursor: ns-resize; position: relative; }
+  /* a small up / down grip so it reads as draggable */
+  #zoomPct::before, #zoomPct::after { content: ''; position: absolute; left: 50%; margin-left: -3px; border: 3px solid transparent; opacity: 0.45; }
+  #zoomPct::before { top: 1px; border-bottom-color: currentColor; } #zoomPct::after { bottom: 1px; border-top-color: currentColor; }
   #pagePop { left: 50%; transform: translateX(-50%); width: min(440px, calc(100% - 20px)); }
   #pageGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 12px 10px; padding: 6px 4px; }
   .pg { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 11.5px; color: var(--dim); }
@@ -249,7 +250,7 @@
   body.eink .pc.on, body.eink .sw.on, body.eink .well.on { outline: 3px solid #000; outline-offset: 3px; }
   body.eink .well.part::after { background: #000; border-color: #fff; }
   body.eink .vs .track { background: #fff; border: 2px solid #000; width: 8px; left: 17px; }
-  body.eink .vs .fill, body.eink #sliders[data-k="water"] .fill, body.eink #zoomTrack .fill { background: #000; }
+  body.eink .vs .fill, body.eink #sliders[data-k="water"] .fill { background: #000; }
   body.eink .chip.on { background: #000; } body.eink .chip.on b, body.eink .chip.on small { color: #fff; }
   body.eink .vs .knob { background: #fff; border: 2px solid #000; }
   body.eink #mixToggle { border: 2px solid #000; color: #000; }
@@ -284,7 +285,7 @@
     #brushPop { width: min(340px, calc(100% - 76px)); left: calc(58px + var(--safe-l)); }
     #colPop { bottom: calc(70px + var(--safe-b)); }
   }
-  @media (max-width: 720px) and (max-height: 700px) { .vs { height: 100px; } #zoomTrack { height: 70px; } }
+  @media (max-width: 720px) and (max-height: 700px) { .vs { height: 100px; } }
   /* phones: fewer buttons up top (tilt, full screen and help are in the menu) */
   @media (max-width: 480px) {
     #tiltBtn, #fsBtn, #helpBtn { display: none !important; }
@@ -406,8 +407,7 @@
 
 <div id="zoomBar" class="panel">
   <button class="ico" id="zoomIn" title="Zoom in (+)"><svg><use href="#i-zin"/></svg></button>
-  <div class="vs" id="zoomTrack" title="Zoom — drag"><div class="track"><div class="fill"></div></div><div class="knob"></div></div>
-  <button id="zoomPct" title="Whole page / your zoom (0)">100%</button>
+  <button id="zoomPct" title="Zoom — drag up or down; tap for the whole page">100%</button>
   <button class="ico" id="zoomOut" title="Zoom out (−)"><svg><use href="#i-zout"/></svg></button>
 </div>
 
