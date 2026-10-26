@@ -120,7 +120,7 @@ export function segments(pts, w, h, { minLen = 14, tol = 1.0 } = {}) {
     if (comp.length < minLen * 0.7) continue;
     split(comp);
   }
-  function split(idx) {
+  function split(idx, ridged = false) {
     if (idx.length < minLen * 0.7) return;
     // principal axis
     let mx = 0, my = 0; for (const j of idx) { mx += pts[j].x; my += pts[j].y; } mx /= idx.length; my /= idx.length;
@@ -137,7 +137,19 @@ export function segments(pts, w, h, { minLen = 14, tol = 1.0 } = {}) {
     }
     if (worst > tol) {
       if (wi < 3 || wi > ord.length - 4) { // an outlier at an end: drop it
-        ord.splice(wi, 1); return split(ord.map((o) => o[0]));
+        ord.splice(wi, 1); return split(ord.map((o) => o[0]), ridged);
+      }
+      // two parallel ridges: a wide line (near the camera, or a red line on wood) gives a centre
+      // line at each of its edges, 1-3 px apart and 8-connected, which is never straight as one
+      // and chopped by Douglas-Peucker into pieces too short to keep. Split by side instead when
+      // both sides run most of the length; each then stands or falls on its own
+      if (!ridged) {
+        const side = ord.map((o) => { const p = pts[o[0]]; return -(p.x - mx) * uy + (p.y - my) * ux > 0; });
+        const P = ord.filter((o, i) => side[i]), N = ord.filter((o, i) => !side[i]);
+        const ext = (g) => (g.length ? g[g.length - 1][1] - g[0][1] : 0);
+        if (P.length >= minLen * 0.7 && N.length >= minLen * 0.7 && ext(P) > 0.6 * len && ext(N) > 0.6 * len) {
+          split(P.map((o) => o[0]), true); split(N.map((o) => o[0]), true); return;
+        }
       }
       split(ord.slice(0, wi).map((o) => o[0])); split(ord.slice(wi).map((o) => o[0])); return;
     }
@@ -471,7 +483,14 @@ export function total(cam, F, S, model) {
 export function detectCourt(rgba, W, H, opt = {}) {
   const t0 = now(), sizes = opt.workWidth ? [opt.workWidth] : opt.sizes || [640, 480];
   let best = null;
-  const fine = features(rgba, W, H, { ...opt, workWidth: sizes[0] });
+  const fine = opt.features || features(rgba, W, H, { ...opt, workWidth: sizes[0] });
+  // fast path: when the service boxes are found and the camera they give passes a stricter
+  // version of the court test, the global search is not needed
+  if (opt.fast !== false) {
+    const r = detectFromBoxes(fine, opt);
+    if (r.accept) { r.ms = { features: fine.ms, boxes: r.msBoxes, total: now() - t0 }; return r; }
+    opt = { ...opt, boxTried: r };
+  }
   for (const ww of sizes) {
     const r = detectAt(rgba, W, H, { ...opt, workWidth: ww, features: ww === sizes[0] ? fine : undefined });
     // judge on the fine features (polished there first)
@@ -484,6 +503,54 @@ export function detectCourt(rgba, W, H, opt = {}) {
   const res = finish({ cam: best.c, ...best.sc }, fine, best.S, opt);
   res.ms = { features: fine.ms, total: now() - t0 };
   res.features = fine; res.workWidth = best.ww; res.candidates = best.r.candidates; res.tin = best.r.tin;
+  res.path = 'search';
+  return res;
+}
+
+// Fast path: the camera from the service boxes alone (boxes.js), refined, probed along the zoom /
+// distance valley and polished like a search candidate. `accept` is set when the fit would pass
+// the court test with a margin: enough lines matched, two of them on the floor, most of the
+// projected model on image lines. Otherwise the caller runs the global search.
+export function detectFromBoxes(F, opt = {}) {
+  const t0 = now();
+  const seeds = boxSeeds(F).seeds;
+  if (!seeds.length) return { ok: false, accept: false, nSeeds: 0, msBoxes: now() - t0 };
+  const { model, pts: S } = modelSamples(0.48, 0.08), Sc = modelSamples(0.48, 0.25).pts;
+  const tauC = Math.max(4, F.w / 80), tried = [];
+  for (const cam of seeds) {
+    let c = refine(cam, F, Sc, { tau: tauC * 1.5, iters: 14, minTau: tauC / 2 }).cam;
+    c = refine(c, F, S, { tau: tauC, iters: 10, minTau: 1.2 }).cam;
+    tried.push({ cam: c, ...total(c, F, S, model) });
+  }
+  tried.sort((a, b) => b.score - a.score);
+  const lead = [];
+  for (const t of tried) { if (!lead.some((u) => same(u.cam, t.cam))) lead.push(t); if (lead.length >= 2) break; }
+  for (const t of lead.slice(0, 1)) for (const k of [0.8, 1.25]) {
+    let c = refine(dolly(t.cam, k), F, Sc, { tau: tauC * 2, iters: 12, minTau: tauC / 2 }).cam;
+    c = refine(c, F, S, { tau: tauC, iters: 10, minTau: 1.2 }).cam;
+    const sc = total(c, F, S, model);
+    if (sc.score > lead[0].score) lead.push({ cam: c, ...sc });
+  }
+  let best = null;
+  for (const t of lead) for (const tin of opt.tin ? [opt.tin] : TINS) {
+    const M = modelSamples(tin, 0.08);
+    const r = refine(t.cam, F, M.pts, { tau: 2.5, iters: 12, minTau: 1, free: [1, 1, 1, 1, 1, 1, 1, opt.distortion === false ? 0 : 1] });
+    const sc = total(r.cam, F, M.pts, M.model), s0 = total(t.cam, F, M.pts, M.model);
+    const pick = sc.score >= s0.score ? { cam: r.cam, ...sc, tin } : { cam: t.cam, ...s0, tin };
+    if (!best || pick.score > best.score) best = pick;
+  }
+  const res = finish(best, F, modelSamples(best.tin, 0.08).pts, opt);
+  const hit = res.lines.filter((l) => l.vis > 0.25 && l.frac > 0.5);
+  const nFloor = hit.filter((l) => l.kind === 'floor').length, nWall = hit.length - nFloor;
+  // a wall line too: floor lines alone can be fitted onto the boxes by a much too close camera
+  // that pushes everything else out of frame (or onto a score bug)
+  const A = { matched: 5, floor: 3, wall: 1, coverage: 0.55, floorOnly: 0.8, ...opt.boxAccept };
+  // ...unless nearly all of the projected model is on image lines (an overhead view shows no wall)
+  res.accept = res.ok && res.matched >= A.matched && nFloor >= A.floor && res.coverage >= A.coverage && (nWall >= A.wall || res.coverage >= A.floorOnly);
+  res.nFloor = nFloor; res.nWall = nWall; res.nSeeds = seeds.length; res.tin = best.tin; res.features = F; res.workWidth = F.w;
+  res.path = 'boxes'; res.msBoxes = now() - t0;
+  res.candidates = tried.slice(0, opt.nCandidates ?? 5).map((t) => ({ score: t.score, cam: toFull(t.cam, F) }));
+  res.tried = tried;
   return res;
 }
 
@@ -523,8 +590,11 @@ function detectAt(rgba, W, H, opt = {}) {
   // refine each, re-score both ways (model on image lines, image lines on the model)
   let best = null;
   const tried = [];
-  // seeds from the service boxes go first: when the boxes are visible they are close to exact
-  const boxes = opt.boxes === false ? [] : boxSeeds(F).seeds.map((cam) => ({ cam, box: true }));
+  // seeds from the service boxes go first: when the boxes are visible they are close to exact.
+  // When the fast path already refined them on these features, its results are reused as they are
+  const pre = opt.boxTried?.features === F ? opt.boxTried.tried : null;
+  if (pre) for (const t of pre) { tried.push({ ...t, box: true }); if (!best || t.score > best.score) best = { ...t }; }
+  const boxes = pre || opt.boxes === false ? [] : boxSeeds(F).seeds.map((cam) => ({ cam, box: true }));
   for (const { cam, box } of [...boxes, ...top]) {
     let c = refine(cam, F, Sc, { tau: tauC * (box ? 1.5 : 2.5), iters: 14, minTau: tauC / 2 }).cam;
     c = refine(c, F, S, { tau: tauC, iters: 10, minTau: 1.2 }).cam;

@@ -31,7 +31,7 @@ self.onmessage = (e) => {
         if (r.ok) reset(r.cam, r.tin, opt);
       }
     }
-    self.postMessage({ id, mode, path, ok: r.ok, cam: pack(r.cam), tin: r.tin, quality: { coverage: r.coverage, recall: r.recall, rms: r.rms, score: r.score, good: r.good, matched: r.matched }, ms: r.ms, mount: tracker.mount });
+    self.postMessage({ id, mode, path, via: r.path, ok: r.ok, cam: pack(r.cam), tin: r.tin, quality: { coverage: r.coverage, recall: r.recall, rms: r.rms, score: r.score, good: r.good, matched: r.matched }, ms: r.ms, mount: tracker.mount });
   } catch (err) {
     self.postMessage({ id, mode, error: String(err && err.stack || err) });
   }

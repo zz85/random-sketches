@@ -93,6 +93,29 @@ export function cameraFromFloorH(H, w, h, cx, cy, focal = null) {
   return new Camera([...rotToRodrigues(R), ...C, Math.log(f), 0], w, h, cx, cy);
 }
 
+// Pose (rotation and position, focal fixed) that puts world points W on image points I:
+// Gauss-Newton with a numeric Jacobian, a few iterations from a close start.
+export function fitCorners(cam, W, I, iters = 6) {
+  let c = cam;
+  const res = (c) => { const r = []; for (let k = 0; k < W.length; k++) { const u = c.project(W[k]); if (!(u[2] > 0)) return null; r.push(u[0] - I[k][0], u[1] - I[k][1]); } return r; };
+  for (let it = 0; it < iters; it++) {
+    const r0 = res(c); if (!r0) return null;
+    const J = [];
+    for (let j = 0; j < 6; j++) {
+      const p = c.p.slice(), h = j < 3 ? 1e-5 : 1e-4; p[j] += h;
+      const r1 = res(c.with(p)); if (!r1) return null;
+      J.push(r1.map((v, i) => (v - r0[i]) / h));
+    }
+    const A = new Float64Array(36), b = new Float64Array(6);
+    for (let a = 0; a < 6; a++) { for (let e = 0; e < 6; e++) { let s = 0; for (let i = 0; i < r0.length; i++) s += J[a][i] * J[e][i]; A[a * 6 + e] = s + (a === e ? 1e-6 : 0); } let s = 0; for (let i = 0; i < r0.length; i++) s += J[a][i] * r0[i]; b[a] = -s; }
+    const x = solve(A, b, 6); if (!x) return null;
+    const p = c.p.slice(); for (let j = 0; j < 6; j++) p[j] += x[j];
+    c = c.with(p);
+    if (Math.hypot(...x.slice(3)) < 1e-4) break;
+  }
+  return c;
+}
+
 // Seeds: every image quad of box corners that looks like the two service boxes.
 export function boxSeeds(F, { max = 48, gap = 6, probe = 14 } = {}) {
   const lines = mergeLines(F.segs.filter((s) => (s.wt ?? 1) > 0.3)).filter((l) => l.len >= 8);
@@ -127,9 +150,12 @@ export function boxSeeds(F, { max = 48, gap = 6, probe = 14 } = {}) {
     }
   }
   const seeds = [];
+  // The short line is often found in pieces (a player stands on it, lens distortion bends it
+  // across the court), so the two T junctions only need to lie on one line, not on one piece.
+  const sameLine = (A, B, P) => A === B || (Math.abs(A.ux * B.uy - A.uy * B.ux) < Math.sin(4 * Math.PI / 180) && Math.abs((P.x - A.px) * A.nx + (P.y - A.py) * A.ny) < 3);
   for (let i = 0; i < sides.length; i++) for (let k = i + 1; k < sides.length; k++) {
     const s1 = sides[i], s2 = sides[k];
-    if (s1.T.S !== s2.T.S) continue; // both on the same short line
+    if (!sameLine(s1.T.S, s2.T.S, s2.T) || !sameLine(s2.T.S, s1.T.S, s1.T)) continue; // both on the short line
     const ex = s2.T.x - s1.T.x, ey = s2.T.y - s1.T.y, d = Math.hypot(ex, ey);
     if (d < 12) continue;
     // stems on the same side of the short line; each box back turns outward, away from the other box
@@ -145,8 +171,12 @@ export function boxSeeds(F, { max = 48, gap = 6, probe = 14 } = {}) {
       if (f0 && f0 > 0.2 * F.w && f0 < 30 * F.w) fl.push(f0);
       for (const hf of [20, 30, 40, 50, 62, 75, 90]) fl.push(F.w / 2 / Math.tan(hf * Math.PI / 360));
       const support = s1.len + s2.len + d;
+      const Wp = [[xa, SHORT, 0], [xa, BACK, 0], [xb, SHORT, 0], [xb, BACK, 0]];
       for (const f of fl) {
-        const cam = cameraFromFloorH(Hm, F.w, F.h, F.cx, F.cy, f);
+        let cam = cameraFromFloorH(Hm, F.w, F.h, F.cx, F.cy, f);
+        // a focal other than the homography's own leaves the pose only roughly on the corners:
+        // put it back on them, so every rung of the ladder starts with the boxes in place
+        if (cam && f !== f0) cam = fitCorners(cam, Wp, I);
         if (cam && cam.C[2] > 0.3 && (cam.C[1] > 0.3 || cam.C[2] > 4.7)) seeds.push({ cam, support, quad: I });
       }
     }
