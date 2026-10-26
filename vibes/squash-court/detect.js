@@ -281,15 +281,19 @@ export const FRONT_CAM_Z = 0.6;
 // Behind the front wall a camera sees the floor over the tin, which is opaque on every court, so
 // one more than 0.6 m behind it is at least tin height.
 export const plausible = (cam) => (cam.C[1] > 0.3 || cam.C[2] > 4.7 || (cam.C[1] < -0.05 && cam.C[2] > 0.5) || (cam.C[2] < FRONT_CAM_Z && cam.C[1] > -0.6)) && cam.C[2] > 0.3 && cam.f > 30 && Math.abs(cam.k1) < 0.5
-  // a camera at or behind the front wall looks through it, or through a front corner, so stands about within its width
-  && !(cam.C[1] < 0.3 && cam.C[2] < 4.7 && (cam.C[0] < -1 || cam.C[0] > 7.4));
+  // a camera at or behind the front wall looks through it or through a front corner: close in, it
+  // stands about within its width; further back (a zoomed camera in the stand behind a glass front
+  // wall) it can be off to one side, as long as the front wall is between it and the court
+  && !(cam.C[1] < 0.3 && cam.C[2] < 4.7 && (cam.C[0] < -1 + 0.4 * Math.min(0, cam.C[1]) || cam.C[0] > 7.4 - 0.4 * Math.min(0, cam.C[1])));
 
 // The wall line on the glass right in front of a camera behind that wall is out of frame or a blur,
 // never usable: the back wall line for a camera behind the back wall, the front wall lines (out line,
-// service line, tin) for a front camera in or just behind the front wall. Further back, through a
-// glass front wall, the tin (opaque on every court) and the lines are in view and count.
+// service line, tin) for a front camera in or just behind the front wall, and for a camera well back
+// behind a glass front wall (a zoomed camera in the stand: they are out of focus and do not show).
+// In between, a metre or two behind the glass, they count: that keeps a tin camera from sliding
+// back along its view.
 // A camera in a side wall's plane (a front-corner camera) sees that wall's out line edge-on: skip it too.
-export const skip = (cam, kind, name) => (kind === 'back' && cam.C[1] > 9.45) || (kind === 'front' && cam.C[1] < 0.3 && cam.C[1] > -0.6 && cam.C[2] < 4.7)
+export const skip = (cam, kind, name) => (kind === 'back' && cam.C[1] > 9.45) || (kind === 'front' && cam.C[2] < 4.7 && ((cam.C[1] < 0.3 && cam.C[1] > -0.6) || cam.C[1] < -2.5))
   || (kind === 'side' && Math.abs(cam.C[0] - (name === 'side-out-R' ? 0 : 6.4)) < 0.08);
 // The front / corner camera: at the front wall and low, looking back down the court.
 export const isFront = (cam) => cam.C[1] < 1 && cam.C[2] < 2.5 && cam.R[7] > 0.5;
@@ -676,7 +680,7 @@ function detectAt(rgba, W, H, opt = {}) {
     for (const t of tried.slice().sort((a, b) => b.score - a.score)) { if (!lead.some((u) => same(u.cam, t.cam))) lead.push(t); if (lead.length >= 3) break; }
     // not for a front camera: it stands at the front wall, and walking it back along its view would
     // put it behind the wall, where only the lines it already fits are in view to argue
-    for (const t of lead) if (!isFront(t.cam)) for (const k of [0.72, 0.85, 1.15, 1.3, 1.5]) {
+    for (const t of lead) if (!isFront(t.cam) || t.cam.C[1] < -1.5) for (const k of [0.72, 0.85, 1.15, 1.3, 1.5]) {
       let c = refine(dolly(t.cam, k), F, Sc, { tau: tauC * 2, iters: 12, minTau: tauC / 2 }).cam;
       c = refine(c, F, S, { tau: tauC, iters: 10, minTau: 1.2 }).cam;
       const sc = total(c, F, S, model); tried.push({ cam: c, ...sc });
@@ -756,7 +760,7 @@ function toFull(cam, F) { const p = cam.p.slice(); p[6] += Math.log(F.scale); re
 export function toWorkCam(cam, F) { const p = cam.p.slice(); p[6] -= Math.log(F.scale); return new Camera(p, F.w, F.h, cam.cx / F.scale, cam.cy / F.scale); }
 
 // Quality numbers and the camera in original pixels.
-function finish(best, F, S, opt) {
+export function finish(best, F, S, opt) {
   if (!best) return { ok: false };
   const cam = best.cam;
   // fraction of image court-line weight the model explains, and model coverage

@@ -100,6 +100,18 @@ describe('detection on synthetic frames', () => {
       expect(Math.hypot(...r.cam.C.map((v, k) => v - cam.C[k]))).toBeLessThan(0.05);
     }, 30000);
   }
+  // a zoomed camera in the stand behind a glass front wall, off to one side (PSA Tour Finals): its
+  // front-wall lines do not show, and once fitted it tracks
+  test('front camera far behind a glass front wall tracks', () => {
+    const cam = Camera.fromLookAt([8, -6.7, 1.4], [2.5, 9, 0.6], 0, 1280 / 2 / Math.tan(30 * Math.PI / 360), 1280, 720);
+    const img = renderCourt(cam, { seed: 4, style: 'glass', players: 2 }), st = createTracker({ tin: 0.48 });
+    const p = cam.p.slice(); p[0] += 0.004; p[1] -= 0.004; p[6] += 0.02;
+    resetTracker(st, cam.with(p), 0.48);
+    let c = cam.with(p);
+    for (let i = 0; i < 4; i++) { const r = trackFrame(img.data, 1280, 720, c, st, { dt: 0.04 }); expect(r.ok).toBe(true); c = r.cam; }
+    let e = 0; for (const X of [[0, 5.415, 0], [4.825, 7.015, 0], [3.2, 9.75, 0]]) { const a = cam.project(X), b = c.project(X); e = Math.max(e, Math.hypot(a[0] - b[0], a[1] - b[1])); }
+    expect(e).toBeLessThan(2);
+  }, 20000);
   test('PSA men\'s tin (0.43 m) is told from the WSF one', () => {
     const { cam } = cases[4], img = renderCourt(cam, { seed: 5, style: 'glass', players: 2, adverts: 8, tin: 0.43 });
     const r = detectCourt(img.data, W, H);
