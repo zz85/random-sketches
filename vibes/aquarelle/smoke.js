@@ -74,6 +74,7 @@ try {
   const line = (x0, y0, x1, y1, n = 40, wob = 0) => Array.from({ length: n }, (_, i) => { const t = i / (n - 1); return [x0 + (x1 - x0) * t + Math.sin(t * 9) * wob, y0 + (y1 - y0) * t + Math.cos(t * 7) * wob]; });
   const sel = async (s) => ev(`(() => { const b = document.querySelector(${JSON.stringify(s)}); if (!b) return false; b.click(); return true; })()`);
   const stat = (x0, y0, x1, y1) => ev(`(() => { const px = __aq.sim.exportPixels({ paperCol: [0.89, 0.87, 0.80] }); const W = __aq.sim.W; let s = 0, n = 0, dark = 0; for (let y = ${y0}; y < ${y1}; y += 2) for (let x = ${x0}; x < ${x1}; x += 2) { const i = (y * W + x) * 4; const l = (px[i] + px[i + 1] + px[i + 2]) / 3; s += l; n++; if (l < 200) dark++; } return { mean: s / n, dark: dark / n }; })()`);
+  const waitFor = async (expr, ms = 8000) => { for (let i = 0; i < ms / 100; i++) { if (await ev(expr)) return true; await sleep(100); } return false; };
   const waitDry = async (max = 40) => { for (let i = 0; i < max * 4; i++) { if (!(await ev('__aq.sim.wet'))) return true; await sleep(250); } return false; };
 
 
@@ -177,7 +178,8 @@ try {
   await sleep(2500);
   const glazed = await stat(200, 230, 700, 330);
   check(glazed.mean < before.mean - 2, 'glaze darkens the dried layer', `${before.mean.toFixed(1)} -> ${glazed.mean.toFixed(1)}`);
-  await sel('#undoBtn'); await sleep(200);
+  await waitFor('!__aq.stroke'); // under load the pen-up can still be in the queue
+  await sel('#undoBtn'); await sleep(400);
   const undone = await stat(200, 230, 700, 330);
   check(Math.abs(undone.mean - before.mean) < 0.3, 'undo restores the dried layer', `${undone.mean.toFixed(2)} vs ${before.mean.toFixed(2)}`);
   await sel('#redoBtn'); await sleep(200);
@@ -390,7 +392,6 @@ try {
   // 16. notebooks: pages, zoom buttons, two-finger gesture lock (B7 Pro size, saving on)
   await c.send('Emulation.setDeviceMetricsOverride', { width: 632, height: 840, deviceScaleFactor: 2, mobile: true });
   await c.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
-  const waitFor = async (expr, ms = 8000) => { for (let i = 0; i < ms / 100; i++) { if (await ev(expr)) return true; await sleep(100); } return false; };
   check(await load('fresh=1&nosw=1&nohelp=1&eink=1'), 'loads for a notebook');
   await ev(`__aq.createPainting(1264, 1680, 'Notebook test', 1).then(() => { __aq.setMode('pen'); __aq.fit(1); return true; })`); await sleep(400);
   const lsp = await ev('__aq.sim.pattern.sp');
@@ -594,6 +595,37 @@ try {
   const far2 = await ev(`(() => { const q = __aq.toScreen(${farPt[0]} - __aq.sim.origin[0], ${farPt[1]} - __aq.sim.origin[1]); return [q.x, q.y]; })()`);
   check(far2[0] > 0 && far2[0] < 632 && (await scr2(far2[0], far2[1])) < 120, 'far writing restored too', far2.map((v) => v.toFixed(0)).join(','));
   check(errors().length === 0, 'no console errors (new controls, pastel, infinite page)', errors().join(' | '));
+  // every panel fits small and short screens: scrolling tool strip, ⋯ menu, popovers inside
+  const panelsFit = () => ev(`(() => { const rs = [...document.querySelectorAll('.panel')].map((p) => [p.id, p.getBoundingClientRect()]).filter(([, r]) => r.width), bad = [];
+    for (let i = 0; i < rs.length; i++) { const [n, r] = rs[i]; if (r.left < -1 || r.top < -1 || r.right > innerWidth + 1 || r.bottom > innerHeight + 1) bad.push(n + ' off'); for (let j = i + 1; j < rs.length; j++) { const [m, q] = rs[j]; if (r.left < q.right && q.left < r.right && r.top < q.bottom && q.top < r.bottom) bad.push(n + '/' + m); } }
+    return bad; })()`);
+  for (const [w, h, d] of [[844, 390, 3], [560, 420, 1], [320, 568, 2], [1280, 600, 1]]) {
+    await c.send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: d, mobile: d > 1 });
+    check(await load('fresh=1&nosw=1&nohelp=1&nosave=1'), `loads at ${w} × ${h}`); await sleep(300);
+    const bad = await panelsFit();
+    check(bad.length === 0, `no panel overlaps or runs off at ${w} × ${h}`, bad.join(', '));
+    for (const pop of ['brushPop', 'colPop', 'actPop', 'layerPop']) {
+      const r = await ev(`(() => { __aq.closePops(); __aq.togglePop('${pop}'); const r = document.getElementById('${pop}').getBoundingClientRect(); __aq.closePops(); return r.top >= 0 && r.left >= 0 && r.bottom <= innerHeight + 0.5 && r.right <= innerWidth + 0.5; })()`);
+      check(r, `${pop} stays on screen at ${w} × ${h}`);
+    }
+  }
+  // 844 × 390: the tool strip scrolls to its last tool
+  await c.send('Emulation.setDeviceMetricsOverride', { width: 844, height: 390, deviceScaleFactor: 3, mobile: true });
+  check(await load('fresh=1&nosw=1&nohelp=1&nosave=1'), 'loads in phone landscape'); await sleep(300);
+  check(await ev(`(() => { const t = document.querySelector('#tools'); return t.scrollHeight > t.clientHeight + 20 && getComputedStyle(t).overflowY === 'auto'; })()`), 'the tool strip scrolls on a short screen');
+  check(await ev(`(() => { const t = document.querySelector('#tools'); t.scrollTop = 1e4; const b = document.querySelector('#pickBtn').getBoundingClientRect(), r = t.getBoundingClientRect(); return b.bottom <= r.bottom + 1 && b.top >= r.top - 1; })()`), 'and its last tool can be reached');
+  // 320 wide: top-right buttons go into ⋯ and still work
+  await c.send('Emulation.setDeviceMetricsOverride', { width: 320, height: 568, deviceScaleFactor: 2, mobile: true });
+  check(await load('fresh=1&nosw=1&nohelp=1&nosave=1'), 'loads at 320 wide'); await sleep(300);
+  const inMore = await ev(`[...document.querySelectorAll('#morePop button')].map((b) => b.id)`);
+  check(await ev(`!!document.querySelector('#topR #moreBtn')`) && inMore.includes('layBtn'), 'buttons that do not fit go into ⋯', inMore.join(','));
+  await sel('#moreBtn'); await sleep(100);
+  check(await ev(`document.querySelector('#morePop').classList.contains('open')`), '⋯ opens');
+  await sel('#layBtn'); await sleep(200);
+  check(await ev(`document.querySelector('#layerPop').classList.contains('open')`), 'and Layers works from it');
+  await c.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 860, deviceScaleFactor: 1, mobile: false });
+  check(await load('fresh=1&nosw=1&nohelp=1&nosave=1'), 'loads wide again'); await sleep(300);
+  check(!(await ev(`!!document.querySelector('#moreBtn')?.isConnected`)), 'no ⋯ when everything fits');
   await c.send('Emulation.setDeviceMetricsOverride', { width: VW, height: VH, deviceScaleFactor: 1, mobile: false });
 
   // 17. pen-to-paint alignment, full screen and resizing, on both interfaces (this one and v1/)

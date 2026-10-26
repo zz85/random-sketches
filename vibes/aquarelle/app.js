@@ -154,16 +154,78 @@ function onResize() {
 const rectOf = (sel) => { const el = $(sel); if (!el || !el.offsetParent && getComputedStyle(el).position !== 'fixed') return null; const r = el.getBoundingClientRect(); return r.width && r.height ? r : null; };
 /** Move panels that would collide: the page control below the top bars when they leave
  *  no room for it, the zoom buttons above a tall bottom bar. */
+// Make every panel fit whatever the screen: buttons that do not fit the top right bar go
+// into a ⋯ menu, the tool strip scrolls between the top bars and the palette, the slider
+// shortens (and goes, leaving the chips, which drag too), the zoom bar drops its % last.
+const MORE = ['helpBtn', 'shareBtn', 'fsBtn', 'tiltBtn', 'layBtn', 'dryBtn', 'redoBtn']; // first to go first
+const moreBtn = Object.assign(document.createElement('button'), { className: 'ico', id: 'moreBtn', title: 'More', innerHTML: '<svg><use href="#i-more"/></svg>' });
+const morePop = Object.assign(document.createElement('div'), { id: 'morePop', className: 'pop under right' });
+document.body.appendChild(morePop);
+moreBtn.onclick = (e) => { e.stopPropagation(); togglePop('morePop'); };
+morePop.addEventListener('click', (e) => { if (e.target.closest('button') && !['layBtn'].includes(e.target.closest('button').id)) setTimeout(() => morePop.classList.remove('open'), 0); });
+const visible = (el) => el && getComputedStyle(el).display !== 'none';
+function fitTopBars() {
+  const tr = $('#topR'), home = MORE.map((id) => document.getElementById(id));
+  // everything back home, in its order, then move out until the bars do not touch
+  for (const b of [...$$('#topR > button'), ...morePop.children]) if (b !== moreBtn) tr.appendChild(b);
+  const order = ['undoBtn', 'redoBtn', 'dryBtn', 'tiltBtn', 'layBtn', 'shareBtn', 'fsBtn', 'helpBtn'];
+  for (const id of order) tr.appendChild(document.getElementById(id));
+  moreBtn.remove();
+  const clash = () => { const l = rectOf('#topL'), r = tr.getBoundingClientRect(); return l && r.left < l.right + 8; };
+  if (!clash()) return;
+  tr.appendChild(moreBtn);
+  for (const b of home) {
+    if (!clash()) break;
+    if (!visible(b)) continue;
+    morePop.prepend(b);
+  }
+}
+function fitColumns() {
+  const tools = $('#tools'), sl = $('#sliders'), track = $('#slTrack'), zb = $('#zoomBar');
+  tools.style.top = tools.style.maxHeight = tools.style.transform = '';
+  track.style.height = ''; track.style.display = ''; sl.style.top = sl.style.transform = sl.style.maxHeight = sl.style.overflowY = '';
+  $('#zoomPct').style.display = '';
+  const topB = Math.max(...['#topL', '#topR', '#pages'].map(rectOf).filter(Boolean).map((r) => r.bottom), box.y) + 6;
+  const bar = rectOf(S.mode === 'pen' ? '#penBar' : '#palette');
+  // tool strip: between the top bars and the palette (on the left both reach it)
+  const t = rectOf('#tools');
+  if (t) {
+    const lo = bar && bar.left < t.right ? bar.top - 6 : box.y + box.h - 8, room = lo - topB;
+    if (t.height > room) { tools.style.top = topB + 'px'; tools.style.transform = 'none'; tools.style.maxHeight = Math.max(100, room) + 'px'; }
+    else if (t.top < topB || t.bottom > lo) { tools.style.top = (topB + lo) / 2 + 'px'; }
+  }
+  // zoom bar above the palette or pen bar, if they share the corner
+  const z = rectOf('#zoomBar');
+  if (z && bar && bar.left < z.right && bar.right > z.left && bar.top < z.bottom) zb.style.bottom = box.y + box.h - bar.top + 8 + 'px';
+  // slider column: above the zoom bar when they share the edge
+  const s = rectOf('#sliders'), z2 = rectOf('#zoomBar');
+  if (s) {
+    let lo = box.y + box.h - 8;
+    if (z2 && z2.left < s.right && z2.right > s.left) lo = Math.min(lo, z2.top - 6);
+    if (bar && bar.left < s.right && bar.right > s.left) lo = Math.min(lo, bar.top - 6);
+    const top = Math.max(s.top, topB), over = top + s.height - lo;
+    if (over > 0 || s.top < topB) {
+      const th = track.getBoundingClientRect().height;
+      if (over > 0) { const h = th - over; if (h >= 56) track.style.height = h + 'px'; else track.style.display = 'none'; }
+      const s2 = rectOf('#sliders');
+      if (s2 && (s2.top < topB || s2.bottom > lo)) { sl.style.transform = 'none'; sl.style.top = Math.max(topB, Math.min(s2.top, lo - s2.height)) + 'px'; }
+      const s3 = rectOf('#sliders'); if (s3 && s3.bottom > lo) { sl.style.maxHeight = Math.max(80, lo - s3.top) + 'px'; sl.style.overflowY = 'auto'; }
+    }
+  }
+  // a very short screen: the zoom bar keeps + and − only
+  const z3 = rectOf('#zoomBar');
+  if (z3 && z3.top < topB) $('#zoomPct').style.display = 'none';
+}
 function layoutPanels() {
   const pg = $('#pages'), zb = $('#zoomBar');
   pg.style.top = ''; zb.style.bottom = '';
+  fitTopBars();
   const p = rectOf('#pages');
   if (p) {
     const hit = ['#topL', '#topR'].map(rectOf).filter(Boolean).filter((r) => r.left < p.right + 4 && r.right > p.left - 4);
     if (hit.length) pg.style.top = Math.max(...hit.map((r) => r.bottom)) + 6 + 'px';
   }
-  const z = rectOf('#zoomBar'), b = rectOf(S.mode === 'pen' ? '#penBar' : '#palette');
-  if (z && b && b.left < z.right && b.right > z.left && b.top < z.bottom) zb.style.bottom = box.y + box.h - b.top + 8 + 'px';
+  fitColumns();
 }
 /** The free rectangle the floating panels leave: wide panels (bars) bound it from above or
  *  below, tall ones (tool strip, sliders, zoom) from the side. */
@@ -760,7 +822,7 @@ $$('#tools [data-tool]').forEach((b) => b.addEventListener('click', (e) => {
 function setMode(m) {
   S.mode = m; savePrefs(); applyTheme();
   $$('#modeSeg button').forEach((b) => b.classList.toggle('on', b.dataset.v === m));
-  closePops(); markTools(); syncSliders(); updateCursor(); buildPenBar(); refreshColour(); if (!userMovedView) requestAnimationFrame(() => fit());
+  closePops(); markTools(); syncSliders(); updateCursor(); buildPenBar(); refreshColour(); requestAnimationFrame(() => (userMovedView ? layoutPanels() : fit()));
   if (window.__ready) toast(m === 'pen' ? 'Pen: ink for writing notes' : 'Paint: watercolour', 900);
 }
 $$('#modeSeg button').forEach((b) => (b.onclick = (e) => { e.stopPropagation(); setMode(b.dataset.v); }));
@@ -913,6 +975,17 @@ function togglePop(id) {
   closePops(id);
   p.classList.toggle('open', open);
   if (open) ({ brushPop: buildBrushes, colPop: buildColour, layerPop: buildLayers, actPop: buildActions, pagePop: buildPages })[id]?.();
+  if (open) keepOnScreen(p);
+}
+/** A popover never runs off the screen: shift it back in, and it scrolls if it is taller. */
+function keepOnScreen(p) {
+  p.style.translate = ''; p.style.maxHeight = '';
+  const r = p.getBoundingClientRect(), m = 4;
+  if (r.height > innerHeight - 2 * m) p.style.maxHeight = innerHeight - 2 * m + 'px';
+  const r2 = p.getBoundingClientRect();
+  const dy = r2.top < m ? m - r2.top : r2.bottom > innerHeight - m ? innerHeight - m - r2.bottom : 0;
+  const dx = r2.left < m ? m - r2.left : r2.right > innerWidth - m ? innerWidth - m - r2.right : 0;
+  if (dx || dy) p.style.translate = `${dx}px ${dy}px`;
 }
 document.addEventListener('pointerdown', (e) => {
   if (e.target === canvas || e.target.closest('.pop, .menu, .panel, #gallery, .tl')) return;
@@ -1550,7 +1623,8 @@ function menu(e, items) {
   for (const [label, f, cls] of items) { const b = document.createElement('button'); b.textContent = label; if (cls) b.style.color = '#ff6b6b'; b.onclick = () => { m.remove(); f(); }; m.appendChild(b); }
   document.body.appendChild(m);
   const r = e.target.getBoundingClientRect();
-  m.style.left = Math.min(innerWidth - 200, r.left) + 'px'; m.style.top = Math.min(innerHeight - m.offsetHeight - 10, r.bottom + 4) + 'px';
+  m.style.maxHeight = innerHeight - 16 + 'px';
+  m.style.left = Math.max(4, Math.min(innerWidth - m.offsetWidth - 4, r.left)) + 'px'; m.style.top = Math.max(8, Math.min(innerHeight - m.offsetHeight - 8, r.bottom + 4)) + 'px';
   setTimeout(() => document.addEventListener('pointerdown', function off(ev) { if (!m.contains(ev.target)) { m.remove(); document.removeEventListener('pointerdown', off); } }), 0);
 }
 function cardMenu(e, m) {
@@ -1691,6 +1765,6 @@ if ('serviceWorker' in navigator && !qs.has('nosw') && location.protocol !== 'fi
 window.__aq = {
   box, get dpr() { return dpr; }, setFullscreen, get sim() { return sim; }, get doc() { return doc; }, view, S, get stroke() { return stroke; }, fit, setTool, selectBrush, choosePigment, useCustom, render,
   redraw: () => { needsRender = true; }, get world() { return world; }, worldKeep, infMinZ, visibleRect, placeAt, freeAreaRect: () => freeArea(), baseZ, zoomBy, zoomToggle, freeArea, gotoPage, insertPage, deletePage, movePage, get pageCache() { return pageCache; }, useBrush, setMode, setNib, setPenColour, exportImage, save, toSheet, toScreen, openGallery, openById, createPainting, rec, togglePop, dupLayer,
-  get penSeen() { return penSeen; },
+  get penSeen() { return penSeen; }, togglePop, closePops,
 };
 window.__ready = true;

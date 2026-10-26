@@ -32,6 +32,9 @@ The interface is the first one's floating toolbars, with everything added since.
 - **Size / water / paint:** one slim column of three values over one slider (top right on
   a phone or a 7" e-reader). Tap a value to put it on the slider, or drag up and down on
   the value itself. For Lift, Smudge and Eraser paint is their strength; pastel has no water.
+- **Small or short screens:** everything stays on screen. Top-right buttons that do not fit
+  go into a ⋯ menu, the tool strip scrolls (swipe it up and down), the slider shortens and
+  then leaves just the values (drag them), and popovers move in and scroll.
 - **Zoom:** + / − with the % between them (bottom right): drag up or down on the % to zoom,
   tap it for the whole page.
 - **Bottom:** the watercolour palette. The big well shows what is on the brush, from a thin
