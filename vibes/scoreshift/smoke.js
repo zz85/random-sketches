@@ -289,6 +289,43 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
     const order = await b.evaluate(`(async()=>{const o=__ss.arrOf().clips.map(c=>c.name).join();const p=await __ss.playProgram();__ss.player.stop();const ir=(await __ss.toIR()).score;
       const xs=p.notes.map(n=>ir.events.find(e=>e.id===n.event).src.x);return {o,firstIsC:xs[0]>xs[2]&&xs[2]<xs[4]}})()`);
     check('clip order chips: drag a clip to play it first', order.o === 'C,A,B' && order.firstIsC, JSON.stringify(order));
+    // ✎ Annotate: a pen writes a "3" over a note and circles two bars; the ink sticks to the music
+    const markersWere = await b.evaluate('__ss.MKS.on'); // Annotate turns Markers off; put it back after
+    await b.evaluate(`(()=>{__ss.S.programs.clear();__ss.MKS.range=null;if(__ss.MKS.on)document.getElementById('markMode').click();document.getElementById('pop').style.display='none';window.scrollTo(0,0);document.getElementById('wrap').scrollTop=0;__ss.update();return 1})()`);
+    await press('#annMode'); await sleep(300);
+    const pg = (x, y) => b.evaluate("(()=>{const S=__ss.S,k=(S.rend.r/devicePixelRatio)*S.zoom,r=document.getElementById('cv').getBoundingClientRect();return {x:r.left+(" + x + ")*k,y:r.top+(" + y + ")*k}})()");
+    const stroke = async (pts) => { const c = []; for (const [x, y] of pts) c.push(await pg(x, y));
+      await b.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: c[0].x, y: c[0].y, button: 'left', buttons: 1, clickCount: 1, pointerType: 'pen', force: 0.5 });
+      for (const q of c.slice(1)) await b.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: q.x, y: q.y, button: 'left', buttons: 1, pointerType: 'pen', force: 0.6 });
+      await b.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: c.at(-1).x, y: c.at(-1).y, button: 'left', buttons: 0, clickCount: 1, pointerType: 'pen' }); };
+    const nt = await b.evaluate(`(()=>{const st=__ss.S.model.staves[0],n=st.notes.slice().sort((a,b)=>a.x-b.x)[8];return {x:n.x,top:__yOfP(st,8,n.x),sp:__ss.S.model.space||16}})()`);
+    await stroke([[nt.x - 5, nt.top - 2.6 * nt.sp], [nt.x + 4, nt.top - 2.7 * nt.sp], [nt.x - 1, nt.top - 2.1 * nt.sp]]); await sleep(120);
+    await stroke([[nt.x - 1, nt.top - 2.1 * nt.sp], [nt.x + 5, nt.top - 1.7 * nt.sp], [nt.x - 5, nt.top - 1.2 * nt.sp]]); await sleep(900);
+    const bx = await b.evaluate(`(()=>{const m=__ss.S.score.measures.filter(q=>q.st.index===1),st=m[1].st,sp=__ss.S.model.space||16;return {x0:m[1].x0+6,x1:m[2].x1-6,y0:__yOfP(st,8,m[1].x0)-1.4*sp,y1:__yOfP(st,0,m[1].x0)+1.4*sp}})()`);
+    const ccx = (bx.x0 + bx.x1) / 2, ccy = (bx.y0 + bx.y1) / 2, crx = (bx.x1 - bx.x0) / 2, cry = (bx.y1 - bx.y0) / 2;
+    await stroke(Array.from({ length: 25 }, (_, i) => [ccx + crx * Math.cos(i / 24 * 2 * Math.PI), ccy + cry * Math.sin(i / 24 * 2 * Math.PI)])); await sleep(900);
+    const ink = (x, y) => "(()=>{const S=__ss.S,r=S.rend.r,d=document.getElementById('an').getContext('2d').getImageData(Math.round((" + x + ")*r)-6,Math.round((" + y + ")*r)-6,13,13).data;let n=0;for(let i=3;i<d.length;i+=4)if(d[i]>40)n++;return n})()";
+    const where = `(async()=>{const m=await import('../notation-ir/annotations.js');const a=__ss.annotations()[0];await __ss.refreshAnnotations();const r=m.resolveAnnotation(__ss.S.surf,a,__ss.ANN.items);return {x:Math.round(r.pieces[0].points[0].x),y:Math.round(r.pieces[0].points[0].y),lost:r.lost}})()`;
+    const an1 = await b.evaluate(`({kinds:__ss.annotations().map(a=>a.anchor.kind),strokes:__ss.annotations()[0]?.strokes.length})`);
+    const w0 = await b.evaluate(where), inkAt = await b.evaluate(ink(nt.x - 1, nt.top - 2.1 * nt.sp));
+    await b.evaluate(`document.querySelector('[data-view=original]').click();1`); await sleep(300); const wOrig = await b.evaluate(where);
+    await b.evaluate(`document.querySelector('[data-view=transposed]').click();1`); await sleep(200);
+    await b.evaluate(`(async()=>{const st=__ss.S.model.staves[0];st.notes.splice(1,1);(await import('./omr.js')).interpret(st);__ss.update();return 1})()`); await sleep(400);
+    const wFix = await b.evaluate(where);
+    check('✎ Annotate: pen ink sticks to its note and passage, through view changes and a correction', an1.kinds.join() === 'event,span' && an1.strokes === 2 && inkAt > 10 && JSON.stringify(wOrig) === JSON.stringify(w0) && JSON.stringify(wFix) === JSON.stringify(w0) && !w0.lost, JSON.stringify({ an1, w0, wOrig, wFix, inkAt }));
+    // eraser, undo, and the project carries the ink
+    await press('#annErase'); await stroke([[ccx - crx, ccy], [ccx - crx + 8, ccy + 2]]); await sleep(200);
+    const afterErase = await b.evaluate(`__ss.annotations().length`);
+    await press('#annUndo'); const afterUndo = await b.evaluate(`__ss.annotations().length`); await press('#annErase');
+    const proj2 = await b.evaluate(`new Promise((res)=>{const a=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){HTMLAnchorElement.prototype.click=a;fetch(this.href).then(r=>r.text()).then(res)};__ss.saveProject();})`);
+    await press('#annMode');
+    await b.evaluate(`__ss.load(new File([${JSON.stringify(proj2)}],'p.scoreshift',{type:'application/json'}),'p.scoreshift').then(()=>1)`);
+    await waitFor(() => b.evaluate(`!!(__ss.S.model && __ss.S.score && __ss.annotations().length)`), 20000).catch(() => {}); await sleep(500);
+    const back = { ...(await b.evaluate(`(async()=>{await __ss.refreshAnnotations();return {n:__ss.annotations().length}})()`)), inProject: (JSON.parse(proj2).annotations?.[1] || []).length };
+    check('annotations: eraser, undo, saved in the project and back on reopening', afterErase === 1 && afterUndo === 2 && back.n === 2 && back.inProject === 2, JSON.stringify({ afterErase, afterUndo, back }));
+    await shot('annotate');
+    await b.evaluate(`(()=>{__ss.ANN.pages.clear();__ss.update();return 1})()`);
+    if (markersWere !== (await b.evaluate('__ss.MKS.on'))) await press('#markMode');
     await press('#markMode'); await b.evaluate(`(()=>{__ss.S.programs.clear();__ss.update();return 1})()`);
 
     // the CODA audition sheet, if present locally (not committed): every bar adds up

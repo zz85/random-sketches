@@ -10,6 +10,7 @@ import { Renderer, plan, describe, drawOverlay } from './render.js';
 import { markersOf } from '../notation-ir/markers.js';
 import { layoutMarkersOn, drawMarkersOn, hitMarkerOn, selectionBands, drawBands, headMaps, drawHeadsOn } from '../notation-ir/surface.js';
 import { photoSurface } from './surface.js';
+import { attachStrokes, drawAnnotations, hitAnnotation, resolveAnnotation, reattachAnnotation, itemsOf } from '../notation-ir/annotations.js';
 import { emptyArrangement, hasMarkers, addClip, addJump, removeMarker, markerById, moveClip, compileArrangement, arrangementMarkers, rangeOfIR } from '../notation-ir/arrangement.js';
 import { renderClipOrder } from '../notation-ir/cliporder.js';
 import { findById, parsePageId } from '../notation-ir/anchors.js';
@@ -17,7 +18,8 @@ import { headsAt, HEAD_COLORS } from '../notation-ir/playheads.js';
 
 const $ = (id) => document.getElementById(id);
 const cv = $('cv'), ov = $('ov'), ctx = cv.getContext('2d'), octx = ov.getContext('2d');
-const ph = $('ph'), phx = ph.getContext('2d'); // playhead lines, redrawn every frame on their own canvas
+const ph = $('ph'), phx = ph.getContext('2d');
+const an = $('an'), anx = an.getContext('2d'); // pen annotations and live ink // playhead lines, redrawn every frame on their own canvas
 const store = JSON.parse(localStorage.getItem('scoreshift') || '{}');
 const S = { edits: new Map(), programs: new Map(), source: null, speed: store.speed || 1, metro: !!store.metro, startTick: 0, from: store.from || 'C', to: store.to || 'Bb-clarinet', octave: 'auto', clef: store.clef || 'auto', view: 'transposed', labels: !!store.labels, zoom: 1, model: null, rend: null, name: 'score', sel: null, tempo: store.tempo || 100, score: null, sounding: null };
 const save = () => localStorage.setItem('scoreshift', JSON.stringify({ from: S.from, to: S.to, clef: S.clef, labels: S.labels, tempo: S.tempo, show: S.show, speed: S.speed, metro: S.metro }));
@@ -85,7 +87,7 @@ function probe(src) {
 function show(model, img, name) {
   S.model = model; S.rend = new Renderer(img, model); S.name = name; S.octave = S.octave ?? 'auto';
   $('empty').hidden = true; $('stage').hidden = false; $('export').disabled = false;
-  for (const id of ['play', 'xml', 'midi', 'editInk', 'markMode']) $(id).disabled = false;
+  for (const id of ['play', 'xml', 'midi', 'editInk', 'markMode', 'annMode']) $(id).disabled = false;
   $('transport').hidden = false;
   player.stop(); S.selM = null; S.startTick = 0;
   fitZoom(); update();
@@ -100,7 +102,8 @@ async function saveProject() {
   for (let k = 1; k <= n; k++) { const e = S.edits.get(k) ?? (await idb.get(editKey(k)))?.edits; if (e) pages[k] = e; }
   const settings = { from: S.from, to: S.to, clef: S.clef, octave: S.octave, tempo: S.tempo, speed: S.speed };
   const programs = Object.fromEntries([...(S.programs || new Map())].filter(([, v]) => v));
-  const text = makeProject({ bytes: S.source.bytes, name: S.source.name, mime: S.source.mime, pages, settings, programs });
+  const annotations = Object.fromEntries([...ANN.pages].filter(([, v]) => v?.length));
+  const text = makeProject({ bytes: S.source.bytes, name: S.source.name, mime: S.source.mime, pages, settings, programs, annotations });
   download(text, 'application/json', `${S.source.name.replace(/\.[^.]+$/, '')}.scoreshift`);
   return { pages: Object.keys(pages).length, size: text.length };
 }
@@ -122,8 +125,11 @@ async function load(blob, name, fromProject = null) {
   S.source = { bytes, name: name || blob.name || 'score', mime: blob.type || (await isPdf(blob) ? 'application/pdf' : 'image/png'), key: await fileKey(bytes) };
   S.edits = new Map(fromProject ? Object.entries(fromProject.pages).map(([k, v]) => [+k, v]) : []);
   S.programs = new Map(fromProject ? Object.entries(fromProject.programs || {}).map(([k, v]) => [+k, v]) : []);
+  ANN.pages = new Map(fromProject ? Object.entries(fromProject.annotations || {}).map(([k, v]) => [+k, v]) : []);
+  ANN.undo = []; ANN.redo = []; ANN.sel = null;
   if (fromProject) for (const [k, v] of S.edits) idb.put(editKey(k), v ? { edits: v, name: S.source.name, saved: Date.now() } : null);
   if (fromProject) for (const [k, v] of S.programs) idb.put(`${editKey(k)}:prog`, v ? { program: v, saved: Date.now() } : null);
+  if (fromProject) for (const [k, v] of ANN.pages) idb.put(`${editKey(k)}:ann`, v?.length ? { annotations: v, saved: Date.now() } : null);
   MKS.range = null; MKS.sel = null; MKS.pick = null;
   $('saveProject').disabled = false;
   if (await isPdf(blob)) return loadPdf(blob, name);
@@ -209,6 +215,7 @@ const markEdited = () => {
 async function restoreEdits(model, k = pageNo()) {
   markOriginal(model);
   if (!S.programs.has(k) && S.source) { const pr = await idb.get(`${editKey(k)}:prog`); if (pr?.program) S.programs.set(k, pr.program); }
+  if (!ANN.pages.has(k) && S.source) { const pa = await idb.get(`${editKey(k)}:ann`); if (pa?.annotations) ANN.pages.set(k, pa.annotations); }
   const saved = S.edits.get(k) ?? (S.source ? (await idb.get(editKey(k)))?.edits : null);
   if (!saved) return 0;
   const r = applyEdits(model, saved, { interpret, yOfP });
@@ -310,6 +317,7 @@ function update() {
   drawPlayhead();
   drawProgramMarkers();
   refreshMarkers();
+  refreshAnnotations();
   if (!player.playing) showPos(S.startTick);
   chips();
   layoutStage();
@@ -700,6 +708,7 @@ function arrUi() {
 }
 $('arrMode').addEventListener('click', (e) => { const b = e.target.closest('[data-am]'); if (!b || !arrOf()) return; arrOf().mode = b.dataset.am; changed(); });
 $('markMode').onclick = () => {
+  if (!MKS.on && ANN.on) $('annMode').click();
   MKS.on = !MKS.on; MKS.pick = null; MKS.extend = false; if (!MKS.on) clearRange();
   hidePop(); refreshMarkers();
   setStatus(MKS.on ? '<b>Markers</b>: tap a bar to select it (Shift+tap or Extend grows it); or drag across notes, with a finger hold first. Then play or loop it, keep it as a clip or add a jump. Tap a marker to change it.' : 'Markers off: tap notes to correct them');
@@ -772,6 +781,187 @@ function markerTap(e) {
   return true;
 }
 
+// ---------- ✎ Annotate: pen annotations on the photo (notation-ir annotations.js) ----------
+// Ink is attached to the music under it - a note, a span of notes, or a moment on the staff -
+// and stored in staff spaces, so it stays on its notes through corrections and on the
+// transposed page. A pen (or mouse) writes; a finger writes too until a pen has been used,
+// after that fingers scroll. Strokes written close together in quick succession (a "3" in two
+// strokes, a circle and its arrow) become one annotation. The pen's eraser end, or the eraser
+// tool, wipes annotations; a tap on one selects it (delete, colour, re-attach a lost one).
+const ANN = { on: false, pages: new Map(), color: '#c2255c', width: 0.2, erase: false, penSeen: false, undo: [], redo: [], sel: null, group: null, live: null, ptrs: new Map(), swallowUntil: 0, irc: null, items: [] };
+const ANN_COLORS = ['#c2255c', '#1c7ed6', '#2b8a3e', '#212529'];
+const GROUP_MS = 650;
+const annList = () => ANN.pages.get(pageNo()) || [];
+function annSet(list) { ANN.pages.set(pageNo(), list); if (S.source) idb.put(`${editKey()}:ann`, list.length ? { annotations: list, saved: Date.now() } : null); }
+function annChange(fn) {
+  const before = JSON.stringify(annList());
+  const list = JSON.parse(before); fn(list);
+  if (JSON.stringify(list) === before) return;
+  ANN.undo.push(before); if (ANN.undo.length > 100) ANN.undo.shift(); ANN.redo = [];
+  annSet(list); drawAnn(); annBar();
+}
+function annUndo(redo = false) {
+  const from = redo ? ANN.redo : ANN.undo, to = redo ? ANN.undo : ANN.redo;
+  if (!from.length) return;
+  to.push(JSON.stringify(annList())); annSet(JSON.parse(from.pop())); ANN.sel = null; hidePop(); drawAnn(); annBar();
+}
+function annDelete(id) { annChange((l) => { const i = l.findIndex((a) => a.id === id); if (i >= 0) l.splice(i, 1); }); ANN.sel = null; hidePop(); }
+/** The surface and time items for the current page (shared with markers). */
+async function annSurface() {
+  const irc = await toIR();
+  ANN.irc = irc; ANN.items = itemsOf(irc.score); S.surf = surfaceFor(irc);
+  return S.surf;
+}
+async function refreshAnnotations() {
+  if (!S.model || (!ANN.on && !annList().length)) { ANN.irc = null; drawAnn(); return; }
+  await annSurface(); drawAnn();
+  const lost = annList().filter((a) => resolveAnnotation(S.surf, a, ANN.items)?.lost).length;
+  if (lost && !/annotation/.test($('status').textContent)) setStatus($('status').innerHTML + ` · <b class="bad">${lost} annotation${lost > 1 ? 's' : ''} lost ${lost > 1 ? 'their' : 'its'} note</b> (dashed: tap it in ✎ Annotate to re-attach)`);
+}
+function drawAnn() {
+  const R = S.rend; if (!R) return;
+  if (an.width !== R.W || an.height !== R.H) { an.width = R.W; an.height = R.H; }
+  anx.clearRect(0, 0, R.W, R.H);
+  if (!S.model) return;
+  if (ANN.irc && S.surf) drawAnnotations(anx, S.surf, annList(), ANN.items, { selected: ANN.sel });
+  // ink still being written: plain strokes until it is attached
+  const r = R.r, live = [...(ANN.group?.strokes || []), ...[...ANN.ptrs.values()].filter((p) => p.ink).map((p) => p.pts)];
+  anx.save(); anx.lineCap = 'round'; anx.lineJoin = 'round'; anx.strokeStyle = ANN.color; anx.globalAlpha = 0.85;
+  const w = Math.max(1, ANN.width * mkView().sp);
+  for (const s of live) {
+    if (s.length === 1) { anx.fillStyle = ANN.color; anx.beginPath(); anx.arc(s[0].x * r, s[0].y * r, w / 2, 0, 7); anx.fill(); continue; }
+    for (let i = 1; i < s.length; i++) { anx.lineWidth = w * (0.6 + 0.8 * (s[i].p ?? 0.5)); anx.beginPath(); anx.moveTo(s[i - 1].x * r, s[i - 1].y * r); anx.lineTo(s[i].x * r, s[i].y * r); anx.stroke(); }
+  }
+  anx.restore();
+}
+function annBar() {
+  const box = $('annBar');
+  box.hidden = !ANN.on;
+  $('annMode').setAttribute('aria-pressed', ANN.on);
+  if (!ANN.on) return;
+  box.querySelectorAll('[data-c]').forEach((b) => b.setAttribute('aria-pressed', !ANN.erase && b.dataset.c === ANN.color));
+  box.querySelectorAll('[data-w]').forEach((b) => b.setAttribute('aria-pressed', !ANN.erase && +b.dataset.w === ANN.width));
+  $('annErase').setAttribute('aria-pressed', ANN.erase);
+  $('annUndo').disabled = !ANN.undo.length; $('annRedo').disabled = !ANN.redo.length;
+  $('annClear').disabled = !annList().length;
+}
+/** Finish the stroke group: attach it to the music and keep it. */
+function commitGroup() {
+  const g = ANN.group; ANN.group = null;
+  if (!g) return;
+  clearTimeout(g.timer);
+  if (!S.surf || !ANN.irc) { drawAnn(); return; }
+  const a = attachStrokes(S.surf, ANN.items, g.strokes, { id: `a${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`, color: g.color, width: g.width });
+  if (!a) { drawAnn(); setStatus('That ink is not near any music on the page, so it was not kept.'); return; }
+  annChange((l) => l.push(a));
+}
+function eraseAt(pt) {
+  const hit = S.surf && hitAnnotation(S.surf, annList(), ANN.items, pt, 0.9);
+  if (hit) { annChange((l) => { const i = l.findIndex((a) => a.id === hit.id); if (i >= 0) l.splice(i, 1); }); return true; }
+  return false;
+}
+function annPop(id, e) {
+  const a = annList().find((x) => x.id === id); if (!a) return;
+  ANN.sel = id; drawAnn();
+  const r = resolveAnnotation(S.surf, a, ANN.items), lost = r?.lost;
+  const what = { event: 'a note', span: 'a passage', time: 'a moment on the staff' }[a.anchor.kind];
+  showPop(`<h3>Annotation</h3>
+    <p class="hint">${lost ? '<b style="color:#c92a2a">Its note was deleted by a correction.</b>' : `Attached to ${what}: it stays with the music.`}</p>
+    ${lost ? '<div class="row"><button id="aNear">Attach to the nearest note</button><button id="aPick">Pick a note…</button></div>' : ''}
+    <div class="row">${ANN_COLORS.map((c) => `<button data-ac="${c}" aria-label="colour" style="background:${c};width:1.8rem;height:1.8rem;border-radius:50%;${c === a.color ? 'outline:2px solid #111;outline-offset:2px' : ''}"></button>`).join('')}</div>
+    <div class="row"><button id="aDel">✕ Delete</button><button id="aX">Close</button></div>`, e);
+  pop.querySelectorAll('[data-ac]').forEach((b) => (b.onclick = () => { annChange((l) => { l.find((x) => x.id === id).color = b.dataset.ac; }); annPop(id, e); }));
+  $('aDel').onclick = () => annDelete(id);
+  $('aX').onclick = () => { ANN.sel = null; hidePop(); drawAnn(); };
+  if (lost) {
+    $('aNear').onclick = () => {
+      const pc = r.pieces[0]?.points[0]; const near = pc && S.surf.eventAt(pc, 6);
+      if (!near) { setStatus('No note near it'); return; }
+      annChange((l) => reattachAnnotation(l.find((x) => x.id === id), near, ANN.items)); annPop(id, e);
+    };
+    $('aPick').onclick = () => { ANN.pick = id; hidePop(); setStatus('<b>Tap the note this annotation belongs to</b> (Esc cancels)'); };
+  }
+}
+
+$('annMode').onclick = async () => {
+  ANN.on = !ANN.on; commitGroup(); ANN.sel = null; ANN.pick = null; hidePop();
+  if (ANN.on && MKS.on) $('markMode').click(); // one page mode at a time
+  $('stage').classList.toggle('inking', ANN.on);
+  annBar();
+  if (ANN.on) { await annSurface(); drawAnn(); setStatus('<b>✎ Annotate</b>: write on the music with a pen (or mouse; a finger until you use a pen). Ink sticks to the notes under it. Tap a mark to change it; the pen\u2019s eraser end or ⌫ wipes marks.'); }
+  else refreshAnnotations();
+};
+$('annBar').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.c) { ANN.color = b.dataset.c; ANN.erase = false; }
+  else if (b.dataset.w) { ANN.width = +b.dataset.w; ANN.erase = false; }
+  else if (b.id === 'annErase') ANN.erase = !ANN.erase;
+  else if (b.id === 'annUndo') annUndo(false);
+  else if (b.id === 'annRedo') annUndo(true);
+  else if (b.id === 'annClear') { if (confirm('Remove every annotation on this page? (Undo brings them back.)')) annChange((l) => { l.length = 0; }); }
+  annBar();
+});
+
+// pointer input on the page in Annotate mode
+const stg = $('stage');
+stg.addEventListener('pointerdown', (e) => {
+  if (!ANN.on || !S.model) return;
+  if (e.pointerType === 'pen') ANN.penSeen = true;
+  const fingerScrolls = e.pointerType === 'touch' && ANN.penSeen;
+  const rec = { id: e.pointerId, type: e.pointerType, x0: e.clientX, y0: e.clientY, pts: [], moved: 0, ink: false, scroll: fingerScrolls, erase: ANN.erase || (e.pointerType === 'pen' && (e.buttons & 32)), sx: $('wrap').scrollLeft, sy: $('wrap').scrollTop };
+  // a second finger: stop writing, scroll instead
+  const touches = [...ANN.ptrs.values()].filter((p) => p.type === 'touch');
+  if (e.pointerType === 'touch' && touches.length) { for (const t of touches) { t.ink = false; t.scroll = true; t.pts = []; } rec.scroll = true; }
+  ANN.ptrs.set(e.pointerId, rec);
+  stg.setPointerCapture(e.pointerId);
+  if (rec.scroll) return;
+  e.preventDefault();
+  const pt = imgAt(e);
+  if (rec.erase) { eraseAt(pt); return; }
+  // a new stroke far from the waiting group, or after a pause: the group is done
+  const g = ANN.group;
+  if (g) {
+    clearTimeout(g.timer);
+    const sp = S.model.space || 16, b = g.strokes.flat();
+    const d = Math.min(...b.map((q) => Math.hypot(q.x - pt.x, q.y - pt.y)));
+    if (d > 3 * sp) commitGroup();
+  }
+  rec.ink = true; rec.pts.push({ x: pt.x, y: pt.y, p: e.pointerType === 'pen' ? e.pressure : 0.5 });
+  drawAnn();
+});
+stg.addEventListener('pointermove', (e) => {
+  const rec = ANN.ptrs.get(e.pointerId); if (!rec) return;
+  rec.moved = Math.max(rec.moved, Math.hypot(e.clientX - rec.x0, e.clientY - rec.y0));
+  if (rec.scroll) { const w = $('wrap'); w.scrollLeft = rec.sx - (e.clientX - rec.x0); w.scrollTop = rec.sy - (e.clientY - rec.y0); return; }
+  if (rec.erase) { eraseAt(imgAt(e)); return; }
+  if (!rec.ink) return;
+  for (const ce of e.getCoalescedEvents ? e.getCoalescedEvents() : [e]) {
+    const q = imgAt(ce), last = rec.pts[rec.pts.length - 1];
+    if (!last || Math.hypot(q.x - last.x, q.y - last.y) > 0.6) rec.pts.push({ x: q.x, y: q.y, p: e.pointerType === 'pen' ? ce.pressure : 0.5 });
+  }
+  drawAnn();
+});
+function annUp(e) {
+  const rec = ANN.ptrs.get(e.pointerId); if (!rec) return;
+  ANN.ptrs.delete(e.pointerId);
+  ANN.swallowUntil = performance.now() + 400;
+  if (rec.scroll || rec.erase || e.type === 'pointercancel') { drawAnn(); return; }
+  const pt = imgAt(e);
+  if (rec.moved < 6 && !ANN.group) { // a tap: pick a note for a lost mark, or select a mark
+    if (ANN.pick) { const near = S.surf.eventAt(pt, 6), id = ANN.pick; ANN.pick = null; if (near) { annChange((l) => reattachAnnotation(l.find((x) => x.id === id), near, ANN.items)); setStatus('<b>Annotation re-attached</b>'); } else setStatus('Cancelled: no note there'); return; }
+    const hit = S.surf && hitAnnotation(S.surf, annList(), ANN.items, pt, 0.9);
+    if (hit) { annPop(hit.id, e); return; }
+    if (ANN.sel) { ANN.sel = null; hidePop(); drawAnn(); return; }
+    // otherwise a dot (a staccato, a breath mark): keep it as ink
+  }
+  if (!ANN.group) ANN.group = { strokes: [], color: ANN.color, width: ANN.width };
+  ANN.group.strokes.push(rec.pts);
+  ANN.group.timer = setTimeout(commitGroup, GROUP_MS);
+  drawAnn();
+}
+stg.addEventListener('pointerup', annUp);
+stg.addEventListener('pointercancel', annUp);
+
 /** The music as shown (as written or transposed) into StaffInk, in a new tab. */
 async function editInStaffInk({ open = true } = {}) {
   if (!S.model) return null;
@@ -801,7 +991,7 @@ function fitZoom() {
 function layoutStage() {
   if (!S.rend) return;
   const w = (S.rend.W / devicePixelRatio) * S.zoom, h = (S.rend.H / devicePixelRatio) * S.zoom;
-  for (const c of [cv, ov, ph]) { c.style.width = w + 'px'; c.style.height = h + 'px'; }
+  for (const c of [cv, ov, ph, an]) { c.style.width = w + 'px'; c.style.height = h + 'px'; }
   $('stage').style.width = w + 'px'; $('stage').style.height = h + 'px';
   chips();
 }
@@ -970,6 +1160,7 @@ function notePop(n, e) {
 }
 $('stage').addEventListener('click', (e) => {
   if (!S.model) return;
+  if (ANN.on || performance.now() < ANN.swallowUntil) return; // pen strokes and taps are handled on pointer up
   if (markerTap(e)) return;
   const rect = cv.getBoundingClientRect(), k = (S.rend.r / devicePixelRatio) * S.zoom;
   const x = (e.clientX - rect.left) / k, y = (e.clientY - rect.top) / k;
@@ -990,6 +1181,8 @@ $('stage').addEventListener('click', (e) => {
   else hidePop();
 });
 document.addEventListener('keydown', (e) => {
+  if (ANN.on && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && e.target === document.body) { e.preventDefault(); annUndo(e.shiftKey); return; }
+  if (ANN.on && ANN.sel && (e.key === 'Delete' || e.key === 'Backspace') && e.target === document.body) { e.preventDefault(); annDelete(ANN.sel); return; }
   if (e.key === 'Escape') { MKS.pick = null; MKS.sel = null; clearRange(); hidePop(); update(); }
   if (e.key === ' ' && e.target === document.body && S.model) { e.preventDefault(); $('play').click(); }
 });
@@ -997,10 +1190,10 @@ window.addEventListener('resize', () => S.rend && layoutStage());
 
 $('export').onclick = () => {
   const c = document.createElement('canvas'); c.width = cv.width; c.height = cv.height;
-  const g = c.getContext('2d'); g.drawImage(cv, 0, 0); if (S.view !== 'original') g.drawImage(ov, 0, 0);
+  const g = c.getContext('2d'); g.drawImage(cv, 0, 0); if (S.view !== 'original') g.drawImage(ov, 0, 0); g.drawImage(an, 0, 0);
   c.toBlob((b) => { const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `${S.name}-${S.to}.png`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); }, 'image/png');
 };
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
 // test hook
-window.__ss = { S, load, saveProject, idb, update, plan, openPage, exportPdf, player, setFix, eventOf, toMusicXML, toMidi, musicOpts, playProgram, editInStaffInk, toIR, markers: () => MK, refreshMarkers, heads: () => S.heads, MKS, rangeNow, markerTap, arrOf }; window.__yOfP = yOfP;
+window.__ss = { S, load, saveProject, idb, update, plan, openPage, exportPdf, player, setFix, eventOf, toMusicXML, toMidi, musicOpts, playProgram, editInStaffInk, toIR, markers: () => MK, refreshMarkers, heads: () => S.heads, ANN, annotations: () => annList(), refreshAnnotations, annUndo, MKS, rangeNow, markerTap, arrOf }; window.__yOfP = yOfP;

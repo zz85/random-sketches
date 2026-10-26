@@ -107,18 +107,19 @@ const unb64 = (s) => { const b = atob(s), u = new Uint8Array(b.length); for (let
 
 /**
  * A project: the source file's bytes, its name and type, edits per page, the settings, and
- * playback programs per page (notation-ir playback.js; anchored by page-keyed ids, so they
- * still resolve after the page's corrections are applied).
+ * playback programs and pen annotations per page (notation-ir playback.js / annotations.js;
+ * anchored by page-keyed ids, so they still resolve after the page's corrections are applied).
  */
-export function makeProject({ bytes, name, mime, pages, settings, programs }) {
-  return JSON.stringify({ format: PROJECT_FORMAT, version: PROJECT_VERSION, saved: new Date().toISOString(), name, mime, settings, pages, ...(programs && Object.keys(programs).length ? { programs } : {}), source: b64(bytes) });
+export function makeProject({ bytes, name, mime, pages, settings, programs, annotations }) {
+  const some = (o) => o && Object.keys(o).length;
+  return JSON.stringify({ format: PROJECT_FORMAT, version: PROJECT_VERSION, saved: new Date().toISOString(), name, mime, settings, pages, ...(some(programs) ? { programs } : {}), ...(some(annotations) ? { annotations } : {}), source: b64(bytes) });
 }
-/** Parse a project file; returns { bytes, name, mime, pages, settings, programs } or null if it is not one. */
+/** Parse a project file; returns { bytes, name, mime, pages, settings, programs, annotations } or null if it is not one. */
 export function readProject(text) {
   let j; try { j = JSON.parse(text); } catch (e) { return null; }
   if (!j || j.format !== PROJECT_FORMAT) return null;
   if (j.version > PROJECT_VERSION) throw new Error(`project version ${j.version} is newer than this app`);
-  return { bytes: unb64(j.source), name: j.name, mime: j.mime, pages: j.pages || {}, settings: j.settings || {}, programs: j.programs || {} };
+  return { bytes: unb64(j.source), name: j.name, mime: j.mime, pages: j.pages || {}, settings: j.settings || {}, programs: j.programs || {}, annotations: j.annotations || {} };
 }
 
 /** Content key of a source file (same file -> same key), for the autosave. */
