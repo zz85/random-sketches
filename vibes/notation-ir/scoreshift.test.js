@@ -266,3 +266,42 @@ describe('pen annotations on a photographed page', async () => {
     expect(Math.abs(r.pieces[0].points[0].x - ink[0][0].x)).toBeLessThan(sp / 2);
   });
 });
+
+describe('annotations in exported pages', async () => {
+  const { chooseAnnotations, colorsOf, drawPageAnnotations } = await import('../scoreshift/inkexport.js');
+  const { photoSurface } = await import('../scoreshift/surface.js');
+  const { attachStrokes, itemsOf } = await import('./annotations.js');
+  const { lineY } = await import('../scoreshift/omr.js');
+  const model = minuet.model, sc = minuet.sc, irc = fromScoreShift(model, sc);
+  const surf = photoSurface({ model, score: sc, irc, view: () => ({ X: (x) => x, Y: (y) => y, sp: 16 }) });
+  const items = itemsOf(irc.score), st = model.staves[0];
+  const ev = irc.score.events.filter((e) => e.src.line === 0).sort((a, b) => a.src.x - b.src.x);
+  const mark = (e, color) => attachStrokes(surf, items, [[{ x: e.src.x - 4, y: lineY(st, 0, e.src.x) - 30 }, { x: e.src.x + 4, y: lineY(st, 0, e.src.x) - 26 }]], { id: color, color });
+  const list = [mark(ev[3], '#c2255c'), mark(ev[9], '#1c7ed6')];
+  const ctx = () => { const calls = []; return { calls, g: new Proxy({}, { get: (t, k) => (k in t ? t[k] : (...a) => calls.push([k, ...a])), set: (t, k, v) => ((t[k] = v), true) }) }; };
+  test('choose: all, none, or by colour', () => {
+    expect(chooseAnnotations(list, {}).length).toBe(2);
+    expect(chooseAnnotations(list, { include: false })).toEqual([]);
+    expect(chooseAnnotations(list, { colors: ['#1C7ED6'] }).map((a) => a.id)).toEqual(['#1c7ed6']);
+    expect(colorsOf([list, [], null])).toEqual(['#c2255c', '#1c7ed6']);
+  });
+  test('drawn at the export scale, where they were written', () => {
+    const { calls, g } = ctx();
+    expect(drawPageAnnotations(g, { model, renderer: { r: 2 }, annotations: list, opts: { colors: ['#c2255c'] } })).toBe(1);
+    const mv = calls.find((c) => c[0] === 'moveTo');
+    expect(mv[1]).toBeCloseTo((ev[3].src.x - 4) * 2, 0);
+    expect(mv[2]).toBeCloseTo((lineY(st, 0, ev[3].src.x) - 30) * 2, 0);
+  });
+  test('on the transposed page, through the stretched staff', async () => {
+    const { calls, g } = ctx();
+    const { plan: mk } = await import('../scoreshift/render.js'), plan = mk(model, { from: 'C', to: 'Bb-clarinet', octave: 'auto', clef: 'auto' });
+    const warps = new Map([[st, { warp: (x) => x + 20, k: 1 }]]);
+    drawPageAnnotations(g, { model, renderer: { r: 1, warps }, plan, annotations: [list[0]] });
+    expect(calls.find((c) => c[0] === 'moveTo')[1]).toBeCloseTo(ev[3].src.x - 4 + 20, 0);
+  });
+  test('nothing chosen: nothing drawn', () => {
+    const { calls, g } = ctx();
+    expect(drawPageAnnotations(g, { model, renderer: { r: 1 }, annotations: list, opts: { include: false } })).toBe(0);
+    expect(calls.length).toBe(0);
+  });
+});

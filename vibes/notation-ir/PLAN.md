@@ -125,8 +125,9 @@ Every adapter is `from<App>(…) → IR` plus, where useful, `to<App>(IR) → { 
      (`annotations.js`) and ScoreShift's ✎ Annotate mode (pen and mouse, finger until a pen is
      seen; colours, widths, eraser and pen eraser end, undo/redo, tap a mark to recolour,
      delete or re-attach it; saved per page and in the project, included in the PNG export).
-     Next: carrying the marks into StaffInk with "Edit in StaffInk" (needs an id mapping),
-     and the transposed PDF export;
+     Exports ask whether to draw them and which colours (PNG and the transposed PDF, whose
+     pages are drawn in the export workers). Next: carrying the marks into StaffInk with
+     "Edit in StaffInk" (needs an id mapping);
    - live geometry only: ScoreShift's `src` stays as the photo surface's identity, and
      engraved positions are never copied into the IR.
 4. **Return trip StaffInk → ScoreShift.** Rewrite the page from corrected pitches by matching

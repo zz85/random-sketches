@@ -1,11 +1,13 @@
 // Recognition off the main thread, three jobs:
 //  { gray, w, h, f }          -> analysis model (A maps normalized -> the UI image's pixels)
 //  { probe, gray, w, h }      -> staff count and page coverage, cheap (opening a PDF)
-//  { page, bitmap, opts, q }  -> a whole export page: recognise + rewrite + JPEG, all here with
-//                                OffscreenCanvas; pages without staves come back as they are
+//  { page, bitmap, opts, q, annotations, annOpts }  -> a whole export page: recognise + rewrite +
+//                                the page's pen annotations + JPEG, all here with OffscreenCanvas;
+//                                pages without staves come back as they are
 import { normalize, analyze, findStaves } from './omr.js';
 import { sauvola, staffMetrics } from './imgproc.js';
 import { Renderer, plan } from './render.js';
+import { drawPageAnnotations } from './inkexport.js';
 
 function probeGray(gray, w, h) {
   const b = sauvola({ w, h, data: gray }, 31, 0.2, 'wolf', 0), m = staffMetrics(b);
@@ -26,7 +28,7 @@ function analyzeGray(gray, w, h, f, opts) {
 }
 const toGray = (rgba, n) => { const g = new Uint8Array(n); for (let i = 0; i < n; i++) g[i] = (rgba[i * 4] * 77 + rgba[i * 4 + 1] * 150 + rgba[i * 4 + 2] * 29) >> 8; return g; };
 
-async function exportPage({ bitmap, opts, q = 0.8 }) {
+async function exportPage({ bitmap, opts, q = 0.8, annotations = null, annOpts = {} }) {
   const W = bitmap.width, H = bitmap.height, img = new OffscreenCanvas(W, H);
   img.getContext('2d').drawImage(bitmap, 0, 0); bitmap.close();
   const jpeg = async (c) => new Uint8Array(await (await c.convertToBlob({ type: 'image/jpeg', quality: q })).arrayBuffer());
@@ -40,9 +42,11 @@ async function exportPage({ bitmap, opts, q = 0.8 }) {
   if (!pr.staves) return { jpeg: await jpeg(img), w: W, h: H, music: false };
   try {
     const model = analyzeGray(gray, aw, ah, f, {});
-    const r = new Renderer(img, model), out = new OffscreenCanvas(1, 1);
-    r.render(out.getContext('2d'), plan(model, opts));
-    return { jpeg: await jpeg(out), w: out.width, h: out.height, music: true, staves: model.staves.length };
+    const r = new Renderer(img, model), out = new OffscreenCanvas(1, 1), pl = plan(model, opts);
+    r.render(out.getContext('2d'), pl);
+    let marks = 0;
+    if (annotations?.length) { try { marks = drawPageAnnotations(out.getContext('2d'), { model, renderer: r, plan: pl, annotations, opts: annOpts }); } catch (e) { marks = -1; } }
+    return { jpeg: await jpeg(out), w: out.width, h: out.height, music: true, staves: model.staves.length, marks };
   } catch (e) {
     return { jpeg: await jpeg(img), w: W, h: H, music: false };
   }

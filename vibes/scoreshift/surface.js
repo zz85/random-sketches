@@ -7,8 +7,11 @@ import { findById, parsePageId, resolveAnchor, positionAt } from '../notation-ir
 /**
  * model = the recognised page, score = buildScore(model), irc = fromScoreShift(...) result
  * ({ score: IR, byId }), view() -> { X, Y, sp } for the current zoom.
+ * warp(line, x) -> x: where page x is drawn on the rewritten (transposed) page, whose staves
+ * are stretched where a key signature got wider (Renderer.warps); identity for the original.
  */
-export function photoSurface({ model, score, irc, view }) {
+export function photoSurface({ model, score, irc, view, warp = null }) {
+  const W = warp || ((line, x) => x);
   const sp = model.space || 16, ir = irc.score;
   const partOf = new Map(); score.parts.forEach((p, k) => p.staves.forEach((st) => partOf.set(st.index, k)));
   const lines = [];
@@ -28,18 +31,18 @@ export function photoSurface({ model, score, irc, view }) {
     lines: () => lines,
     place(id, edge = 'start') {
       const e = evOf(id); if (!e?.src) return [];
-      const x = e.src.x + (edge === 'end' ? 0.9 : edge === 'center' ? 0 : -0.7) * sp;
+      const x = W(e.src.line, e.src.x + (edge === 'end' ? 0.9 : edge === 'center' ? 0 : -0.7) * sp);
       return [{ line: e.src.line, x, top: lines[e.src.line].topAt(x) }];
     },
     eventAt(pt, reach = 3) {
       const st = staffAt(pt, reach); if (!st) return null;
       let best = null, bd = Infinity;
-      for (const e of ir.events) if (e.src?.line === st.index) { const d = Math.abs(e.src.x - pt.x); if (d < bd) { bd = d; best = e; } }
+      for (const e of ir.events) if (e.src?.line === st.index) { const d = Math.abs(W(st.index, e.src.x) - pt.x); if (d < bd) { bd = d; best = e; } }
       return best ? best.id : null;
     },
     barOf(id) {
       const e = evOf(id), q = e && irc.byId.get(e.id); if (!q) return null;
-      return { key: q.m.index, line: q.m.st.index, x: Math.min(q.m.x1, q.m.st.x1) };
+      return { key: q.m.index, line: q.m.st.index, x: W(q.m.st.index, Math.min(q.m.x1, q.m.st.x1)) };
     },
     barAt(pt) {
       const st = staffAt(pt); if (!st) return null;
@@ -50,9 +53,9 @@ export function photoSurface({ model, score, irc, view }) {
       return { first: evs.reduce((a, e) => (on(e) < on(a) ? e : a)).id, last: evs.reduce((a, e) => (end(e) > end(a) ? e : a)).id, m };
     },
     placeAnchor(a) {
-      if (a.barline) { const d = findById(ir, 'barline', a.barline); return d?.src ? { line: d.src.line, x: d.src.x } : null; }
+      if (a.barline) { const d = findById(ir, 'barline', a.barline); return d?.src ? { line: d.src.line, x: W(d.src.line, d.src.x) } : null; }
       try { const r = resolveAnchor(ir, a); return positionAt(ir, r.fragment, r.t); } catch (e) { return null; }
     },
-    lostAt(a) { const k = parsePageId(a.event || a.barline); return k && lines[k.line] ? { line: k.line, x: k.q * ir.pageIds.unit } : null; },
+    lostAt(a) { const k = parsePageId(a.event || a.barline); return k && lines[k.line] ? { line: k.line, x: W(k.line, k.q * ir.pageIds.unit) } : null; },
   };
 }

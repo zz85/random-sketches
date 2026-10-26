@@ -11,6 +11,7 @@ import { markersOf } from '../notation-ir/markers.js';
 import { layoutMarkersOn, drawMarkersOn, hitMarkerOn, selectionBands, drawBands, headMaps, drawHeadsOn } from '../notation-ir/surface.js';
 import { photoSurface } from './surface.js';
 import { attachStrokes, drawAnnotations, hitAnnotation, resolveAnnotation, reattachAnnotation, itemsOf } from '../notation-ir/annotations.js';
+import { chooseAnnotations, colorsOf, drawPageAnnotations } from './inkexport.js';
 import { emptyArrangement, hasMarkers, addClip, addJump, removeMarker, markerById, moveClip, compileArrangement, arrangementMarkers, rangeOfIR } from '../notation-ir/arrangement.js';
 import { renderClipOrder } from '../notation-ir/cliporder.js';
 import { findById, parsePageId } from '../notation-ir/anchors.js';
@@ -259,8 +260,10 @@ $('nextPage').onclick = () => S.pdf && busy(() => openPage(S.pdf.page + 1));
 // Whole document, transposed, as a PDF: pages without staves are kept as they are.
 // The main thread only paints PDF pages; a pool of workers recognises, rewrites and
 // JPEG-encodes them in parallel (OffscreenCanvas), results reassembled in page order.
-async function exportPdf() {
+async function exportPdf(annOpts = S.annExport) {
   const P = S.pdf; if (!P) return;
+  const annOf = (k) => chooseAnnotations(ANN.pages.get(k), annOpts);
+  let marks = 0;
   const { writePdf } = await pdfMod();
   const opts = { from: S.from, to: S.to, octave: S.octave, clef: S.clef }, q = 0.8;
   const pages = new Array(P.n); let next = 1, done = 0;
@@ -272,13 +275,16 @@ async function exportPdf() {
       const { canvas, widthPt, heightPt } = await P.pool.render(k, 2400); // pages render on all readers at once
       let r;
       if (P.edited.has(k)) { // corrected by hand: use that model, render here
-        const { model, img } = P.edited.get(k), c = document.createElement('canvas');
-        new Renderer(img, model).render(c.getContext('2d'), plan(model, opts));
+        const { model, img } = P.edited.get(k), c = document.createElement('canvas'), rd = new Renderer(img, model), pl = plan(model, opts);
+        rd.render(c.getContext('2d'), pl);
+        marks += drawPageAnnotations(c.getContext('2d'), { model, renderer: rd, plan: pl, annotations: annOf(k) });
         r = { jpeg: await jpegMain(c), w: c.width, h: c.height };
       } else {
         const bitmap = await createImageBitmap(canvas);
         canvas.width = canvas.height = 1; // free the page early
-        r = await poolCall({ page: true, bitmap, opts, q }, [bitmap]);
+        const an = annOf(k);
+        r = await poolCall({ page: true, bitmap, opts, q, ...(an.length ? { annotations: an } : {}) }, [bitmap]);
+        if (r.marks > 0) marks += r.marks;
       }
       pages[k - 1] = { ...r, widthPt, heightPt };
       done++; progress();
@@ -288,9 +294,9 @@ async function exportPdf() {
   const bytes = writePdf(pages);
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
   a.download = `${P.name}-${S.to}.pdf`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 10000);
-  return { bytes: bytes.length, music: pages.filter((p) => p.music).length };
+  return { bytes: bytes.length, music: pages.filter((p) => p.music).length, marks };
 }
-$('exportPdf').onclick = () => busy(exportPdf, 'Transposing…');
+$('exportPdf').onclick = (e) => exportWith('pdf', e);
 for (const id of ['cam', 'cam2', 'file']) $(id).onchange = (e) => { const f = e.target.files[0]; if (f) load(f, f.name); e.target.value = ''; };
 const sample = async () => closePdf() || load(await (await fetch('sample.jpg')).blob(), 'minuet');
 $('sample').onclick = sample; $('sample2').onclick = sample;
@@ -456,7 +462,12 @@ function startPlay(fromTick) {
 // perpendicular to the staff on a tilted photo; one per cursor for programs, coloured like
 // their clip. Drawn on their own canvas so a frame costs one line, not the overlay.
 /** The page as a notation-ir surface (./surface.js): markers, playheads and selection all go through it. */
-function surfaceFor(irc) { return photoSurface({ model: S.model, score: S.score, irc, view: mkView }); }
+function surfaceFor(irc) {
+  // on the transposed page staves stretch where a key signature got wider: draw and pick there
+  const W = S.view === 'transposed' && S.rend?.warps;
+  const warp = W ? (line, x) => { const w = W.get(S.model.staves[line]); return w ? w.warp(x) : x; } : null;
+  return photoSurface({ model: S.model, score: S.score, irc, view: mkView, warp });
+}
 /** IR events as surface time items, time in `unit`s of a whole note (ticks: WHOLE, whole notes: 1). */
 function irItems(score, unit) {
   const f = (x) => (x.n / x.d) * unit;
@@ -1188,12 +1199,49 @@ document.addEventListener('keydown', (e) => {
 });
 window.addEventListener('resize', () => S.rend && layoutStage());
 
-$('export').onclick = () => {
+async function exportPng(annOpts = S.annExport) {
   const c = document.createElement('canvas'); c.width = cv.width; c.height = cv.height;
-  const g = c.getContext('2d'); g.drawImage(cv, 0, 0); if (S.view !== 'original') g.drawImage(ov, 0, 0); g.drawImage(an, 0, 0);
-  c.toBlob((b) => { const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `${S.name}-${S.to}.png`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); }, 'image/png');
-};
+  const g = c.getContext('2d'); g.drawImage(cv, 0, 0); if (S.view !== 'original') g.drawImage(ov, 0, 0);
+  const list = chooseAnnotations(annList(), annOpts);
+  if (list.length) { // drawn at the page's own scale (the screen view keeps marks legible when zoomed out)
+    if (!ANN.irc) await annSurface();
+    const r = S.rend.r, v = { X: (x) => x * r, Y: (y) => y * r, sp: (S.model.space || 16) * r };
+    drawAnnotations(g, { ...S.surf, view: () => v }, list, ANN.items);
+  }
+  await new Promise((res) => c.toBlob((b) => { const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `${S.name}-${S.to}.png`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); res(); }, 'image/png'));
+  return { marks: list.length };
+}
+$('export').onclick = (e) => exportWith('png', e);
+
+/**
+ * Exports ask about pen annotations when there are any: draw them or not, and which colours
+ * (e.g. a teacher's red marks but not your own pencil). The choice is remembered.
+ */
+function exportWith(kind, e) {
+  const lists = kind === 'pdf' ? [...ANN.pages.values()] : [annList()];
+  const cols = colorsOf(lists), n = lists.reduce((s, l) => s + (l?.length || 0), 0);
+  const go = () => (kind === 'pdf' ? busy(exportPdf, 'Transposing…') : exportPng());
+  if (!n) { go(); return; }
+  const o = S.annExport || { include: true, colors: null };
+  const on = (c) => !o.colors || o.colors.includes(c);
+  showPop(`<h3>${kind === 'pdf' ? 'Transposed PDF' : 'PNG'} · pen annotations</h3>
+    <p class="hint">${n} mark${n > 1 ? 's' : ''}${kind === 'pdf' ? ` on ${lists.filter((l) => l?.length).length} page${lists.filter((l) => l?.length).length > 1 ? 's' : ''}` : ' on this page'}.</p>
+    <div class="row"><label><input type="radio" name="xa" value="1" ${o.include !== false ? 'checked' : ''}> Draw them</label><label><input type="radio" name="xa" value="0" ${o.include === false ? 'checked' : ''}> Leave them out</label></div>
+    ${cols.length > 1 ? `<div class="row" id="xCols">${cols.map((c) => `<label title="${c}"><input type="checkbox" data-xc="${c}" ${on(c) ? 'checked' : ''}> <span style="display:inline-block;width:1.1rem;height:1.1rem;border-radius:50%;background:${c};vertical-align:middle"></span></label>`).join('')}</div>` : ''}
+    <div class="row"><button id="xGo">⬇ Export</button><button id="xX">Cancel</button></div>`, e);
+  const sync = () => { const inc = pop.querySelector('input[name=xa]:checked').value === '1'; pop.querySelectorAll('[data-xc]').forEach((b) => (b.disabled = !inc)); };
+  pop.querySelectorAll('input[name=xa]').forEach((b) => (b.onchange = sync)); sync();
+  $('xGo').onclick = () => {
+    const include = pop.querySelector('input[name=xa]:checked').value === '1';
+    const picked = [...pop.querySelectorAll('[data-xc]')].filter((b) => b.checked).map((b) => b.dataset.xc);
+    S.annExport = { include, colors: cols.length > 1 && picked.length < cols.length ? picked : null };
+    try { localStorage.setItem('scoreshift.annExport', JSON.stringify(S.annExport)); } catch (err) { /* private mode */ }
+    hidePop(); go();
+  };
+  $('xX').onclick = () => hidePop();
+}
+try { S.annExport = JSON.parse(localStorage.getItem('scoreshift.annExport')) || undefined; } catch (err) { /* none saved */ }
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
 // test hook
-window.__ss = { S, load, saveProject, idb, update, plan, openPage, exportPdf, player, setFix, eventOf, toMusicXML, toMidi, musicOpts, playProgram, editInStaffInk, toIR, markers: () => MK, refreshMarkers, heads: () => S.heads, ANN, annotations: () => annList(), refreshAnnotations, annUndo, MKS, rangeNow, markerTap, arrOf }; window.__yOfP = yOfP;
+window.__ss = { S, load, saveProject, idb, update, plan, openPage, exportPdf, player, setFix, eventOf, toMusicXML, toMidi, musicOpts, playProgram, editInStaffInk, toIR, markers: () => MK, refreshMarkers, heads: () => S.heads, ANN, exportPng, exportWith, annotations: () => annList(), refreshAnnotations, annUndo, MKS, rangeNow, markerTap, arrOf }; window.__yOfP = yOfP;

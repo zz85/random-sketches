@@ -110,6 +110,26 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
     check('transposed PDF export (3 Letter pages, re-readable)', pdfOut.pages === 3 && pdfOut.w === 612 && pdfOut.h === 792 && pdfOut.size > 100000, JSON.stringify(pdfOut));
     const ex2 = await b.evaluate(`(()=>{const a=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){};return __ss.exportPdf().finally(()=>{HTMLAnchorElement.prototype.click=a})})()`);
     check('export: music pages transposed in workers, title page kept', ex2.music === 2, JSON.stringify(ex2));
+    // pen annotations into the transposed PDF: a red and a blue mark on page 2, export with only red
+    await b.evaluate(`document.querySelector('#thumbs button[data-page="2"]').click();1`);
+    await waitFor(() => b.evaluate(`__ss.S.pdf.page===2 && !!__ss.S.model && !!__ss.S.score`), 20000).catch(() => {}); await sleep(400);
+    const viewWas = await b.evaluate('__ss.S.view');
+    const mk2 = await b.evaluate(`(async()=>{const S=__ss.S;document.querySelector('[data-view=transposed]').click();await new Promise(r=>setTimeout(r,200));
+      const ir=(await __ss.toIR()).score,m=await import('../notation-ir/annotations.js'),{photoSurface}=await import('./surface.js'),{buildScore}=await import('./score.js');
+      const surf=photoSurface({model:S.model,score:S.score,irc:await __ss.toIR(),view:()=>({X:x=>x,Y:y=>y,sp:16})}),items=m.itemsOf(ir);
+      const ev=ir.events.filter(e=>e.src.line===0).sort((a,b)=>a.src.x-b.src.x),st=S.model.staves[0],sp=S.model.space||16;
+      const blob=(e,color)=>{const x=e.src.x,y=__yOfP(st,8,x)-2*sp;return m.attachStrokes(surf,items,[[{x:x-10,y},{x:x+10,y},{x:x+10,y:y-12},{x:x-10,y:y-12},{x:x-10,y}]],{id:color,color,width:0.6})};
+      const red=blob(ev[4],'#c2255c'),blue=blob(ev[10],'#1c7ed6');__ss.ANN.pages.set(2,[red,blue]);
+      const r=S.rend.r,at=(e)=>({fx:e.src.x*r/S.rend.W,fy:(__yOfP(st,8,e.src.x)-2*sp-6)*r/S.rend.H});return {red:at(ev[4]),blue:at(ev[10]),kinds:[red.anchor.kind,blue.anchor.kind]}})()`);
+    // through the export dialog: untick blue
+    const pdfAnn = await b.evaluate(`new Promise((res)=>{const a=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){HTMLAnchorElement.prototype.click=a;
+      fetch(this.href).then(r=>r.arrayBuffer()).then(async buf=>{const {openPdf,renderPage}=await import('./pdfsource.js');const d=await openPdf(new Blob([buf]));const {canvas:c}=await renderPage(d,2,2000);const g=c.getContext('2d');
+        const px=(f,want)=>{const d2=g.getImageData(Math.round(f.fx*c.width)-6,Math.round(f.fy*c.height)-6,13,13).data;let n=0;for(let i=0;i<d2.length;i+=4){const [R,G,B]=[d2[i],d2[i+1],d2[i+2]];if(want==='red'?R>150&&G<90&&B<140:B>150&&R<90)n++}return n};
+        res({red:px(${JSON.stringify(mk2.red)},'red'),blue:px(${JSON.stringify(mk2.blue)},'blue'),dialog:window.__dlg})}).catch((e)=>res({err:String(e&&e.stack||e)}))};
+      document.getElementById('exportPdf').click();
+      setTimeout(()=>{const p=document.getElementById('pop');window.__dlg=p.querySelector('h3')?.textContent;const blue=p.querySelector('[data-xc="#1c7ed6"]');if(blue)blue.checked=false;document.getElementById('xGo').click();},300);})`);
+    check('pen annotations into the transposed PDF, by colour (red drawn, blue left out)', /annotations/.test(pdfAnn.dialog || '') && pdfAnn.red > 20 && pdfAnn.blue === 0 && mk2.kinds.join() === 'event,event', JSON.stringify({ ...pdfAnn, mk2 }));
+    await b.evaluate(`(()=>{__ss.ANN.pages.clear();__ss.S.annExport=undefined;localStorage.removeItem('scoreshift.annExport');document.querySelector('[data-view=${viewWas}]').click();return 1})()`);
     await b.evaluate(`document.getElementById('sample').click();1`);
     await waitFor(() => b.evaluate(`!__ss.S.pdf && __ss.S.model && __ss.S.model.notes.length > 90`), 20000).catch(async () => console.log(await b.evaluate(`JSON.stringify({pdf:!!__ss.S.pdf,m:__ss.S.model?.notes.length,st:document.getElementById("status").textContent,busy:document.getElementById("busy").style.display})`)));
 
@@ -291,7 +311,7 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
     check('clip order chips: drag a clip to play it first', order.o === 'C,A,B' && order.firstIsC, JSON.stringify(order));
     // ✎ Annotate: a pen writes a "3" over a note and circles two bars; the ink sticks to the music
     const markersWere = await b.evaluate('__ss.MKS.on'); // Annotate turns Markers off; put it back after
-    await b.evaluate(`(()=>{__ss.S.programs.clear();__ss.MKS.range=null;if(__ss.MKS.on)document.getElementById('markMode').click();document.getElementById('pop').style.display='none';window.scrollTo(0,0);document.getElementById('wrap').scrollTop=0;__ss.update();return 1})()`);
+    await b.evaluate(`(()=>{__ss.S.programs.clear();__ss.MKS.range=null;document.querySelector('[data-view=transposed]').click();if(__ss.MKS.on)document.getElementById('markMode').click();document.getElementById('pop').style.display='none';window.scrollTo(0,0);document.getElementById('wrap').scrollTop=0;__ss.update();return 1})()`);
     await press('#annMode'); await sleep(300);
     const pg = (x, y) => b.evaluate("(()=>{const S=__ss.S,k=(S.rend.r/devicePixelRatio)*S.zoom,r=document.getElementById('cv').getBoundingClientRect();return {x:r.left+(" + x + ")*k,y:r.top+(" + y + ")*k}})()");
     const stroke = async (pts) => { const c = []; for (const [x, y] of pts) c.push(await pg(x, y));
@@ -305,14 +325,16 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
     const ccx = (bx.x0 + bx.x1) / 2, ccy = (bx.y0 + bx.y1) / 2, crx = (bx.x1 - bx.x0) / 2, cry = (bx.y1 - bx.y0) / 2;
     await stroke(Array.from({ length: 25 }, (_, i) => [ccx + crx * Math.cos(i / 24 * 2 * Math.PI), ccy + cry * Math.sin(i / 24 * 2 * Math.PI)])); await sleep(900);
     const ink = (x, y) => "(()=>{const S=__ss.S,r=S.rend.r,d=document.getElementById('an').getContext('2d').getImageData(Math.round((" + x + ")*r)-6,Math.round((" + y + ")*r)-6,13,13).data;let n=0;for(let i=3;i<d.length;i+=4)if(d[i]>40)n++;return n})()";
-    const where = `(async()=>{const m=await import('../notation-ir/annotations.js');const a=__ss.annotations()[0];await __ss.refreshAnnotations();const r=m.resolveAnnotation(__ss.S.surf,a,__ss.ANN.items);return {x:Math.round(r.pieces[0].points[0].x),y:Math.round(r.pieces[0].points[0].y),lost:r.lost}})()`;
+    // where the mark is, measured from its note as drawn in this view (transposed staves stretch)
+    const where = `(async()=>{const m=await import('../notation-ir/annotations.js');const a=__ss.annotations()[0];await __ss.refreshAnnotations();const S=__ss.S,r=m.resolveAnnotation(S.surf,a,__ss.ANN.items);
+      const note=S.surf.place(a.anchor.id,'center')[0];return {dx:Math.round(r.pieces[0].points[0].x-note.x),y:Math.round(r.pieces[0].points[0].y),lost:r.lost,view:S.view}})()`;
     const an1 = await b.evaluate(`({kinds:__ss.annotations().map(a=>a.anchor.kind),strokes:__ss.annotations()[0]?.strokes.length})`);
     const w0 = await b.evaluate(where), inkAt = await b.evaluate(ink(nt.x - 1, nt.top - 2.1 * nt.sp));
     await b.evaluate(`document.querySelector('[data-view=original]').click();1`); await sleep(300); const wOrig = await b.evaluate(where);
     await b.evaluate(`document.querySelector('[data-view=transposed]').click();1`); await sleep(200);
     await b.evaluate(`(async()=>{const st=__ss.S.model.staves[0];st.notes.splice(1,1);(await import('./omr.js')).interpret(st);__ss.update();return 1})()`); await sleep(400);
     const wFix = await b.evaluate(where);
-    check('✎ Annotate: pen ink sticks to its note and passage, through view changes and a correction', an1.kinds.join() === 'event,span' && an1.strokes === 2 && inkAt > 10 && JSON.stringify(wOrig) === JSON.stringify(w0) && JSON.stringify(wFix) === JSON.stringify(w0) && !w0.lost, JSON.stringify({ an1, w0, wOrig, wFix, inkAt }));
+    check('✎ Annotate: pen ink sticks to its note and passage, in both views and through a correction', an1.kinds.join() === 'event,span' && an1.strokes === 2 && inkAt > 10 && w0.view === 'transposed' && wOrig.view === 'original' && wOrig.dx === w0.dx && wOrig.y === w0.y && wFix.dx === w0.dx && wFix.y === w0.y && !w0.lost && !wFix.lost, JSON.stringify({ an1, w0, wOrig, wFix, inkAt }));
     // eraser, undo, and the project carries the ink
     await press('#annErase'); await stroke([[ccx - crx, ccy], [ccx - crx + 8, ccy + 2]]); await sleep(200);
     const afterErase = await b.evaluate(`__ss.annotations().length`);
