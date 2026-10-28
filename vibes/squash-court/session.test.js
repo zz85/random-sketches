@@ -1,5 +1,5 @@
 import { test, expect } from 'bun:test';
-import { keepFlights, toMatch, fromRecorded, playersAt, rallyList } from './session.js';
+import { keepFlights, toMatch, fromRecorded, playersAt, rallyList, pickCleanup } from './session.js';
 
 const fl = (t0, t1, x = 1) => ({ cam: [3.2, 14, 4], t0, t1, speed: 20, labels: [], impacts: [{ t: (t0 + t1) / 2, X: [x, 0, 1], plane: 'front' }], pts: [{ t: t0, X: [x, 5, 1], V: [0, -20, 2] }, { t: t1, X: [x, 1, 1.2], V: [0, -18, 0] }], uv: [[1, 2]] });
 
@@ -36,4 +36,15 @@ test('rallies of a recording, with who hit how many', () => {
   expect(R.map((r) => [r.n, r.shots, r.by[1], r.by[2]])).toEqual([[1, 3, 2, 1], [2, 2, 1, 1]]);
   expect(R[0]).toMatchObject({ t0: 9.6, t1: 13.8 });
   expect(R[1].last).toMatchObject({ hitter: 1, kind: { type: 'lob' } });
+});
+
+test('clean-up picks the oldest recordings first and never the one being recorded', () => {
+  const d = (n) => Date.UTC(2026, 9, n);
+  const recs = [{ id: 'a', date: d(1), bytes: 10, video: 1000 }, { id: 'b', date: d(5), bytes: 10, video: 0 }, { id: 'c', date: d(9), bytes: 10, video: 3000 }, { id: 'live', date: d(10), bytes: 5, video: 500 }];
+  expect(pickCleanup(recs, { olderThan: d(6) })).toEqual([{ id: 'a', drop: 'video', bytes: 1000 }]); // b has no video
+  expect(pickCleanup(recs, { olderThan: d(6), what: 'all' }).map((x) => [x.id, x.bytes])).toEqual([['a', 1010], ['b', 10]]);
+  expect(pickCleanup(recs, { keepNewest: 2, what: 'all' }).map((x) => x.id)).toEqual(['a', 'b']);
+  // the automatic one: just enough, oldest first, never the live session
+  expect(pickCleanup(recs, { need: 1500, keep: ['live'] }).map((x) => x.id)).toEqual(['a', 'c']);
+  expect(pickCleanup(recs, { need: 600, keep: ['live'] }).map((x) => x.id)).toEqual(['a']);
 });

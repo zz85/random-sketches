@@ -175,7 +175,7 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
       const B=S.src.currentTime+(S.tShift||0); S.allFlights=[{cam:[3,17,4],t0:B-2.2,t1:B-1,speed:20,labels:[],impacts:[],pts:[B-2.2,B-1.6,B-1].map((t,i)=>({t,X:[3,5-i,1+i*0.3],V:[0,-9,1]}))}];
       const sh=(t,p)=>({t,player:p,quality:3,kind:{type:'drive'},front:[3,0,1.2],struck:{t:t-0.3,X:[3,8,1],V:[0,-20,2]},bounce:{t:t+0.7,X:[3,9,0]},speed:30,apex:2,tight:false,measured:true});
       S.comm.shots=[sh(B-2,1),sh(B-1.4,2),sh(B+1.5,1)];
-      document.getElementById('demo').click(); for(let i=0;i<40&&!/video/.test(document.getElementById('recList').textContent);i++) await w(150);
+      document.getElementById('demo').click(); for(let i=0;i<40&&!document.getElementById('recList').textContent.includes('(video');i++) await w(150);
       const txt=document.getElementById('recList').textContent;
       document.querySelector('#recList li button').click(); for(let i=0;i<40&&!(S.rv&&S.rv.el.readyState>=2);i++) await w(150);
       await w(300);
@@ -183,8 +183,27 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
       const rl=[...document.querySelectorAll('#rallyList button')].map(x=>x.textContent);
       document.querySelector('#rallyList button').click(); await w(500);
       return {meta:S.rv?.segs.map(s=>[s.t0,s.t1,s.size,s.mime,!!s.cam]),err:S.rv?.el.error?.message,cur:S.rv?.cur,gap:S.rv?.gap,rt:[S.replay?.t0,S.replay?.t1],started,txt,segs:S.rv?.segs.length??0,ready:S.rv?.el.readyState,px:[...px],rl,playing:!!S.replayRaf,t:S.replayT,stop:S.replayStop,vplaying:S.rv&&!S.rv.el.paused}})()`);
-    check('video with the session: recorded in segments, played back on the stage; rallies listed and played', rv.started && /video [0-9.]+ MB/.test(rv.txt) && rv.segs >= 1 && rv.ready >= 2 && rv.px[0] > 60 && rv.rl.length === 2 && /Rally 1 .* 2 shots .*P1 1, P2 1/.test(rv.rl[0]) && rv.playing && rv.vplaying && rv.t >= rv.rt[0] && rv.t < rv.rt[1], JSON.stringify(rv));
+    check('video with the session: recorded in segments, played back on the stage; rallies listed and played', rv.started && /video [0-9.]+ (MB|kB)/.test(rv.txt) && rv.segs >= 1 && rv.ready >= 2 && rv.px[0] > 60 && rv.rl.length === 2 && /Rally 1 .* 2 shots .*P1 1, P2 1/.test(rv.rl[0]) && rv.playing && rv.vplaying && rv.t >= rv.rt[0] && rv.t < rv.rt[1], JSON.stringify(rv));
     await b.evaluate(`(async()=>{for(const li of document.querySelectorAll('#recList li')){window.confirm=()=>true;li.querySelectorAll('button')[2].click();}await new Promise(r=>setTimeout(r,300));return 1})()`);
+    // storage meter and clean-up: three recordings (10 and 3 days old, today), video on two of them
+    const sm = await b.evaluate(`(async()=>{const w=(ms)=>new Promise(r=>setTimeout(r,ms)),S=__sq; window.confirm=()=>true;
+      const { Store, Video } = await import('./session.js'); const day=86400e3, now=Date.now();
+      for(const li of document.querySelectorAll('#recList li')) li.querySelector('button:last-child').click(); await w(300);
+      const mk=async(id,age,mbv)=>{await Store.put({id,date:now-age*day,source:'camera',duration:60,shots:5,data:{shots:[],players:[]},bytes:2000}); if(mbv) await Video.put(id,0,{t0:0,t1:10,mime:'video/webm',w:640,h:360,cam:null},new Blob([new Uint8Array(mbv*1e6)],{type:'video/webm'}));};
+      await mk('old',10,3); await mk('mid',3,0); await mk('new',0,2);
+      await window.__refreshRecordings(); await w(200);
+      document.getElementById('cleanAge').dispatchEvent(new Event('change')); await w(600);
+      const a={meter:document.getElementById('storeText').textContent, note:document.getElementById('cleanNote').textContent, rows:[...document.querySelectorAll('#recList li span')].map(x=>x.textContent.replace(/^.*?· camera · /,''))};
+      document.getElementById('cleanGo').click(); await w(800);
+      a.after=[...document.querySelectorAll('#recList li span')].map(x=>x.textContent.replace(/^.*?· camera · /,'')); a.left=(await Video.sizes());
+      // the automatic clean-up: a browser with 60 MB of room left drops the oldest video it may
+      const est=navigator.storage.estimate.bind(navigator.storage); navigator.storage.estimate=async()=>({usage:100e6,quota:150e6});
+      await mk('old2',20,2); await window.__refreshRecordings();
+      document.getElementById('cleanAge').dispatchEvent(new Event('change')); S.sessionId='new';
+      a.room=await window.__ensureRoom(5e6); a.auto=document.getElementById('recNote').textContent; a.left2=await Video.sizes();
+      navigator.storage.estimate=est; for(const li of document.querySelectorAll('#recList li')) li.querySelector('button:last-child').click(); await w(400);
+      return a})()`);
+    check('storage meter and clean-up: sizes, remove old video, free space automatically', /Recordings .*video 5\.0 MB/.test(sm.meter) && /1 recording, frees 3\.0 MB/.test(sm.note) && !sm.left.old && sm.left.new && /dropped the video of 1 old recording \(2\.0 MB\)/.test(sm.auto) && !sm.left2.old2 && sm.left2.new, JSON.stringify(sm));
     await b.evaluate(`document.getElementById('zoomBar').scrollIntoView();1`); await new Promise((r) => setTimeout(r, 200)); await shot('zoom');
     const errors = [];
     for (const e of b.events) if (e.method === 'Runtime.exceptionThrown') errors.push(e.params.exceptionDetails.exception?.description || e.params.exceptionDetails.text);

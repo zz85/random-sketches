@@ -82,6 +82,10 @@
   .recList li { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 4px 6px; background: #1e2128; border-radius: 3px; font-size: 13px; }
   .recList li span { flex: 1; min-width: 12em; }
   .recList button { padding: 3px 8px; font-size: 12px; }
+  .meter { height: 8px; background: #262a33; border-radius: 4px; overflow: hidden; margin-top: 6px; }
+  .meter div { height: 100%; width: 0; background: var(--acc); transition: width .3s; } .meter div.high { background: #ffbf1f; } .meter div.full { background: #f0584f; }
+  .recCtl.clean { flex-wrap: wrap; } .recCtl select { background: #262a33; color: var(--fg); border: 1px solid #333844; border-radius: 4px; padding: 3px 4px; font: inherit; font-size: 12px; }
+  #storeKeep { padding: 2px 8px; font-size: 12px; }
   .rallyList li { padding: 0; background: none; } .rallyList button { width: 100%; text-align: left; padding: 5px 8px; font-size: 13px; }
   .rallyList button[aria-current="true"] { border-color: #ffe600; background: #3a3620; }
   .replay { display: flex; gap: 8px; align-items: center; }
@@ -149,7 +153,14 @@
     <div class="recCtl"><label class="chk3" title="Also keep the camera's picture (about 11 MB a minute, in this browser), to watch a session back with the analysis drawn over it"><input id="recVideo" type="checkbox"> record video with camera sessions</label><span id="recVideoNote" class="note"></span></div>
     <div class="recCtl"><button id="recSave" title="Keep everything analysed so far: player positions, ball flights, bounces, shots (a camera session saves itself)">Save this session</button><span id="recNote" class="note" aria-live="polite"></span></div>
     <p id="recEmpty" class="note">None yet. A camera session is recorded as it goes; open one here to see its heatmaps, bounces and a 3D replay.</p>
-    <ol id="recList" class="recList"></ol></figure>
+    <ol id="recList" class="recList"></ol>
+    <div id="storeMeter" class="meter" role="meter" aria-label="Storage used by this site" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="storeBar"></div></div>
+    <div class="recCtl"><span id="storeText" class="note"></span><button id="storeKeep" hidden title="Ask the browser not to clear the recordings when it is short of space">Keep</button><span id="storeKept" class="note" hidden>· kept by the browser</span></div>
+    <div class="recCtl clean"><span class="note">Clean up</span>
+      <select id="cleanWhat" aria-label="What to remove"><option value="video">the video of</option><option value="all">whole recordings</option></select>
+      <select id="cleanAge" aria-label="Which recordings"><option value="1">older than a day</option><option value="7" selected>older than a week</option><option value="30">older than a month</option><option value="keep3">all but the newest 3</option></select>
+      <button id="cleanGo">Remove</button><span id="cleanNote" class="note" aria-live="polite"></span></div>
+    <label class="chk3" title="When the browser is about to run out of room, the video of the oldest recordings is deleted first; the analysis and the session being recorded are never touched"><input id="autoClean" type="checkbox" checked> free space automatically (drops the video of the oldest recordings)</label></figure>
   <figure id="ralliesFig" class="wide" hidden><h2>Rallies</h2><ol id="rallyList" class="recList rallyList"></ol></figure>
   <figure class="wide"><h2>Commentary</h2><ol id="feed" aria-live="polite"></ol></figure>
   <figure><h2>Floor, rectified (front wall at the top)</h2><canvas id="plan" class="panel" width="256" height="390"></canvas></figure>

@@ -44,7 +44,7 @@ Things we found worth doing but haven't done yet. The first item in each section
 
 ## Live and recordings
 
-- **Take the recorded video out of the browser.** It is kept in IndexedDB only; Download writes the analysis without it. The segments are separate WebM / MP4 files (one recorder each), so a download needs them joined (remux, or a zip of the segments with the `.json`). Also: a storage meter and old-recording clean-up when the browser's quota runs low.
+- **Take the recorded video out of the browser.** It is kept in IndexedDB only; Download writes the analysis without it. The segments are separate WebM / MP4 files (one recorder each), so a download needs them joined (remux, or a zip of the segments with the `.json`).
 - **Check video recording on phones.** Frame rate of the analysis while encoding, and Safari's MP4 segments seeking and playing back to back.
 - **Still frames at each shot.** A cheaper alternative: one JPEG per named shot (or per floor bounce), shown next to its line in the commentary feed of a recording.
 - **Rally winners in the rally list.** It shows the last shot, not who won the point; that needs the score bug read between points (OCR) or the ball's last bounce judged.

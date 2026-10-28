@@ -12,7 +12,7 @@ import { Commentary, describe, movement, mainView } from './commentary.js';
 import { TControl, tLabel, T_POINT } from './tcontrol.js';
 import { coachStats, posAtFromLogs, responsePatterns, ZONE_X, ZONE_Y } from './coaching.js';
 import { zoomOptions, currentOption } from './camzoom.js';
-import { keepFlights, toMatch, fromRecorded, playersAt as replayPlayersAt, rallyList, Store, Video } from './session.js';
+import { keepFlights, toMatch, fromRecorded, playersAt as replayPlayersAt, rallyList, pickCleanup, Store, Video } from './session.js';
 import { SegmentRecorder } from './recorder.js';
 
 const $ = (id) => document.getElementById(id);
@@ -905,6 +905,7 @@ async function saveSession() {
     coach: S.coach, flights: S.allFlights, camera: S.cam, text: (s) => describe(s, nameOf),
   });
   const rec = { id: S.sessionId, date: M.started, source: M.source, duration: M.duration, shots: M.shots.filter((s) => s.quality >= 2).length, data: M };
+  rec.bytes = JSON.stringify(M).length;
   try { await Store.put(rec); $('recNote').textContent = `saved ${new Date().toLocaleTimeString()}`; await refreshRecordings(); } catch (e) { $('recNote').textContent = `not saved: ${e.message}`; }
   return rec;
 }
@@ -913,15 +914,84 @@ async function refreshRecordings() {
   const when = (d) => new Date(d).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
   $('recList').replaceChildren(...list.map((r) => {
     const li = document.createElement('li'), txt = document.createElement('span'), mk = (label, title, fn) => { const b = document.createElement('button'); b.textContent = label; b.title = title; b.onclick = fn; return b; };
-    txt.textContent = `${when(r.date)} · ${r.source} · ${clock(r.duration).slice(0, -2)} · ${r.shots} shots${sizes[r.id] ? ` · video ${(sizes[r.id] / 1e6).toFixed(1)} MB` : ''}${r.id === S.sessionId && S.live && S.src?.srcObject ? ' (recording)' : ''}`;
+    txt.textContent = `${when(r.date)} · ${r.source} · ${clock(r.duration).slice(0, -2)} · ${r.shots} shots · ${mb((r.bytes ?? 0) + (sizes[r.id] ?? 0))}${sizes[r.id] ? ` (video ${mb(sizes[r.id])})` : ''}${r.id === S.sessionId && S.live && S.src?.srcObject ? ' (recording)' : ''}`;
     li.append(txt,
       mk('Open', 'Heatmaps, bounces, coaching and a 3D replay of this session', async () => { const x = await Store.get(r.id); if (x) useMatch(x.data, `${when(r.date)}, ${r.source}`, r.id); }),
       mk('Download', 'As a .json file (Open… reads it back)', async () => { const x = await Store.get(r.id); if (!x) return; const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(x.data)], { type: 'application/json' })); a.download = `squash-session-${new Date(r.date).toISOString().slice(0, 16).replace(':', '')}.json`; a.click(); }),
+      ...(sizes[r.id] && !(r.id === S.sessionId && S.vrec) ? [mk('Drop video', `Free ${mb(sizes[r.id])}: delete this recording's video, keep its analysis`, async () => { if (!confirm(`Delete the video of the recording from ${when(r.date)} (${mb(sizes[r.id])})? Its analysis stays.`)) return; await Video.remove(r.id); refreshRecordings(); })] : []),
       mk('Delete', 'Delete this recording', async () => { if (!confirm(`Delete the recording from ${when(r.date)}?`)) return; await Store.remove(r.id); refreshRecordings(); }));
     return li;
   }));
   $('recEmpty').hidden = list.length > 0;
+  S.recs = list.map((r) => ({ ...r, video: sizes[r.id] ?? 0 }));
+  storageMeter();
 }
+
+// ---------- storage meter and clean-up ----------
+// What the recordings take (their analysis and their video), against what the browser lets this
+// site keep (navigator.storage.estimate; a browser may also clear it under storage pressure unless
+// it has been made persistent). Clean up: drop the video, or whole recordings, older than a
+// chosen age; and, when the box is ticked, the video of the oldest recordings is dropped on its
+// own (never the session being recorded, never the analysis) when the browser runs low.
+const mb = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1e3))} kB`);
+async function storageInfo() {
+  const e = (await navigator.storage?.estimate?.().catch(() => null)) ?? {};
+  return { usage: e.usage ?? null, quota: e.quota ?? null, persisted: (await navigator.storage?.persisted?.().catch(() => false)) ?? false };
+}
+async function storageMeter() {
+  const recs = S.recs ?? [], data = recs.reduce((s, r) => s + (r.bytes ?? 0), 0), video = recs.reduce((s, r) => s + r.video, 0), info = await storageInfo();
+  const used = info.usage ?? data + video, q = info.quota, f = q ? Math.min(1, used / q) : 0;
+  $('storeBar').style.width = `${(f * 100).toFixed(1)}%`; $('storeBar').className = f > 0.9 ? 'full' : f > 0.7 ? 'high' : '';
+  $('storeMeter').setAttribute('aria-valuenow', String(Math.round(f * 100)));
+  $('storeText').textContent = `Recordings ${mb(data + video)}${video ? ` (video ${mb(video)})` : ''}${q ? ` · ${mb(used)} of the ${mb(q)} this browser allows (${(f * 100).toFixed(f < 0.1 ? 1 : 0)}%)` : ''}`;
+  $('storeKeep').hidden = info.persisted || !navigator.storage?.persist; $('storeKept').hidden = !info.persisted;
+  updateCleanNote();
+}
+$('storeKeep').onclick = async () => { const ok = await navigator.storage.persist().catch(() => false); $('recNote').textContent = ok ? 'the browser will not clear the recordings on its own' : 'the browser declined (it decides by how much the site is used; installing it as an app helps)'; storageMeter(); };
+function cleanPlan() {
+  const v = $('cleanAge').value, what = $('cleanWhat').value, keep = S.vrec && S.sessionId ? [S.sessionId] : [];
+  return pickCleanup(S.recs ?? [], v === 'keep3' ? { keepNewest: 3, what, keep } : { olderThan: Date.now() - +v * 86400e3, what, keep });
+}
+function updateCleanNote() {
+  const P = cleanPlan(), n = P.length;
+  $('cleanGo').disabled = !n;
+  $('cleanNote').textContent = n ? `${n} recording${n === 1 ? '' : 's'}, frees ${mb(P.reduce((s, x) => s + x.bytes, 0))}` : 'nothing to remove';
+}
+for (const id of ['cleanAge', 'cleanWhat']) $(id).onchange = updateCleanNote;
+$('cleanGo').onclick = async () => {
+  const P = cleanPlan(); if (!P.length) return;
+  const all = P[0].drop === 'all', freed = mb(P.reduce((s, x) => s + x.bytes, 0));
+  if (!confirm(`${all ? 'Delete' : 'Delete the video of'} ${P.length} recording${P.length === 1 ? '' : 's'} (${freed})?${all ? '' : ' Their analysis stays.'}`)) return;
+  for (const x of P) await (all ? Store.remove(x.id) : Video.remove(x.id));
+  $('recNote').textContent = `freed ${freed}`; refreshRecordings();
+};
+S.autoClean = localStorage.getItem('squash.autoClean') !== '0'; $('autoClean').checked = S.autoClean;
+$('autoClean').onchange = (e) => { S.autoClean = e.target.checked; localStorage.setItem('squash.autoClean', S.autoClean ? '1' : '0'); };
+// room for `bytes` more: when the browser's quota would leave less than a margin, drop the video of
+// the oldest recordings (if allowed). Returns whether there is room.
+async function ensureRoom(bytes) {
+  const { usage, quota } = await storageInfo(); if (usage == null || !quota) return true;
+  const margin = Math.max(50e6, 0.05 * quota), need = usage + bytes + margin - quota;
+  if (need <= 0) return true;
+  if (!S.autoClean) { $('recNote').textContent = `storage nearly full (${mb(quota - usage)} left): clean up below`; return false; }
+  if (!S.recs) await refreshRecordings();
+  const P = pickCleanup(S.recs ?? [], { need, keep: S.sessionId ? [S.sessionId] : [] });
+  for (const x of P) await Video.remove(x.id);
+  if (P.length) { $('recNote').textContent = `storage low: dropped the video of ${P.length} old recording${P.length === 1 ? '' : 's'} (${mb(P.reduce((s, x) => s + x.bytes, 0))})`; refreshRecordings(); }
+  return P.reduce((s, x) => s + x.bytes, 0) >= need;
+}
+// a video segment: room first, and once more if the browser still says the quota is exceeded
+async function saveSegment(id, seg, meta, blob) {
+  await ensureRoom(blob.size);
+  try { await Video.put(id, seg, meta, blob); }
+  catch (e) {
+    if (e?.name !== 'QuotaExceededError') throw e;
+    if (!(await ensureRoom(blob.size * 4))) { $('recNote').textContent = 'storage full: video recording stopped (the analysis is still recorded)'; stopVideoRec(); return; }
+    await Video.put(id, seg, meta, blob);
+  }
+  if (seg % 6 === 5) refreshRecordings(); // the meter, every minute of video
+}
+window.__ensureRoom = ensureRoom; window.__refreshRecordings = refreshRecordings; // for the smoke test
 $('recSave').onclick = () => saveSession().then((r) => { if (!r) $('recNote').textContent = 'nothing analysed yet'; });
 setInterval(() => { if (S.live && S.src?.srcObject && S.sessionId) saveSession(); }, 20000);
 document.addEventListener('visibilitychange', () => { if (document.hidden && S.live && S.src?.srcObject && S.sessionId) saveSession(); });
@@ -990,7 +1060,7 @@ function startVideoRec() {
   S.vrec = new SegmentRecorder({
     stream: () => S.src?.srcObject ?? null, now: () => vt() ?? 0,
     meta: () => ({ w: S.srcW, h: S.srcH, cam: S.cam && S.okay ? { p: S.cam.p.slice(), w: S.cam.w, h: S.cam.h, cx: S.cam.cx, cy: S.cam.cy } : null }),
-    save: (seg, meta, blob) => Video.put(id, seg, meta, blob),
+    save: (seg, meta, blob) => saveSegment(id, seg, meta, blob),
   });
   S.vrec.start(); S.hudKey = '';
 }

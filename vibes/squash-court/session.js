@@ -11,6 +11,7 @@
 //   playersAt(logs, t) -> [{ id, X, seen }] where each player was at t (null if not seen near then)
 //   rallyList(M) -> [{ n, t0, t1, shots, by: { 1: n, 2: n }, last: shot }] the session's rallies
 //   Store: IndexedDB list / get / put / remove of { id, date, source, duration, shots, data }
+//   pickCleanup(recs, opts) -> [{ id, drop: 'video' | 'all', bytes }] what a clean-up removes
 //   Video: the optional recorded picture, in ~10 s segments (each a whole playable file):
 //     put(id, seg, { t0, t1, mime, cam, w, h }, blob), segments(id), remove(id)
 import { W as CW, L as CL } from './court.js';
@@ -81,6 +82,24 @@ export function playersAt(logs, t, near = 0.5) {
   return out;
 }
 
+// What a clean-up removes, oldest first. recs: [{ id, date, bytes (analysis), video (bytes) }].
+//   olderThan: only recordings started before this time (ms); keepNewest: never the newest n;
+//   keep: ids never touched (the session being recorded); what: 'video' drops only the picture
+//   (the analysis stays, and it is small), 'all' the whole recording;
+//   need: stop once this many bytes are freed (the automatic clean-up), else take all that match.
+export function pickCleanup(recs, { olderThan = Infinity, keepNewest = 0, keep = [], what = 'video', need = Infinity } = {}) {
+  const newest = new Set([...recs].sort((a, b) => b.date - a.date).slice(0, keepNewest).map((r) => r.id)), skip = new Set(keep);
+  const out = []; let freed = 0;
+  for (const r of [...recs].sort((a, b) => a.date - b.date)) {
+    if (freed >= need) break;
+    if (r.date >= olderThan || newest.has(r.id) || skip.has(r.id)) continue;
+    const bytes = what === 'all' ? (r.bytes ?? 0) + (r.video ?? 0) : r.video ?? 0;
+    if (!bytes && what === 'video') continue;
+    out.push({ id: r.id, drop: what, bytes }); freed += bytes;
+  }
+  return out;
+}
+
 // ---------- storage (IndexedDB, browser only) ----------
 const DB = 'squash-court', ST = 'sessions', VS = 'video';
 function db() {
@@ -105,5 +124,6 @@ export const Store = {
   get: (id) => tx('readonly', (s) => s.get(id)),
   remove: async (id) => { await Video.remove(id); return tx('readwrite', (s) => s.delete(id)); },
   // newest first, metadata only (each record is read whole: fine for tens of sessions)
-  list: async () => (await tx('readonly', (s) => s.getAll())).map(({ data, ...m }) => (void data, m)).sort((a, b) => b.date - a.date),
+  // bytes: the analysis as stored (older records without the field are measured here)
+  list: async () => (await tx('readonly', (s) => s.getAll())).map(({ data, ...m }) => ({ ...m, bytes: m.bytes ?? JSON.stringify(data ?? null).length })).sort((a, b) => b.date - a.date),
 };
