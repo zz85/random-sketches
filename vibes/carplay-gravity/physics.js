@@ -157,10 +157,14 @@ export class World {
     this.maxSpeed = 7000;
     this.onKnock = null;
     this.restitution = null; // overrides every body's when set (zero-g is bouncier)
+    this.ignore = new Set(); // pairs that pass through each other until they have come apart
   }
   add(b) { this.bodies.push(b); return b; }
   remove(b) { this.bodies = this.bodies.filter((o) => o !== b); if (this.joint && this.joint.body === b) this.joint = null; }
-  clear() { this.bodies = []; this.arbiters.clear(); this.joint = null; }
+  clear() { this.bodies = []; this.arbiters.clear(); this.ignore.clear(); this.joint = null; }
+  // a and b start one inside the other (a toolbar and its buttons): no contact between them until
+  // they have separated once, then they collide like any other pair
+  ignorePair(a, b) { this.ignore.add(a.id < b.id ? a.id + ':' + b.id : b.id + ':' + a.id); }
   setBounds(l, t, r, b) { this.walls = { l, t, r, b }; }
 
   // Soft mouse joint (Box2D's b2MouseJoint) anchored at a world point on the body.
@@ -178,11 +182,14 @@ export class World {
       for (let j = i + 1; j < B.length; j++) {
         const b = B[j];
         if (a.invMass === 0 && b.invMass === 0) continue;
-        const R = a.bound + b.bound;
+        const R = a.bound + b.bound, key = a.id < b.id ? a.id + ':' + b.id : b.id + ':' + a.id;
+        if (this.ignore.size && this.ignore.has(key)) {
+          if (Math.abs(a.x - b.x) > R || Math.abs(a.y - b.y) > R || !collide(a, b).length) this.ignore.delete(key);
+          continue;
+        }
         if (Math.abs(a.x - b.x) > R || Math.abs(a.y - b.y) > R) continue;
         const cs = collide(a, b);
         if (!cs.length) continue;
-        const key = a.id < b.id ? a.id + ':' + b.id : b.id + ':' + a.id;
         live.add(key);
         this.updateArbiter(key, a, b, cs);
       }

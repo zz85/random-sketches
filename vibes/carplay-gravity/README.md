@@ -9,6 +9,10 @@ tumble: clocks tick, the map keeps driving, play / pause / skip work and the gau
   appearance, labels on glass chips, page dots, a layered "Celosia"-style wallpaper (Indigo, Rose,
   Teal) or the blue Ocean sweep. The icons and wallpapers are drawn from scratch in canvas code,
   not Apple's artwork.
+- **The sidebar falls too**: its glass pill is a piece like the rest. The clock, recent apps and
+  buttons start inside it and pass through it until they have come apart once (`world.ignorePair`),
+  then they collide normally. The pill is tipped over its foot when it drops, since a 70 × 468 bar
+  would otherwise just stand there.
 - **Appearance**: Dark or Light (light wallpapers, glass and maps), and icons in Default, Dark or
   Clear (tinted glass with the glyph cut out of it).
 - **Liquid Glass blur**: every glass piece (sidebar, chips, cards, Clear icons, the options sheet)

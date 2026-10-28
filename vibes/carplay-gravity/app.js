@@ -205,13 +205,16 @@ function paintWallpaper(g, W, H, name, light) {
 //           draw(c, p), key?() (cache while unchanged), dyn? (draw every frame), act? (tap),
 //           hits?: [{ x, y, w, h, act }] in piece coordinates }
 
-const SB = 82; // the sidebar's width; its glass pill is the backdrop, its contents are pieces
+const SB = 82; // the sidebar's width; its glass pill and everything on it are pieces
 const theme = () => `${state.appearance}|${state.icons}`;
 const appTile = (id, n, x, y, T, act = 'app:' + n) => ({ id, x, y, w: T, h: T, act, glass: state.icons === 'clear' ? 'squircle' : undefined,
   key: () => theme() + (n === 'calendar' ? new Date().toDateString() : ''), draw: (c, p) => paintApp(c, n, 0, 0, p.w, { mode: state.icons, light: LIGHT() }) });
 
 function sidebar(homeBtn) {
   const out = [
+    // the pill: its contents start inside it and pass through it until they have come apart
+    { id: 'sb-pill', x: SB / 2, y: LH / 2, w: SB - 12, h: LH - 12, glass: 24, under: true, key: theme,
+      draw: (c, p) => glass(c, 0, 0, p.w, p.h, 24, TH().sidebar, { sheen: 0.08, rim: 1.2 }) },
     { id: 'sb-time', x: 41, y: 30, w: 62, h: 22, key: () => live.clock + theme(), draw: (c, p) => text(c, live.clock, p.w / 2, p.h / 2 + 1, font(700, 19), TH().text, 'center', 0, 'middle') },
     { id: 'sb-sig', x: 41, y: 51, w: 44, h: 13, key: theme, draw: (c) => {
       c.fillStyle = TH().text; [0.35, 0.55, 0.78, 1].forEach((f, i) => { rrect(c, 1 + i * 4.6, 12 * (1 - f) + 0.5, 3.2, 12 * f, 1); c.fill(); });
@@ -443,8 +446,14 @@ function setLayout(name) {
     p.body = world.add(new Body({ x: sp.x, y: sp.y, w: sp.w, h: sp.h, shape: sp.shape || 'box', pinned: true, friction: 0.55 }));
     return p;
   });
-  backdrop = null;
+  backdrop = null; shelter();
   if (state.loose) setTimeout(() => { if (state.layout === name && state.loose) dropAll(); }, 700);
+}
+// pieces that start inside a container piece (the sidebar pill) don't collide with it until apart
+function shelter() {
+  for (const c of pieces) if (c.under) for (const p of pieces) {
+    if (p !== c && Math.abs(p.home.x - c.home.x) < (p.w + c.w) / 2 && Math.abs(p.home.y - c.home.y) < (p.h + c.h) / 2) world.ignorePair(c.body, p.body);
+  }
 }
 // rebuild the specs in place (appearance or icon style changed: glass flags and draw functions)
 function respec() {
@@ -472,12 +481,14 @@ new ResizeObserver(() => { clearTimeout(resizeTimer); resizeTimer = setTimeout(r
 function dropAll() {
   state.started = true; state.loose = true;
   const zero = state.mode === 'zero';
-  for (const { body: b } of pieces) {
+  for (const p of pieces) {
+    const b = p.body;
     if (!b.pinned) continue;
     tweens.delete(b); b.setPinned(false);
     b.w = (Math.random() - 0.5) * (zero ? 1.2 : 0.6);
     b.vx = (Math.random() - 0.5) * (zero ? 160 : 30);
     b.vy = zero ? (Math.random() - 0.5) * 160 : -Math.random() * 40;
+    if (p.under) { b.w = 0.8 + Math.random() * 0.3; b.vx = b.w * p.h / 2; } // a tall toolbar would just stand there: tip it over its foot
   }
 }
 
@@ -491,6 +502,7 @@ function restore() {
     b.setPinned(true);
     tweens.set(b, { t: -i * 0.012, fx: b.x, fy: b.y, fa: b.angle, p });
   });
+  shelter();
 }
 
 function stepTweens(dt) {
@@ -881,12 +893,6 @@ function drawBackdrop() {
     } else {
       paintWallpaper(g, LW, LH, state.wallpaper, LIGHT());
       if (state.layout === 'dash') { g.fillStyle = LIGHT() ? 'rgba(255,255,255,.12)' : 'rgba(0,0,0,.18)'; g.fillRect(0, 0, LW, LH); }
-      // the sidebar's glass pill: the wallpaper under it, blurred
-      const buf = snapshot(backdrop, 10);
-      g.save(); g.shadowColor = 'rgba(0,0,0,.3)'; g.shadowBlur = 14; rrect(g, 6, 6, SB - 12, LH - 12, 24); g.fillStyle = 'rgba(0,0,0,.01)'; g.fill(); g.restore();
-      rrect(g, 6, 6, SB - 12, LH - 12, 24); frostInto(g, buf);
-      g.setTransform(K, 0, 0, K, 0, 0);
-      glass(g, 6, 6, SB - 12, LH - 12, 24, TH().sidebar, { sheen: 0.08, rim: 1.2 });
     }
   }
   ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(backdrop, 0, 0);

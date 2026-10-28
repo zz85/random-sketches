@@ -24,7 +24,7 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
 // layout sanity: inside the screen, no two pieces overlapping (axis-aligned boxes at home)
 const LAYOUT = `(()=>{const P=__cp.pieces,{LW,LH}=__cp.size;let out=0,ov=[];
   for(const p of P){if(p.x-p.w/2<-0.5||p.y-p.h/2<-0.5||p.x+p.w/2>LW+0.5||p.y+p.h/2>LH+0.5)out++;}
-  for(let i=0;i<P.length;i++)for(let j=i+1;j<P.length;j++){const a=P[i],b=P[j];if(Math.abs(a.x-b.x)<(a.w+b.w)/2-0.5&&Math.abs(a.y-b.y)<(a.h+b.h)/2-0.5)ov.push(a.id+'/'+b.id);}
+  for(let i=0;i<P.length;i++)for(let j=i+1;j<P.length;j++){const a=P[i],b=P[j];if(a.under||b.under)continue;if(Math.abs(a.x-b.x)<(a.w+b.w)/2-0.5&&Math.abs(a.y-b.y)<(a.h+b.h)/2-0.5)ov.push(a.id+'/'+b.id);}
   return {n:P.length,out,ov,LW:Math.round(LW),LH:Math.round(LH)}})()`;
 const STATS = `(()=>{const P=__cp.pieces,W=__cp.world.walls;return {n:P.length,pinned:P.filter(p=>p.body.pinned).length,
   off:Math.max(...P.map(p=>Math.hypot(p.body.x-p.home.x,p.body.y-p.home.y)+Math.abs(p.body.angle)*100)),
