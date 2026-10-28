@@ -1,7 +1,8 @@
 // Headless end-to-end check over CDP (zero deps), at 800 × 480 (the target head unit) and
 // 1280 × 800: every layout fits the screen with no pieces overlapping, everything falls and
 // settles inside, Restore puts every piece back, a drag lifts an icon, taps work on a still layout,
-// pulling one card out knocks others loose, Drive sways with the turns, Zero-G floats, the frame
+// pulling one card out knocks others loose, Drive sways with the turns, Zero-G floats, the options
+// sheet (open, every control, close), the frame
 // cost, no console errors. node smoke.js. Writes smoke_*.png.
 import http from 'http';
 import path from 'path';
@@ -75,7 +76,7 @@ const STATS = `(()=>{const P=__cp.pieces,W=__cp.world.walls;return {n:P.length,p
     check('tap next skips', await b.evaluate(`__cp.state.track===1`));
     await shot('dash_paused');
     // pull the weather card out and throw it at the now-playing card
-    const w0 = await b.evaluate(`__cp.clientOf('wx')`);
+    const w0 = await b.evaluate(`__cp.clientOf('upnext')`);
     await mouse('mousePressed', w0);
     for (let i = 1; i <= 6; i++) { await mouse('mouseMoved', [w0[0] - i * 3, w0[1] - i * 30]); await sleep(16); }
     await mouse('mouseReleased', [w0[0] - 18, w0[1] - 180]); await sleep(1500);
@@ -92,10 +93,31 @@ const STATS = `(()=>{const P=__cp.pieces,W=__cp.world.walls;return {n:P.length,p
     s = await b.evaluate(STATS);
     check('zero-g: pieces float, inside', s.inside && s.speed > 5);
     await shot('zero');
-    // the controls drawer
-    await click([783, 23]); await sleep(300);
-    check('☰ opens the controls', await b.evaluate(`document.body.classList.contains('menu') && document.getElementById('hw').getBoundingClientRect().top>=0`));
+    // the options sheet, drawn on the canvas: open it from the button, change things, close it
+    await b.evaluate(`__cp.restore()`); await sleep(1200);
+    await b.evaluate(`__cp.setLayout('home')`); await sleep(300);
+    await click(await b.evaluate(`__cp.menuPoint('orb')`)); await sleep(300);
+    check('sheet: the button opens it', await b.evaluate(`__cp.state.menu`));
+    await click(await b.evaluate(`__cp.menuPoint('layout',0,'dash')`));
+    await click(await b.evaluate(`__cp.menuPoint('mode',0,'drive')`));
+    await click(await b.evaluate(`__cp.menuPoint('wallpaper',0,'rose')`));
+    await click(await b.evaluate(`__cp.menuPoint('icons',0,'dark')`));
+    const sl = await b.evaluate(`__cp.menuPoint('strength',0)`), sr = await b.evaluate(`__cp.menuPoint('strength',2/3)`);
+    await mouse('mousePressed', sl); for (let i = 1; i <= 8; i++) { await mouse('mouseMoved', [sl[0] + (sr[0] - sl[0]) * i / 8, sl[1]]); await sleep(16); } await mouse('mouseReleased', sr); await sleep(200);
+    let st = await b.evaluate(`(()=>{const s=__cp.state;return {layout:s.layout,mode:s.mode,wallpaper:s.wallpaper,icons:s.icons,strength:s.strength,loose:s.loose}})()`);
+    check('sheet: screen, gravity, wallpaper, icons, strength', st.layout === 'dash' && st.mode === 'drive' && st.wallpaper === 'rose' && st.icons === 'dark' && Math.abs(st.strength - 2) < 0.06, JSON.stringify(st));
     await shot('menu');
+    const dc = await b.evaluate(`__cp.menuPoint('dial',0.5)`);
+    await mouse('mousePressed', [dc[0] - 40, dc[1]]); await mouse('mouseMoved', [dc[0] - 45, dc[1]]); await mouse('mouseReleased', [dc[0] - 45, dc[1]]); await sleep(200);
+    check('sheet: the dial points gravity left', await b.evaluate(`__cp.state.mode==='down' && Math.abs(Math.abs(__cp.state.angle)-Math.PI)<0.1`));
+    await click(await b.evaluate(`__cp.menuPoint('drop')`));
+    check('sheet: Restore puts everything back', await b.evaluate(`!__cp.state.loose`));
+    await click(await b.evaluate(`__cp.menuPoint('close')`)); await sleep(400);
+    check('sheet: closes', await b.evaluate(`!__cp.state.menu && __cp.state.menuT===0`));
+    await click(await b.evaluate(`__cp.clientOf('sb-btn')`));
+    check('sidebar button goes to the apps', await b.evaluate(`__cp.state.layout==='home'`));
+    await shot('home_dark');
+    await b.evaluate(`localStorage.clear()`);
     const pf = await b.evaluate(`(()=>{const p=__cp.perf;p.frames=0;p.ms=0;return new Promise(r=>setTimeout(()=>r({ms:p.ms/p.frames,n:p.frames}),3000))})()`);
     check('frame cost', pf.ms < 12, `${pf.ms.toFixed(2)} ms/frame CPU (headless, no GPU), ${pf.n} frames in 3 s`);
     const ex = b.events.filter((e) => e.method === 'Runtime.exceptionThrown' || (e.method === 'Runtime.consoleAPICalled' && e.params.type === 'error'));

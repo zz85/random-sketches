@@ -126,7 +126,7 @@ function mulberry(a) { return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = 
 export function drawMap(ctx, w, h, drive, { night = true, scale = null } = {}) {
   const px = scale || Math.max(w, h) / 420; // px per metre
   const col = night
-    ? { bg: '#1f2329', block: '#2a2f37', park: '#22382c', water: '#1b2d44', road: '#3d434d', major: '#565e6b', label: '#8b94a3', route: '#2f8bff', routeEdge: '#1b5fc4' }
+    ? { bg: '#22262e', block: '#2b3039', park: '#1f3a2d', water: '#1b2e4f', road: '#454c58', major: '#5d6574', label: '#9aa3b2', route: '#3d8dff', routeEdge: '#1d5fd0' }
     : { bg: '#ece8df', block: '#f6f3ec', park: '#cfe5c4', water: '#a9cdee', road: '#ffffff', major: '#fde59a', label: '#6c6f75', route: '#2f7bf5', routeEdge: '#1b5fc4' };
   ctx.save();
   ctx.fillStyle = col.bg; ctx.fillRect(0, 0, w, h);
@@ -190,9 +190,9 @@ export function drawMap(ctx, w, h, drive, { night = true, scale = null } = {}) {
   // the car: an arrow pointing up
   ctx.save(); ctx.translate(cx, cy);
   const a = Math.max(10, Math.min(w, h) * 0.05);
-  ctx.fillStyle = 'rgba(47,139,255,0.18)'; ctx.beginPath(); ctx.arc(0, 0, a * 2.2, 0, 7); ctx.fill();
+  
   ctx.beginPath(); ctx.moveTo(0, -a); ctx.lineTo(a * 0.75, a * 0.8); ctx.lineTo(0, a * 0.4); ctx.lineTo(-a * 0.75, a * 0.8); ctx.closePath();
-  ctx.fillStyle = '#fff'; ctx.strokeStyle = '#1b5fc4'; ctx.lineWidth = a * 0.18; ctx.lineJoin = 'round'; ctx.stroke(); ctx.fill();
+  ctx.fillStyle = '#2f86ff'; ctx.strokeStyle = '#fff'; ctx.lineWidth = a * 0.2; ctx.lineJoin = 'round'; ctx.shadowColor = '#0008'; ctx.shadowBlur = a * 0.4; ctx.stroke(); ctx.shadowBlur = 0; ctx.fill();
   ctx.restore();
 }
 

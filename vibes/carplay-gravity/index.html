@@ -6,65 +6,20 @@
 <meta name="theme-color" content="#08090b">
 <title>CarPlay Gravity</title>
 <style>
-  :root { color-scheme: dark; }
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { height: 100%; overflow: hidden; background: #08090b; color: #fff;
-    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", system-ui, sans-serif;
-    -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; }
-  body { display: flex; flex-direction: column; }
-  button { font: inherit; color: inherit; }
-
-  /* the head unit: a bezel round the screen when there is room, the bare screen when there is not */
-  #unit { flex: 1; min-height: 0; display: flex; padding: 14px 14px 8px; }
-  #bezel { flex: 1; display: flex; padding: 10px; border-radius: 26px; background: linear-gradient(#1d1f23, #0d0e10);
+  html, body { height: 100%; overflow: hidden; background: #08090b; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; }
+  /* a bezel round the screen when there is room, the bare screen on a head-unit-sized display */
+  #unit { height: 100%; display: flex; padding: 18px; }
+  #bezel { flex: 1; display: flex; padding: 12px; border-radius: 28px; background: linear-gradient(#1d1f23, #0d0e10);
     box-shadow: inset 0 1px 0 #2e3137, inset 0 -1px 0 #000, 0 12px 34px #000c; }
-  #screen { position: relative; flex: 1; overflow: hidden; border-radius: 14px; background: #07080c; }
+  #screen { position: relative; flex: 1; overflow: hidden; border-radius: 16px; background: #07080c; }
   #cv { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
   #cv.grabbing { cursor: grabbing; }
-
-  /* hardware buttons: under the screen, or a drop-down drawer on a small screen (800 × 480) */
-  #hw { flex: none; display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px 14px; padding: 8px 14px calc(10px + env(safe-area-inset-bottom));
-    font-size: 13px; color: #c9ced6; }
-  .seg { display: flex; background: #16181c; border-radius: 10px; padding: 3px; box-shadow: inset 0 1px 2px #000c, 0 1px 0 #ffffff10; }
-  .seg button, .hwb { border: 0; background: none; padding: 7px 11px; border-radius: 8px; cursor: pointer; white-space: nowrap; }
-  .seg button.on { background: linear-gradient(#3a3e46, #2b2e34); color: #fff; box-shadow: 0 1px 0 #ffffff1a inset, 0 1px 2px #000; }
-  .hwb { background: linear-gradient(#2c2f35, #1d1f23); box-shadow: 0 1px 0 #ffffff1a inset, 0 1px 3px #000; color: #e6e9ee; }
-  .hwb:active { filter: brightness(1.3); }
-  .knob { display: flex; align-items: center; gap: 8px; }
-  #dial { width: 40px; height: 40px; cursor: grab; touch-action: none; border-radius: 50%; }
-  #strength { width: 110px; accent-color: #8fb3ff; }
-  #gval { width: 3.6em; font-variant-numeric: tabular-nums; }
-  #menu { display: none; }
-  #toast { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); z-index: 5; pointer-events: none; opacity: 0; transition: opacity .3s;
-    background: #000c; padding: 8px 14px; border-radius: 10px; font-size: 13px; color: #fff; max-width: 90%; text-align: center; }
-  #toast.on { opacity: 1; }
-
-  @media (max-height: 600px), (max-width: 860px) {
-    #unit { padding: 0; } #bezel { padding: 0; border-radius: 0; box-shadow: none; } #screen { border-radius: 0; }
-    #hw { position: fixed; z-index: 10; top: 0; left: 0; right: 0; padding: 8px 54px 10px 10px; gap: 6px 8px; font-size: 12px;
-      background: #0b0c0fe6; -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); box-shadow: 0 6px 20px #000a;
-      transform: translateY(-105%); transition: transform .22s ease; }
-    body.menu #hw { transform: none; }
-    .seg button, .hwb { padding: 6px 8px; } #strength { width: 80px; } #dial { width: 34px; height: 34px; }
-    #menu { display: block; position: fixed; z-index: 11; top: 6px; right: 6px; width: 34px; height: 34px; border-radius: 50%; border: 0; cursor: pointer;
-      background: #00000066; color: #fff; font-size: 18px; line-height: 34px; opacity: .7; }
-    body.menu #menu { opacity: 1; background: #ffffff22; }
-  }
+  @media (max-height: 600px), (max-width: 860px) { #unit, #bezel { padding: 0; border-radius: 0; box-shadow: none; } #screen { border-radius: 0; } }
 </style>
 </head>
 <body>
-<div id="unit"><div id="bezel"><div id="screen">
-  <canvas id="cv"></canvas>
-  <div id="toast"></div>
-</div></div></div>
-<button id="menu" aria-label="Controls" title="Controls (M)">☰</button>
-<div id="hw">
-  <div class="seg" id="layouts"><button data-layout="home">Home</button><button data-layout="dash">Dashboard</button><button data-layout="cluster">Cluster</button></div>
-  <div class="seg" id="modes"><button data-mode="down" title="Gravity points where the dial says (arrow keys)">Down</button><button data-mode="tilt" title="Gravity follows the device's tilt">Tilt</button><button data-mode="drive" title="The car's turns and bumps throw things around">Drive</button><button data-mode="zero" title="No gravity, bouncy">Zero-G</button></div>
-  <div class="knob"><canvas id="dial" title="Drag to point gravity; double-click for down"></canvas><input type="range" id="strength" min="0" max="3" step="0.05" value="1" aria-label="Gravity strength"><span id="gval">1.0 g</span></div>
-  <button class="hwb" id="shake" title="S">Shake</button>
-  <button class="hwb" id="drop" title="G">Drop</button>
-</div>
+<div id="unit"><div id="bezel"><div id="screen"><canvas id="cv"></canvas></div></div></div>
 <script type="module" src="app.js"></script>
 </body>
 </html>
