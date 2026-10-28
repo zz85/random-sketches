@@ -1,6 +1,8 @@
 # Logs
 
 28 Oct 2026
+- CarPlay Gravity: cracks need a triple tap, and how quick the three taps are sets how hard the knock is (more and longer cracks, more LCD streaks, a bigger shock); thicker crack lines; a smaller ink blot at the impact. `node smoke.js` 39 checks.
+- ScoreShift: a C section stays in C after a page in D. A sharp or flat hugging a staff's first note is that note's, not key ink, and a system of staves none of which prints a key is a keyless section like two single staves in a row (Sibelius 2 viola pp. 2-4: staves opening on F♯ or C♯ and the divisi systems read D major). Fixture `scan_sibelius2_va_keyless.png`; bun test 55, eval unchanged.
 - CarPlay Gravity: cracks run across the screen instead of out like a star (one to four roughly sideways lines through the impact, fewer forks and rings), and a broken LCD shows thin blue and red light streaks, mostly columns, some rows, appearing as the crack spreads; they replace the stuck pixel column. `node smoke.js` 38 checks.
 - CarPlay Gravity: Cracks strength slider in the sheet (0.25× to 3×, default 1.8×, `?cracks=`) for crack count, reach, shard shift and shock; cracks run out from the impact over half a second with a glint on the tips; each wedge between cracks shifts and turns as one piece and shades as it tilts (after ksenia-k's broken glass pen); smaller colour split on text; Shake and Drop moved clear of the Direction label. `node smoke.js` 38 checks.
 - Aquarelle: fitting the page (100%, the % button, opening a page) uses the whole screen below the top bars; the tool strip, sliders, palette and zoom float over the page instead of shrinking it.

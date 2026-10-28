@@ -79,7 +79,7 @@ export function fracture(x, y, W, H, rnd = Math.random, P = 1) {
     const t = rnd() * TAU, m = (1.2 + rnd() * 3) * P ** 0.8;
     return { poly, dx: Math.cos(t) * m, dy: Math.sin(t) * m, rot: (rnd() < 0.5 ? -1 : 1) * (0.3 + 0.7 * rnd()) * 0.011 * P };
   });
-  return { x, y, lines, shards, rings, seed: rnd(), power: P, blot: (9 + rnd() * 14) * (0.85 + 0.15 * P), streaks: Math.min(7, Math.round(1 + P + rnd() * 2)), born: performance.now() / 1000 };
+  return { x, y, lines, shards, rings, seed: rnd(), power: P, blot: (4 + rnd() * 6) * (0.85 + 0.15 * P), streaks: Math.min(7, Math.round(1 + P + rnd() * 2)), born: performance.now() / 1000 };
 }
 
 // draw a crack as a ribbon that tapers to its tip, with brightness that comes and goes
@@ -99,8 +99,8 @@ function ribbon(g, L, scale, alpha, solid = false) {
 export function drawCracks2D(g, list, K) {
   g.save(); g.setTransform(K, 0, 0, K, 0, 0); g.lineCap = 'round'; g.lineJoin = 'round';
   for (const C of list) for (const L of C.lines) {
-    g.save(); g.translate(0.6, 0.8); g.strokeStyle = 'rgba(0,0,0,.5)'; ribbon(g, L, 1.6, 1); g.restore();
-    g.strokeStyle = 'rgba(255,255,255,.9)'; ribbon(g, L, 0.8, 1);
+    g.save(); g.translate(0.6, 0.8); g.strokeStyle = 'rgba(0,0,0,.5)'; ribbon(g, L, 2.4, 1); g.restore();
+    g.strokeStyle = 'rgba(255,255,255,.9)'; ribbon(g, L, 1.3, 1);
   }
   g.restore();
 }
@@ -273,10 +273,10 @@ export function createFX(cv) {
     // B: which crack a pixel belongs to (1-based x 20, unblurred so it decodes cleanly; newest wins)
     out.cracks.forEach((C, i) => { g2.strokeStyle = `rgb(0,0,${(i + 1) * 20})`; for (const L of C.lines) ribbon(g2, L, 5, 1, true); });
     g2.save(); g2.filter = `blur(${(1.6 * mk).toFixed(1)}px)`; g2.strokeStyle = '#0f0';
-    for (const C of out.cracks) for (const L of C.lines) ribbon(g2, L, 3.2, 0.9);
+    for (const C of out.cracks) for (const L of C.lines) ribbon(g2, L, 4.2, 0.9);
     g2.restore();
     g2.strokeStyle = '#f00';
-    for (const C of out.cracks) for (const L of C.lines) ribbon(g2, L, 0.9, 1);
+    for (const C of out.cracks) for (const L of C.lines) ribbon(g2, L, 1.5, 1);
     for (const [unit, m] of [[1, map1], [2, map2]]) { gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, T[unit]); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, m); m.width = m.height = 0; }
     mapsDirty = false;
   }

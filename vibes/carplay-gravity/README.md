@@ -20,7 +20,8 @@ tumble: clocks tick, the map keeps driving, play / pause / skip work and the gau
   blurs the backdrop under it once, cut to its outline, and reuses that; a piece in flight blurs
   the live frame (four per frame at most), because reading the canvas back is the slow part. No
   refraction or lensing at the rim, only blur, tint and a lit edge.
-- **Double-tap cracks the glass**: one to four long cracks running across the screen, roughly
+- **Triple-tap cracks the glass**: the quicker the three taps, the harder the knock (three taps in
+  150 ms hit about 1.6 times as hard as the Cracks slider says, in 700 ms about half). One to four long cracks running across the screen, roughly
   sideways through the point, nearly straight with small kinks, the odd fork and short dead-end
   hairlines, a crushed spot where it hit, and thin blue and red streaks of light from the LCD
   layers it knocked loose, mostly columns down the panel, some rows along the crack. The cracks run out from the impact over half a second, with a glint
@@ -88,4 +89,4 @@ a soft mouse joint, and pinned bodies that a hard hit sets free.
 
 Tests: `node --test` (physics: resting, an 8-box stack, rolling, knock-loose, dragging) and
 `node smoke.js` (headless Chromium over CDP, at 800 × 480 and 1280 × 800: each layout fits with no overlaps, first touch / 5 s start, drop and
-settle, double-tap crack, the WebGL pass and ripples, drag, restore, taps, knock-loose, drive sway, zero-g, the options sheet (appearance, icons), frame cost, no console errors).
+settle, double tap does nothing, triple-tap crack, the WebGL pass and ripples, drag, restore, taps, knock-loose, drive sway, zero-g, the options sheet (appearance, icons), frame cost, no console errors).

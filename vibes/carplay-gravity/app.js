@@ -4,7 +4,7 @@
 // to the device. Each piece draws itself in its own coordinates; static ones are cached as bitmaps
 // and redrawn only when what they show changes, live ones (maps, gauges) every frame. Glass pieces
 // blur whatever has been drawn under them this frame. The options are a CarPlay-style sheet on the
-// same canvas (the button in the sidebar, the Settings app, or M). Double-tap cracks the glass.
+// same canvas (the button in the sidebar, the Settings app, or M). Triple-tap cracks the glass.
 import { World, Body } from './physics.js';
 import { Drive, drawMap, fmtDist } from './nav.js';
 import { APPS, HOME_APPS, GLYPH, paintApp, glyph, squircle, homeGlyph } from './icons.js';
@@ -569,13 +569,15 @@ function onMotion(e) {
 }
 
 // ---------- cracked glass ----------
-// A double tap is a knock on the screen: a few long cracks from the point (fracture() in fx.js),
+// A triple tap is a knock on the screen: a few long cracks from the point (fracture() in fx.js),
 // drawn by the WebGL pass as broken cover glass over a bleeding panel, and a shock that knocks
 // nearby pieces loose and away. It stays until Restore.
 let cracks = null;
 const crackList = [];
-function crack(x, y) {
-  const P = state.crackPower, C = fracture(x, y, LW, LH, Math.random, P);
+// three taps in 150 ms hit about 1.6 times as hard as the slider says, in 700 ms about 0.55 times
+function tapForce(span) { const t = Math.min(1, Math.max(0, (span - 150) / 550)); return 1.6 - 1.05 * t; }
+function crack(x, y, force = 1) {
+  const P = Math.min(4, Math.max(0.2, state.crackPower * force)), C = fracture(x, y, LW, LH, Math.random, P);
   crackList.push(C);
   if (fx.ok) { fx.addCrack(C); if (state.ripples === 'on') fx.ripple(x, y, 2.2); }
   cracks = null; // re-render the layer
@@ -668,7 +670,7 @@ function drawMenu(dt) {
   }
   const d = M.items.find((i) => i.id === 'dial');
   text(ctx, 'Direction', d.x + d.w / 2, d.y + d.h + 18, font(500, 13), th.faint, 'center');
-  text(ctx, 'Drag and throw anything. Double-tap cracks the glass. M sheet, G drop, S shake, arrows aim.', M.x + M.w / 2, M.y + M.h - 18, font(500, 12), th.faint, 'center', M.w - 40);
+  text(ctx, 'Drag and throw anything. Triple-tap cracks the glass. M sheet, G drop, S shake, arrows aim.', M.x + M.w / 2, M.y + M.h - 18, font(500, 12), th.faint, 'center', M.w - 40);
   ctx.restore();
 }
 
@@ -741,7 +743,7 @@ function pieceAt(x, y, slop = 4) {
   }
   return null;
 }
-let drag = null, menuPointer = null, lastTap = { t: 0, x: 0, y: 0 };
+let drag = null, menuPointer = null, taps = [];
 cv.addEventListener('pointerdown', (e) => {
   if (drag || menuPointer != null) return;
   const pt = toLogical(e);
@@ -749,10 +751,14 @@ cv.addEventListener('pointerdown', (e) => {
   if (state.menu) { menuPointer = e.pointerId; menuDown(pt); return; }
   const o = ORB();
   if (Math.hypot(pt.x - o.x, pt.y - o.y) < o.r + 6) { menuPointer = e.pointerId; openMenu(true); return; }
-  // a double tap anywhere cracks the glass
+  // a triple tap anywhere cracks the glass; the quicker the three taps, the harder the knock
   const now = performance.now();
-  if (now - lastTap.t < 320 && Math.hypot(pt.x - lastTap.x, pt.y - lastTap.y) < 40) { lastTap.t = 0; crack(pt.x, pt.y); return; }
-  lastTap = { t: now, x: pt.x, y: pt.y };
+  if (taps.length && (now - taps.at(-1).t > 380 || Math.hypot(pt.x - taps[0].x, pt.y - taps[0].y) > 40)) taps = [];
+  taps.push({ t: now, x: pt.x, y: pt.y });
+  if (taps.length === 3) {
+    const span = now - taps[0].t; taps = [];
+    crack(pt.x, pt.y, tapForce(span)); return;
+  }
   if (fx.ok && state.ripples === 'on') fx.ripple(pt.x, pt.y, 1);
   if (!state.started) dropAll(); // the first touch lets gravity go
   const hit = pieceAt(pt.x, pt.y);
@@ -1034,4 +1040,4 @@ function menuPoint(id, fx = 0.5, option) {
   if (option != null) { const i = it.options.findIndex(([v]) => v === option); fx = (i + 0.5) / it.options.length; }
   return [r.left + (it.x + it.w * fx) * S, r.top + (it.y + it.h / 2) * S];
 }
-window.__cp = { world, state, drive, perf, cracks: crackList, get pieces() { return pieces; }, get size() { return { S, LW, LH }; }, setLayout, setMode, dropAll, restore, shake, crack, openMenu, clientOf, menuPoint, FILTER, fx };
+window.__cp = { world, state, drive, perf, cracks: crackList, get pieces() { return pieces; }, get size() { return { S, LW, LH }; }, setLayout, setMode, dropAll, restore, shake, crack, openMenu, clientOf, menuPoint, tapForce, FILTER, fx };

@@ -84,17 +84,20 @@ const STATS = `(()=>{const P=__cp.pieces,W=__cp.world.walls;return {n:P.length,p
     await b.evaluate(`__cp.restore()`); await sleep(1600);
     s = await b.evaluate(STATS);
     check('restore: every piece back home', s.pinned === s.n && s.off < 0.01);
-    // double tap cracks the glass and the shock knocks nearby tiles loose
+    // a double tap does nothing; a triple tap cracks the glass and the shock knocks nearby tiles loose
     for (const xy of [[500, 452], [503, 454]]) { await mouse('mousePressed', xy); await mouse('mouseReleased', xy); await sleep(60); }
+    await sleep(450);
+    check('double tap does not crack', await b.evaluate(`__cp.cracks.length===0`));
+    for (const xy of [[500, 452], [503, 454], [501, 453]]) { await mouse('mousePressed', xy); await mouse('mouseReleased', xy); await sleep(60); }
     await sleep(150); s = await b.evaluate(STATS);
-    check('double tap cracks the glass', await b.evaluate(`__cp.cracks.length===1`) && s.n - s.pinned >= 3, `${s.n - s.pinned} loose`);
+    check('triple tap cracks the glass, quick taps hit harder', await b.evaluate(`__cp.tapForce(130)>1.5 && __cp.tapForce(800)<0.6 && __cp.cracks[0]?.power>1.8`) && await b.evaluate(`__cp.cracks.length===1`) && s.n - s.pinned >= 3, `${s.n - s.pinned} loose`);
     check('WebGL pass draws the crack (ripples off by default)', await b.evaluate(`__cp.fx.ok && __cp.fx.cracks.length===1 && __cp.fx.ripples.length===0 && __cp.fx.canvas.style.visibility==='visible' && __cp.fx.canvas.width===__cp.fx.canvas.parentElement.querySelector('canvas').width`));
     await sleep(800); await shot('crack');
     const spread = await b.evaluate(`(()=>{const f=__cp.fx,c=f.cracks[0],b0=c.born,W=f.canvas.width,H=f.canvas.height,K=W/__cp.size.LW;
       const grab=a=>{c.born=performance.now()/1000-a;f.render();const o=document.createElement('canvas');o.width=W;o.height=H;const g=o.getContext('2d');g.drawImage(f.canvas,0,0);return g.getImageData(0,0,W,H).data;};
       const ref=grab(-1),far=a=>{const d=grab(a);let n=0;for(let y=0;y<H;y+=3)for(let x=0;x<W;x+=3){const i=(y*W+x)*4;if(Math.hypot(x/K-c.x,y/K-c.y)>250&&Math.abs(d[i]-ref[i])+Math.abs(d[i+1]-ref[i+1])+Math.abs(d[i+2]-ref[i+2])>60)n++;}return n;};
       const r={early:far(0.05),done:far(2),power:c.power};c.born=b0;return r;})()`);
-    check('crack spreads out over half a second, at strength 1.8x', spread.early === 0 && spread.done > 50 && spread.power === 1.8, JSON.stringify(spread));
+    check('crack spreads out over half a second, from a quick triple tap', spread.early === 0 && spread.done > 50 && spread.power > 1.8, JSON.stringify(spread));
     await b.evaluate(`__cp.restore()`); await sleep(1600);
     check('restore: clears the cracks', await b.evaluate(`__cp.cracks.length===0 && __cp.pieces.every(p=>p.body.pinned)`));
     await sleep(1200);
