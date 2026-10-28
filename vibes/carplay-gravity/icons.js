@@ -1,9 +1,11 @@
 // App icons and small glyphs, painted on a canvas in the style of CarPlay in iOS 26 / 27: squircle
 // tiles with a lit glass rim, Default (colour) and Dark appearances. Drawn from scratch here, not
-// Apple's artwork. Every painter works in a 24-unit box scaled to the tile size.
+// Apple's artwork. Every painter works in a 24-unit box scaled to the tile size. Three appearances,
+// as in iOS 26: 'default' (colour), 'dark' (the glyph's colour on a black tile) and 'clear' (a white
+// glyph on glass: the tile itself is drawn by the caller over a blurred backdrop).
 
 const TAU = Math.PI * 2;
-const FAM = '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", system-ui, sans-serif';
+const FAM = '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", Helvetica, "Helvetica Neue", Arial, sans-serif';
 
 // Apple's icon outline is close to a superellipse with n ≈ 5
 export function squircle(c, x, y, w, h = w, n = 5) {
@@ -48,34 +50,38 @@ export const APPS = {
 export const HOME_APPS = ['phone', 'music', 'maps', 'messages', 'nowplaying', 'podcasts', 'audiobooks', 'news', 'calendar', 'settings'];
 
 const P = {}; // cached Path2Ds
+// the glyph's fill: white on a colour tile and on glass, the app's colour on a dark tile
+const ink = (c, m, pal) => (m === 'dark' ? vgrad(c, ...pal.ink) : '#fff');
 const path = (k, d) => P[k] || (P[k] = new Path2D(d));
 
 const GLYPHS = {
-  phone(c, dark) {
-    c.fillStyle = dark ? vgrad(c, ...PAL.phone.ink) : '#fff';
-    c.translate(12, 12); c.scale(0.9, 0.9); c.translate(-12, -12);
-    c.fill(path('handset', 'M6.4 3.6c.6-.4 1.4-.3 1.9.3l2.2 2.8c.5.6.5 1.5-.1 2.1l-1.3 1.3c-.3.3-.3.7-.1 1 1.2 2 2.9 3.7 4.9 4.9.3.2.8.2 1-.1l1.3-1.3c.6-.6 1.5-.6 2.1-.1l2.8 2.2c.6.5.7 1.3.3 1.9l-1 1.6c-.8 1.2-2.3 1.8-3.7 1.4C12.1 20.2 7.8 15.9 6.4 9.3 6 7.9 6.6 6.4 7.8 5.6z'));
+  phone(c, m) {
+    // a receiver: two pads joined by a curved handle, like the system's handset glyph
+    c.strokeStyle = c.fillStyle = ink(c, m, PAL.phone); c.lineCap = 'round'; c.lineJoin = 'round';
+    c.lineWidth = 5.4; c.beginPath(); c.moveTo(6.0, 4.9); c.lineTo(7.7, 8.3); c.stroke();
+    c.beginPath(); c.moveTo(15.7, 16.3); c.lineTo(19.1, 18.0); c.stroke();
+    c.lineWidth = 3.6; c.beginPath(); c.moveTo(7.3, 7.6); c.bezierCurveTo(8.4, 11.6, 12.4, 15.6, 16.4, 16.7); c.stroke();
   },
-  music(c, dark) {
-    c.fillStyle = dark ? vgrad(c, ...PAL.music.ink) : '#fff';
+  music(c, m) {
+    c.fillStyle = ink(c, m, PAL.music);
     c.fill(path('note', 'M9 6.8 18.6 4.6c.5-.1.9.2.9.7v10.4c0 1.7-1.5 3-3.3 3-1.5 0-2.6-.9-2.6-2.1 0-1.4 1.4-2.5 3.1-2.5.4 0 .8.1 1.2.2V8.6L10.6 10.3v7.6c0 1.7-1.5 3-3.3 3-1.5 0-2.6-.9-2.6-2.1 0-1.4 1.4-2.5 3.1-2.5.4 0 .8.1 1.2.2V7.5c0-.4.3-.6.6-.7z'));
   },
-  messages(c, dark) {
-    c.fillStyle = dark ? vgrad(c, ...PAL.messages.ink) : '#fff';
+  messages(c, m) {
+    c.fillStyle = ink(c, m, PAL.messages);
     c.fill(path('bubble', 'M12 4.2c4.9 0 8.8 3.2 8.8 7.2s-3.9 7.2-8.8 7.2c-.9 0-1.8-.1-2.6-.3-1.1.9-2.8 1.7-4.9 1.8.9-.8 1.5-1.8 1.7-2.8C4.3 16 3.2 13.8 3.2 11.4c0-4 3.9-7.2 8.8-7.2z'));
   },
-  nowplaying(c) {
-    const g = lin(c, 5, 0, 19, 0, ['#ff3b30', '#ff2d55', '#f74fa6']);
+  nowplaying(c, m) {
+    const g = m === 'clear' ? '#fff' : lin(c, 5, 0, 19, 0, ['#ff3b30', '#ff2d55', '#f74fa6']);
     c.fillStyle = g;
     [[6.1, 13.4], [8.9, 12.2], [11.7, 9.4], [14.5, 6.6], [17.3, 2.2]].forEach(([x, h]) => {
       const w = 1.75, y = 12 - h / 2;
       c.beginPath(); c.roundRect(x - w / 2, y, w, h, w / 2); c.fill();
     });
   },
-  podcasts(c, dark) {
-    const ink = dark ? vgrad(c, ...PAL.podcasts.ink) : '#fff';
-    c.strokeStyle = ink; c.fillStyle = ink; c.lineCap = 'round';
-    c.globalAlpha = dark ? 1 : 0.9;
+  podcasts(c, m) {
+    const col = ink(c, m, PAL.podcasts);
+    c.strokeStyle = col; c.fillStyle = col; c.lineCap = 'round';
+    c.globalAlpha = m === 'dark' ? 1 : 0.9;
     c.lineWidth = 1.55;
     c.beginPath(); c.arc(12, 10.4, 7.5, Math.PI * 0.78, Math.PI * 2.22); c.stroke();
     c.beginPath(); c.arc(12, 10.4, 4.6, Math.PI * 0.8, Math.PI * 2.2); c.stroke();
@@ -83,33 +89,38 @@ const GLYPHS = {
     c.beginPath(); c.arc(12, 10.4, 2.3, 0, TAU); c.fill();
     c.beginPath(); c.roundRect(10.65, 13.6, 2.7, 6.6, 1.35); c.fill();
   },
-  audiobooks(c, dark) {
-    c.fillStyle = dark ? '#b85a00' : '#e06a00';
+  audiobooks(c, m) {
+    const dark = m === 'dark';
+    c.fillStyle = m === 'clear' ? 'rgba(255,255,255,.45)' : dark ? '#b85a00' : '#e06a00';
     c.fill(path('cover', 'M12 8c-2.2-1.6-5.5-1.9-8.4-1V18.8c2.9-.9 6.2-.6 8.4 1 2.2-1.6 5.5-1.9 8.4-1V7c-2.9-.9-6.2-.6-8.4 1z'));
-    c.fillStyle = dark ? lin(c, 0, 5, 0, 19, ['#ffc35c', '#ff9418']) : lin(c, 0, 5, 0, 19, ['#fffaf0', '#ffe6b8']);
+    c.fillStyle = m === 'clear' ? '#fff' : dark ? lin(c, 0, 5, 0, 19, ['#ffc35c', '#ff9418']) : lin(c, 0, 5, 0, 19, ['#fffaf0', '#ffe6b8']);
     c.fill(path('pages', 'M11.6 7.1C9.6 5.6 6.8 5.3 4.4 6v11.6c2.4-.7 5.2-.4 7.2 1.1zM12.4 7.1c2-1.5 4.8-1.8 7.2-1.1v11.6c-2.4-.7-5.2-.4-7.2 1.1z'));
   },
-  news(c, dark) {
+  news(c, m) {
     c.save();
     c.beginPath(); c.roundRect(4.6, 4.6, 14.8, 14.8, 3.3); c.clip();
-    c.fillStyle = lin(c, 0, 4, 0, 20, ['#ff4b5c', '#f2203b']); c.fillRect(4, 4, 16, 16);
-    c.strokeStyle = dark ? '#1f1f23' : '#fff'; c.lineWidth = 2.6; c.lineCap = 'butt';
+    c.fillStyle = m === 'clear' ? '#fff' : lin(c, 0, 4, 0, 20, ['#ff4b5c', '#f2203b']); c.fillRect(4, 4, 16, 16);
+    c.lineWidth = 2.6; c.lineCap = 'butt';
+    if (m === 'clear') c.globalCompositeOperation = 'destination-out'; else c.strokeStyle = m === 'dark' ? '#1f1f23' : '#fff';
     c.beginPath(); c.moveTo(4.4, 4.4); c.lineTo(19.6, 19.6); c.stroke();
     c.restore();
   },
-  calendar(c, dark, now = new Date()) {
+  calendar(c, m, now = new Date()) {
+    const dark = m !== 'default';
     c.textAlign = 'center'; c.textBaseline = 'alphabetic';
-    c.fillStyle = '#ff3b30'; c.font = `600 4.6px ${FAM}`;
+    c.fillStyle = m === 'clear' ? '#fff' : '#ff3b30'; c.font = `600 4.6px ${FAM}`;
     c.fillText(now.toLocaleDateString('en-US', { weekday: 'short' }), 12, 8.2);
     c.fillStyle = dark ? '#fff' : '#111'; c.font = `400 12.6px ${FAM}`;
     c.fillText(String(now.getDate()), 12, 19.6);
   },
-  settings(c, dark) {
-    const ink = dark ? '#8f9299' : '#3e4147';
+  settings(c, m) {
+    const dark = m !== 'default', ink = m === 'clear' ? '#fff' : dark ? '#8f9299' : '#3e4147';
     c.fillStyle = ink;
     c.beginPath(); c.arc(12, 12, 9.3, 0, TAU); c.fill();
+    if (m === 'clear') c.globalCompositeOperation = 'destination-out';
     c.fillStyle = dark ? '#2a2a2e' : lin(c, 0, 3, 0, 21, ['#d4d7db', '#9a9ea5']);
     c.beginPath(); c.arc(12, 12, 8.1, 0, TAU); c.fill();
+    c.globalCompositeOperation = 'source-over';
     c.strokeStyle = ink; c.lineWidth = 0.55;
     for (let i = 0; i < 48; i++) { const a = (i / 48) * TAU; c.beginPath(); c.moveTo(12 + Math.cos(a) * 6.9, 12 + Math.sin(a) * 6.9); c.lineTo(12 + Math.cos(a) * 8.1, 12 + Math.sin(a) * 8.1); c.stroke(); }
     c.lineWidth = 0.8; c.beginPath(); c.arc(12, 12, 6.6, 0, TAU); c.stroke();
@@ -120,9 +131,23 @@ const GLYPHS = {
       c.quadraticCurveTo(12 + Math.cos(a + 0.5) * 4.6, 12 + Math.sin(a + 0.5) * 4.6, 12 + Math.cos(a + 0.35) * 6.5, 12 + Math.sin(a + 0.35) * 6.5); c.stroke();
     }
     c.fillStyle = ink; c.beginPath(); c.arc(12, 12, 2.5, 0, TAU); c.fill();
+    if (m === 'clear') c.globalCompositeOperation = 'destination-out';
     c.fillStyle = dark ? '#2a2a2e' : '#c3c6cb'; c.beginPath(); c.arc(12, 12, 1.15, 0, TAU); c.fill();
+    c.globalCompositeOperation = 'source-over';
   },
-  maps(c, dark) {
+  maps(c, m) {
+    if (m === 'clear') { // roads and the puck in white on glass
+      c.strokeStyle = 'rgba(255,255,255,.5)'; c.lineWidth = 1.1;
+      for (const r of [5, 7.6, 10.2]) { c.beginPath(); c.arc(24, 0, r, Math.PI / 2, Math.PI); c.stroke(); }
+      c.lineWidth = 2.2; c.beginPath(); c.moveTo(0, 12.5); c.lineTo(9.6, 24); c.stroke();
+      c.lineWidth = 3.4; c.beginPath(); c.moveTo(13, 24.5); c.lineTo(24.5, 15); c.stroke();
+      c.fillStyle = 'rgba(255,255,255,.75)'; c.fillRect(9.8, -1, 4.4, 10);
+      c.fillStyle = '#fff'; c.beginPath(); c.arc(12, 13.4, 5.6, 0, TAU); c.fill();
+      c.globalCompositeOperation = 'destination-out'; c.beginPath(); c.moveTo(12, 10.1); c.lineTo(14.9, 16.3); c.lineTo(12, 15); c.lineTo(9.1, 16.3); c.closePath(); c.fill();
+      c.globalCompositeOperation = 'source-over';
+      return;
+    }
+    const dark = m === 'dark';
     const L = dark
       ? { land: '#1f3b2a', park: '#2a5a3a', pink: '#6a3150', yellow: '#8a7420', road: '#52555c', ring: '#2f5a3f' }
       : { land: '#a7e59b', park: '#8fdc85', pink: '#f6a3c8', yellow: '#fbd648', road: '#ffffff', ring: '#c9f2c1' };
@@ -143,32 +168,56 @@ const GLYPHS = {
   },
 };
 
-// The whole tile at x, y with side s. dark = the Dark icon appearance.
-export function paintApp(c, name, x, y, s, { dark = false, now } = {}) {
+// The whole tile at x, y with side s. mode: 'default' | 'dark' | 'clear'. A clear tile is only a
+// faint tint, a white glyph and the rim: the caller blurs what is behind it first.
+export function paintApp(c, name, x, y, s, { mode = 'default', now, light = false } = {}) {
   c.save();
   c.translate(x, y);
-  // soft drop shadow under the tile
-  c.save(); c.shadowColor = 'rgba(0,0,0,.35)'; c.shadowBlur = s * 0.06; c.shadowOffsetY = s * 0.02;
-  squircle(c, 0, 0, s); c.fillStyle = '#000'; c.fill(); c.restore();
-  squircle(c, 0, 0, s);
-  c.save(); c.clip();
-  c.scale(s / 24, s / 24);
-  const pal = PAL[name];
-  if (name === 'maps') GLYPHS.maps(c, dark);
-  else {
-    c.fillStyle = vgrad(c, ...(dark ? DARK_BG : pal.bg)); c.fillRect(0, 0, 24, 24);
-    GLYPHS[name](c, dark, now);
+  if (mode !== 'clear') { // soft drop shadow under the tile
+    c.save(); c.shadowColor = 'rgba(0,0,0,.35)'; c.shadowBlur = s * 0.06; c.shadowOffsetY = s * 0.02;
+    squircle(c, 0, 0, s); c.fillStyle = '#000'; c.fill(); c.restore();
   }
-  // glass: a sheen at the top and a lit rim, brighter top-left
-  c.fillStyle = lin(c, 0, 0, 0, 12, ['rgba(255,255,255,.16)', 'rgba(255,255,255,0)']);
-  c.fillRect(0, 0, 24, 12);
-  c.restore();
+  // the glyph is drawn on its own layer so a clear glyph can punch holes in itself
+  const L = layer(Math.ceil(s * (c.getTransform().a || 1)) + 2);
+  const g = L.getContext('2d'), k = L.width / s;
+  g.setTransform(k, 0, 0, k, 0, 0); g.clearRect(0, 0, s, s);
+  squircle(g, 0, 0, s); g.save(); g.clip(); g.scale(s / 24, s / 24);
+  const pal = PAL[name];
+  if (mode === 'clear') { g.fillStyle = light ? 'rgba(255,255,255,.28)' : 'rgba(255,255,255,.1)'; g.fillRect(0, 0, 24, 24); }
+  else if (name !== 'maps') { g.fillStyle = vgrad(g, ...(mode === 'dark' ? DARK_BG : pal.bg)); g.fillRect(0, 0, 24, 24); }
+  if (mode === 'clear') { // glyph alone, so its cut-outs do not cut the tint
+    const G = layer(L.width, 1), gg = G.getContext('2d');
+    gg.setTransform(k * s / 24, 0, 0, k * s / 24, 0, 0); gg.clearRect(0, 0, 24, 24);
+    GLYPHS[name](gg, mode, now);
+    g.setTransform(1, 0, 0, 1, 0, 0); g.shadowColor = 'rgba(0,0,0,.25)'; g.shadowBlur = s * 0.03 * k; g.drawImage(G, 0, 0); g.shadowColor = 'transparent';
+    g.setTransform(k, 0, 0, k, 0, 0); g.scale(s / 24, s / 24);
+  } else GLYPHS[name](g, mode, now);
+  g.fillStyle = lin(g, 0, 0, 0, 12, [`rgba(255,255,255,${mode === 'clear' ? 0.12 : 0.16})`, 'rgba(255,255,255,0)']);
+  g.fillRect(0, 0, 24, 12);
+  g.restore();
+  c.drawImage(L, 0, 0, L.width / k, L.height / k);
+  // the lit rim, brighter top-left
   squircle(c, s * 0.012, s * 0.012, s * 0.976);
   c.lineWidth = Math.max(0.8, s * 0.022);
   c.strokeStyle = lin(c, 0, 0, s, s, [[0, 'rgba(255,255,255,.75)'], [0.38, 'rgba(255,255,255,.08)'], [0.7, 'rgba(255,255,255,.04)'], [1, 'rgba(255,255,255,.4)']]);
   c.stroke();
   c.restore();
 }
+const layers = [];
+function layer(px, i = 0) {
+  let L = layers[i];
+  if (!L) L = layers[i] = document.createElement('canvas');
+  if (L.width !== L.height || L.width < px) { const n = Math.max(px, L.width); L.width = L.height = n; }
+  return L;
+}
+
+// Home accessory glyphs for the widgets page, in a 24-unit box
+export const homeGlyph = {
+  fan(c, col) { c.fillStyle = col; for (let i = 0; i < 4; i++) { c.save(); c.translate(12, 12); c.rotate(i * Math.PI / 2 + 0.3); c.beginPath(); c.ellipse(0, -5.2, 3.1, 5, 0.5, 0, TAU); c.fill(); c.restore(); } c.beginPath(); c.arc(12, 12, 1.8, 0, TAU); c.fill(); },
+  garage(c, col) { c.strokeStyle = c.fillStyle = col; c.lineWidth = 1.7; c.beginPath(); c.roundRect(3.5, 4, 17, 16, 2.4); c.stroke(); for (let i = 0; i < 3; i++) c.fillRect(6.5, 8 + i * 3.6, 11, 1.8); },
+  humidifier(c, col) { c.fillStyle = col; c.beginPath(); c.moveTo(7, 20); c.lineTo(17, 20); c.quadraticCurveTo(18.5, 13, 15.5, 9); c.lineTo(8.5, 9); c.quadraticCurveTo(5.5, 13, 7, 20); c.fill(); c.beginPath(); c.roundRect(9.5, 6, 5, 2.4, 1); c.fill(); for (const [x, y] of [[9, 3], [12, 2], [15, 3]]) { c.beginPath(); c.arc(x, y, 0.8, 0, TAU); c.fill(); } },
+  bulb(c, col) { c.fillStyle = col; c.beginPath(); c.arc(12, 9.5, 6, Math.PI * 0.8, Math.PI * 2.2); c.lineTo(14.6, 16.5); c.lineTo(9.4, 16.5); c.closePath(); c.fill(); c.fillStyle = '#9a9a9f'; c.beginPath(); c.roundRect(9.4, 17.4, 5.2, 1.6, 0.6); c.fill(); c.beginPath(); c.roundRect(10, 19.6, 4, 1.5, 0.6); c.fill(); },
+};
 
 // ---------- UI glyphs (canvas, at x, y in a box of side s) ----------
 

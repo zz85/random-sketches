@@ -2,15 +2,16 @@
 // drawn on one canvas in the look of CarPlay in iOS 26 / 27. The screen is laid out in logical
 // pixels for an 800 × 480 head unit (wider screens get more width, the height stays 480) and scaled
 // to the device. Each piece draws itself in its own coordinates; static ones are cached as bitmaps
-// and redrawn only when what they show changes, live ones (maps, gauges) every frame. The options
-// are a CarPlay-style sheet on the same canvas (the button top right, the Settings app, or M).
+// and redrawn only when what they show changes, live ones (maps, gauges) every frame. Glass pieces
+// blur whatever has been drawn under them this frame. The options are a CarPlay-style sheet on the
+// same canvas (the button in the sidebar, the Settings app, or M). Double-tap cracks the glass.
 import { World, Body } from './physics.js';
 import { Drive, drawMap, fmtDist } from './nav.js';
-import { APPS, HOME_APPS, GLYPH, paintApp, glyph, squircle } from './icons.js';
+import { APPS, HOME_APPS, GLYPH, paintApp, glyph, squircle, homeGlyph } from './icons.js';
 
 const params = new URLSearchParams(location.search);
 const TAU = Math.PI * 2, STEP = 1 / 120;
-const FAM = '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, "Helvetica Neue", system-ui, sans-serif';
+const FAM = '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", Helvetica, "Helvetica Neue", Arial, sans-serif';
 const font = (w, px) => `${w} ${px}px ${FAM}`;
 const screenEl = document.getElementById('screen'), cv = document.getElementById('cv'), ctx = cv.getContext('2d');
 const world = new World();
@@ -23,25 +24,47 @@ const TRACKS = [
   ['Slow Orbit', 'Hollis & June', 301, 265],
   ['Rain on Route 99', 'Northbound', 235, 160],
 ];
-const LAYOUT_NAMES = ['home', 'dash', 'cluster'], MODES = ['down', 'tilt', 'drive', 'zero'];
+const LAYOUT_NAMES = ['widgets', 'dash', 'home', 'cluster'], MODES = ['down', 'tilt', 'drive', 'zero'];
 const WALLPAPERS = { indigo: 'Indigo', rose: 'Rose', teal: 'Teal', ocean: 'Ocean' };
 const saved = (() => { try { return JSON.parse(localStorage.getItem('carplay-gravity') || '{}'); } catch (e) { return {}; } })();
 const pick = (v, list, d) => (list.includes(v) ? v : d);
+const AUTO_DROP = 5000; // gravity starts after this long, or at the first touch
 
 const state = {
   layout: pick(params.get('layout') || saved.layout, LAYOUT_NAMES, 'home'),
+  appearance: pick(params.get('appearance') || saved.appearance, ['dark', 'light'], 'dark'),
   wallpaper: pick(params.get('wallpaper') || saved.wallpaper, Object.keys(WALLPAPERS), 'indigo'),
-  icons: pick(params.get('icons') || saved.icons, ['default', 'dark'], 'default'),
-  loose: false, mode: 'down', strength: 1, angle: Math.PI / 2, tilt: null,
-  playing: true, track: 0, pos: 37, bumpT: 0, nextBump: 3, mph: 0, rpm: 0.8, g: [0, 1],
+  icons: pick(params.get('icons') || saved.icons, ['default', 'dark', 'clear'], 'default'),
+  started: false, loose: false, mode: 'down', strength: 1.5, angle: Math.PI / 2, tilt: null,
+  playing: true, track: 0, pos: 37, bumpT: 0, nextBump: 3, mph: 0, rpm: 0.8, g: [0, 1], quake: 0,
   menu: params.has('menu'), menuT: params.has('menu') ? 1 : 0,
+  home: { climate: true, garage: false, humidifier: false, stove: true },
 };
-const save = () => { try { localStorage.setItem('carplay-gravity', JSON.stringify({ layout: state.layout, wallpaper: state.wallpaper, icons: state.icons })); } catch (e) { /* private mode */ } };
+const save = () => { try { localStorage.setItem('carplay-gravity', JSON.stringify({ layout: state.layout, appearance: state.appearance, wallpaper: state.wallpaper, icons: state.icons })); } catch (e) { /* private mode */ } };
 // what the pieces show, updated once a frame
 const live = { clock: '', dist: '', onto: '', dir: 0, mi: '', min: '', arr: '', odo: '', trip: '', range: '', sig: 0 };
 let pieces = [];
 const tweens = new Map();
 let S = 1, LW = 800, LH = 480, DPR = 1, K = 1; // logical → CSS px, logical size, device px per logical px
+
+// ---------- themes ----------
+
+const THEMES = {
+  dark: {
+    text: '#fff', sub: 'rgba(255,255,255,.62)', faint: 'rgba(255,255,255,.4)', glyph: '#fff',
+    chip: 'rgba(28,28,38,.34)', card: 'rgba(36,36,48,.34)', cardBlue: 'rgba(40,96,220,.38)', pill: 'rgba(24,24,32,.5)', sidebar: 'rgba(18,18,26,.28)',
+    sheet: 'rgba(30,30,40,.6)', seg: 'rgba(255,255,255,.08)', segOn: 'rgba(255,255,255,.24)', track: 'rgba(255,255,255,.18)', btn: 'rgba(255,255,255,.14)',
+    ev: ['#ffd60a', '#30d158', '#64d2ff'], tileOn: 'rgba(255,255,255,.94)', tileOff: 'rgba(60,110,230,.4)', dim: 'rgba(0,0,0,.28)', rim: 1,
+  },
+  light: {
+    text: '#1c1c1e', sub: 'rgba(0,0,0,.55)', faint: 'rgba(0,0,0,.38)', glyph: '#1c1c1e',
+    chip: 'rgba(255,255,255,.5)', card: 'rgba(255,255,255,.5)', cardBlue: 'rgba(255,255,255,.55)', pill: 'rgba(255,255,255,.7)', sidebar: 'rgba(255,255,255,.32)',
+    sheet: 'rgba(246,246,250,.62)', seg: 'rgba(0,0,0,.06)', segOn: 'rgba(255,255,255,.95)', track: 'rgba(0,0,0,.12)', btn: 'rgba(0,0,0,.07)',
+    ev: ['#b78300', '#1e9e48', '#0071e3'], tileOn: 'rgba(255,255,255,.96)', tileOff: 'rgba(255,255,255,.4)', dim: 'rgba(255,255,255,.18)', rim: 1.4,
+  },
+};
+const TH = () => THEMES[state.appearance];
+const LIGHT = () => state.appearance === 'light';
 
 // ---------- drawing helpers ----------
 
@@ -77,75 +100,126 @@ function text(c, s, x, y, f, color, align = 'left', max = 0, base = 'alphabetic'
 }
 const measure = (s, f) => { ctx.font = f; return ctx.measureText(s).width; };
 
-// Liquid Glass, as far as a 2D canvas goes: a translucent tinted fill, a sheen across the top and
-// a rim lit from the top left (and faintly from the bottom right).
-function glass(c, x, y, w, h, r, tint = 'rgba(38,38,48,.55)', { rim = 1, sheen = 0.1 } = {}) {
+// The glass on top of a blurred backdrop: a translucent tint, a sheen across the top and a rim lit
+// from the top left (and faintly from the bottom right).
+function glass(c, x, y, w, h, r, tint, { rim = TH().rim, sheen = 0.1 } = {}) {
   rrect(c, x, y, w, h, r); c.fillStyle = tint; c.fill();
   if (sheen) { rrect(c, x, y, w, h, r); c.fillStyle = lin(c, 0, y, 0, y + Math.min(h, 90), [`rgba(255,255,255,${sheen})`, 'rgba(255,255,255,0)']); c.fill(); }
   rrect(c, x + 0.5, y + 0.5, w - 1, h - 1, r);
   c.lineWidth = 1;
-  c.strokeStyle = lin(c, x, y, x + w * 0.6, y + h, [[0, `rgba(255,255,255,${0.5 * rim})`], [0.35, `rgba(255,255,255,${0.1 * rim})`], [0.8, `rgba(255,255,255,${0.06 * rim})`], [1, `rgba(255,255,255,${0.28 * rim})`]]);
+  c.strokeStyle = lin(c, x, y, x + w * 0.6, y + h, [[0, `rgba(255,255,255,${0.55 * rim})`], [0.35, `rgba(255,255,255,${0.12 * rim})`], [0.8, `rgba(255,255,255,${0.06 * rim})`], [1, `rgba(255,255,255,${0.3 * rim})`]]);
   c.stroke();
+}
+
+// ---------- Liquid Glass blur ----------
+// A glass piece blurs what is already on the canvas under it. The frame so far is shrunk into a
+// small buffer (shrinking is the blur) and drawn back, scaled up, inside the piece's outline, with
+// a real blur and more saturation where the browser has canvas filters. One snapshot is shared by
+// every glass piece until something else is drawn.
+const FILTER = (() => { try { const c = document.createElement('canvas').getContext('2d'); c.filter = 'blur(2px)'; return c.filter === 'blur(2px)'; } catch (e) { return false; } })();
+const blurBufs = [document.createElement('canvas')], blurRing = Array.from({ length: 8 }, () => document.createElement('canvas'));
+let ringAt = 0;
+// Blurring at a quarter of the resolution costs a sixteenth, so the frame (or just the region
+// under one piece) is shrunk first and the filter runs on the small copy.
+function snapshot(src = cv, px = 7, r = { x: 0, y: 0, w: src.width, h: src.height }, out = blurRing[ringAt++ % blurRing.length]) {
+  const a = blurBufs[0];
+  const w1 = Math.max(1, Math.ceil(r.w / 4)), h1 = Math.max(1, Math.ceil(r.h / 4));
+  if (a.width < w1 || a.height < h1) { a.width = Math.max(a.width, w1); a.height = Math.max(a.height, h1); }
+  const ga = a.getContext('2d'); ga.imageSmoothingQuality = 'low';
+  ga.clearRect(0, 0, w1, h1); ga.drawImage(src, r.x, r.y, r.w, r.h, 0, 0, w1, h1);
+  const w2 = FILTER ? w1 : Math.max(1, Math.ceil(w1 / 3)), h2 = FILTER ? h1 : Math.max(1, Math.ceil(h1 / 3));
+  if (out.width !== w2 || out.height !== h2) { out.width = w2; out.height = h2; }
+  const go = out.getContext('2d'); go.clearRect(0, 0, w2, h2); go.imageSmoothingQuality = 'low';
+  if (FILTER) go.filter = `blur(${(px * K / 4).toFixed(1)}px) saturate(1.7)`;
+  go.drawImage(a, 0, 0, w1, h1, 0, 0, w2, h2);
+  out.rect = r;
+  return out;
+}
+// draw a blurred snapshot into the current path's interior (the path is in the current transform)
+function frostInto(c, buf) {
+  const r = buf.rect;
+  c.save(); c.clip();
+  c.setTransform(1, 0, 0, 1, 0, 0);
+  c.imageSmoothingQuality = 'high';
+  c.drawImage(buf, r.x, r.y, r.w, r.h);
+  c.restore();
+}
+// the device-pixel box under a (possibly rotated) piece, padded so the blur has something to pull in
+function regionUnder(p, ox, oy, pad) {
+  const b = p.body, c = Math.abs(Math.cos(b.angle)), sn = Math.abs(Math.sin(b.angle));
+  const hw = (p.w * c + p.h * sn) / 2 + pad, hh = (p.w * sn + p.h * c) / 2 + pad;
+  const x0 = Math.max(0, Math.floor((b.x + ox - hw) * K)), y0 = Math.max(0, Math.floor((b.y + oy - hh) * K));
+  const x1 = Math.min(cv.width, Math.ceil((b.x + ox + hw) * K)), y1 = Math.min(cv.height, Math.ceil((b.y + oy + hh) * K));
+  return x1 - x0 < 2 || y1 - y0 < 2 ? null : { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+function glassShape(c, p) {
+  if (p.glass === 'squircle') squircle(c, 0, 0, p.w);
+  else if (p.shape === 'circle') { c.beginPath(); c.arc(p.w / 2, p.h / 2, p.w / 2, 0, TAU); }
+  else rrect(c, 0, 0, p.w, p.h, p.glass);
 }
 
 // ---------- wallpapers ----------
 // "Celosia" (iOS 27): sweeping layered petals with soft shadows and lit edges, in a hue; "Ocean"
-// (iOS 26's dark default): a teal sweep and a blue one.
-function paintWallpaper(g, W, H, name) {
+// (iOS 26's default): a teal sweep and a blue one. Both have a light and a dark version.
+function paintWallpaper(g, W, H, name, light) {
   if (name === 'ocean') {
-    g.fillStyle = lin(g, 0, 0, W, H, ['#0b3150', '#071a33']); g.fillRect(0, 0, W, H);
-    const band = (pts, fill, rimc) => {
-      g.save(); g.shadowColor = 'rgba(0,0,0,.45)'; g.shadowBlur = 40; g.shadowOffsetY = -6;
+    const C = light
+      ? { base: ['#d9eef4', '#c9d6f2'], a: ['#a9e3ee', '#8fd0e6'], b: ['#c7cdf6', '#aebaf0'], c: ['#b9c3f2', '#9fb0ea'], rim: 'rgba(255,255,255,.85)', sh: 'rgba(60,80,140,.18)' }
+      : { base: ['#0b3150', '#071a33'], a: ['#0e7a92', '#0b4b72'], b: ['#2856b8', '#163985'], c: ['#1f4aa6', '#10306f'], rim: 'rgba(150,200,255,.4)', sh: 'rgba(0,0,0,.45)' };
+    g.fillStyle = lin(g, 0, 0, W, H, C.base); g.fillRect(0, 0, W, H);
+    const band = (pts, fill) => {
+      g.save(); g.shadowColor = C.sh; g.shadowBlur = 40; g.shadowOffsetY = -6;
       g.beginPath(); pts(g); g.fillStyle = fill; g.fill(); g.restore();
-      g.beginPath(); pts(g, true); g.strokeStyle = rimc; g.lineWidth = 1.5; g.stroke();
+      g.beginPath(); pts(g, true); g.strokeStyle = C.rim; g.lineWidth = 1.5; g.stroke();
     };
-    band((p, edge) => { p.moveTo(W * 0.02, -10); p.bezierCurveTo(W * 0.15, H * 0.55, W * 0.4, H * 0.9, W * 0.62, H + 10); if (!edge) { p.lineTo(-10, H + 10); p.lineTo(-10, -10); p.closePath(); } },
-      lin(g, 0, 0, W * 0.5, H, ['#0e7a92', '#0b4b72']), 'rgba(140,230,255,.35)');
-    band((p, edge) => { p.moveTo(W * 0.58, -10); p.bezierCurveTo(W * 0.5, H * 0.35, W * 0.62, H * 0.75, W * 0.98, H * 0.95); if (!edge) { p.lineTo(W + 10, H + 10); p.lineTo(W + 10, -10); p.closePath(); } },
-      lin(g, W * 0.5, 0, W, H, ['#2856b8', '#163985']), 'rgba(150,190,255,.4)');
-    band((p, edge) => { p.moveTo(W * 0.48, H + 10); p.bezierCurveTo(W * 0.62, H * 0.6, W * 0.85, H * 0.45, W + 10, H * 0.42); if (!edge) { p.lineTo(W + 10, H + 10); p.closePath(); } },
-      lin(g, W * 0.5, H * 0.4, W, H, ['#1f4aa6', '#10306f']), 'rgba(150,190,255,.35)');
+    band((p, edge) => { p.moveTo(W * 0.02, -10); p.bezierCurveTo(W * 0.15, H * 0.55, W * 0.4, H * 0.9, W * 0.62, H + 10); if (!edge) { p.lineTo(-10, H + 10); p.lineTo(-10, -10); p.closePath(); } }, lin(g, 0, 0, W * 0.5, H, C.a));
+    band((p, edge) => { p.moveTo(W * 0.58, -10); p.bezierCurveTo(W * 0.5, H * 0.35, W * 0.62, H * 0.75, W * 0.98, H * 0.95); if (!edge) { p.lineTo(W + 10, H + 10); p.lineTo(W + 10, -10); p.closePath(); } }, lin(g, W * 0.5, 0, W, H, C.b));
+    band((p, edge) => { p.moveTo(W * 0.48, H + 10); p.bezierCurveTo(W * 0.62, H * 0.6, W * 0.85, H * 0.45, W + 10, H * 0.42); if (!edge) { p.lineTo(W + 10, H + 10); p.closePath(); } }, lin(g, W * 0.5, H * 0.4, W, H, C.c));
     return;
   }
   const hue = { indigo: 250, rose: 334, teal: 190 }[name] ?? 250;
-  g.fillStyle = lin(g, 0, 0, W * 0.4, H, [`hsl(${hue} 45% 20%)`, `hsl(${hue + 8} 50% 7%)`]); g.fillRect(0, 0, W, H);
+  g.fillStyle = light ? lin(g, 0, 0, W * 0.4, H, [`hsl(${hue} 60% 92%)`, `hsl(${hue + 8} 45% 80%)`]) : lin(g, 0, 0, W * 0.4, H, [`hsl(${hue} 45% 20%)`, `hsl(${hue + 8} 50% 7%)`]);
+  g.fillRect(0, 0, W, H);
   // each petal: an S-curve rising to the right, filled below, lit along its edge and casting a soft
   // shadow up onto the one behind it
   const bands = [[0.5, -0.12, 30], [0.82, 0.12, 25], [1.12, 0.38, 20], [1.42, 0.62, 15], [1.75, 0.9, 10]];
   bands.forEach(([y0, y1, l], i) => {
     const curve = (p) => { p.moveTo(-W * 0.05, H * y0); p.bezierCurveTo(W * 0.32, H * (y0 - 0.62), W * 0.5, H * (y1 + 0.42), W * 1.05, H * y1); };
-    g.save(); g.shadowColor = 'rgba(0,0,0,.6)'; g.shadowBlur = 44; g.shadowOffsetY = -12;
+    g.save(); g.shadowColor = light ? `hsla(${hue} 40% 35% / .22)` : 'rgba(0,0,0,.6)'; g.shadowBlur = 44; g.shadowOffsetY = -12;
     g.beginPath(); curve(g); g.lineTo(W * 1.05, H * 1.1); g.lineTo(-W * 0.05, H * 1.1); g.closePath();
-    g.fillStyle = lin(g, W * 0.2, H * (y1 + 0.1), W * 0.45, H * 1.1, [`hsl(${hue + i * 3} 42% ${l + 10}%)`, `hsl(${hue + i * 5} 48% ${Math.max(4, l - 10)}%)`]);
+    g.fillStyle = light
+      ? lin(g, W * 0.2, H * (y1 + 0.1), W * 0.45, H * 1.1, [`hsl(${hue + i * 3} 65% ${94 - i * 2}%)`, `hsl(${hue + i * 5} 50% ${80 - i * 3}%)`])
+      : lin(g, W * 0.2, H * (y1 + 0.1), W * 0.45, H * 1.1, [`hsl(${hue + i * 3} 42% ${l + 10}%)`, `hsl(${hue + i * 5} 48% ${Math.max(4, l - 10)}%)`]);
     g.fill(); g.restore();
-    // the lit edge: a soft glow and a thin bright line that fades towards the ends
-    const edge = lin(g, 0, 0, W, 0, [[0, `hsla(${hue + 15} 90% 82% / 0)`], [0.35, `hsla(${hue + 15} 90% 82% / ${0.55 - i * 0.06})`], [0.75, `hsla(${hue + 10} 90% 86% / ${0.35 - i * 0.04})`], [1, `hsla(${hue + 15} 90% 82% / 0.1)`]]);
-    g.save(); g.shadowColor = `hsla(${hue + 15} 90% 75% / .55)`; g.shadowBlur = 10;
-    g.beginPath(); curve(g); g.strokeStyle = edge; g.lineWidth = 1.6; g.stroke(); g.restore();
+    const a = light ? 0.95 : 0.55 - i * 0.06;
+    const edge = lin(g, 0, 0, W, 0, [[0, `hsla(${hue + 15} 90% ${light ? 98 : 82}% / 0)`], [0.35, `hsla(${hue + 15} 90% ${light ? 98 : 82}% / ${a})`], [0.75, `hsla(${hue + 10} 90% ${light ? 99 : 86}% / ${a * 0.65})`], [1, `hsla(${hue + 15} 90% 82% / 0.1)`]]);
+    g.save(); g.shadowColor = light ? 'rgba(255,255,255,.9)' : `hsla(${hue + 15} 90% 75% / .55)`; g.shadowBlur = 10;
+    g.beginPath(); curve(g); g.strokeStyle = edge; g.lineWidth = light ? 2 : 1.6; g.stroke(); g.restore();
   });
-  // a little light falling from the top
-  const r = g.createRadialGradient(W * 0.62, -H * 0.1, 0, W * 0.62, -H * 0.1, H * 0.9); r.addColorStop(0, `hsla(${hue + 20} 70% 70% / .16)`); r.addColorStop(1, 'transparent');
+  const r = g.createRadialGradient(W * 0.62, -H * 0.1, 0, W * 0.62, -H * 0.1, H * 0.9); r.addColorStop(0, light ? 'rgba(255,255,255,.35)' : `hsla(${hue + 20} 70% 70% / .16)`); r.addColorStop(1, 'transparent');
   g.fillStyle = r; g.fillRect(0, 0, W, H);
 }
 
 // ---------- pieces ----------
-// A spec: { id, x, y (centre), w, h, shape?, draw(c, p), key?() (cache while unchanged), dyn? (draw every frame),
-//           act? (tap), hits?: [{ x, y, w, h, act }] in piece coordinates }
+// A spec: { id, x, y (centre), w, h, shape?, glass? (corner radius or 'squircle': blur what is under it),
+//           draw(c, p), key?() (cache while unchanged), dyn? (draw every frame), act? (tap),
+//           hits?: [{ x, y, w, h, act }] in piece coordinates }
 
 const SB = 82; // the sidebar's width; its glass pill is the backdrop, its contents are pieces
-const dark = () => state.icons === 'dark';
+const theme = () => `${state.appearance}|${state.icons}`;
+const appTile = (id, n, x, y, T, act = 'app:' + n) => ({ id, x, y, w: T, h: T, act, glass: state.icons === 'clear' ? 'squircle' : undefined,
+  key: () => theme() + (n === 'calendar' ? new Date().toDateString() : ''), draw: (c, p) => paintApp(c, n, 0, 0, p.w, { mode: state.icons, light: LIGHT() }) });
 
 function sidebar(homeBtn) {
   const out = [
-    { id: 'sb-time', x: 41, y: 30, w: 62, h: 22, key: () => live.clock, draw: (c, p) => text(c, live.clock, p.w / 2, p.h / 2 + 1, font(650, 19), '#fff', 'center', 0, 'middle') },
-    { id: 'sb-sig', x: 41, y: 51, w: 44, h: 13, draw: (c) => {
-      c.fillStyle = '#fff'; [0.35, 0.55, 0.78, 1].forEach((f, i) => { rrect(c, 1 + i * 4.6, 12 * (1 - f) + 0.5, 3.2, 12 * f, 1); c.fill(); });
-      text(c, '5G', 21, 12, font(650, 12.5), '#fff');
+    { id: 'sb-time', x: 41, y: 30, w: 62, h: 22, key: () => live.clock + theme(), draw: (c, p) => text(c, live.clock, p.w / 2, p.h / 2 + 1, font(700, 19), TH().text, 'center', 0, 'middle') },
+    { id: 'sb-sig', x: 41, y: 51, w: 44, h: 13, key: theme, draw: (c) => {
+      c.fillStyle = TH().text; [0.35, 0.55, 0.78, 1].forEach((f, i) => { rrect(c, 1 + i * 4.6, 12 * (1 - f) + 0.5, 3.2, 12 * f, 1); c.fill(); });
+      text(c, '5G', 21, 12, font(700, 12.5), TH().text);
     } },
   ];
-  ['maps', 'music', 'phone'].forEach((n, i) => out.push({ id: 'mini-' + n, x: 41, y: 112 + i * 54, w: 42, h: 42, act: 'app:' + n,
-    key: () => state.icons + (n === 'calendar' ? new Date().getDate() : ''), draw: (c, p) => paintApp(c, n, 0, 0, p.w, { dark: dark() }) }));
-  out.push({ id: 'sb-btn', x: 41, y: LH - 38, w: 42, h: 42, act: 'home', draw: (c, p) => (homeBtn === 'grid' ? glyph.gridBtn : glyph.dashBtn)(c, 4, 4, p.w - 8) });
+  ['maps', 'music', 'phone'].forEach((n, i) => out.push(appTile('mini-' + n, n, 41, 112 + i * 54, 42)));
+  out.push({ id: 'sb-btn', x: 41, y: LH - 38, w: 42, h: 42, act: 'home', key: theme, draw: (c, p) => (homeBtn === 'grid' ? glyph.gridBtn : glyph.dashBtn)(c, 4, 4, p.w - 8, TH().glyph) });
   return out;
 }
 
@@ -156,19 +230,56 @@ function homeSpecs() {
   const top = Math.round((LH - (2 * rowH + gapY + 26)) / 2) + 2, out = sidebar('dash');
   HOME_APPS.slice(0, cols * 2).forEach((n, i) => {
     const col = i % cols, row = Math.floor(i / cols), cx = SB + gx + T / 2 + col * (T + gx), y0 = top + row * (rowH + gapY);
-    out.push({ id: 'tile-' + n, x: cx, y: y0 + T / 2, w: T, h: T, act: 'app:' + n, key: () => state.icons + (n === 'calendar' ? new Date().toDateString() : ''),
-      draw: (c, p) => paintApp(c, n, 0, 0, p.w, { dark: dark() }) });
+    out.push(appTile('tile-' + n, n, cx, y0 + T / 2, T));
     const f = font(500, 15), lw = Math.ceil(measure(APPS[n].label, f)) + 16;
-    out.push({ id: 'lbl-' + n, x: cx, y: y0 + T + 7 + LBL / 2, w: lw, h: LBL, draw: (c, p) => {
-      rrect(c, 0, 0, p.w, p.h, 8); c.fillStyle = 'rgba(30,30,40,.5)'; c.fill();
-      text(c, APPS[n].label, p.w / 2, p.h / 2 + 0.5, f, '#fff', 'center', 0, 'middle');
+    out.push({ id: 'lbl-' + n, x: cx, y: y0 + T + 7 + LBL / 2, w: lw, h: LBL, glass: 8, key: theme, draw: (c, p) => {
+      glass(c, 0, 0, p.w, p.h, 8, TH().chip, { sheen: 0.06, rim: 0.6 });
+      text(c, APPS[n].label, p.w / 2, p.h / 2 + 0.5, f, TH().text, 'center', 0, 'middle');
     } });
   });
   // pages: widgets, Dashboard, then the app grid
   const pages = 2 + Math.ceil(HOME_APPS.length / (cols * 2)), dw = pages * 14;
-  out.push({ id: 'dots', x: SB + MW / 2 + 4, y: top + 2 * rowH + gapY + 16, w: dw, h: 12, draw: (c) => {
-    for (let i = 0; i < pages; i++) { c.fillStyle = i === 2 ? '#fff' : 'rgba(255,255,255,.35)'; c.beginPath(); c.arc(7 + i * 14, 6, 3.6, 0, TAU); c.fill(); }
+  out.push({ id: 'dots', x: SB + MW / 2 + 4, y: top + 2 * rowH + gapY + 16, w: dw, h: 12, key: theme, draw: (c) => {
+    for (let i = 0; i < pages; i++) { c.fillStyle = i === 2 ? TH().text : TH().faint; c.beginPath(); c.arc(7 + i * 14, 6, 3.6, 0, TAU); c.fill(); }
   } });
+  return out;
+}
+
+// iOS 26's first page: a calendar widget and a stack of Home accessories
+const HOME_TILES = [
+  ['climate', 'Climate', homeGlyph.fan, '#30a8ff', (on) => (on ? '68–72°' : 'Off')],
+  ['garage', 'Garage', homeGlyph.garage, '#5e5ce6', (on) => (on ? 'Open' : 'Closed')],
+  ['humidifier', 'Bedroom', homeGlyph.humidifier, '#64d2ff', (on) => (on ? 'Humidifier On' : 'Humidifier')],
+  ['stove', 'Kitchen', homeGlyph.bulb, '#ffd60a', (on) => (on ? 'Stove' : 'Stove Off')],
+];
+function widgetSpecs() {
+  const out = sidebar('dash'), area = LW - SB, T = Math.min(112, (LH - 140) / 2), gap = 12;
+  const tx = SB + area * 0.52 + (area * 0.48 - 2 * T - gap) / 2, ty = (LH - 2 * T - gap) / 2;
+  const ex = SB + Math.max(28, area * 0.07), ew = area * 0.46, eh = 60;
+  const events = [['4–5PM', 'Design review', 0], ['6:30–7:30PM', 'Squash with Sam', 1], [null, 'TOMORROW'], ['7–8AM', 'Ferry to Bainbridge', 2]];
+  let y = (LH - (3 * eh + 30)) / 2;
+  events.forEach(([when, what, ci], i) => {
+    if (!when) { out.push({ id: 'ev-tomorrow', x: ex + 50, y: y + 12, w: 100, h: 20, key: theme, draw: (c) => text(c, what, 0, 15, font(500, 16), TH().sub) }); y += 30; return; }
+    out.push({ id: 'ev' + i, x: ex + ew / 2, y: y + eh / 2, w: ew, h: eh - 6, key: theme, draw: (c, p) => {
+      const col = TH().ev[ci];
+      rrect(c, 0, 2, 4.5, p.h - 4, 2.25); c.fillStyle = col; c.fill();
+      const m = /^(.*?)(AM|PM)$/.exec(when);
+      text(c, m[1], 16, 22, font(700, 22), col); text(c, m[2], 16 + measure(m[1], font(700, 22)) + 1, 22, font(700, 15), col);
+      text(c, what, 16, 47, font(500, 21), col, 'left', p.w - 20);
+    } });
+    y += eh;
+  });
+  HOME_TILES.forEach(([k, name, g, col, sub], i) => {
+    const x = tx + (i % 2) * (T + gap) + T / 2, yy = ty + Math.floor(i / 2) * (T + gap) + T / 2;
+    out.push({ id: 'acc-' + k, x, y: yy, w: T, h: T, act: 'toggle:' + k, glass: 20, key: () => theme() + state.home[k], draw: (c, p) => {
+      const on = state.home[k], th = TH();
+      glass(c, 0, 0, p.w, p.h, 20, on ? th.tileOn : th.tileOff, { sheen: on ? 0 : 0.1 });
+      c.save(); c.translate(14, 14); c.scale(30 / 24, 30 / 24); g(c, on ? col : '#fff'); c.restore();
+      const tc = on ? '#1c1c1e' : (LIGHT() ? '#1c1c1e' : '#fff');
+      text(c, name, 14, p.h - 34, font(700, 17), tc, 'left', p.w - 20);
+      text(c, sub(on), 14, p.h - 14, font(500, 15), on ? 'rgba(0,0,0,.55)' : (LIGHT() ? 'rgba(0,0,0,.55)' : 'rgba(255,255,255,.75)'), 'left', p.w - 20);
+    } });
+  });
   return out;
 }
 
@@ -176,30 +287,31 @@ function dashSpecs() {
   const g = 6, x0 = SB + 2, y0 = g, AW = LW - g - x0, AH = LH - 2 * g;
   const mapW = Math.round((AW - g) * 0.6), RW = AW - mapW - g, cH = (AH - 2 * g) / 3, rx = x0 + mapW + g;
   const out = sidebar('grid');
-  const blue = 'rgba(48,104,226,.5)';
-  out.push({ id: 'map', x: x0 + mapW / 2, y: y0 + AH / 2, w: mapW, h: AH, dyn: true, map: 400, draw: (c, p) => {
+  out.push({ id: 'map', x: x0 + mapW / 2, y: y0 + AH / 2, w: mapW, h: AH, dyn: true, map: { zoom: 1, carY: 0.7 }, draw: (c, p) => {
     c.save(); rrect(c, 0, 0, p.w, p.h, 20); c.clip();
     if (p.mapCv) c.drawImage(p.mapCv, 0, 0, p.w, p.h);
-    const parts = [[live.arr, ' arrival'], [live.min, ' min'], [live.mi, ' mi']], fb = font(650, 15), fr = font(500, 15);
+    const parts = [[live.arr, ' arrival'], [live.min, ' min'], [live.mi, ' mi']], fb = font(700, 15), fr = font(500, 15);
     const widths = parts.map(([v, u]) => measure(v, fb) + measure(u, fr)), gap = 16, tw = widths.reduce((a, b) => a + b) + gap * 2, pw = tw + 36;
-    glass(c, (p.w - pw) / 2, p.h - 46, pw, 36, 18, 'rgba(28,28,34,.72)', { sheen: 0.06 });
+    // the arrival pill frosts the map under it
+    if (p.mapBlur) { rrect(c, (p.w - pw) / 2, p.h - 46, pw, 36, 18); c.save(); c.clip(); c.filter = FILTER ? `blur(${(5 * K / 4).toFixed(1)}px) saturate(1.6)` : 'none'; c.drawImage(p.mapBlur, 0, 0, p.w, p.h); c.restore(); }
+    glass(c, (p.w - pw) / 2, p.h - 46, pw, 36, 18, TH().pill, { sheen: 0.06 });
     let x = (p.w - tw) / 2;
-    parts.forEach(([v, u], i) => { text(c, v, x, p.h - 23, fb, '#fff'); text(c, u, x + measure(v, fb), p.h - 23, fr, '#ffffffcc'); x += widths[i] + gap; });
+    parts.forEach(([v, u], i) => { text(c, v, x, p.h - 23, fb, TH().text); text(c, u, x + measure(v, fb), p.h - 23, fr, TH().sub); x += widths[i] + gap; });
     c.restore();
-    rrect(c, 0.5, 0.5, p.w - 1, p.h - 1, 20); c.strokeStyle = 'rgba(255,255,255,.12)'; c.lineWidth = 1; c.stroke();
+    rrect(c, 0.5, 0.5, p.w - 1, p.h - 1, 20); c.strokeStyle = 'rgba(255,255,255,.14)'; c.lineWidth = 1; c.stroke();
   } });
-  out.push({ id: 'turn', x: rx + RW / 2, y: y0 + cH / 2, w: RW, h: cH, key: () => `${live.dist}|${live.onto}|${live.dir}`, draw: (c, p) => {
-    glass(c, 0, 0, p.w, p.h, 20, blue);
-    glyph.turn(c, 16, p.h / 2 - 22, 44, live.dir);
-    text(c, live.dist, 74, p.h / 2 - 2, font(650, 26), '#fff', 'left', p.w - 86);
-    text(c, live.onto, 74, p.h / 2 + 22, font(500, 17), '#ffffffd9', 'left', p.w - 86);
+  out.push({ id: 'turn', x: rx + RW / 2, y: y0 + cH / 2, w: RW, h: cH, glass: 20, key: () => `${live.dist}|${live.onto}|${live.dir}|${theme()}`, draw: (c, p) => {
+    glass(c, 0, 0, p.w, p.h, 20, TH().cardBlue);
+    glyph.turn(c, 16, p.h / 2 - 22, 44, live.dir, TH().text);
+    text(c, live.dist, 74, p.h / 2 - 2, font(700, 26), TH().text, 'left', p.w - 86);
+    text(c, live.onto, 74, p.h / 2 + 22, font(500, 17), TH().sub, 'left', p.w - 86);
   } });
   const bs = 34, cy = cH / 2, ax = 16 + 66 + 8, span = RW - ax - 10;
-  out.push({ id: 'np', x: rx + RW / 2, y: y0 + cH + g + cH / 2, w: RW, h: cH,
+  out.push({ id: 'np', x: rx + RW / 2, y: y0 + cH + g + cH / 2, w: RW, h: cH, glass: 20,
     hits: [['prev', 0.17], ['play', 0.5], ['next', 0.83]].map(([act, f]) => ({ act, x: ax + span * f - bs * 0.8, y: cy - bs * 0.8, w: bs * 1.6, h: bs * 1.6 })),
-    key: () => `${state.track}|${state.playing}`,
+    key: () => `${state.track}|${state.playing}|${theme()}`,
     draw: (c, p) => {
-      glass(c, 0, 0, p.w, p.h, 20, blue);
+      glass(c, 0, 0, p.w, p.h, 20, TH().cardBlue);
       const hue = TRACKS[state.track][3], A = 66, x = 16, y = cy - A / 2;
       c.save(); rrect(c, x, y, A, A, 9); c.clip();
       c.fillStyle = `hsl(${hue} 70% 45%)`; c.fillRect(x, y, A, A);
@@ -208,19 +320,19 @@ function dashSpecs() {
       c.restore();
       for (const h of p.hits) {
         const s = h.act === 'play' ? bs * 1.05 : bs, gx = h.x + h.w / 2 - s / 2, gy = h.y + h.h / 2 - s / 2;
-        glyph[h.act === 'play' ? (state.playing ? 'pause' : 'play') : h.act](c, gx, gy, s);
+        glyph[h.act === 'play' ? (state.playing ? 'pause' : 'play') : h.act](c, gx, gy, s, TH().text);
       }
     } });
-  out.push({ id: 'upnext', x: rx + RW / 2, y: y0 + 2 * (cH + g) + cH / 2, w: RW, h: cH, draw: (c, p) => {
-    glass(c, 0, 0, p.w, p.h, 20, 'rgba(26,26,34,.62)');
+  out.push({ id: 'upnext', x: rx + RW / 2, y: y0 + 2 * (cH + g) + cH / 2, w: RW, h: cH, glass: 20, key: theme, draw: (c, p) => {
+    glass(c, 0, 0, p.w, p.h, 20, TH().card);
     const ev = (y, col, when, what) => {
       rrect(c, 16, y - 14, 4, 42, 2); c.fillStyle = col; c.fill();
-      text(c, when, 30, y + 2, font(650, 16), col); text(c, what, 30, y + 23, font(500, 15), col, 'left', p.w - 44);
+      text(c, when, 30, y + 2, font(700, 16), col); text(c, what, 30, y + 23, font(500, 15), col, 'left', p.w - 44);
     };
     const s = p.h / 148;
-    ev(30 * s, '#ffd60a', '6:30–7:30 PM', 'Squash with Sam');
-    text(c, 'TOMORROW', 16, 88 * s, font(500, 11.5), '#ffffff8c');
-    ev(110 * s, '#30d158', '7–8 AM', 'Ferry to Bainbridge');
+    ev(30 * s, TH().ev[1], '6:30–7:30 PM', 'Squash with Sam');
+    text(c, 'TOMORROW', 16, 88 * s, font(500, 11.5), TH().faint);
+    ev(110 * s, TH().ev[2], '7–8 AM', 'Ferry to Bainbridge');
   } });
   return out;
 }
@@ -238,7 +350,7 @@ function clusterSpecs() {
     rrect(c, 0, 0, p.w, p.h, 9); c.fillStyle = '#ffffff12'; c.fill();
     'PRND'.split('').forEach((ch, i) => text(c, ch, 20 + i * 24, 21, font(650, 17), ch === 'D' ? '#fff' : '#8a93a3', 'center'));
   } });
-  out.push({ id: 'cmap', x: cx, y: top + 112, w: 204, h: 168, dyn: true, map: 300, draw: (c, p) => {
+  out.push({ id: 'cmap', x: cx, y: top + 112, w: 204, h: 168, dyn: true, map: { zoom: 1.3, carY: 0.72 }, draw: (c, p) => {
     c.save(); rrect(c, 0, 0, p.w, p.h, 16); c.clip();
     if (p.mapCv) c.drawImage(p.mapCv, 0, 0, p.w, p.h);
     c.font = font(650, 13); const tw = c.measureText(live.dist).width;
@@ -262,7 +374,8 @@ function clusterSpecs() {
   return out;
 }
 
-const LAYOUTS = { home: homeSpecs, dash: dashSpecs, cluster: clusterSpecs };
+
+const LAYOUTS = { widgets: widgetSpecs, home: homeSpecs, dash: dashSpecs, cluster: clusterSpecs };
 
 // ---------- gauges ----------
 
@@ -306,6 +419,7 @@ function drawGauge(c, p, kind) {
   c.restore();
 }
 
+
 // ---------- pieces <-> bodies ----------
 
 function fitScreen() {
@@ -316,7 +430,7 @@ function fitScreen() {
   K = S * DPR;
   cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
   world.setBounds(0, 0, LW, LH);
-  backdrop = null;
+  backdrop = null; cracks = null;
 }
 
 function setLayout(name) {
@@ -331,6 +445,12 @@ function setLayout(name) {
   });
   backdrop = null;
   if (state.loose) setTimeout(() => { if (state.layout === name && state.loose) dropAll(); }, 700);
+}
+// rebuild the specs in place (appearance or icon style changed: glass flags and draw functions)
+function respec() {
+  const specs = new Map(LAYOUTS[state.layout]().map((s) => [s.id, s]));
+  for (const p of pieces) { const sp = specs.get(p.id); if (sp) Object.assign(p, { ...sp, body: p.body, home: p.home, mapCv: p.mapCv, cache: null }); }
+  backdrop = null;
 }
 
 // new sizes (resize or rotation): every piece gets its new home and size, loose ones stay where they are
@@ -350,7 +470,7 @@ let resizeTimer = 0;
 new ResizeObserver(() => { clearTimeout(resizeTimer); resizeTimer = setTimeout(relayout, 100); }).observe(screenEl);
 
 function dropAll() {
-  state.loose = true;
+  state.started = true; state.loose = true;
   const zero = state.mode === 'zero';
   for (const { body: b } of pieces) {
     if (!b.pinned) continue;
@@ -362,8 +482,9 @@ function dropAll() {
 }
 
 function restore() {
-  state.loose = false;
+  state.loose = false; state.started = true;
   if (drag) endDrag();
+  cracks = null; crackList.length = 0;
   pieces.forEach((p, i) => {
     const b = p.body;
     b.angle = ((b.angle % TAU) + TAU * 1.5) % TAU - Math.PI; // the short way round
@@ -403,7 +524,7 @@ function gravity(dt) {
     ux = -drive.aLat / 9.81 * 2.4;
     uy = 1 + (Math.random() - 0.5) * 0.18 * Math.min(1, drive.v / 6);
     state.nextBump -= dt;
-    if (state.nextBump < 0) { state.bumpT = 0.08; state.nextBump = 2.5 + Math.random() * 5; }
+    if (state.nextBump < 0) { state.bumpT = 0.08; state.nextBump = 2.5 + Math.random() * 5; state.quake = Math.max(state.quake, 4); }
     if (state.bumpT > 0) { state.bumpT -= dt; uy -= 2.6; }
   }
   world.gx = ux * g; world.gy = uy * g;
@@ -430,82 +551,149 @@ function onMotion(e) {
   state.tilt = { x: t.x + (x - t.x) * 0.35, y: t.y + (y - t.y) * 0.35 };
 }
 
+// ---------- cracked glass ----------
+// A double tap is a stone on the windscreen: a spider web of cracks from the point (radial cracks
+// that wander and branch, joined by rings), drawn into a layer that stays until Restore, and a
+// shock that knocks nearby pieces loose and away.
+let cracks = null;
+const crackList = [];
+function crack(x, y) {
+  const rnd = Math.random, lines = [], n = 9 + Math.floor(rnd() * 7), radials = [];
+  for (let i = 0; i < n; i++) {
+    const a0 = (i / n) * TAU + (rnd() - 0.5) * 0.5, len = 70 + rnd() * 260, pts = [[x, y]];
+    let a = a0, px = x, py = y, d = 0;
+    while (d < len) {
+      const st = 6 + rnd() * 16; a += (rnd() - 0.5) * 0.5; px += Math.cos(a) * st; py += Math.sin(a) * st; d += st; pts.push([px, py]);
+      if (rnd() < 0.12 && d > 30) { // a branch
+        const b = [[px, py]]; let ba = a + (rnd() < 0.5 ? -1 : 1) * (0.35 + rnd() * 0.4), bx = px, by = py;
+        for (let k = 0, bl = 20 + rnd() * 80; k * 10 < bl; k++) { ba += (rnd() - 0.5) * 0.5; bx += Math.cos(ba) * 10; by += Math.sin(ba) * 10; b.push([bx, by]); }
+        lines.push({ pts: b, w: 0.8 });
+      }
+    }
+    radials.push(pts); lines.push({ pts, w: 1.2 });
+  }
+  // rings: join neighbouring radials at a few distances from the centre
+  for (const r of [14 + rnd() * 8, 34 + rnd() * 14, 62 + rnd() * 24, 100 + rnd() * 30]) {
+    for (let i = 0; i < n; i++) {
+      if (rnd() < 0.3) continue;
+      const A = radials[i], B = radials[(i + 1) % n];
+      const at = (P) => { let acc = 0; for (let k = 1; k < P.length; k++) { acc += Math.hypot(P[k][0] - P[k - 1][0], P[k][1] - P[k - 1][1]); if (acc >= r) return P[k]; } return null; };
+      const a = at(A), b = at(B);
+      if (!a || !b) continue;
+      const mx = (a[0] + b[0]) / 2 + (rnd() - 0.5) * 8, my = (a[1] + b[1]) / 2 + (rnd() - 0.5) * 8;
+      lines.push({ pts: [a, [mx, my], b], w: 0.8 });
+    }
+  }
+  crackList.push({ x, y, lines, shards: Array.from({ length: 7 }, () => [x + (rnd() - 0.5) * 22, y + (rnd() - 0.5) * 22, 2 + rnd() * 5, rnd() * TAU]) });
+  cracks = null; // re-render the layer
+  state.quake = Math.max(state.quake, 10);
+  for (const { body: b } of pieces) {
+    const dx = b.x - x, dy = b.y - y, d = Math.hypot(dx, dy);
+    if (d > 260) continue;
+    if (b.pinned) { tweens.delete(b); b.setPinned(false); state.loose = state.started = true; }
+    const f = (1 - d / 260) * 1600 / Math.max(1, Math.sqrt(b.mass));
+    b.vx += dx / (d || 1) * f; b.vy += dy / (d || 1) * f - 200; b.w += (Math.random() - 0.5) * 10;
+  }
+}
+function drawCracks() {
+  if (!crackList.length) return;
+  if (!cracks || cracks.width !== cv.width || cracks.height !== cv.height) {
+    cracks = document.createElement('canvas'); cracks.width = cv.width; cracks.height = cv.height;
+    const g = cracks.getContext('2d'); g.setTransform(K, 0, 0, K, 0, 0); g.lineCap = 'round'; g.lineJoin = 'round';
+    for (const C of crackList) {
+      // a frosted bruise where it hit, and the chipped shards
+      const r = g.createRadialGradient(C.x, C.y, 0, C.x, C.y, 26); r.addColorStop(0, 'rgba(255,255,255,.55)'); r.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = r; g.beginPath(); g.arc(C.x, C.y, 26, 0, TAU); g.fill();
+      for (const [sx, sy, s, a] of C.shards) { g.save(); g.translate(sx, sy); g.rotate(a); g.beginPath(); g.moveTo(-s, -s * 0.4); g.lineTo(s, -s * 0.7); g.lineTo(s * 0.4, s); g.closePath(); g.fillStyle = 'rgba(255,255,255,.3)'; g.fill(); g.strokeStyle = 'rgba(255,255,255,.7)'; g.lineWidth = 0.6; g.stroke(); g.restore(); }
+      const stroke = (style, w, dx, dy) => {
+        g.strokeStyle = style;
+        for (const L of C.lines) { g.lineWidth = L.w * w; g.beginPath(); L.pts.forEach(([x, y], i) => (i ? g.lineTo(x + dx, y + dy) : g.moveTo(x + dx, y + dy))); g.stroke(); }
+      };
+      stroke('rgba(0,0,0,.35)', 2.2, 0.7, 0.9); // the shadow of the crack
+      stroke('rgba(255,255,255,.8)', 0.9, 0, 0); // its bright edge
+      stroke('rgba(200,225,255,.25)', 3.5, -0.6, -0.6); // a little refraction glow
+    }
+  }
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(cracks, 0, 0);
+}
+
 // ---------- the options sheet ----------
 
 const ORB = () => (state.layout === 'cluster' ? { x: LW - 26, y: 26, r: 17 } : { x: SB / 2, y: LH - 92, r: 17 });
 function menuLayout() {
-  const w = Math.min(640, LW - 40), h = Math.min(400, LH - 36), x = (LW - w) / 2, y = (LH - h) / 2;
-  const cx = x + 132, cw = Math.min(330, w * 0.52), rx = cx + cw + (x + w - cx - cw) / 2;
-  const row = (i) => y + 96 + i * 50;
+  const w = Math.min(660, LW - 40), h = Math.min(430, LH - 30), x = (LW - w) / 2, y = (LH - h) / 2;
+  const cx = x + 130, cw = Math.min(350, w * 0.54), rx = cx + cw + (x + w - cx - cw) / 2;
+  const row = (i) => y + 88 + i * 46;
+  const seg = (id, label, i, options, get, set) => ({ id, kind: 'seg', label, x: cx, y: row(i) - 17, w: cw, h: 34, options, get, set });
   const items = [
-    { id: 'close', kind: 'button', x: x + w - 50, y: y + 18, w: 34, h: 34, round: true, draw: 'close', run: () => openMenu(false) },
-    { id: 'layout', kind: 'seg', label: 'Screen', x: cx, y: row(0) - 18, w: cw, h: 36, options: [['home', 'Home'], ['dash', 'Dashboard'], ['cluster', 'Cluster']], get: () => state.layout, set: (v) => setLayout(v) },
-    { id: 'mode', kind: 'seg', label: 'Gravity', x: cx, y: row(1) - 18, w: cw, h: 36, options: [['down', 'Down'], ['tilt', 'Tilt'], ['drive', 'Drive'], ['zero', 'Zero-G']], get: () => state.mode, set: (v) => setMode(v) },
-    { id: 'strength', kind: 'slider', label: 'Strength', x: cx, y: row(2) - 18, w: cw - 62, h: 36, min: 0, max: 3, get: () => state.strength, set: (v) => { state.strength = Math.round(v * 20) / 20; }, fmt: (v) => v.toFixed(1) + ' g' },
-    { id: 'icons', kind: 'seg', label: 'Icons', x: cx, y: row(3) - 18, w: cw, h: 36, options: [['default', 'Default'], ['dark', 'Dark']], get: () => state.icons, set: (v) => { state.icons = v; save(); } },
-    { id: 'wallpaper', kind: 'seg', label: 'Wallpaper', x: cx, y: row(4) - 18, w: cw, h: 36, options: Object.entries(WALLPAPERS), get: () => state.wallpaper, set: (v) => { state.wallpaper = v; save(); backdrop = null; } },
-    { id: 'dial', kind: 'dial', x: rx - 58, y: row(0) - 22, w: 116, h: 116 },
-    { id: 'shake', kind: 'button', label: 'Shake', x: rx - 70, y: row(3) - 22, w: 140, h: 40, run: shake },
-    { id: 'drop', kind: 'button', label: () => (state.loose ? 'Restore' : 'Drop'), x: rx - 70, y: row(4) - 22, w: 140, h: 40, run: () => (state.loose ? restore() : dropAll()), primary: true },
+    { id: 'close', kind: 'button', x: x + w - 50, y: y + 16, w: 34, h: 34, round: true, run: () => openMenu(false) },
+    seg('layout', 'Screen', 0, [['widgets', 'Widgets'], ['dash', 'Dashboard'], ['home', 'Apps'], ['cluster', 'Cluster']], () => state.layout, (v) => setLayout(v)),
+    seg('mode', 'Gravity', 1, [['down', 'Down'], ['tilt', 'Tilt'], ['drive', 'Drive'], ['zero', 'Zero-G']], () => state.mode, (v) => setMode(v)),
+    { id: 'strength', kind: 'slider', label: 'Strength', x: cx, y: row(2) - 17, w: cw - 62, h: 34, min: 0, max: 3, get: () => state.strength, set: (v) => { state.strength = Math.round(v * 20) / 20; }, fmt: (v) => v.toFixed(1) + ' g' },
+    seg('appearance', 'Appearance', 3, [['dark', 'Dark'], ['light', 'Light']], () => state.appearance, (v) => { state.appearance = v; save(); respec(); }),
+    seg('icons', 'Icons', 4, [['default', 'Default'], ['dark', 'Dark'], ['clear', 'Clear']], () => state.icons, (v) => { state.icons = v; save(); respec(); }),
+    seg('wallpaper', 'Wallpaper', 5, Object.entries(WALLPAPERS), () => state.wallpaper, (v) => { state.wallpaper = v; save(); backdrop = null; }),
+    { id: 'dial', kind: 'dial', x: rx - 56, y: row(0) - 17, w: 112, h: 112 },
+    { id: 'shake', kind: 'button', label: 'Shake', x: rx - 70, y: row(3) - 20, w: 140, h: 38, run: shake },
+    { id: 'drop', kind: 'button', label: () => (state.loose ? 'Restore' : 'Drop'), x: rx - 70, y: row(4) - 20, w: 140, h: 38, run: () => (state.loose ? restore() : dropAll()), primary: true },
   ];
   return { x, y, w, h, items };
 }
 
-function openMenu(on) { state.menu = on; if (menuDrag) menuDrag = null; }
+function openMenu(on) { state.menu = on; menuDrag = null; }
 
 function drawMenu(dt) {
   state.menuT = Math.max(0, Math.min(1, state.menuT + (state.menu ? dt : -dt) / 0.18));
-  const t = state.menuT;
+  const t = state.menuT, th = TH();
   if (t <= 0) { drawOrb(); return; }
-  // frosted: the frame shrunk and blown back up, dimmed
-  const bw = Math.max(1, Math.round(cv.width / 14)), bh = Math.max(1, Math.round(cv.height / 14));
-  if (!blurCv) blurCv = document.createElement('canvas');
-  if (blurCv.width !== bw || blurCv.height !== bh) { blurCv.width = bw; blurCv.height = bh; }
-  const bc = blurCv.getContext('2d'); bc.imageSmoothingQuality = 'high'; bc.drawImage(cv, 0, 0, bw, bh);
-  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = t; ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(blurCv, 0, 0, cv.width, cv.height);
-  ctx.fillStyle = 'rgba(0,0,0,.28)'; ctx.fillRect(0, 0, cv.width, cv.height);
+  // the whole running scene, frosted
+  const buf = snapshot(cv, 16);
+  ctx.save(); ctx.globalAlpha = t; ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.beginPath(); ctx.rect(0, 0, cv.width, cv.height);
+  frostInto(ctx, buf);
+  ctx.fillStyle = th.dim; ctx.fillRect(0, 0, cv.width, cv.height);
   const M = menuLayout(), sc = 0.96 + 0.04 * t;
   ctx.setTransform(K * sc, 0, 0, K * sc, K * (M.x + M.w / 2) * (1 - sc), K * (M.y + M.h / 2) * (1 - sc));
-  ctx.save(); ctx.shadowColor = 'rgba(0,0,0,.5)'; ctx.shadowBlur = 40 * K; ctx.shadowOffsetY = 10 * K;
-  rrect(ctx, M.x, M.y, M.w, M.h, 30); ctx.fillStyle = 'rgba(30,30,38,.8)'; ctx.fill(); ctx.restore();
+  ctx.save(); ctx.shadowColor = 'rgba(0,0,0,.4)'; ctx.shadowBlur = 40 * K; ctx.shadowOffsetY = 10 * K;
+  rrect(ctx, M.x, M.y, M.w, M.h, 30); ctx.fillStyle = th.sheet; ctx.fill(); ctx.restore();
   glass(ctx, M.x, M.y, M.w, M.h, 30, 'rgba(255,255,255,.02)', { sheen: 0.07 });
-  text(ctx, 'Gravity', M.x + 26, M.y + 46, font(700, 24), '#fff');
+  text(ctx, 'Gravity', M.x + 26, M.y + 44, font(700, 24), th.text);
   for (const it of M.items) {
-    if (it.label && it.kind !== 'button') text(ctx, it.label, M.x + 26, it.y + it.h / 2 + 1, font(500, 15), '#ffffffa6', 'left', 0, 'middle');
+    if (it.label && it.kind !== 'button') text(ctx, it.label, M.x + 26, it.y + it.h / 2 + 1, font(500, 15), th.sub, 'left', 0, 'middle');
     if (it.kind === 'seg') {
-      rrect(ctx, it.x, it.y, it.w, it.h, it.h / 2); ctx.fillStyle = 'rgba(255,255,255,.08)'; ctx.fill();
+      rrect(ctx, it.x, it.y, it.w, it.h, it.h / 2); ctx.fillStyle = th.seg; ctx.fill();
       const n = it.options.length, ow = it.w / n, cur = it.get();
       it.options.forEach(([v, lab], i) => {
-        if (v === cur) glass(ctx, it.x + i * ow + 3, it.y + 3, ow - 6, it.h - 6, (it.h - 6) / 2, 'rgba(255,255,255,.24)', { sheen: 0.12, rim: 1.2 });
-        text(ctx, lab, it.x + i * ow + ow / 2, it.y + it.h / 2 + 1, font(v === cur ? 650 : 500, 14), v === cur ? '#fff' : '#ffffffbf', 'center', ow - 10, 'middle');
+        if (v === cur) glass(ctx, it.x + i * ow + 3, it.y + 3, ow - 6, it.h - 6, (it.h - 6) / 2, th.segOn, { sheen: 0.12, rim: 1.2 });
+        text(ctx, lab, it.x + i * ow + ow / 2, it.y + it.h / 2 + 1, font(v === cur ? 700 : 500, 14), v === cur ? th.text : th.sub, 'center', ow - 10, 'middle');
       });
     } else if (it.kind === 'slider') {
       const f = (it.get() - it.min) / (it.max - it.min), ty = it.y + it.h / 2;
-      rrect(ctx, it.x, ty - 3, it.w, 6, 3); ctx.fillStyle = 'rgba(255,255,255,.18)'; ctx.fill();
+      rrect(ctx, it.x, ty - 3, it.w, 6, 3); ctx.fillStyle = th.track; ctx.fill();
       rrect(ctx, it.x, ty - 3, Math.max(6, it.w * f), 6, 3); ctx.fillStyle = '#0a84ff'; ctx.fill();
-      ctx.save(); ctx.shadowColor = 'rgba(0,0,0,.4)'; ctx.shadowBlur = 6 * K; ctx.shadowOffsetY = 2 * K;
+      ctx.save(); ctx.shadowColor = 'rgba(0,0,0,.35)'; ctx.shadowBlur = 6 * K; ctx.shadowOffsetY = 2 * K;
       ctx.beginPath(); ctx.arc(it.x + it.w * f, ty, 13, 0, TAU); ctx.fillStyle = '#fff'; ctx.fill(); ctx.restore();
-      text(ctx, it.fmt(it.get()), it.x + it.w + 62, ty + 1, font(600, 15), '#fff', 'right', 0, 'middle');
+      text(ctx, it.fmt(it.get()), it.x + it.w + 62, ty + 1, font(700, 15), th.text, 'right', 0, 'middle');
     } else if (it.kind === 'dial') drawDial(ctx, it);
     else if (it.kind === 'button') {
-      if (it.round) { ctx.beginPath(); ctx.arc(it.x + it.w / 2, it.y + it.h / 2, it.w / 2, 0, TAU); ctx.fillStyle = 'rgba(255,255,255,.12)'; ctx.fill(); glyph.close(ctx, it.x + 6, it.y + 6, it.w - 12, '#fff'); }
+      if (it.round) { ctx.beginPath(); ctx.arc(it.x + it.w / 2, it.y + it.h / 2, it.w / 2, 0, TAU); ctx.fillStyle = th.btn; ctx.fill(); glyph.close(ctx, it.x + 6, it.y + 6, it.w - 12, th.text); }
       else {
-        glass(ctx, it.x, it.y, it.w, it.h, it.h / 2, it.primary ? 'rgba(10,132,255,.85)' : 'rgba(255,255,255,.14)', { sheen: 0.12 });
-        text(ctx, typeof it.label === 'function' ? it.label() : it.label, it.x + it.w / 2, it.y + it.h / 2 + 1, font(650, 15), '#fff', 'center', 0, 'middle');
+        glass(ctx, it.x, it.y, it.w, it.h, it.h / 2, it.primary ? 'rgba(10,132,255,.9)' : th.btn, { sheen: 0.12 });
+        text(ctx, typeof it.label === 'function' ? it.label() : it.label, it.x + it.w / 2, it.y + it.h / 2 + 1, font(700, 15), it.primary ? '#fff' : th.text, 'center', 0, 'middle');
       }
     }
   }
-  text(ctx, 'Direction', M.items.find((i) => i.id === 'dial').x + 58, M.items.find((i) => i.id === 'dial').y + 136, font(500, 13), '#ffffff8c', 'center');
-  text(ctx, 'Drag and throw anything. Keys: M this sheet, G drop, S shake, arrows point gravity.', M.x + M.w / 2, M.y + M.h - 20, font(500, 12), '#ffffff73', 'center', M.w - 40);
-  ctx.globalAlpha = 1;
+  const d = M.items.find((i) => i.id === 'dial');
+  text(ctx, 'Direction', d.x + d.w / 2, d.y + d.h + 18, font(500, 13), th.faint, 'center');
+  text(ctx, 'Drag and throw anything. Double-tap cracks the glass. M sheet, G drop, S shake, arrows aim.', M.x + M.w / 2, M.y + M.h - 18, font(500, 12), th.faint, 'center', M.w - 40);
+  ctx.restore();
 }
 
 function drawDial(c, it) {
-  const R = it.w / 2, cx = it.x + R, cy = it.y + R;
-  c.beginPath(); c.arc(cx, cy, R, 0, TAU); c.fillStyle = 'rgba(255,255,255,.07)'; c.fill();
-  c.strokeStyle = 'rgba(255,255,255,.18)'; c.lineWidth = 1; c.stroke();
-  c.fillStyle = 'rgba(255,255,255,.35)';
+  const R = it.w / 2, cx = it.x + R, cy = it.y + R, th = TH();
+  c.beginPath(); c.arc(cx, cy, R, 0, TAU); c.fillStyle = th.seg; c.fill();
+  c.strokeStyle = th.track; c.lineWidth = 1; c.stroke();
+  c.fillStyle = th.faint;
   for (let i = 0; i < 4; i++) { const a = i * Math.PI / 2; c.beginPath(); c.arc(cx + Math.cos(a) * (R - 9), cy + Math.sin(a) * (R - 9), 2, 0, TAU); c.fill(); }
   const [gx, gy] = state.g, m = Math.hypot(gx, gy), L = Math.min(1, m / 1.5) * (R - 20);
   if (L < 6) { c.fillStyle = '#0a84ff'; c.beginPath(); c.arc(cx, cy, 6, 0, TAU); c.fill(); return; }
@@ -517,14 +705,16 @@ function drawDial(c, it) {
 }
 
 function drawOrb() {
-  const o = ORB();
-  ctx.save(); ctx.globalAlpha = 0.85;
-  ctx.shadowColor = 'rgba(0,0,0,.35)'; ctx.shadowBlur = 8 * K;
-  ctx.beginPath(); ctx.arc(o.x, o.y, o.r, 0, TAU); ctx.fillStyle = 'rgba(30,30,38,.55)'; ctx.fill(); ctx.restore();
-  ctx.save(); ctx.globalAlpha = 0.85;
+  const o = ORB(), th = TH();
+  ctx.save(); ctx.globalAlpha = 0.9;
+  ctx.beginPath(); ctx.arc(o.x, o.y, o.r, 0, TAU);
+  const pad = 8, r = { x: Math.max(0, Math.floor((o.x - o.r - pad) * K)), y: Math.max(0, Math.floor((o.y - o.r - pad) * K)) };
+  r.w = Math.min(cv.width - r.x, Math.ceil((2 * o.r + 2 * pad) * K)); r.h = Math.min(cv.height - r.y, Math.ceil((2 * o.r + 2 * pad) * K));
+  if (r.w > 1 && r.h > 1) frostInto(ctx, snapshot(cv, 7, r));
+  ctx.beginPath(); ctx.arc(o.x, o.y, o.r, 0, TAU); ctx.fillStyle = LIGHT() ? 'rgba(255,255,255,.4)' : 'rgba(30,30,38,.4)'; ctx.fill();
   ctx.beginPath(); ctx.arc(o.x, o.y, o.r - 0.5, 0, TAU);
-  ctx.strokeStyle = lin(ctx, o.x - o.r, o.y - o.r, o.x + o.r, o.y + o.r, ['rgba(255,255,255,.55)', 'rgba(255,255,255,.08)', 'rgba(255,255,255,.3)']); ctx.lineWidth = 1; ctx.stroke();
-  glyph.gravity(ctx, o.x - 10, o.y - 10, 20);
+  ctx.strokeStyle = lin(ctx, o.x - o.r, o.y - o.r, o.x + o.r, o.y + o.r, ['rgba(255,255,255,.6)', 'rgba(255,255,255,.08)', 'rgba(255,255,255,.3)']); ctx.lineWidth = 1; ctx.stroke();
+  glyph.gravity(ctx, o.x - 10, o.y - 10, 20, th.glyph);
   ctx.restore();
 }
 
@@ -568,7 +758,7 @@ function pieceAt(x, y, slop = 4) {
   }
   return null;
 }
-let drag = null, menuPointer = null;
+let drag = null, menuPointer = null, lastTap = { t: 0, x: 0, y: 0 };
 cv.addEventListener('pointerdown', (e) => {
   if (drag || menuPointer != null) return;
   const pt = toLogical(e);
@@ -576,6 +766,11 @@ cv.addEventListener('pointerdown', (e) => {
   if (state.menu) { menuPointer = e.pointerId; menuDown(pt); return; }
   const o = ORB();
   if (Math.hypot(pt.x - o.x, pt.y - o.y) < o.r + 6) { menuPointer = e.pointerId; openMenu(true); return; }
+  // a double tap anywhere cracks the glass
+  const now = performance.now();
+  if (now - lastTap.t < 320 && Math.hypot(pt.x - lastTap.x, pt.y - lastTap.y) < 40) { lastTap.t = 0; crack(pt.x, pt.y); return; }
+  lastTap = { t: now, x: pt.x, y: pt.y };
+  if (!state.started) dropAll(); // the first touch lets gravity go
   const hit = pieceAt(pt.x, pt.y);
   if (!hit) return;
   const act = hit.p.hits?.find((h) => hit.u >= h.x && hit.v >= h.y && hit.u <= h.x + h.w && hit.v <= h.y + h.h)?.act || hit.p.act;
@@ -615,6 +810,7 @@ function tap({ act, p }) {
   if (a === 'play') { state.playing = !state.playing; return; }
   if (a === 'next' || a === 'prev') return changeTrack(a === 'next' ? 1 : -1);
   if (a === 'home') return setLayout(state.layout === 'home' ? 'dash' : 'home');
+  if (a.startsWith('toggle:')) { const k = a.slice(7); state.home[k] = !state.home[k]; p.flash = 0.35; return; }
   if (a === 'app:settings') { p.flash = 0.35; return openMenu(true); }
   if (a.startsWith('app:') && ['maps', 'music', 'nowplaying', 'podcasts', 'audiobooks'].includes(a.slice(4)) && state.layout !== 'dash') return setLayout('dash');
   hop(p);
@@ -632,10 +828,11 @@ function changeTrack(d) { state.track = (state.track + d + TRACKS.length) % TRAC
 
 function shake() {
   if (!state.loose) dropAll();
+  state.quake = Math.max(state.quake, 14);
   for (const { body: b } of pieces) {
     if (b.pinned) continue;
-    const a = Math.random() * TAU, v = 500 + Math.random() * 900;
-    b.vx += Math.cos(a) * v; b.vy += Math.sin(a) * v - 400; b.w += (Math.random() - 0.5) * 14;
+    const a = Math.random() * TAU, v = 1100 + Math.random() * 1700;
+    b.vx += Math.cos(a) * v; b.vy += Math.sin(a) * v - 900; b.w += (Math.random() - 0.5) * 24;
   }
 }
 
@@ -671,22 +868,25 @@ function update(dt, force = false) {
 
 // ---------- rendering ----------
 
-let backdrop = null, blurCv = null, frameNo = 0;
+let backdrop = null, backdropSerial = 0, frameNo = 0;
 function drawBackdrop() {
-  const key = `${state.layout === 'cluster' ? 'cluster' : 'carplay'}|${state.wallpaper}|${state.layout === 'cluster' ? '' : state.layout}`;
+  const key = state.layout === 'cluster' ? 'cluster' : `carplay|${state.wallpaper}|${state.appearance}|${state.layout === 'dash'}`;
   if (!backdrop || backdrop.width !== cv.width || backdrop.height !== cv.height) { backdrop = document.createElement('canvas'); backdrop.width = cv.width; backdrop.height = cv.height; }
   if (backdrop.key !== key) {
-    backdrop.key = key;
+    backdrop.key = key; backdrop.serial = ++backdropSerial;
     const g = backdrop.getContext('2d'); g.setTransform(K, 0, 0, K, 0, 0);
     if (state.layout === 'cluster') {
       const r = g.createRadialGradient(LW / 2, LH / 2, 0, LW / 2, LH / 2, LW * 0.6); r.addColorStop(0, '#151b26'); r.addColorStop(0.75, '#050608'); r.addColorStop(1, '#050608');
       g.fillStyle = r; g.fillRect(0, 0, LW, LH);
     } else {
-      paintWallpaper(g, LW, LH, state.wallpaper);
-      if (state.layout === 'dash') { g.fillStyle = 'rgba(0,0,0,.18)'; g.fillRect(0, 0, LW, LH); }
-      // the sidebar's glass pill
-      g.save(); g.shadowColor = 'rgba(0,0,0,.35)'; g.shadowBlur = 14; rrect(g, 6, 6, SB - 12, LH - 12, 24); g.fillStyle = 'rgba(16,16,22,.42)'; g.fill(); g.restore();
-      glass(g, 6, 6, SB - 12, LH - 12, 24, 'rgba(255,255,255,.04)', { sheen: 0.08, rim: 1.2 });
+      paintWallpaper(g, LW, LH, state.wallpaper, LIGHT());
+      if (state.layout === 'dash') { g.fillStyle = LIGHT() ? 'rgba(255,255,255,.12)' : 'rgba(0,0,0,.18)'; g.fillRect(0, 0, LW, LH); }
+      // the sidebar's glass pill: the wallpaper under it, blurred
+      const buf = snapshot(backdrop, 10);
+      g.save(); g.shadowColor = 'rgba(0,0,0,.3)'; g.shadowBlur = 14; rrect(g, 6, 6, SB - 12, LH - 12, 24); g.fillStyle = 'rgba(0,0,0,.01)'; g.fill(); g.restore();
+      rrect(g, 6, 6, SB - 12, LH - 12, 24); frostInto(g, buf);
+      g.setTransform(K, 0, 0, K, 0, 0);
+      glass(g, 6, 6, SB - 12, LH - 12, 24, TH().sidebar, { sheen: 0.08, rim: 1.2 });
     }
   }
   ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(backdrop, 0, 0);
@@ -713,13 +913,55 @@ function render(dt) {
     const w = Math.round(p.w * K), h = Math.round(p.h * K);
     if (!p.mapCv) p.mapCv = document.createElement('canvas');
     if (p.mapCv.width !== w || p.mapCv.height !== h) { p.mapCv.width = w; p.mapCv.height = h; }
-    drawMap(p.mapCv.getContext('2d'), w, h, drive, { scale: Math.max(w, h) / p.map });
+    drawMap(p.mapCv.getContext('2d'), w, h, drive, { ...p.map, light: LIGHT() && state.layout !== 'cluster' });
+    if (p.id === 'map') { // a small copy for the arrival pill's frost
+      if (!p.mapBlur) p.mapBlur = document.createElement('canvas');
+      const bw = Math.max(1, Math.round(w / 8)), bh = Math.max(1, Math.round(h / 8));
+      if (p.mapBlur.width !== bw) { p.mapBlur.width = bw; p.mapBlur.height = bh; }
+      p.mapBlur.getContext('2d').drawImage(p.mapCv, 0, 0, bw, bh);
+    }
   }
-  ctx.setTransform(K, 0, 0, K, 0, 0);
+  // screen shake from Shake, potholes and cracks
+  state.quake *= Math.exp(-dt * 7);
+  const qx = (Math.random() - 0.5) * state.quake, qy = (Math.random() - 0.5) * state.quake;
+  let snaps = 0;
   for (const p of pieces) {
     const b = p.body;
+    const T = (c) => { c.setTransform(K, 0, 0, K, qx * K, qy * K); c.translate(b.x, b.y); c.rotate(b.angle); c.translate(-p.w / 2, -p.h / 2); };
+    if (p.glass) { // blur what is under it
+      // Reading the live canvas back stalls the GPU, and clipping to a curved outline every frame
+      // is not free either. So a piece at rest blurs the backdrop under it (wallpaper and sidebar,
+      // which is what lies there) once, cut to its outline, and then draws it like any bitmap. A
+      // moving piece blurs the live frame, up to a budget per frame; the rest reuse their last blur.
+      if (b.pinned) {
+        const key = `${backdrop.serial}|${K}|${Math.round(b.x)},${Math.round(b.y)},${b.angle.toFixed(2)}`;
+        if (!p.frost || p.frost.key !== key) {
+          p.frost ||= { buf: document.createElement('canvas'), baked: document.createElement('canvas') };
+          const r = regionUnder(p, 0, 0, 10);
+          if (r) {
+            snapshot(backdrop, 7, r, p.frost.buf);
+            const bk = p.frost.baked, bw = Math.ceil(p.w * K), bh = Math.ceil(p.h * K);
+            if (bk.width !== bw || bk.height !== bh) { bk.width = bw; bk.height = bh; }
+            const g = bk.getContext('2d'); g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, bw, bh);
+            g.setTransform(K, 0, 0, K, 0, 0); glassShape(g, p); g.save(); g.clip();
+            g.translate(p.w / 2, p.h / 2); g.rotate(-b.angle); g.translate(-b.x, -b.y);
+            g.imageSmoothingQuality = 'high'; g.drawImage(p.frost.buf, r.x / K, r.y / K, r.w / K, r.h / K);
+            g.restore();
+          }
+          p.frost.key = key;
+        }
+        T(ctx); ctx.drawImage(p.frost.baked, 0, 0, p.w, p.h);
+      } else {
+        const r = regionUnder(p, qx, qy, 10);
+        if (r) {
+          if (snaps < 4 || !p.frost) { p.frost ||= { buf: document.createElement('canvas'), baked: document.createElement('canvas') }; snapshot(cv, 7, r, p.frost.buf); snaps++; }
+          p.frost.buf.rect = r; p.frost.key = null;
+          T(ctx); glassShape(ctx, p); frostInto(ctx, p.frost.buf);
+        }
+      }
+    }
     ctx.save();
-    ctx.translate(b.x, b.y); ctx.rotate(b.angle); ctx.translate(-p.w / 2, -p.h / 2);
+    T(ctx);
     if (drag && drag.p === p && drag.joint && !p.dyn) { ctx.shadowColor = '#000b'; ctx.shadowBlur = 16 * K; ctx.shadowOffsetY = 6 * K; }
     drawPiece(p);
     if (p.flash > 0) { // tap feedback
@@ -729,6 +971,7 @@ function render(dt) {
     }
     ctx.restore();
   }
+  drawCracks();
   ctx.setTransform(K, 0, 0, K, 0, 0);
   drawToast(dt);
   drawMenu(dt);
@@ -759,7 +1002,7 @@ window.addEventListener('keydown', (e) => {
   else if (k === 't') setMode('tilt');
   else if (k === 'm') openMenu(!state.menu);
   else if (k === 'escape') openMenu(false);
-  else if (k === '1' || k === '2' || k === '3') setLayout(LAYOUT_NAMES[+k - 1]);
+  else if (k >= '1' && k <= '4') setLayout(LAYOUT_NAMES[+k - 1]);
 });
 
 // ---------- loop ----------
@@ -792,7 +1035,8 @@ fitScreen();
 setLayout(state.layout);
 setMode(pick(params.get('mode'), MODES, 'down'), false);
 requestAnimationFrame(frame);
-if (!params.has('still')) setTimeout(() => { if (!state.loose) dropAll(); }, 1600);
+if (!params.has('still')) setTimeout(() => { if (!state.started) dropAll(); }, AUTO_DROP);
+else state.started = true; // ?still: nothing falls until asked
 
 // for the smoke test: client coordinates of a piece (or one of its buttons), or of a sheet control
 function clientOf(id, act) {
@@ -808,4 +1052,4 @@ function menuPoint(id, fx = 0.5, option) {
   if (option != null) { const i = it.options.findIndex(([v]) => v === option); fx = (i + 0.5) / it.options.length; }
   return [r.left + (it.x + it.w * fx) * S, r.top + (it.y + it.h / 2) * S];
 }
-window.__cp = { world, state, drive, perf, get pieces() { return pieces; }, get size() { return { S, LW, LH }; }, setLayout, setMode, dropAll, restore, shake, openMenu, clientOf, menuPoint };
+window.__cp = { world, state, drive, perf, cracks: crackList, get pieces() { return pieces; }, get size() { return { S, LW, LH }; }, setLayout, setMode, dropAll, restore, shake, crack, openMenu, clientOf, menuPoint, FILTER };

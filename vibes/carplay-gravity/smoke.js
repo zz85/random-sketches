@@ -38,12 +38,28 @@ const STATS = `(()=>{const P=__cp.pieces,W=__cp.world.walls;return {n:P.length,p
   const mouse = (type, [x, y]) => b.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1 });
   const click = async (xy) => { await mouse('mousePressed', xy); await mouse('mouseReleased', xy); await sleep(250); };
   try {
+    // a fresh visit: still for 5 s, or until the first touch, at 1.5 g
+    await b.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/carplay-gravity/` });
+    await waitFor(() => b.evaluate('!!window.__cp'), 15000);
+    await b.evaluate(`localStorage.clear()`);
+    await b.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/carplay-gravity/` });
+    await waitFor(() => b.evaluate('!!window.__cp'), 15000);
+    await sleep(1500);
+    let st0 = await b.evaluate(`({started:__cp.state.started, pinned:__cp.pieces.every(p=>p.body.pinned), g:__cp.state.strength, filter:__cp.FILTER})`);
+    check('start: still at first, 1.5 g, glass blur on', !st0.started && st0.pinned && st0.g === 1.5 && st0.filter, JSON.stringify(st0));
+    await sleep(4500);
+    check('start: drops by itself after 5 s', await b.evaluate(`__cp.state.started && __cp.pieces.some(p=>!p.body.pinned)`));
+    await b.send('Page.reload', {}); await waitFor(() => b.evaluate('!!window.__cp && !__cp.state.started'), 15000); await sleep(500);
+    await mouse('mousePressed', [400, 140]); await sleep(50);
+    const ft = await b.evaluate(`({started:__cp.state.started, loose:__cp.pieces.filter(p=>!p.body.pinned).length, layout:__cp.state.layout, menu:__cp.state.menu, vw:innerWidth, vh:innerHeight})`);
+    check('start: the first touch drops it sooner', ft.started && ft.loose > 0, JSON.stringify(ft));
+    await mouse('mouseReleased', [400, 140]); await sleep(300);
     for (const [w, h, tag] of [[1280, 800, '1280'], [800, 480, '']]) {
       await b.send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: false });
       await b.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/carplay-gravity/?still` });
       await waitFor(() => b.evaluate('!!window.__cp'), 15000);
       await sleep(600);
-      for (const L of ['home', 'dash', 'cluster']) {
+      for (const L of ['widgets', 'home', 'dash', 'cluster']) {
         await b.evaluate(`__cp.setLayout('${L}')`); await sleep(500);
         const s = await b.evaluate(LAYOUT);
         check(`${w}×${h} ${L}: ${s.n} pieces fit ${s.LW}×${s.LH}, none overlapping`, s.n >= 8 && !s.out && !s.ov.length, s.ov.join(' '));
@@ -68,6 +84,13 @@ const STATS = `(()=>{const P=__cp.pieces,W=__cp.world.walls;return {n:P.length,p
     await b.evaluate(`__cp.restore()`); await sleep(1600);
     s = await b.evaluate(STATS);
     check('restore: every piece back home', s.pinned === s.n && s.off < 0.01);
+    // double tap cracks the glass and the shock knocks nearby tiles loose
+    for (const xy of [[500, 452], [503, 454]]) { await mouse('mousePressed', xy); await mouse('mouseReleased', xy); await sleep(60); }
+    await sleep(150); s = await b.evaluate(STATS);
+    check('double tap cracks the glass', await b.evaluate(`__cp.cracks.length===1`) && s.n - s.pinned >= 3, `${s.n - s.pinned} loose`);
+    await sleep(800); await shot('crack');
+    await b.evaluate(`__cp.restore()`); await sleep(1600);
+    check('restore: clears the cracks', await b.evaluate(`__cp.cracks.length===0 && __cp.pieces.every(p=>p.body.pinned)`));
     await click(await b.evaluate(`__cp.clientOf('tile-music')`));
     check('tap Music opens the dashboard', await b.evaluate(`__cp.state.layout==='dash'`));
     await click(await b.evaluate(`__cp.clientOf('np','play')`));
@@ -101,6 +124,9 @@ const STATS = `(()=>{const P=__cp.pieces,W=__cp.world.walls;return {n:P.length,p
     await click(await b.evaluate(`__cp.menuPoint('layout',0,'dash')`));
     await click(await b.evaluate(`__cp.menuPoint('mode',0,'drive')`));
     await click(await b.evaluate(`__cp.menuPoint('wallpaper',0,'rose')`));
+    await click(await b.evaluate(`__cp.menuPoint('appearance',0,'light')`));
+    await click(await b.evaluate(`__cp.menuPoint('icons',0,'clear')`));
+    check('sheet: light appearance, clear icons', await b.evaluate(`__cp.state.appearance==='light' && __cp.state.icons==='clear'`));
     await click(await b.evaluate(`__cp.menuPoint('icons',0,'dark')`));
     const sl = await b.evaluate(`__cp.menuPoint('strength',0)`), sr = await b.evaluate(`__cp.menuPoint('strength',2/3)`);
     await mouse('mousePressed', sl); for (let i = 1; i <= 8; i++) { await mouse('mouseMoved', [sl[0] + (sr[0] - sl[0]) * i / 8, sl[1]]); await sleep(16); } await mouse('mouseReleased', sr); await sleep(200);
