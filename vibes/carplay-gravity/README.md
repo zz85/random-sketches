@@ -20,15 +20,16 @@ tumble: clocks tick, the map keeps driving, play / pause / skip work and the gau
   blurs the backdrop under it once, cut to its outline, and reuses that; a piece in flight blurs
   the live frame (four per frame at most), because reading the canvas back is the slow part. No
   refraction or lensing at the rim, only blur, tint and a lit edge.
-- **Double-tap cracks the glass**: three to nine long cracks from the point in uneven directions,
-  nearly straight with small kinks, forks and short dead-end hairlines, a crushed spot with a
-  partial ring where it hit. The cracks run out from the impact over half a second, with a glint
+- **Double-tap cracks the glass**: one to four long cracks running across the screen, roughly
+  sideways through the point, nearly straight with small kinks, the odd fork and short dead-end
+  hairlines, a crushed spot where it hit, and thin blue and red streaks of light from the LCD
+  layers it knocked loose, mostly columns down the panel, some rows along the crack. The cracks run out from the impact over half a second, with a glint
   on the running tips. Drawn as a WebGL2 pass over the finished frame (`fx.js`): each wedge of
   glass between two cracks shifts and turns the picture under it as one piece, a little lighter or
   darker as it tilts (the idea from [ksenia-k's broken glass pen](https://codepen.io/ksenia-k/pen/abegNPO);
   no code from it), the crack edges split it into colours and
   catch the light from the top left, and the panel bleeds: dark ink spreading from the impact
-  with fingers along the cracks, an oily rainbow round it, sometimes a faint stuck pixel column.
+  with fingers along the cracks, and an oily rainbow round it.
   **Cracks** in the sheet (0.25× to 3×, default 1.8×, `?cracks=`) sets how many cracks, how far
   they run, how far the wedges move and how hard the shock is. The shock knocks nearby pieces loose. Restore mends it. Without WebGL2 (or after a lost
   context) the cracks are drawn in 2D instead. The crack shapes follow the notes on broken-glass

@@ -31,20 +31,23 @@ export function fracture(x, y, W, H, rnd = Math.random, P = 1) {
     lines.push(L);
     return L;
   };
-  // a few main cracks in uneven directions; one or two of them die early
-  const n = Math.max(3, Math.min(9, Math.round(2 + 1.6 * P) + Math.floor(rnd() * 3))), wts = Array.from({ length: n }, () => 0.55 + rnd()), sum = wts.reduce((a, b) => a + b, 0);
-  let ang = rnd() * TAU, rc = 5 + rnd() * 5;
+  // one to four main cracks running across the screen, roughly sideways, through the impact:
+  // a gentle fan of headings, each half wandering on its own; now and then one half stops short
+  const n = Math.max(1, Math.min(4, Math.round(0.5 + 0.8 * P + rnd() * 1.2)));
+  const tilt = (rnd() - 0.5) * 0.5, gap = 0.16 + rnd() * 0.18;
   for (let i = 0; i < n; i++) {
-    const full = i === 0 || rnd() > 0.35 / P;
-    const L = run(x + Math.cos(ang) * rc, y + Math.sin(ang) * rc, ang, full ? R : (60 + rnd() * 200) * Math.sqrt(P), (1.3 + rnd() * 0.6) * (0.75 + 0.25 * P));
-    L.full = full; L.ang = ang;
-    if (full) rays.push(L);
-    ang += (wts[i] / sum) * TAU;
+    const head = tilt + (i - (n - 1) / 2) * gap * (0.7 + 0.6 * rnd()), w = (1.3 + rnd() * 0.6) * (0.75 + 0.25 * P);
+    for (const side of [0, Math.PI]) {
+      const full = i === 0 || rnd() > 0.25 / P, ang = head + side + (rnd() - 0.5) * 0.08;
+      const L = run(x, y, ang, full ? R : (80 + rnd() * 220) * Math.sqrt(P), w);
+      L.full = full; L.ang = ang;
+      if (full) rays.push(L);
+    }
   }
   // forks and hackle: cracks branch at 20-35 degrees and some hairlines die into the glass
   for (const M of lines.slice()) {
     const P = M.pts;
-    for (let f = rnd() < 0.7 ? 1 + Math.floor(rnd() * 2) : 0; f-- > 0;) {
+    for (let f = rnd() < 0.45 ? 1 : 0; f-- > 0;) {
       const k = 4 + Math.floor(rnd() * Math.max(1, Math.min(P.length - 5, 30))), [px, py] = P[k], [qx, qy] = P[k - 1];
       const a = Math.atan2(py - qy, px - qx) + (rnd() < 0.5 ? -1 : 1) * (0.35 + rnd() * 0.25);
       run(px, py, a, 60 + rnd() * 320, M.w * 0.7, 0.04);
@@ -56,15 +59,16 @@ export function fracture(x, y, W, H, rnd = Math.random, P = 1) {
     }
   }
   // the crushed spot: tiny splinters and one or two partial rings
-  for (let i = 0, k = Math.round(4 + 3 * P); i < k; i++) run(x, y, rnd() * TAU, (3 + rnd() * 9) * Math.sqrt(P), 0.6, 0);
+  for (let i = 0, k = Math.round(2 + 2 * P); i < k; i++) run(x, y, rnd() * TAU, (3 + rnd() * 9) * Math.sqrt(P), 0.6, 0);
   const rings = [];
-  for (let i = 0, nr = 1 + Math.floor(rnd() * 2); i < nr; i++) {
+  for (let i = 0, nr = rnd() < 0.4 ? 1 : 0; i < nr; i++) {
     const r = 12 + rnd() * 22 + i * 16, s0 = rnd() * TAU, span = 1.2 + rnd() * 2.6, pts = [];
     for (let t = 0; t <= 14; t++) { const q = s0 + span * t / 14, rr = r + (rnd() - 0.5) * 2.5; pts.push([x + Math.cos(q) * rr, y + Math.sin(q) * rr]); }
     lines.push({ pts, w: 0.9, bright: noise(), jag: noise() });
     rings.push({ r, s0, span });
   }
   // shards: wedges between the full cracks, each a glass plate with its own tilt
+  for (const A of rays) A.ang = Math.atan2(A.pts.at(-1)[1] - y, A.pts.at(-1)[0] - x);
   rays.sort((a, b) => a.ang - b.ang);
   const shards = rays.map((A, i) => {
     const B = rays[(i + 1) % rays.length];
@@ -75,7 +79,7 @@ export function fracture(x, y, W, H, rnd = Math.random, P = 1) {
     const t = rnd() * TAU, m = (1.2 + rnd() * 3) * P ** 0.8;
     return { poly, dx: Math.cos(t) * m, dy: Math.sin(t) * m, rot: (rnd() < 0.5 ? -1 : 1) * (0.3 + 0.7 * rnd()) * 0.011 * P };
   });
-  return { x, y, lines, shards, rings, seed: rnd(), power: P, blot: (9 + rnd() * 14) * (0.85 + 0.15 * P), stuck: rnd() < 0.35 ? { x: x + (rnd() - 0.5) * 24, w: 0.6 + rnd() * 0.6, hue: rnd() } : null, born: performance.now() / 1000 };
+  return { x, y, lines, shards, rings, seed: rnd(), power: P, blot: (9 + rnd() * 14) * (0.85 + 0.15 * P), streaks: Math.min(7, Math.round(1 + P + rnd() * 2)), born: performance.now() / 1000 };
 }
 
 // draw a crack as a ribbon that tapers to its tip, with brightness that comes and goes
@@ -169,7 +173,7 @@ void main() {
   vec2 sq = src / uK;
 
   // the panel under the glass: an ink blot spreading from each impact, fingers of it along the
-  // cracks, an oily rainbow round it and a column of stuck pixels
+  // cracks and an oily rainbow round it
   for (int i = 0; i < 8; i++) {
     if (i >= uNImp) break;
     vec4 a = uImp[i], b = uImp2[i];
@@ -184,10 +188,25 @@ void main() {
     col = mix(col, iri(nz * 1.7 + dist * 0.04) * vec3(0.8, 0.5, 1.0), rim * 0.6);
     float halo = smoothstep(R * 5.0, R * 1.2, dist) * (1.0 - blot) * (0.5 + 0.5 * cos(dist * 0.5 + nz * 6.0));
     col += (iri(dist * 0.012 + nz) - 0.5) * halo * 0.1;
-    if (b.y > -1.0) {
-      float sx = abs(sq.x - b.y) - b.z * 0.5;
-      float s = (1.0 - smoothstep(0.0, 0.6, sx)) * (0.8 + 0.2 * h21(vec2(floor(p.y / 3.0), a.z)));
-      col = mix(col, iri(b.w), s * 0.4 * smoothstep(0.0, 0.4, a.w) * exp(-abs(sq.y - a.y) / 260.0));
+  }
+  // the LCD under it: light leaking through dislodged layers as thin blue and red streaks, most of
+  // them columns down the panel, some rows along the crack, fading away from the impact
+  for (int i = 0; i < 8; i++) {
+    if (i >= uNImp) break;
+    vec4 a = uImp[i], b = uImp2[i];
+    for (int k = 0; k < 7; k++) {
+      if (float(k) >= b.y) break;
+      float h1 = h21(vec2(a.z * 91.0, float(k))), h2 = h21(vec2(float(k), a.z * 53.0)), h3 = h21(vec2(a.z + float(k), 7.7));
+      bool row = h3 < 0.28;
+      float c0 = (row ? a.y : a.x) + (h1 - 0.5) * (row ? 70.0 : 260.0);   // where the streak sits
+      float along = row ? sq.x - a.x : sq.y - a.y, across = (row ? sq.y : sq.x) - c0;
+      float w = 0.6 + h2 * 2.6, reach = 90.0 + h1 * 330.0 * b.z;
+      float core = 1.0 - smoothstep(w * 0.5, w * 0.5 + 0.7, abs(across));
+      float halo = exp(-across * across / (w * w * 9.0)) * 0.35;
+      float fade = exp(-abs(along) / reach) * (0.75 + 0.25 * vnoise(vec2(along / 9.0, a.z * 13.0 + float(k))));
+      float on = smoothstep(abs(along) + 20.0, abs(along) + 60.0, front(a.w, a.xy)) * smoothstep(0.0, 0.25, a.w);
+      vec3 tint = h2 < 0.5 ? vec3(0.2, 0.45, 1.0) : h2 < 0.8 ? vec3(1.0, 0.16, 0.22) : vec3(0.85, 0.25, 1.0);
+      col = mix(col, tint * 1.25, clamp(core * fade * on, 0.0, 1.0) * 0.7) + tint * halo * fade * on * 0.5;
     }
   }
 
@@ -293,7 +312,7 @@ export function createFX(cv) {
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cv); sceneW = cv.width; sceneH = cv.height;
       } else gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, cv);
       out.ripples.forEach((r, i) => rip.set([r.x, r.y, now - r.t, r.amp], i * 4));
-      out.cracks.forEach((C, i) => { imp.set([C.x, C.y, C.seed, now - C.born], i * 4); imp2.set([C.blot, C.stuck ? C.stuck.x : -2, C.stuck ? C.stuck.w : 0, C.stuck ? C.stuck.hue : 0], i * 4); });
+      out.cracks.forEach((C, i) => { imp.set([C.x, C.y, C.seed, now - C.born], i * 4); imp2.set([C.blot, C.streaks, C.power, 0], i * 4); });
       gl.uniform2f(U.uRes, glc.width, glc.height); gl.uniform1f(U.uK, K); gl.uniform1f(U.uTime, now); gl.uniform1f(U.uCracked, out.cracks.length ? 1 : 0);
       gl.uniform4fv(U.uRip, rip); gl.uniform1i(U.uNRip, out.ripples.length);
       gl.uniform4fv(U.uImp, imp); gl.uniform4fv(U.uImp2, imp2); gl.uniform1i(U.uNImp, out.cracks.length);
