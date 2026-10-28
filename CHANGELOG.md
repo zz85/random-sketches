@@ -1,6 +1,7 @@
 # Logs
 
 28 Oct 2026
+- Add [CarPlay Gravity](vibes/carplay-gravity/): a CarPlay-style screen (Home grid, Dashboard, instrument Cluster) whose pieces fall, after mrdoob's Google Gravity. Each `.phys` element is measured in the live layout and then moved by a CSS transform from its rigid body, so it keeps working while it tumbles (map driving, music, clocks, gauges, taps). Gravity: Down with a dial / arrow keys, device Tilt, Drive (lateral g from a simulated route's turns, rumble, potholes), Zero-G; 0–3 g. Pinned pieces are knocked loose by a hit over 260 px/s; Restore eases them home. `physics.js`: boxes (Box2D Lite clipping) and circles, warm-started sequential impulses, soft mouse joint. `node --test` (5), `node smoke.js` (13 checks).
 - Aquarelle panels can be moved and folded: a grip on the palette, pen bar, tool strip and size / water / paint column; drag to place (kept relative to the nearest screen edges, so it survives rotation and resizing; a panel away from the edges floats and gives the page its room), tap to fold to the current colour / nib / tool / value, tap the folded panel to unfold, double-tap or Preferences → Panels to put back. `node smoke.js` 163 checks.
 
 26 Oct 2026
