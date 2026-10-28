@@ -29,9 +29,11 @@ tumble: clocks tick, the map keeps driving, play / pause / skip work and the gau
   The shock knocks nearby pieces loose. Restore mends it. Without WebGL2 (or after a lost
   context) the cracks are drawn in 2D instead. The crack shapes follow the notes on broken-glass
   optics in [kossik/cracked-glass](https://github.com/kossik/cracked-glass); no code from it.
-- **Liquid ripples** (Ripples On / Off in the sheet, `?ripples=off`): a touch sends a wave ring
+- **Liquid ripples** (off by default; Ripples On in the sheet or `?ripples=on`): a touch sends a wave ring
   across the screen that bends and shades the picture, dragging leaves a wake, Shake and a crack
-  splash harder. The pass is off when nothing is cracked or rippling.
+  splash harder. The pass is off when nothing is cracked or rippling, and then
+  gives back its GPU memory (the GL canvas and its textures shrink to 1 × 1); the crack maps are
+  drawn at most 1.5 px per logical px.
 - **Layouts**: Widgets (iOS 26's widget page: calendar on the left, four Home accessory tiles
   that toggle), Home (the app grid in CarPlay's default order: 4 columns on 800 × 480, 5 on wide
   screens; labels fall separately), Dashboard (map with the arrival pill, glass cards for the next
@@ -53,7 +55,7 @@ tumble: clocks tick, the map keeps driving, play / pause / skip work and the gau
   (Maps / Music open the dashboard, the sidebar button switches Home / Dashboard, other tiles hop).
 - **Restore** springs everything back into the layout; **Shake** throws it all around.
 - Keys: `M` options, `G` drop / restore, `S` shake, arrows point gravity, `D` drive, `Z` zero-g, `T` tilt, `1`–`4` layouts.
-- URL: `?layout=widgets|home|dash|cluster`, `?appearance=light`, `?mode=drive|zero|tilt`, `?wallpaper=indigo|rose|teal|ocean`, `?icons=dark|clear`, `?ripples=off`, `?menu`, `?still` (no automatic drop), `?seed=` (route).
+- URL: `?layout=widgets|home|dash|cluster`, `?appearance=light`, `?mode=drive|zero|tilt`, `?wallpaper=indigo|rose|teal|ocean`, `?icons=dark|clear`, `?ripples=on`, `?menu`, `?still` (no automatic drop), `?seed=` (route).
 
 The drive: an endless made-up street grid, a route that turns at corners, a speed profile that
 brakes for the bends (2.6 m/s² lateral limit), and the lateral acceleration v²κ that Drive mode

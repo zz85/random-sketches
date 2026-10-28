@@ -37,7 +37,7 @@ const state = {
   appearance: pick(params.get('appearance') || saved.appearance, ['dark', 'light'], 'dark'),
   wallpaper: pick(params.get('wallpaper') || saved.wallpaper, Object.keys(WALLPAPERS), 'indigo'),
   icons: pick(params.get('icons') || saved.icons, ['default', 'dark', 'clear'], 'default'),
-  ripples: pick(params.get('ripples') || saved.ripples, ['on', 'off'], 'on'),
+  ripples: pick(params.get('ripples') || saved.ripples, ['on', 'off'], 'off'),
   started: false, loose: false, mode: 'down', strength: 1.5, angle: Math.PI / 2, tilt: null,
   playing: true, track: 0, pos: 37, bumpT: 0, nextBump: 3, mph: 0, rpm: 0.8, g: [0, 1], quake: 0,
   menu: params.has('menu'), menuT: params.has('menu') ? 1 : 0,
@@ -576,7 +576,7 @@ const crackList = [];
 function crack(x, y) {
   const C = fracture(x, y, LW, LH);
   crackList.push(C);
-  if (fx.ok) { fx.addCrack(C); fx.ripple(x, y, 2.2); }
+  if (fx.ok) { fx.addCrack(C); if (state.ripples === 'on') fx.ripple(x, y, 2.2); }
   cracks = null; // re-render the layer
   state.quake = Math.max(state.quake, 10);
   for (const { body: b } of pieces) {

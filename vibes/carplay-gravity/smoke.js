@@ -88,15 +88,17 @@ const STATS = `(()=>{const P=__cp.pieces,W=__cp.world.walls;return {n:P.length,p
     for (const xy of [[500, 452], [503, 454]]) { await mouse('mousePressed', xy); await mouse('mouseReleased', xy); await sleep(60); }
     await sleep(150); s = await b.evaluate(STATS);
     check('double tap cracks the glass', await b.evaluate(`__cp.cracks.length===1`) && s.n - s.pinned >= 3, `${s.n - s.pinned} loose`);
-    check('WebGL pass draws the crack and ripples', await b.evaluate(`__cp.fx.ok && __cp.fx.cracks.length===1 && __cp.fx.ripples.length>0 && __cp.fx.canvas.style.visibility==='visible'`));
+    check('WebGL pass draws the crack (ripples off by default)', await b.evaluate(`__cp.fx.ok && __cp.fx.cracks.length===1 && __cp.fx.ripples.length===0 && __cp.fx.canvas.style.visibility==='visible' && __cp.fx.canvas.width===__cp.fx.canvas.parentElement.querySelector('canvas').width`));
     await sleep(800); await shot('crack');
     await b.evaluate(`__cp.restore()`); await sleep(1600);
     check('restore: clears the cracks', await b.evaluate(`__cp.cracks.length===0 && __cp.pieces.every(p=>p.body.pinned)`));
     await sleep(1200);
-    check('GL pass hides when idle', await b.evaluate(`__cp.fx.cracks.length===0 && __cp.fx.ripples.length===0 && __cp.fx.canvas.style.visibility==='hidden'`));
-    await b.evaluate(`__cp.state.ripples='off'`); await mouse('mousePressed', [400, 300]); await mouse('mouseReleased', [400, 300]); await sleep(100);
-    check('Ripples off: a touch makes none', await b.evaluate(`__cp.fx.ripples.length===0`));
-    await b.evaluate(`__cp.state.ripples='on'; __cp.setLayout('home')`); await sleep(1600);
+    check('GL pass sleeps when idle (1 x 1, hidden)', await b.evaluate(`__cp.fx.cracks.length===0 && __cp.fx.ripples.length===0 && __cp.fx.canvas.style.visibility==='hidden' && __cp.fx.canvas.width===1`));
+    await mouse('mousePressed', [400, 300]); await mouse('mouseReleased', [400, 300]); await sleep(100);
+    check('Ripples off by default: a touch makes none', await b.evaluate(`__cp.state.ripples==='off' && __cp.fx.ripples.length===0`));
+    await b.evaluate(`__cp.state.ripples='on'`); await mouse('mousePressed', [400, 300]); await mouse('mouseReleased', [400, 300]); await sleep(100);
+    check('Ripples on: a touch makes one', await b.evaluate(`__cp.fx.ripples.length===1`));
+    await b.evaluate(`__cp.state.ripples='off'; __cp.setLayout('home')`); await sleep(2800);
     await click(await b.evaluate(`__cp.clientOf('tile-music')`));
     check('tap Music opens the dashboard', await b.evaluate(`__cp.state.layout==='dash'`));
     await click(await b.evaluate(`__cp.clientOf('np','play')`));

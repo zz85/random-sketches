@@ -84,7 +84,7 @@ function ribbon(g, L, scale, alpha) {
   for (let k = 1; k < P.length; k++) len += Math.hypot(P[k][0] - P[k - 1][0], P[k][1] - P[k - 1][1]);
   for (let k = 1; k < P.length; k++) {
     const d = Math.hypot(P[k][0] - P[k - 1][0], P[k][1] - P[k - 1][1]), t = (s + d / 2) / Math.max(1, len); s += d;
-    const w = L.w * scale * (1 - 0.7 * t ** 1.6) * (0.65 + 0.7 * L.jag(s)), a = alpha * (0.25 + 0.75 * L.bright(s) ** 1.5);
+    const w = L.w * scale * (1 - 0.5 * t ** 1.6) * (0.75 + 0.5 * L.jag(s)), a = alpha * (0.6 + 0.4 * L.bright(s));
     g.globalAlpha = a; g.lineWidth = Math.max(0.3, w);
     g.beginPath(); g.moveTo(P[k - 1][0], P[k - 1][1]); g.lineTo(P[k][0], P[k][1]); g.stroke();
   }
@@ -181,7 +181,9 @@ void main() {
   col *= 1.0 + facet * 0.07;
   col *= 1.0 - near * 0.22 * clamp(-lit, 0.0, 1.0);
   col += near * 0.16 * clamp(lit, 0.0, 1.0);
-  col = mix(col, vec3(1.0), clamp(line, 0.0, 1.0) * (0.55 + 0.35 * clamp(lit + 0.5, 0.0, 1.0)));
+  float shadow = texture(uMap2, vUv + vec2(-0.9, 1.1) * uK / uRes).r * uCracked;
+  col *= 1.0 - 0.45 * clamp(shadow - line, 0.0, 1.0);
+  col = mix(col, vec3(1.0), clamp(line * 1.3, 0.0, 1.0) * (0.75 + 0.2 * clamp(lit + 0.5, 0.0, 1.0)));
   col += (iri(glow * 2.0 + p.x * 0.002) - 0.5) * near * 0.12;
   // ripple light
   col += shade * 0.25;
@@ -191,7 +193,7 @@ void main() {
 export function createFX(cv) {
   const out = { ok: false, ripples: [], cracks: [] };
   const glc = document.createElement('canvas');
-  glc.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;visibility:hidden';
+  glc.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;visibility:hidden'; glc.width = glc.height = 1;
   cv.after(glc);
   const gl = glc.getContext('webgl2', { alpha: false, antialias: false, premultipliedAlpha: false, preserveDrawingBuffer: false });
   if (!gl) return out;
@@ -214,15 +216,16 @@ export function createFX(cv) {
   gl.uniform1i(U.uScene, 0); gl.uniform1i(U.uMap1, 1); gl.uniform1i(U.uMap2, 2);
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
   const map1 = document.createElement('canvas'), map2 = document.createElement('canvas');
-  let mapsDirty = true, K = 1;
+  let mapsDirty = true, K = 1, awake = false, sceneW = 0, sceneH = 0;
+  const MK = () => Math.min(K, 1.5); // map resolution: device px per logical px, capped
 
   function rasterise() {
-    const w = cv.width, h = cv.height;
+    const mk = MK(), w = Math.round(cv.width / K * mk), h = Math.round(cv.height / K * mk);
     for (const m of [map1, map2]) { m.width = w; m.height = h; }
     const g1 = map1.getContext('2d'), g2 = map2.getContext('2d');
     g1.fillStyle = 'rgb(128,128,128)'; g1.fillRect(0, 0, w, h);
     g2.fillStyle = '#000'; g2.fillRect(0, 0, w, h);
-    g1.setTransform(K, 0, 0, K, 0, 0); g2.setTransform(K, 0, 0, K, 0, 0);
+    g1.setTransform(mk, 0, 0, mk, 0, 0); g2.setTransform(mk, 0, 0, mk, 0, 0);
     for (const C of out.cracks) {
       // each crack's shards fade out with distance, so an older crack keeps its shards elsewhere
       for (const s of C.shards) {
@@ -233,21 +236,28 @@ export function createFX(cv) {
       g1.fillStyle = 'rgb(128,128,175)'; g1.beginPath(); g1.arc(C.x, C.y, 5, 0, TAU); g1.fill();
     }
     g2.lineCap = 'round'; g2.lineJoin = 'round'; g2.globalCompositeOperation = 'lighten';
-    g2.save(); g2.filter = `blur(${(1.6 * K).toFixed(1)}px)`; g2.strokeStyle = '#0f0';
+    g2.save(); g2.filter = `blur(${(1.6 * mk).toFixed(1)}px)`; g2.strokeStyle = '#0f0';
     for (const C of out.cracks) for (const L of C.lines) ribbon(g2, L, 3.2, 0.9);
     g2.restore();
     g2.strokeStyle = '#f00';
     for (const C of out.cracks) for (const L of C.lines) ribbon(g2, L, 0.9, 1);
-    for (const [unit, m] of [[1, map1], [2, map2]]) { gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, T[unit]); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, m); }
+    for (const [unit, m] of [[1, map1], [2, map2]]) { gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, T[unit]); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, m); m.width = m.height = 0; }
     mapsDirty = false;
   }
 
   // a lost context hands the cracks back to the 2D fallback
   glc.addEventListener('webglcontextlost', (e) => { e.preventDefault(); out.ok = false; glc.style.visibility = 'hidden'; });
+  // idle: give back the drawing buffer and the textures
+  function sleep() {
+    awake = false; glc.style.visibility = 'hidden'; glc.width = glc.height = 1;
+    const px = new Uint8Array([128, 128, 128, 255]);
+    for (let u = 0; u < 3; u++) { gl.activeTexture(gl.TEXTURE0 + u); gl.bindTexture(gl.TEXTURE_2D, T[u]); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, px); }
+    sceneW = sceneH = 0; mapsDirty = true;
+  }
   const rip = new Float32Array(24 * 4), imp = new Float32Array(8 * 4), imp2 = new Float32Array(8 * 4);
   Object.assign(out, {
     ok: true, canvas: glc,
-    resize(k) { K = k; glc.width = cv.width; glc.height = cv.height; mapsDirty = true; },
+    resize(k) { K = k; mapsDirty = true; if (awake) { glc.width = cv.width; glc.height = cv.height; } },
     addCrack(C) { out.cracks.push(C); if (out.cracks.length > 8) out.cracks.shift(); mapsDirty = true; },
     clear() { out.cracks.length = 0; out.ripples.length = 0; mapsDirty = true; },
     ripple(x, y, amp = 1) { out.ripples.push({ x, y, t: performance.now() / 1000, amp }); if (out.ripples.length > 24) out.ripples.shift(); },
@@ -255,12 +265,16 @@ export function createFX(cv) {
       if (!out.ok) return;
       const now = performance.now() / 1000;
       out.ripples = out.ripples.filter((r) => now - r.t < 2.6);
-      if (!out.cracks.length && !out.ripples.length) { glc.style.visibility = 'hidden'; return; }
+      if (!out.cracks.length && !out.ripples.length) { if (awake) sleep(); return; }
+      if (!awake) { awake = true; glc.width = cv.width; glc.height = cv.height; }
+      if (glc.width !== cv.width || glc.height !== cv.height) { glc.width = cv.width; glc.height = cv.height; }
       if (mapsDirty) rasterise();
       glc.style.visibility = 'visible';
       gl.viewport(0, 0, glc.width, glc.height);
       gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, T[0]);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cv);
+      if (sceneW !== cv.width || sceneH !== cv.height) { // storage once per size, then update in place
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cv); sceneW = cv.width; sceneH = cv.height;
+      } else gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, cv);
       out.ripples.forEach((r, i) => rip.set([r.x, r.y, now - r.t, r.amp], i * 4));
       out.cracks.forEach((C, i) => { imp.set([C.x, C.y, C.seed, now - C.born], i * 4); imp2.set([C.blot, C.stuck ? C.stuck.x : -2, C.stuck ? C.stuck.w : 0, C.stuck ? C.stuck.hue : 0], i * 4); });
       gl.uniform2f(U.uRes, glc.width, glc.height); gl.uniform1f(U.uK, K); gl.uniform1f(U.uTime, now); gl.uniform1f(U.uCracked, out.cracks.length ? 1 : 0);
