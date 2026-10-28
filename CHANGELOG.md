@@ -1,6 +1,7 @@
 # Logs
 
 28 Oct 2026
+- CarPlay Gravity: cracks and liquid ripples as a WebGL2 after-effect (`fx.js`) over the canvas frame. Shards shift the picture under them, crack edges split colour and catch the light, the panel bleeds ink from the impact with an oily rim; touches send ripple rings, drags leave a wake, Shake and cracks splash. Ripples On / Off in the sheet (`?ripples=off`); 2D fallback without WebGL2. Smoke Chromium runs with SwiftShader WebGL. `node smoke.js` 35 checks.
 - Aquarelle: one-tap Hide all panels (eye at the top right; a faint eye stays in the corner to bring them back; Tab and the four-finger tap do the same).
 - CarPlay Gravity cracks look like a cracked screen: a few long, nearly straight cracks in uneven directions with kinks and forks instead of a spider web, plus panel damage (an ink blot at the impact with a coloured fringe, colour bleeding along the cracks, a chromatic split at their edges, a stuck pixel column).
 - CarPlay Gravity: the sidebar's glass pill is a falling piece too (it was baked into the backdrop). Its clock, recent apps and buttons pass through it until they have come apart once (`World.ignorePair`), then collide like any other pair; it tips over its foot when it drops. `node smoke.js` 32 checks.
