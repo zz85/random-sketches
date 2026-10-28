@@ -32,6 +32,8 @@ The interface is the first one's floating toolbars, with everything added since.
 - **Size / water / paint:** one slim column of three values over one slider (top right on
   a phone or a 7" e-reader). Tap a value to put it on the slider, or drag up and down on
   the value itself. For Lift, Smudge and Eraser paint is their strength; pastel has no water.
+- **Hide all panels:** the eye at the top right (or Tab, or a four-finger tap). One faint eye
+  stays in the corner; tap it to bring the panels back. The page does not move.
 - **Move and fold panels:** the palette, pen bar, tool strip and size / water / paint column
   have a ⋮⋮ grip. Drag it to put the panel anywhere (a panel moved off the edges floats over
   the page), tap it to fold the panel down to what is selected (tap the folded panel to open
@@ -74,7 +76,7 @@ page, and undo history starts afresh each time you turn to a page.
 | Pencil / stylus | paints. Pressure sets size and load (pressure curve in Prefs), tilt lays the brush on its side. Hover shows the brush outline |
 | Finger | paints until a pen has been used, then navigates (Prefs → Fingers) |
 | Two fingers | decided by how they start moving, then locked for the gesture: moving together pans (no zoom, no rotation), spreading or pinching zooms, a clear twist rotates (snaps square; Prefs → Rotate with two fingers). A quick pinch in shows the whole page |
-| Two / three / four-finger tap | undo / redo / hide the toolbars |
+| Two / three / four-finger tap | undo / redo / hide or show the panels |
 | Touch and hold | eyedropper (also the dropper at the bottom of the brushes, Alt-click or I) |
 | Hold at the end of a stroke | QuickShape: the stroke is taken back, with everything its water did, and painted again as a straight line or an ellipse (circle when nearly round) |
 | Mouse | left paints (speed stands in for pressure), middle/right or Space-drag pans, wheel zooms |

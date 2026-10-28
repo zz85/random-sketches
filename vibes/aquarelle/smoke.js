@@ -597,11 +597,21 @@ try {
   const far2 = await ev(`(() => { const q = __aq.toScreen(${farPt[0]} - __aq.sim.origin[0], ${farPt[1]} - __aq.sim.origin[1]); return [q.x, q.y]; })()`);
   check(far2[0] > 0 && far2[0] < 632 && (await scr2(far2[0], far2[1])) < 120, 'far writing restored too', far2.map((v) => v.toFixed(0)).join(','));
   check(errors().length === 0, 'no console errors (new controls, pastel, infinite page)', errors().join(' | '));
+  const tapAt = async ([x, y]) => { for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1 }); };
+  // one tap hides every panel, the faint eye left in the corner brings them back
+  check(await load('fresh=1&nosw=1&nohelp=1&nosave=1&eink=1'), 'loads for hide all'); await sleep(300);
+  const v0 = await ev('[__aq.view.x, __aq.view.y, __aq.view.z]');
+  await tapAt(await ev(`(() => { const r = document.querySelector('#hideBtn').getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`)); await sleep(300);
+  check(await ev(`document.body.classList.contains('ui-hidden') && [...document.querySelectorAll('.panel')].every((p) => getComputedStyle(p).opacity === '0' && getComputedStyle(p).pointerEvents === 'none')`), 'the eye hides every panel');
+  check(JSON.stringify(await ev('[__aq.view.x, __aq.view.y, __aq.view.z]')) === JSON.stringify(v0), 'and the page does not move');
+  const us = await ev(`(() => { const r = document.querySelector('#uiShow').getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2, r.width]; })()`);
+  check(us[2] >= 40, 'a show button is left in the corner');
+  await tapAt(us); await sleep(300);
+  check(!(await ev(`document.body.classList.contains('ui-hidden')`)) && (await ev(`getComputedStyle(document.querySelector('#uiShow')).display`)) === 'none', 'tapping it brings the panels back');
   // panels fold and move by their grips
   await c.send('Emulation.setDeviceMetricsOverride', { width: 632, height: 840, deviceScaleFactor: 2, mobile: true });
   check(await load('fresh=1&nosw=1&nohelp=1&nosave=1&eink=1'), 'loads for movable panels'); await sleep(300);
   const gripAt = (id) => ev(`(() => { const r = document.querySelector('#${id} > .grip').getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
-  const tapAt = async ([x, y]) => { for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1 }); };
   const qpw0 = await ev(`document.querySelector('#palette').getBoundingClientRect().width`);
   await tapAt(await gripAt('palette')); await sleep(500);
   const qpw1 = await ev(`document.querySelector('#palette').getBoundingClientRect().width`);

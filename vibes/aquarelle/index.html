@@ -232,6 +232,11 @@
   #toast.show { opacity: 1; }
   #err { display: none; position: fixed; inset: 0; z-index: 100; background: var(--bg); padding: 40px; font-size: 15px; }
   body.ui-hidden .panel, body.ui-hidden .pop { opacity: 0; pointer-events: none; }
+  /* with the panels hidden one faint button, where Hide was, brings them back */
+  #uiShow { display: none; position: fixed; z-index: 30; top: calc(14px + var(--safe-t)); right: calc(14px + var(--safe-r)); width: 44px; height: 44px; border-radius: 50%; background: var(--panel); border: 1px solid var(--line); opacity: 0.55; }
+  body.ui-hidden #uiShow { display: flex; align-items: center; justify-content: center; padding: 0; }
+  #uiShow:hover, #uiShow:active { opacity: 1; }
+  body.eink #uiShow { border: 2px solid #000; opacity: 1; }
 
 
   /* pages (top centre) and zoom (bottom right) */
@@ -341,6 +346,8 @@
   <symbol id="i-pageadd" viewBox="0 0 24 24"><path d="M6 3.5h8l4 4v13H6z"/><path d="M14 3.5v4h4M12 11v6M9 14h6"/></symbol>
   <symbol id="i-zin" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
   <symbol id="i-zout" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+  <symbol id="i-hide" viewBox="0 0 24 24"><path d="M3 3l18 18"/><path d="M10.6 5.1A10.4 10.4 0 0 1 12 5c5 0 9 4.5 10 7a13 13 0 0 1-2.9 3.9M6.6 6.6C4.4 8 2.8 10.2 2 12c1 2.5 5 7 10 7 1.8 0 3.4-.6 4.8-1.4"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></symbol>
+  <symbol id="i-show" viewBox="0 0 24 24"><path d="M2 12c1-2.5 5-7 10-7s9 4.5 10 7c-1 2.5-5 7-10 7S3 14.5 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
   <symbol id="i-fs" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></symbol>
   <symbol id="i-fsexit" viewBox="0 0 24 24"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></symbol>
   <symbol id="i-round" viewBox="0 0 24 24"><path d="M19 3c-3 1.5-7 6-9.2 9.6"/><path d="M10 12.5c-2.6-.4-4.7 1.6-4.9 4.1C4.9 19 4 20 3 21c3 .3 6.6-.5 7.8-3.3.7-1.7.4-3.6-.8-5.2Z"/></symbol>
@@ -392,7 +399,9 @@
   <button class="ico" id="shareBtn" title="Export PNG"><svg><use href="#i-share"/></svg></button>
   <button class="ico" id="fsBtn" title="Full screen"><svg><use href="#i-fs"/></svg></button>
   <button class="ico" id="helpBtn" title="Help (?)"><svg><use href="#i-help"/></svg></button>
+  <button class="ico" id="hideBtn" title="Hide all panels (Tab, four-finger tap)"><svg><use href="#i-hide"/></svg></button>
 </div>
+<button class="ico" id="uiShow" title="Show the panels (Tab)"><svg><use href="#i-show"/></svg></button>
 
 <div id="tools" class="panel">
   <button class="ico" data-brush="round" title="Round brush (B) — tap again for its settings"><svg><use href="#i-round"/></svg></button>
@@ -476,7 +485,7 @@
   <div class="tabs" id="actTabs"><button data-t="share" class="on">Share</button><button data-t="canvas">Canvas</button><button data-t="video">Video</button><button data-t="prefs">Prefs</button><button data-t="help">Help</button></div>
   <div class="body">
     <div data-pane="share">
-      <button class="item" id="fsItem"><span>Full screen<small>also the corners button at the top right; a four-finger tap hides the toolbars</small></span></button>
+      <button class="item" id="fsItem"><span>Full screen<small>also the corners button at the top right</small></span></button>
       <button class="item" id="installItem" data-pwa-install style="display:none"><span>Install app<small>own icon, opens full screen, works offline</small></span></button>
       <button class="item" id="galItem"><span>Gallery<small>all your paintings and notes; + for a new one</small></span></button>
       <button class="item" id="exportPng"><span>PNG<small>full resolution, as it will look dry</small></span></button>
@@ -528,7 +537,8 @@
         <tr><td>Pastel</td><td>the two pastel sticks in the brushes: dry and opaque, they catch the paper's grain (press harder to fill it), cover what is under them and smudge with Smudge</td></tr>
         <tr><td>Infinite page</td><td>Gallery → + → Infinite page, or Canvas → Add an infinite page: no edges, pan as far as you like in any direction</td></tr>
         <tr><td>Pages</td><td>‹ › at the top turn pages; › on the last page adds one. Tap the page number for all pages: move, delete. Gallery → + → Notebook makes a ruled notebook</td></tr>
-        <tr><td>Two-finger tap</td><td>undo — three-finger tap: redo — four-finger tap: full screen</td></tr>
+        <tr><td>Two-finger tap</td><td>undo — three-finger tap: redo — four-finger tap: hide / show the panels</td></tr>
+        <tr><td>Panels</td><td>the eye at the top right hides every panel (tap the faint eye left in the corner to bring them back); a panel's ⋮⋮ grip folds it to what is selected (tap the grip, then tap the folded panel to open it) or moves it (drag the grip); double-tap the grip to put it back</td></tr>
         <tr><td>Touch and hold</td><td>eyedropper (or the dropper in the tools, or Alt-click)</td></tr>
         <tr><td>Hold at stroke end</td><td>QuickShape: snaps to a straight line or an ellipse</td></tr>
         <tr><td>Wet-in-wet</td><td>Clear water brush first, then drop paint in and watch it bloom</td></tr>

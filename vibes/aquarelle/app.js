@@ -157,7 +157,7 @@ const rectOf = (sel) => { const el = $(sel); if (!el || !el.offsetParent && getC
 // Make every panel fit whatever the screen: buttons that do not fit the top right bar go
 // into a ⋯ menu, the tool strip scrolls between the top bars and the palette, the slider
 // shortens (and goes, leaving the chips, which drag too), the zoom bar drops its % last.
-const MORE = ['helpBtn', 'shareBtn', 'fsBtn', 'tiltBtn', 'layBtn', 'dryBtn', 'redoBtn']; // first to go first
+const MORE = ['helpBtn', 'shareBtn', 'fsBtn', 'tiltBtn', 'layBtn', 'dryBtn', 'redoBtn', 'hideBtn']; // first to go first
 const moreBtn = Object.assign(document.createElement('button'), { className: 'ico', id: 'moreBtn', title: 'More', innerHTML: '<svg><use href="#i-more"/></svg>' });
 const morePop = Object.assign(document.createElement('div'), { id: 'morePop', className: 'pop under right' });
 document.body.appendChild(morePop);
@@ -168,12 +168,12 @@ function fitTopBars() {
   const tr = $('#topR'), home = MORE.map((id) => document.getElementById(id));
   // everything back home, in its order, then move out until the bars do not touch
   for (const b of [...$$('#topR > button'), ...morePop.children]) if (b !== moreBtn) tr.appendChild(b);
-  const order = ['undoBtn', 'redoBtn', 'dryBtn', 'tiltBtn', 'layBtn', 'shareBtn', 'fsBtn', 'helpBtn'];
+  const order = ['undoBtn', 'redoBtn', 'dryBtn', 'tiltBtn', 'layBtn', 'shareBtn', 'fsBtn', 'helpBtn', 'hideBtn'];
   for (const id of order) tr.appendChild(document.getElementById(id));
   moreBtn.remove();
   const clash = () => { const l = rectOf('#topL'), r = tr.getBoundingClientRect(); return l && r.left < l.right + 8; };
   if (!clash()) return;
-  tr.appendChild(moreBtn);
+  tr.insertBefore(moreBtn, $('#hideBtn'));
   for (const b of home) {
     if (!clash()) break;
     if (!visible(b)) continue;
@@ -264,6 +264,14 @@ for (const id of MOVABLE) {
   // a folded panel opens again when you tap it
   el.addEventListener('click', (e) => { if (el.classList.contains('folded') && !e.target.closest('.grip')) { e.stopPropagation(); e.preventDefault(); setFolded(id, false); } }, true);
 }
+/** Hide every panel at once (the page stays exactly where it is), or bring them back. */
+function setUiHidden(v) {
+  if (v) closePops();
+  document.body.classList.toggle('ui-hidden', v);
+  labelEl.style.display = 'none';
+}
+$('#hideBtn').onclick = (e) => { e.stopPropagation(); setUiHidden(true); };
+$('#uiShow').onclick = (e) => { e.stopPropagation(); setUiHidden(false); };
 function setFolded(id, v) { pstate(id).folded = v; applyPanel(id); savePrefs(); panelsChanged(); }
 function applyPanel(id) { document.getElementById(id).classList.toggle('folded', !!pstate(id).folded); placePanel(id); }
 /** Put a moved panel where it was put, kept on the screen; a panel that was not moved: clear. */
@@ -752,7 +760,7 @@ function pointerEnd(e) {
     if (stroke && stroke.type === 'touch') endStroke();
     if (touches.size === 0) {
       if (tapCand && !tapCand.moved && performance.now() - tapCand.t0 < 320 && tapCand.n >= 2) {
-        if (tapCand.n === 2) doUndo(); else if (tapCand.n === 3) doRedo(); else document.body.classList.toggle('ui-hidden');
+        if (tapCand.n === 2) doUndo(); else if (tapCand.n === 3) doRedo(); else setUiHidden(!document.body.classList.contains('ui-hidden'));
       } else if (gesture && gesture.mode === 'zoom' && performance.now() - gesture.t0 < 380 && view.z < gesture.z0 * 0.72) { fit(1); userMovedView = true; }
       tapCand = null; gesture = null;
     } else if (gesture) startGesture();
@@ -859,7 +867,7 @@ addEventListener('keydown', (e) => {
   if (k === '-' || k === '_') { zoomBy(1 / 1.25); return; }
   if (e.key === 'PageDown') { e.preventDefault(); gotoPage(doc.page + 1, false); return; }
   if (e.key === 'PageUp') { e.preventDefault(); gotoPage(doc.page - 1); return; }
-  if (k === 'tab') { e.preventDefault(); document.body.classList.toggle('ui-hidden'); return; }
+  if (k === 'tab') { e.preventDefault(); setUiHidden(!document.body.classList.contains('ui-hidden')); return; }
   if (/^[1-9]$/.test(k)) { const p = PIGMENTS[+k - 1]; if (p) choosePigment(p.id, e.shiftKey); }
 });
 addEventListener('keyup', (e) => { if (e.key === ' ') { spaceDown = false; updateCursor(); } });
@@ -1837,6 +1845,6 @@ if ('serviceWorker' in navigator && !qs.has('nosw') && location.protocol !== 'fi
 window.__aq = {
   box, get dpr() { return dpr; }, setFullscreen, get sim() { return sim; }, get doc() { return doc; }, view, S, get stroke() { return stroke; }, fit, setTool, selectBrush, choosePigment, useCustom, render,
   redraw: () => { needsRender = true; }, get world() { return world; }, worldKeep, infMinZ, visibleRect, placeAt, freeAreaRect: () => freeArea(), baseZ, zoomBy, zoomToggle, freeArea, gotoPage, insertPage, deletePage, movePage, get pageCache() { return pageCache; }, useBrush, setMode, setNib, setPenColour, exportImage, save, toSheet, toScreen, openGallery, openById, createPainting, rec, togglePop, dupLayer,
-  get penSeen() { return penSeen; }, togglePop, closePops, setFolded, resetPanels, layoutPanels,
+  get penSeen() { return penSeen; }, setUiHidden, togglePop, closePops, setFolded, resetPanels, layoutPanels,
 };
 window.__ready = true;

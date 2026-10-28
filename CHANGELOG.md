@@ -1,6 +1,7 @@
 # Logs
 
 28 Oct 2026
+- Aquarelle: one-tap Hide all panels (eye at the top right; a faint eye stays in the corner to bring them back; Tab and the four-finger tap do the same).
 - CarPlay Gravity cracks look like a cracked screen: a few long, nearly straight cracks in uneven directions with kinks and forks instead of a spider web, plus panel damage (an ink blot at the impact with a coloured fringe, colour bleeding along the cracks, a chromatic split at their edges, a stuck pixel column).
 - CarPlay Gravity: the sidebar's glass pill is a falling piece too (it was baked into the backdrop). Its clock, recent apps and buttons pass through it until they have come apart once (`World.ignorePair`), then collide like any other pair; it tips over its foot when it drops. `node smoke.js` 32 checks.
 - CarPlay Gravity: Liquid Glass blur on the canvas (each glass piece blurs and saturates what is under it with `ctx.filter`; pieces at rest blur the backdrop once, cut to their outline, pieces in flight the live frame, four a frame), Light appearance with light wallpapers, Clear icons, iOS 26's widgets page (calendar, Home accessory tiles that toggle), an Apple Maps-style 3D driving view (extruded buildings, route ribbon, labels on the ground, fog), double-tap cracks the glass and knocks pieces loose, a new Phone glyph, Helvetica after SF Pro in the font stack. Gravity starts after 5 s or at the first touch, 1.5 g by default, Shake twice as hard with a screen quake. 1.6 ms CPU a frame headless. `node smoke.js` 32 checks.
