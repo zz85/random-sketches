@@ -13,7 +13,10 @@
 
 const TAU = Math.PI * 2;
 
-export function fracture(x, y, W, H, rnd = Math.random, P = 1) {
+// kind: 'hair' one thin line (a slow triple tap), 'crack' a few sideways cracks, 'web' a spider web
+// of radial cracks joined by rings (a quadruple tap)
+export function fracture(x, y, W, H, rnd = Math.random, P = 1, kind = 'crack') {
+  const hair = kind === 'hair', web = kind === 'web';
   const R = Math.hypot(W, H) * 1.3, lines = [], rays = [];
   const noise = () => { const v = Array.from({ length: 16 }, rnd); return (s) => { const f = s / 70, i = Math.floor(f), t = f - i, a = v[i & 15], b = v[(i + 1) & 15]; return a + (b - a) * t * t * (3 - 2 * t); }; };
   // one crack from (px, py) along a, wandering a little around its own heading
@@ -33,7 +36,23 @@ export function fracture(x, y, W, H, rnd = Math.random, P = 1) {
   };
   // one to four main cracks running across the screen, roughly sideways, through the impact:
   // a gentle fan of headings, each half wandering on its own; now and then one half stops short
-  const n = Math.max(1, Math.min(4, Math.round(0.5 + 0.8 * P + rnd() * 1.2)));
+  if (web) {
+    // radial cracks all round, spaced unevenly
+    const n = Math.min(12, 8 + Math.floor(rnd() * 3 + P)), a0 = rnd() * TAU;
+    for (let i = 0; i < n; i++) {
+      const ang = a0 + (i + (rnd() - 0.5) * 0.6) * TAU / n;
+      const L = run(x, y, ang, R, (1.2 + rnd() * 0.7) * (0.75 + 0.25 * P));
+      L.full = true; L.ang = ang; rays.push(L);
+    }
+  } else if (hair) {
+    // one thin line; one half often stops partway
+    const ang = (rnd() - 0.5) * 0.5;
+    for (const side of [0, Math.PI]) {
+      const full = side === 0 || rnd() < 0.5, L = run(x, y, ang + side + (rnd() - 0.5) * 0.06, full ? R : 120 + rnd() * 260, 0.8);
+      L.full = full; L.ang = ang + side; if (full) rays.push(L);
+    }
+  }
+  const n = hair || web ? 0 : Math.max(1, Math.min(4, Math.round(0.5 + 0.8 * P + rnd() * 1.2)));
   const tilt = (rnd() - 0.5) * 0.5, gap = 0.16 + rnd() * 0.18;
   for (let i = 0; i < n; i++) {
     const head = tilt + (i - (n - 1) / 2) * gap * (0.7 + 0.6 * rnd()), w = (1.3 + rnd() * 0.6) * (0.75 + 0.25 * P);
@@ -47,25 +66,45 @@ export function fracture(x, y, W, H, rnd = Math.random, P = 1) {
   // forks and hackle: cracks branch at 20-35 degrees and some hairlines die into the glass
   for (const M of lines.slice()) {
     const P = M.pts;
-    for (let f = rnd() < 0.45 ? 1 : 0; f-- > 0;) {
+    for (let f = hair ? 0 : rnd() < (web ? 0.7 : 0.45) ? 1 : 0; f-- > 0;) {
       const k = 4 + Math.floor(rnd() * Math.max(1, Math.min(P.length - 5, 30))), [px, py] = P[k], [qx, qy] = P[k - 1];
       const a = Math.atan2(py - qy, px - qx) + (rnd() < 0.5 ? -1 : 1) * (0.35 + rnd() * 0.25);
       run(px, py, a, 60 + rnd() * 320, M.w * 0.7, 0.04);
     }
-    for (let s = Math.round((2 + rnd() * 5) * Math.sqrt(P)); s-- > 0;) {
+    for (let s = hair ? Math.floor(rnd() * 3) : Math.round((2 + rnd() * 5) * Math.sqrt(P) * (web ? 1.6 : 1)); s-- > 0;) {
       const k = 1 + Math.floor(rnd() * (P.length - 2)), [px, py] = P[k], [qx, qy] = P[k - 1];
       const a = Math.atan2(py - qy, px - qx) + (rnd() < 0.5 ? -1 : 1) * (0.5 + rnd() * 0.6);
       run(px, py, a, 4 + rnd() * 16, 0.55, 0);
     }
   }
   // the crushed spot: tiny splinters and one or two partial rings
-  for (let i = 0, k = Math.round(2 + 2 * P); i < k; i++) run(x, y, rnd() * TAU, (3 + rnd() * 9) * Math.sqrt(P), 0.6, 0);
+  for (let i = 0, k = hair ? 0 : Math.round((2 + 2 * P) * (web ? 3 : 1)); i < k; i++) run(x, y, rnd() * TAU, (3 + rnd() * 9) * Math.sqrt(P), 0.6, 0);
   const rings = [];
-  for (let i = 0, nr = rnd() < 0.4 ? 1 : 0; i < nr; i++) {
+  for (let i = 0, nr = !hair && !web && rnd() < 0.4 ? 1 : 0; i < nr; i++) {
     const r = 12 + rnd() * 22 + i * 16, s0 = rnd() * TAU, span = 1.2 + rnd() * 2.6, pts = [];
     for (let t = 0; t <= 14; t++) { const q = s0 + span * t / 14, rr = r + (rnd() - 0.5) * 2.5; pts.push([x + Math.cos(q) * rr, y + Math.sin(q) * rr]); }
     lines.push({ pts, w: 0.9, bright: noise(), jag: noise() });
     rings.push({ r, s0, span });
+  }
+  // the web: rings of short cracks joining neighbouring rays, sagging a little toward the impact,
+  // closer together near it; a few links are missing
+  if (web) {
+    const at = (L, r) => { for (const p of L.pts) if (Math.hypot(p[0] - x, p[1] - y) >= r) return p; return null; };
+    const order = rays.slice().sort((a, b) => a.ang - b.ang);
+    for (let k = 0, nr = 3 + Math.floor(rnd() * 2 + P * 0.6), r = 18 + rnd() * 10; k < nr; k++, r *= 1.55 + rnd() * 0.35) {
+      order.forEach((A, i) => {
+        const B = order[(i + 1) % order.length];
+        if (rnd() < 0.18) return;
+        const a = at(A, r * (0.9 + rnd() * 0.2)), b = at(B, r * (0.9 + rnd() * 0.2));
+        if (!a || !b) return;
+        const sag = 0.08 + rnd() * 0.12, mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2, pts = [];
+        for (let t = 0; t <= 6; t++) {
+          const u = t / 6, s = 1 - sag * 4 * u * (1 - u), px = a[0] + (b[0] - a[0]) * u, py = a[1] + (b[1] - a[1]) * u;
+          pts.push([x + (px - x) * s + (rnd() - 0.5) * 1.2, y + (py - y) * s + (rnd() - 0.5) * 1.2]);
+        }
+        lines.push({ pts, w: 0.9 + rnd() * 0.4, bright: noise(), jag: noise() });
+      });
+    }
   }
   // shards: wedges between the full cracks, each a glass plate with its own tilt
   for (const A of rays) A.ang = Math.atan2(A.pts.at(-1)[1] - y, A.pts.at(-1)[0] - x);
@@ -76,10 +115,10 @@ export function fracture(x, y, W, H, rnd = Math.random, P = 1) {
     while (a2 <= a1) a2 += TAU;
     const arc = []; for (let t = 1; t < 12; t++) { const q = a1 + (a2 - a1) * t / 12; arc.push([x + Math.cos(q) * R, y + Math.sin(q) * R]); }
     const poly = [[x, y], ...A.pts, ...arc, ...B.pts.slice().reverse()];
-    const t = rnd() * TAU, m = (1.2 + rnd() * 3) * P ** 0.8;
+    const t = rnd() * TAU, m = (1.2 + rnd() * 3) * P ** 0.8 * (hair ? 0.3 : 1);
     return { poly, dx: Math.cos(t) * m, dy: Math.sin(t) * m, rot: (rnd() < 0.5 ? -1 : 1) * (0.3 + 0.7 * rnd()) * 0.011 * P };
   });
-  return { x, y, lines, shards, rings, seed: rnd(), power: P, blot: (4 + rnd() * 6) * (0.85 + 0.15 * P), streaks: Math.min(7, Math.round(1 + P + rnd() * 2)), born: performance.now() / 1000 };
+  return { x, y, lines, shards, rings, seed: rnd(), power: P, kind, blot: hair ? 0 : (4 + rnd() * 6) * (0.85 + 0.15 * P) * (web ? 1.5 : 1), streaks: hair ? 0 : Math.min(7, Math.round(1 + P + rnd() * 2) + (web ? 2 : 0)), born: performance.now() / 1000 };
 }
 
 // draw a crack as a ribbon that tapers to its tip, with brightness that comes and goes
@@ -177,6 +216,7 @@ void main() {
   for (int i = 0; i < 8; i++) {
     if (i >= uNImp) break;
     vec4 a = uImp[i], b = uImp2[i];
+    if (b.x <= 0.0) continue; // a hairline leaves the panel alone
     float dist = length(sq - a.xy), nz = fbm(sq / 14.0 + a.z * 37.0), nz2 = fbm(sq / 5.0 - a.z * 11.0);
     float grow = min(1.0, 0.25 + a.w * 0.9) * (1.0 + min(a.w, 30.0) * 0.012);
     float R = b.x * grow * (0.7 + 0.75 * nz);
@@ -294,6 +334,7 @@ export function createFX(cv) {
   Object.assign(out, {
     ok: true, canvas: glc,
     resize(k) { K = k; mapsDirty = true; if (awake) { glc.width = cv.width; glc.height = cv.height; } },
+    removeCrack(C) { const i = out.cracks.indexOf(C); if (i >= 0) { out.cracks.splice(i, 1); mapsDirty = true; } },
     addCrack(C) { out.cracks.push(C); if (out.cracks.length > 8) out.cracks.shift(); mapsDirty = true; },
     clear() { out.cracks.length = 0; out.ripples.length = 0; mapsDirty = true; },
     ripple(x, y, amp = 1) { out.ripples.push({ x, y, t: performance.now() / 1000, amp }); if (out.ripples.length > 24) out.ripples.shift(); },

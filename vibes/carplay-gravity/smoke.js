@@ -102,6 +102,13 @@ const STATS = `(()=>{const P=__cp.pieces,W=__cp.world.walls;return {n:P.length,p
     check('restore: clears the cracks', await b.evaluate(`__cp.cracks.length===0 && __cp.pieces.every(p=>p.body.pinned)`));
     await sleep(1200);
     check('GL pass sleeps when idle (1 x 1, hidden)', await b.evaluate(`__cp.fx.cracks.length===0 && __cp.fx.ripples.length===0 && __cp.fx.canvas.style.visibility==='hidden' && __cp.fx.canvas.width===1`));
+    for (const xy of [[500, 452], [502, 453], [501, 452]]) { await mouse('mousePressed', xy); await mouse('mouseReleased', xy); await sleep(300); }
+    check('slow triple tap leaves a single hairline', await b.evaluate(`__cp.cracks.length===1 && __cp.cracks[0].kind==='hair' && __cp.cracks[0].blot===0`));
+    await b.evaluate(`__cp.restore()`); await sleep(1600);
+    for (const xy of [[500, 452], [502, 453], [501, 452], [500, 451]]) { await mouse('mousePressed', xy); await mouse('mouseReleased', xy); await sleep(60); }
+    await sleep(150);
+    check('quadruple tap turns it into a spider web', await b.evaluate(`__cp.cracks.length===1 && __cp.cracks[0].kind==='web' && __cp.fx.cracks.length===1 && __cp.cracks[0].lines.length>40`), await b.evaluate(`JSON.stringify(__cp.cracks.map(c=>[c.kind,c.lines.length]))+__cp.fx.cracks.length`));
+    await b.evaluate(`__cp.restore()`); await sleep(1600);
     await mouse('mousePressed', [400, 300]); await mouse('mouseReleased', [400, 300]); await sleep(100);
     check('Ripples off by default: a touch makes none', await b.evaluate(`__cp.state.ripples==='off' && __cp.fx.ripples.length===0`));
     await b.evaluate(`__cp.state.ripples='on'`); await mouse('mousePressed', [400, 300]); await mouse('mouseReleased', [400, 300]); await sleep(100);

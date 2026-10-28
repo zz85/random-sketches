@@ -576,20 +576,22 @@ let cracks = null;
 const crackList = [];
 // three taps in 150 ms hit about 1.6 times as hard as the slider says, in 700 ms about 0.55 times
 function tapForce(span) { const t = Math.min(1, Math.max(0, (span - 150) / 550)); return 1.6 - 1.05 * t; }
-function crack(x, y, force = 1) {
-  const P = Math.min(4, Math.max(0.2, state.crackPower * force)), C = fracture(x, y, LW, LH, Math.random, P);
+function uncrack(C) { const i = crackList.indexOf(C); if (i >= 0) crackList.splice(i, 1); if (fx.ok) fx.removeCrack(C); cracks = null; }
+function crack(x, y, force = 1, kind = 'crack') {
+  const P = Math.min(4, Math.max(0.2, state.crackPower * force)), C = fracture(x, y, LW, LH, Math.random, P, kind), hit = kind === 'hair' ? 0.3 : 1;
   crackList.push(C);
   if (fx.ok) { fx.addCrack(C); if (state.ripples === 'on') fx.ripple(x, y, 2.2); }
   cracks = null; // re-render the layer
-  state.quake = Math.max(state.quake, 5 + 4 * P);
+  state.quake = Math.max(state.quake, (5 + 4 * P) * hit);
   for (const { body: b } of pieces) {
     const dx = b.x - x, dy = b.y - y, d = Math.hypot(dx, dy);
-    const reach = 160 + 100 * P; // a harder hit knocks more loose, further
+    const reach = (160 + 100 * P) * hit; // a harder hit knocks more loose, further
     if (d > reach) continue;
     if (b.pinned) { tweens.delete(b); b.setPinned(false); state.loose = state.started = true; }
     const f = (1 - d / reach) * 1100 * Math.sqrt(P) / Math.max(1, Math.sqrt(b.mass));
     b.vx += dx / (d || 1) * f; b.vy += dy / (d || 1) * f - 200; b.w += (Math.random() - 0.5) * 10;
   }
+  return C;
 }
 function drawCracks() {
   if (!crackList.length || fx.ok) return; // the WebGL pass draws them
@@ -752,12 +754,17 @@ cv.addEventListener('pointerdown', (e) => {
   const o = ORB();
   if (Math.hypot(pt.x - o.x, pt.y - o.y) < o.r + 6) { menuPointer = e.pointerId; openMenu(true); return; }
   // a triple tap anywhere cracks the glass; the quicker the three taps, the harder the knock
-  const now = performance.now();
+  const now = e.timeStamp || performance.now(); // when the finger landed, even if a frame was slow
   if (taps.length && (now - taps.at(-1).t > 380 || Math.hypot(pt.x - taps[0].x, pt.y - taps[0].y) > 40)) taps = [];
   taps.push({ t: now, x: pt.x, y: pt.y });
+  // a slow one leaves a single hairline; a fourth tap turns the crack into a spider web
   if (taps.length === 3) {
-    const span = now - taps[0].t; taps = [];
-    crack(pt.x, pt.y, tapForce(span)); return;
+    const span = now - taps[0].t;
+    taps.crack = crack(pt.x, pt.y, tapForce(span), span > 520 ? 'hair' : 'crack'); return;
+  }
+  if (taps.length === 4) {
+    const span = now - taps[0].t; uncrack(taps.crack); taps = [];
+    crack(pt.x, pt.y, tapForce(span * 0.75), 'web'); return;
   }
   if (fx.ok && state.ripples === 'on') fx.ripple(pt.x, pt.y, 1);
   if (!state.started) dropAll(); // the first touch lets gravity go
