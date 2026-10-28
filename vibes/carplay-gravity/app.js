@@ -564,39 +564,45 @@ function onMotion(e) {
 }
 
 // ---------- cracked glass ----------
-// A double tap is a stone on the windscreen: a spider web of cracks from the point (radial cracks
-// that wander and branch, joined by rings), drawn into a layer that stays until Restore, and a
-// shock that knocks nearby pieces loose and away.
+// A double tap is a knock on the screen. A cracked screen has a few long cracks running from the
+// point in a few directions, nearly straight with small kinks, the odd fork, a crushed spot where
+// it hit, and under the glass the panel bleeds: dark ink spreading from the impact, colour fringes
+// along the cracks and a stuck line of pixels. It stays until Restore, and the shock knocks nearby
+// pieces loose and away.
 let cracks = null;
 const crackList = [];
 function crack(x, y) {
-  const rnd = Math.random, lines = [], n = 9 + Math.floor(rnd() * 7), radials = [];
-  for (let i = 0; i < n; i++) {
-    const a0 = (i / n) * TAU + (rnd() - 0.5) * 0.5, len = 70 + rnd() * 260, pts = [[x, y]];
-    let a = a0, px = x, py = y, d = 0;
-    while (d < len) {
-      const st = 6 + rnd() * 16; a += (rnd() - 0.5) * 0.5; px += Math.cos(a) * st; py += Math.sin(a) * st; d += st; pts.push([px, py]);
-      if (rnd() < 0.12 && d > 30) { // a branch
-        const b = [[px, py]]; let ba = a + (rnd() < 0.5 ? -1 : 1) * (0.35 + rnd() * 0.4), bx = px, by = py;
-        for (let k = 0, bl = 20 + rnd() * 80; k * 10 < bl; k++) { ba += (rnd() - 0.5) * 0.5; bx += Math.cos(ba) * 10; by += Math.sin(ba) * 10; b.push([bx, by]); }
-        lines.push({ pts: b, w: 0.8 });
-      }
+  const rnd = Math.random, lines = [], W = LW, H = LH;
+  const off = (px, py) => px < -20 || py < -20 || px > W + 20 || py > H + 20;
+  // run a crack from (px, py) at angle a for up to len, forking now and then
+  const run = (px, py, a, len, w, depth) => {
+    const pts = [[px, py]];
+    for (let d = 0; d < len && !off(px, py);) {
+      const st = 7 + rnd() * 14;
+      a += (rnd() - 0.5) * 0.14 + (rnd() < 0.07 ? (rnd() - 0.5) * 0.7 : 0); // mostly straight, the odd kink
+      px += Math.cos(a) * st; py += Math.sin(a) * st; d += st;
+      pts.push([px + (rnd() - 0.5) * 1.2, py + (rnd() - 0.5) * 1.2]);
+      if (depth < 2 && d > 40 && rnd() < 0.025) run(px, py, a + (rnd() < 0.5 ? -1 : 1) * (0.3 + rnd() * 0.5), (len - d) * (0.25 + rnd() * 0.5), w * 0.7, depth + 1);
     }
-    radials.push(pts); lines.push({ pts, w: 1.2 });
+    lines.push({ pts, w });
+  };
+  // a few main cracks, in uneven directions
+  const n = 3 + Math.floor(rnd() * 4), a0 = rnd() * TAU;
+  for (let i = 0; i < n; i++) run(x, y, a0 + (i / n) * TAU + (rnd() - 0.5) * (TAU / n) * 0.8, 260 + rnd() * 700, 1.3, 0);
+  // the crushed spot: short splinters and a partial ring or two
+  for (let i = 0; i < 6; i++) run(x, y, rnd() * TAU, 6 + rnd() * 16, 0.7, 2);
+  for (let i = 0, rings = Math.floor(rnd() * 3); i < rings; i++) {
+    const r = 8 + rnd() * 14, s0 = rnd() * TAU, span = 0.6 + rnd() * 1.4, pts = [];
+    for (let t = 0; t <= 6; t++) { const q = s0 + span * t / 6, rr = r + (rnd() - 0.5) * 3; pts.push([x + Math.cos(q) * rr, y + Math.sin(q) * rr]); }
+    lines.push({ pts, w: 0.7 });
   }
-  // rings: join neighbouring radials at a few distances from the centre
-  for (const r of [14 + rnd() * 8, 34 + rnd() * 14, 62 + rnd() * 24, 100 + rnd() * 30]) {
-    for (let i = 0; i < n; i++) {
-      if (rnd() < 0.3) continue;
-      const A = radials[i], B = radials[(i + 1) % n];
-      const at = (P) => { let acc = 0; for (let k = 1; k < P.length; k++) { acc += Math.hypot(P[k][0] - P[k - 1][0], P[k][1] - P[k - 1][1]); if (acc >= r) return P[k]; } return null; };
-      const a = at(A), b = at(B);
-      if (!a || !b) continue;
-      const mx = (a[0] + b[0]) / 2 + (rnd() - 0.5) * 8, my = (a[1] + b[1]) / 2 + (rnd() - 0.5) * 8;
-      lines.push({ pts: [a, [mx, my], b], w: 0.8 });
-    }
-  }
-  crackList.push({ x, y, lines, shards: Array.from({ length: 7 }, () => [x + (rnd() - 0.5) * 22, y + (rnd() - 0.5) * 22, 2 + rnd() * 5, rnd() * TAU]) });
+  const HUES = [[255, 40, 200], [40, 255, 190], [140, 90, 255], [255, 210, 60], [60, 160, 255]];
+  crackList.push({
+    x, y, lines,
+    tints: lines.map(() => HUES[Math.floor(rnd() * HUES.length)]),
+    blot: { r: 14 + rnd() * 22, lobes: Array.from({ length: 7 }, () => 0.6 + rnd() * 0.7), rot: rnd() * TAU },
+    stuck: rnd() < 0.7 ? { x: x + (rnd() - 0.5) * 30, w: 1 + rnd() * 2.5, c: HUES[Math.floor(rnd() * 3)] } : null,
+  });
   cracks = null; // re-render the layer
   state.quake = Math.max(state.quake, 10);
   for (const { body: b } of pieces) {
@@ -612,18 +618,34 @@ function drawCracks() {
   if (!cracks || cracks.width !== cv.width || cracks.height !== cv.height) {
     cracks = document.createElement('canvas'); cracks.width = cv.width; cracks.height = cv.height;
     const g = cracks.getContext('2d'); g.setTransform(K, 0, 0, K, 0, 0); g.lineCap = 'round'; g.lineJoin = 'round';
+    const path = (L, dx = 0, dy = 0) => { g.beginPath(); L.pts.forEach(([x, y], i) => (i ? g.lineTo(x + dx, y + dy) : g.moveTo(x + dx, y + dy))); };
     for (const C of crackList) {
-      // a frosted bruise where it hit, and the chipped shards
-      const r = g.createRadialGradient(C.x, C.y, 0, C.x, C.y, 26); r.addColorStop(0, 'rgba(255,255,255,.55)'); r.addColorStop(1, 'rgba(255,255,255,0)');
-      g.fillStyle = r; g.beginPath(); g.arc(C.x, C.y, 26, 0, TAU); g.fill();
-      for (const [sx, sy, s, a] of C.shards) { g.save(); g.translate(sx, sy); g.rotate(a); g.beginPath(); g.moveTo(-s, -s * 0.4); g.lineTo(s, -s * 0.7); g.lineTo(s * 0.4, s); g.closePath(); g.fillStyle = 'rgba(255,255,255,.3)'; g.fill(); g.strokeStyle = 'rgba(255,255,255,.7)'; g.lineWidth = 0.6; g.stroke(); g.restore(); }
-      const stroke = (style, w, dx, dy) => {
-        g.strokeStyle = style;
-        for (const L of C.lines) { g.lineWidth = L.w * w; g.beginPath(); L.pts.forEach(([x, y], i) => (i ? g.lineTo(x + dx, y + dy) : g.moveTo(x + dx, y + dy))); g.stroke(); }
-      };
-      stroke('rgba(0,0,0,.35)', 2.2, 0.7, 0.9); // the shadow of the crack
-      stroke('rgba(255,255,255,.8)', 0.9, 0, 0); // its bright edge
-      stroke('rgba(200,225,255,.25)', 3.5, -0.6, -0.6); // a little refraction glow
+      const rgba = ([r, gg, b], a) => `rgba(${r},${gg},${b},${a})`;
+      // the panel under the glass: a stuck column of pixels through the impact
+      if (C.stuck) { const lg = lin(g, 0, 0, 0, LH, [[0, rgba(C.stuck.c, 0)], [0.15, rgba(C.stuck.c, 0.55)], [0.85, rgba(C.stuck.c, 0.55)], [1, rgba(C.stuck.c, 0)]]); g.fillStyle = lg; g.fillRect(C.stuck.x, 0, C.stuck.w, LH); }
+      // colour bleeding along the cracks, soft and wide
+      g.save(); if (FILTER) g.filter = `blur(${(4 * K).toFixed(1)}px)`;
+      C.lines.forEach((L, i) => { if (L.w < 1) return; g.strokeStyle = rgba(C.tints[i], 0.22); g.lineWidth = 9; path(L); g.stroke(); });
+      g.restore();
+      // dark ink spreading from the impact, with a coloured fringe
+      g.save(); g.translate(C.x, C.y); g.rotate(C.blot.rot);
+      const blob = (k) => { g.beginPath(); const L = C.blot.lobes; for (let i = 0; i <= 28; i++) { const q = (i / 28) * TAU, f = L[Math.floor(i / 4) % L.length] * 0.5 + L[Math.ceil(i / 4) % L.length] * 0.5; const r = C.blot.r * f * k; i ? g.lineTo(Math.cos(q) * r, Math.sin(q) * r) : g.moveTo(Math.cos(q) * r, Math.sin(q) * r); } g.closePath(); };
+      if (FILTER) g.filter = `blur(${(3 * K).toFixed(1)}px)`;
+      blob(1.5); g.fillStyle = 'rgba(190,40,255,.35)'; g.fill();
+      blob(1.15); g.fillStyle = 'rgba(30,220,200,.3)'; g.fill();
+      const rg = g.createRadialGradient(0, 0, 0, 0, 0, C.blot.r); rg.addColorStop(0, 'rgba(0,0,0,.95)'); rg.addColorStop(0.7, 'rgba(5,0,15,.85)'); rg.addColorStop(1, 'rgba(10,0,30,.4)');
+      blob(1); g.fillStyle = rg; g.fill();
+      g.restore();
+      // the cracks: shadow, a chromatic split (red one way, cyan the other), and the bright edge
+      for (const L of C.lines) {
+        g.strokeStyle = 'rgba(0,0,0,.4)'; g.lineWidth = L.w * 2.2; path(L, 0.7, 0.9); g.stroke();
+        g.strokeStyle = 'rgba(255,60,120,.35)'; g.lineWidth = L.w * 1.1; path(L, -0.9, 0.3); g.stroke();
+        g.strokeStyle = 'rgba(60,230,255,.35)'; g.lineWidth = L.w * 1.1; path(L, 0.9, -0.3); g.stroke();
+        g.strokeStyle = 'rgba(255,255,255,.85)'; g.lineWidth = L.w * 0.8; path(L); g.stroke();
+      }
+      // a frosted chip right at the impact
+      const r = g.createRadialGradient(C.x, C.y, 0, C.x, C.y, 9); r.addColorStop(0, 'rgba(255,255,255,.7)'); r.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = r; g.beginPath(); g.arc(C.x, C.y, 9, 0, TAU); g.fill();
     }
   }
   ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(cracks, 0, 0);

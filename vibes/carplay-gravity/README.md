@@ -20,8 +20,11 @@ tumble: clocks tick, the map keeps driving, play / pause / skip work and the gau
   blurs the backdrop under it once, cut to its outline, and reuses that; a piece in flight blurs
   the live frame (four per frame at most), because reading the canvas back is the slow part. No
   refraction or lensing at the rim, only blur, tint and a lit edge.
-- **Double-tap cracks the glass**: a spider-web of wandering cracks with rings, shards and a
-  frosted bruise, and the shock knocks nearby pieces loose. Restore mends it.
+- **Double-tap cracks the glass**: three to six long cracks from the point in uneven directions,
+  nearly straight with small kinks and the odd fork, a crushed spot where it hit. Under the glass
+  the panel bleeds: dark ink spreading from the impact with a magenta / teal fringe, soft colour
+  along the cracks, a red / cyan split at their edges, often a stuck column of pixels. The shock
+  knocks nearby pieces loose. Restore mends it.
 - **Layouts**: Widgets (iOS 26's widget page: calendar on the left, four Home accessory tiles
   that toggle), Home (the app grid in CarPlay's default order: 4 columns on 800 × 480, 5 on wide
   screens; labels fall separately), Dashboard (map with the arrival pill, glass cards for the next
