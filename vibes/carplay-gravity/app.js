@@ -38,12 +38,13 @@ const state = {
   wallpaper: pick(params.get('wallpaper') || saved.wallpaper, Object.keys(WALLPAPERS), 'indigo'),
   icons: pick(params.get('icons') || saved.icons, ['default', 'dark', 'clear'], 'default'),
   ripples: pick(params.get('ripples') || saved.ripples, ['on', 'off'], 'off'),
+  crackPower: (() => { const v = parseFloat(params.get('cracks') ?? saved.crackPower); return Number.isFinite(v) ? Math.max(0.25, Math.min(3, v)) : 1.8; })(),
   started: false, loose: false, mode: 'down', strength: 1.5, angle: Math.PI / 2, tilt: null,
   playing: true, track: 0, pos: 37, bumpT: 0, nextBump: 3, mph: 0, rpm: 0.8, g: [0, 1], quake: 0,
   menu: params.has('menu'), menuT: params.has('menu') ? 1 : 0,
   home: { climate: true, garage: false, humidifier: false, stove: true },
 };
-const save = () => { try { localStorage.setItem('carplay-gravity', JSON.stringify({ layout: state.layout, appearance: state.appearance, wallpaper: state.wallpaper, icons: state.icons, ripples: state.ripples })); } catch (e) { /* private mode */ } };
+const save = () => { try { localStorage.setItem('carplay-gravity', JSON.stringify({ layout: state.layout, appearance: state.appearance, wallpaper: state.wallpaper, icons: state.icons, ripples: state.ripples, crackPower: state.crackPower })); } catch (e) { /* private mode */ } };
 // what the pieces show, updated once a frame
 const live = { clock: '', dist: '', onto: '', dir: 0, mi: '', min: '', arr: '', odo: '', trip: '', range: '', sig: 0 };
 let pieces = [];
@@ -574,16 +575,17 @@ function onMotion(e) {
 let cracks = null;
 const crackList = [];
 function crack(x, y) {
-  const C = fracture(x, y, LW, LH);
+  const P = state.crackPower, C = fracture(x, y, LW, LH, Math.random, P);
   crackList.push(C);
   if (fx.ok) { fx.addCrack(C); if (state.ripples === 'on') fx.ripple(x, y, 2.2); }
   cracks = null; // re-render the layer
-  state.quake = Math.max(state.quake, 10);
+  state.quake = Math.max(state.quake, 5 + 4 * P);
   for (const { body: b } of pieces) {
     const dx = b.x - x, dy = b.y - y, d = Math.hypot(dx, dy);
-    if (d > 260) continue;
+    const reach = 160 + 100 * P; // a harder hit knocks more loose, further
+    if (d > reach) continue;
     if (b.pinned) { tweens.delete(b); b.setPinned(false); state.loose = state.started = true; }
-    const f = (1 - d / 260) * 1600 / Math.max(1, Math.sqrt(b.mass));
+    const f = (1 - d / reach) * 1100 * Math.sqrt(P) / Math.max(1, Math.sqrt(b.mass));
     b.vx += dx / (d || 1) * f; b.vy += dy / (d || 1) * f - 200; b.w += (Math.random() - 0.5) * 10;
   }
 }
@@ -602,7 +604,7 @@ const ORB = () => (state.layout === 'cluster' ? { x: LW - 26, y: 26, r: 17 } : {
 function menuLayout() {
   const w = Math.min(660, LW - 40), h = Math.min(430, LH - 30), x = (LW - w) / 2, y = (LH - h) / 2;
   const cx = x + 130, cw = Math.min(350, w * 0.54), rx = cx + cw + (x + w - cx - cw) / 2;
-  const row = (i) => y + 88 + i * 46;
+  const row = (i) => y + 86 + i * 41;
   const seg = (id, label, i, options, get, set) => ({ id, kind: 'seg', label, x: cx, y: row(i) - 17, w: cw, h: 34, options, get, set });
   const items = [
     { id: 'close', kind: 'button', x: x + w - 50, y: y + 16, w: 34, h: 34, round: true, run: () => openMenu(false) },
@@ -611,11 +613,12 @@ function menuLayout() {
     { id: 'strength', kind: 'slider', label: 'Strength', x: cx, y: row(2) - 17, w: cw - 62, h: 34, min: 0, max: 3, get: () => state.strength, set: (v) => { state.strength = Math.round(v * 20) / 20; }, fmt: (v) => v.toFixed(1) + ' g' },
     seg('appearance', 'Appearance', 3, [['dark', 'Dark'], ['light', 'Light']], () => state.appearance, (v) => { state.appearance = v; save(); respec(); }),
     seg('icons', 'Icons', 4, [['default', 'Default'], ['dark', 'Dark'], ['clear', 'Clear']], () => state.icons, (v) => { state.icons = v; save(); respec(); }),
-    seg('ripples', 'Ripples', 6, [['on', 'On'], ['off', 'Off']], () => state.ripples, (v) => { state.ripples = v; save(); }),
+    { id: 'cracks', kind: 'slider', label: 'Cracks', x: cx, y: row(6) - 17, w: cw - 62, h: 34, min: 0.25, max: 3, get: () => state.crackPower, set: (v) => { state.crackPower = Math.round(v * 20) / 20; save(); }, fmt: (v) => v.toFixed(1) + '×' },
+    seg('ripples', 'Ripples', 7, [['on', 'On'], ['off', 'Off']], () => state.ripples, (v) => { state.ripples = v; save(); }),
     seg('wallpaper', 'Wallpaper', 5, Object.entries(WALLPAPERS), () => state.wallpaper, (v) => { state.wallpaper = v; save(); backdrop = null; }),
     { id: 'dial', kind: 'dial', x: rx - 56, y: row(0) - 17, w: 112, h: 112 },
-    { id: 'shake', kind: 'button', label: 'Shake', x: rx - 70, y: row(3) - 20, w: 140, h: 38, run: shake },
-    { id: 'drop', kind: 'button', label: () => (state.loose ? 'Restore' : 'Drop'), x: rx - 70, y: row(4) - 20, w: 140, h: 38, run: () => (state.loose ? restore() : dropAll()), primary: true },
+    { id: 'shake', kind: 'button', label: 'Shake', x: rx - 70, y: y + 206, w: 140, h: 38, run: shake },
+    { id: 'drop', kind: 'button', label: () => (state.loose ? 'Restore' : 'Drop'), x: rx - 70, y: y + 252, w: 140, h: 38, run: () => (state.loose ? restore() : dropAll()), primary: true },
   ];
   return { x, y, w, h, items };
 }

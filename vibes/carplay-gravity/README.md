@@ -20,13 +20,17 @@ tumble: clocks tick, the map keeps driving, play / pause / skip work and the gau
   blurs the backdrop under it once, cut to its outline, and reuses that; a piece in flight blurs
   the live frame (four per frame at most), because reading the canvas back is the slow part. No
   refraction or lensing at the rim, only blur, tint and a lit edge.
-- **Double-tap cracks the glass**: four to six long cracks from the point in uneven directions,
+- **Double-tap cracks the glass**: three to nine long cracks from the point in uneven directions,
   nearly straight with small kinks, forks and short dead-end hairlines, a crushed spot with a
-  partial ring where it hit. Drawn as a WebGL2 pass over the finished frame (`fx.js`): each shard
-  of glass shifts the picture under it a pixel or two, the crack edges split it into colours and
+  partial ring where it hit. The cracks run out from the impact over half a second, with a glint
+  on the running tips. Drawn as a WebGL2 pass over the finished frame (`fx.js`): each wedge of
+  glass between two cracks shifts and turns the picture under it as one piece, a little lighter or
+  darker as it tilts (the idea from [ksenia-k's broken glass pen](https://codepen.io/ksenia-k/pen/abegNPO);
+  no code from it), the crack edges split it into colours and
   catch the light from the top left, and the panel bleeds: dark ink spreading from the impact
   with fingers along the cracks, an oily rainbow round it, sometimes a faint stuck pixel column.
-  The shock knocks nearby pieces loose. Restore mends it. Without WebGL2 (or after a lost
+  **Cracks** in the sheet (0.25× to 3×, default 1.8×, `?cracks=`) sets how many cracks, how far
+  they run, how far the wedges move and how hard the shock is. The shock knocks nearby pieces loose. Restore mends it. Without WebGL2 (or after a lost
   context) the cracks are drawn in 2D instead. The crack shapes follow the notes on broken-glass
   optics in [kossik/cracked-glass](https://github.com/kossik/cracked-glass); no code from it.
 - **Liquid ripples** (off by default; Ripples On in the sheet or `?ripples=on`): a touch sends a wave ring
@@ -55,7 +59,7 @@ tumble: clocks tick, the map keeps driving, play / pause / skip work and the gau
   (Maps / Music open the dashboard, the sidebar button switches Home / Dashboard, other tiles hop).
 - **Restore** springs everything back into the layout; **Shake** throws it all around.
 - Keys: `M` options, `G` drop / restore, `S` shake, arrows point gravity, `D` drive, `Z` zero-g, `T` tilt, `1`–`4` layouts.
-- URL: `?layout=widgets|home|dash|cluster`, `?appearance=light`, `?mode=drive|zero|tilt`, `?wallpaper=indigo|rose|teal|ocean`, `?icons=dark|clear`, `?ripples=on`, `?menu`, `?still` (no automatic drop), `?seed=` (route).
+- URL: `?layout=widgets|home|dash|cluster`, `?appearance=light`, `?mode=drive|zero|tilt`, `?wallpaper=indigo|rose|teal|ocean`, `?icons=dark|clear`, `?ripples=on`, `?cracks=0.25..3`, `?menu`, `?still` (no automatic drop), `?seed=` (route).
 
 The drive: an endless made-up street grid, a route that turns at corners, a speed profile that
 brakes for the bends (2.6 m/s² lateral limit), and the lateral acceleration v²κ that Drive mode

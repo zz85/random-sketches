@@ -5,15 +5,15 @@
 // out from touches. When nothing is cracked or rippling, the pass is off and costs nothing.
 //
 // Crack geometry is made once per impact (fracture()) in logical pixels and rasterised into two
-// maps: map 1 holds each shard's shift (RG) and facet light (B); map 2 the crack lines (R) and a
-// blurred copy of them (G), whose gradient gives the shader the side of a crack facing the light.
+// maps: map 1 holds each shard's shift (RG) and turn about the impact (B); map 2 the crack lines (R), a
+// blurred copy of them (G), whose gradient gives the side facing the light, and which crack it is (B).
 // The look follows kossik/cracked-glass's notes on the optics of broken glass: few long cracks,
 // nearly straight, forking now and then; short dead-end hackle hairlines; partial rings near a
 // crushed spot; width and brightness that vary along a crack; per-shard plate tilt.
 
 const TAU = Math.PI * 2;
 
-export function fracture(x, y, W, H, rnd = Math.random) {
+export function fracture(x, y, W, H, rnd = Math.random, P = 1) {
   const R = Math.hypot(W, H) * 1.3, lines = [], rays = [];
   const noise = () => { const v = Array.from({ length: 16 }, rnd); return (s) => { const f = s / 70, i = Math.floor(f), t = f - i, a = v[i & 15], b = v[(i + 1) & 15]; return a + (b - a) * t * t * (3 - 2 * t); }; };
   // one crack from (px, py) along a, wandering a little around its own heading
@@ -32,11 +32,11 @@ export function fracture(x, y, W, H, rnd = Math.random) {
     return L;
   };
   // a few main cracks in uneven directions; one or two of them die early
-  const n = 4 + Math.floor(rnd() * 3), wts = Array.from({ length: n }, () => 0.55 + rnd()), sum = wts.reduce((a, b) => a + b, 0);
+  const n = Math.max(3, Math.min(9, Math.round(2 + 1.6 * P) + Math.floor(rnd() * 3))), wts = Array.from({ length: n }, () => 0.55 + rnd()), sum = wts.reduce((a, b) => a + b, 0);
   let ang = rnd() * TAU, rc = 5 + rnd() * 5;
   for (let i = 0; i < n; i++) {
-    const full = i === 0 || rnd() > 0.25;
-    const L = run(x + Math.cos(ang) * rc, y + Math.sin(ang) * rc, ang, full ? R : 90 + rnd() * 260, 1.5 + rnd() * 0.6);
+    const full = i === 0 || rnd() > 0.35 / P;
+    const L = run(x + Math.cos(ang) * rc, y + Math.sin(ang) * rc, ang, full ? R : (60 + rnd() * 200) * Math.sqrt(P), (1.3 + rnd() * 0.6) * (0.75 + 0.25 * P));
     L.full = full; L.ang = ang;
     if (full) rays.push(L);
     ang += (wts[i] / sum) * TAU;
@@ -49,14 +49,14 @@ export function fracture(x, y, W, H, rnd = Math.random) {
       const a = Math.atan2(py - qy, px - qx) + (rnd() < 0.5 ? -1 : 1) * (0.35 + rnd() * 0.25);
       run(px, py, a, 60 + rnd() * 320, M.w * 0.7, 0.04);
     }
-    for (let s = 3 + Math.floor(rnd() * 6); s-- > 0;) {
+    for (let s = Math.round((2 + rnd() * 5) * Math.sqrt(P)); s-- > 0;) {
       const k = 1 + Math.floor(rnd() * (P.length - 2)), [px, py] = P[k], [qx, qy] = P[k - 1];
       const a = Math.atan2(py - qy, px - qx) + (rnd() < 0.5 ? -1 : 1) * (0.5 + rnd() * 0.6);
       run(px, py, a, 4 + rnd() * 16, 0.55, 0);
     }
   }
   // the crushed spot: tiny splinters and one or two partial rings
-  for (let i = 0; i < 7; i++) run(x, y, rnd() * TAU, 3 + rnd() * 9, 0.6, 0);
+  for (let i = 0, k = Math.round(4 + 3 * P); i < k; i++) run(x, y, rnd() * TAU, (3 + rnd() * 9) * Math.sqrt(P), 0.6, 0);
   const rings = [];
   for (let i = 0, nr = 1 + Math.floor(rnd() * 2); i < nr; i++) {
     const r = 12 + rnd() * 22 + i * 16, s0 = rnd() * TAU, span = 1.2 + rnd() * 2.6, pts = [];
@@ -72,20 +72,20 @@ export function fracture(x, y, W, H, rnd = Math.random) {
     while (a2 <= a1) a2 += TAU;
     const arc = []; for (let t = 1; t < 12; t++) { const q = a1 + (a2 - a1) * t / 12; arc.push([x + Math.cos(q) * R, y + Math.sin(q) * R]); }
     const poly = [[x, y], ...A.pts, ...arc, ...B.pts.slice().reverse()];
-    const t = rnd() * TAU, m = 0.6 + rnd() * 1.9;
-    return { poly, dx: Math.cos(t) * m, dy: Math.sin(t) * m, light: (rnd() - 0.5) * 2 };
+    const t = rnd() * TAU, m = (1.2 + rnd() * 3) * P ** 0.8;
+    return { poly, dx: Math.cos(t) * m, dy: Math.sin(t) * m, rot: (rnd() < 0.5 ? -1 : 1) * (0.3 + 0.7 * rnd()) * 0.011 * P };
   });
-  return { x, y, lines, shards, rings, seed: rnd(), blot: 9 + rnd() * 14, stuck: rnd() < 0.35 ? { x: x + (rnd() - 0.5) * 24, w: 0.6 + rnd() * 0.6, hue: rnd() } : null, born: performance.now() / 1000 };
+  return { x, y, lines, shards, rings, seed: rnd(), power: P, blot: (9 + rnd() * 14) * (0.85 + 0.15 * P), stuck: rnd() < 0.35 ? { x: x + (rnd() - 0.5) * 24, w: 0.6 + rnd() * 0.6, hue: rnd() } : null, born: performance.now() / 1000 };
 }
 
 // draw a crack as a ribbon that tapers to its tip, with brightness that comes and goes
-function ribbon(g, L, scale, alpha) {
+function ribbon(g, L, scale, alpha, solid = false) {
   const P = L.pts; let s = 0, len = 0;
   for (let k = 1; k < P.length; k++) len += Math.hypot(P[k][0] - P[k - 1][0], P[k][1] - P[k - 1][1]);
   for (let k = 1; k < P.length; k++) {
     const d = Math.hypot(P[k][0] - P[k - 1][0], P[k][1] - P[k - 1][1]), t = (s + d / 2) / Math.max(1, len); s += d;
     const w = L.w * scale * (1 - 0.5 * t ** 1.6) * (0.75 + 0.5 * L.jag(s)), a = alpha * (0.6 + 0.4 * L.bright(s));
-    g.globalAlpha = a; g.lineWidth = Math.max(0.3, w);
+    g.globalAlpha = solid ? 1 : a; g.lineWidth = Math.max(0.3, w);
     g.beginPath(); g.moveTo(P[k - 1][0], P[k - 1][1]); g.lineTo(P[k][0], P[k][1]); g.stroke();
   }
   g.globalAlpha = 1;
@@ -120,6 +120,10 @@ float fbm(vec2 p) { float s = 0.0, a = 0.5; for (int i = 0; i < 4; i++) { s += a
 vec3 iri(float t) { return 0.5 + 0.5 * cos(6.2832 * (t + vec3(0.0, 0.33, 0.67))); }
 // device pixels (y down) <-> texture coordinates (y up)
 vec2 toUv(vec2 p) { return vec2(p.x, uRes.y - p.y) / uRes; }
+// a crack runs out from its impact over half a second; front() is how far it has got
+float reachOf(vec2 c) { vec2 S = uRes / uK; return length(max(c, S - c)) + 40.0; } // farthest corner
+float front(float age, vec2 c) { float t = clamp(age / 0.5, 0.0, 1.0); return reachOf(c) * (1.0 - (1.0 - t) * (1.0 - t)); }
+float reveal(int i, vec2 q) { float d = length(q - uImp[i].xy), r = front(uImp[i].w, uImp[i].xy); return uImp[i].w >= 0.5 ? 1.0 : 1.0 - smoothstep(r - 30.0, r, d); }
 
 void main() {
   vec2 p = vec2(vUv.x, 1.0 - vUv.y) * uRes;   // device px, y down
@@ -139,9 +143,20 @@ void main() {
 
   // shards: each plate shifts what is under it
   vec4 m1 = texture(uMap1, vUv), m2 = texture(uMap2, vUv);
-  vec2 off = (m1.xy - 128.0 / 255.0) * 255.0 / 40.0 * uCracked; // logical px
-  float facet = (m1.z - 128.0 / 255.0) * 2.0 * uCracked;
-  float line = m2.r * uCracked, glow = m2.g * uCracked;
+  // the nearest impact pivots its shards; a crack pixel knows which impact it belongs to
+  int ni = 0; float nd = 1e9;
+  for (int i = 0; i < 8; i++) { if (i >= uNImp) break; float d = length(q - uImp[i].xy); if (d < nd) { nd = d; ni = i; } }
+  int li = int(floor(m2.b * 255.0 / 20.0 + 0.5)) - 1; if (li < 0 || li >= uNImp) li = ni;
+  float revS = uNImp > 0 ? reveal(ni, q) : 0.0, revL = uNImp > 0 ? reveal(li, q) : 0.0;
+  // shards: each plate is shifted and turned a little about the impact, so it tilts as a whole
+  vec2 v = q - uImp[ni].xy;
+  float rot = (m1.z - 128.0 / 255.0) * 255.0 / 3000.0;
+  vec2 off = ((m1.xy - 128.0 / 255.0) * 255.0 / 8.0 + vec2(-v.y, v.x) * rot) * revS * uCracked; // logical px
+  float facet = clamp(rot * 70.0 + dot(off, L) * 0.06, -1.0, 1.0) * revS * uCracked;
+  float line = m2.r * uCracked * revL, glow = m2.g * uCracked * revL;
+  // the running tip glints
+  float la = uNImp > 0 ? uImp[li].w : 1.0, dl = uNImp > 0 ? length(q - uImp[li].xy) : 0.0, fr = front(la, uNImp > 0 ? uImp[li].xy : vec2(0.0));
+  line += (la < 0.5 ? exp(-(fr - dl) * (fr - dl) / 300.0) : 0.0) * smoothstep(0.2, 0.7, m2.g) * uCracked;
   vec2 e = vec2(1.5 / uRes.x, 0.0), f = vec2(0.0, 1.5 / uRes.y);
   vec2 grad = vec2(texture(uMap2, vUv + e).g - texture(uMap2, vUv - e).g, -(texture(uMap2, vUv + f).g - texture(uMap2, vUv - f).g));
   vec2 n = length(grad) > 1e-4 ? normalize(grad) : vec2(0.0);   // points away from the crack
@@ -149,7 +164,7 @@ void main() {
 
   // where the picture comes from: bent by ripples, shards and, at a crack, split by colour
   vec2 src = p + (disp + off) * uK;
-  vec2 ca = n * glow * 1.6 * uK + vec2(off.x, off.y) * 0.25 * uK;
+  vec2 ca = n * glow * 1.6 * uK + off * 0.06 * uK;
   vec3 col = vec3(texture(uScene, toUv(src + ca)).r, texture(uScene, toUv(src)).g, texture(uScene, toUv(src - ca)).b);
   vec2 sq = src / uK;
 
@@ -178,10 +193,10 @@ void main() {
 
   // the glass: facet tilt, the crack's dark face and its lit face, the thin bright core
   float near = smoothstep(0.08, 0.6, glow);
-  col *= 1.0 + facet * 0.07;
+  col *= 1.0 + facet * 0.12;
   col *= 1.0 - near * 0.22 * clamp(-lit, 0.0, 1.0);
   col += near * 0.16 * clamp(lit, 0.0, 1.0);
-  float shadow = texture(uMap2, vUv + vec2(-0.9, 1.1) * uK / uRes).r * uCracked;
+  float shadow = texture(uMap2, vUv + vec2(-0.9, 1.1) * uK / uRes).r * uCracked * revL;
   col *= 1.0 - 0.45 * clamp(shadow - line, 0.0, 1.0);
   col = mix(col, vec3(1.0), clamp(line * 1.3, 0.0, 1.0) * (0.75 + 0.2 * clamp(lit + 0.5, 0.0, 1.0)));
   col += (iri(glow * 2.0 + p.x * 0.002) - 0.5) * near * 0.12;
@@ -229,13 +244,15 @@ export function createFX(cv) {
     for (const C of out.cracks) {
       // each crack's shards fade out with distance, so an older crack keeps its shards elsewhere
       for (const s of C.shards) {
-        const c = (a) => `rgba(${Math.round(128 + s.dx * 40)},${Math.round(128 + s.dy * 40)},${Math.round(128 + s.light * 60)},${a})`;
+        const cl = (v) => Math.max(1, Math.min(255, Math.round(128 + v))), c = (a) => `rgba(${cl(s.dx * 8)},${cl(s.dy * 8)},${cl(s.rot * 3000)},${a})`;
         const rg = g1.createRadialGradient(C.x, C.y, 0, C.x, C.y, 520); rg.addColorStop(0, c(1)); rg.addColorStop(0.6, c(0.85)); rg.addColorStop(1, c(0));
         g1.fillStyle = rg; g1.beginPath(); s.poly.forEach(([x, y], i) => (i ? g1.lineTo(x, y) : g1.moveTo(x, y))); g1.closePath(); g1.fill();
       }
-      g1.fillStyle = 'rgb(128,128,175)'; g1.beginPath(); g1.arc(C.x, C.y, 5, 0, TAU); g1.fill();
+      g1.fillStyle = 'rgb(128,128,128)'; g1.beginPath(); g1.arc(C.x, C.y, 5, 0, TAU); g1.fill();
     }
     g2.lineCap = 'round'; g2.lineJoin = 'round'; g2.globalCompositeOperation = 'lighten';
+    // B: which crack a pixel belongs to (1-based x 20, unblurred so it decodes cleanly; newest wins)
+    out.cracks.forEach((C, i) => { g2.strokeStyle = `rgb(0,0,${(i + 1) * 20})`; for (const L of C.lines) ribbon(g2, L, 5, 1, true); });
     g2.save(); g2.filter = `blur(${(1.6 * mk).toFixed(1)}px)`; g2.strokeStyle = '#0f0';
     for (const C of out.cracks) for (const L of C.lines) ribbon(g2, L, 3.2, 0.9);
     g2.restore();

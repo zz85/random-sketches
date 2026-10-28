@@ -90,6 +90,11 @@ const STATS = `(()=>{const P=__cp.pieces,W=__cp.world.walls;return {n:P.length,p
     check('double tap cracks the glass', await b.evaluate(`__cp.cracks.length===1`) && s.n - s.pinned >= 3, `${s.n - s.pinned} loose`);
     check('WebGL pass draws the crack (ripples off by default)', await b.evaluate(`__cp.fx.ok && __cp.fx.cracks.length===1 && __cp.fx.ripples.length===0 && __cp.fx.canvas.style.visibility==='visible' && __cp.fx.canvas.width===__cp.fx.canvas.parentElement.querySelector('canvas').width`));
     await sleep(800); await shot('crack');
+    const spread = await b.evaluate(`(()=>{const f=__cp.fx,c=f.cracks[0],b0=c.born,W=f.canvas.width,H=f.canvas.height,K=W/__cp.size.LW;
+      const grab=a=>{c.born=performance.now()/1000-a;f.render();const o=document.createElement('canvas');o.width=W;o.height=H;const g=o.getContext('2d');g.drawImage(f.canvas,0,0);return g.getImageData(0,0,W,H).data;};
+      const ref=grab(-1),far=a=>{const d=grab(a);let n=0;for(let y=0;y<H;y+=3)for(let x=0;x<W;x+=3){const i=(y*W+x)*4;if(Math.hypot(x/K-c.x,y/K-c.y)>250&&Math.abs(d[i]-ref[i])+Math.abs(d[i+1]-ref[i+1])+Math.abs(d[i+2]-ref[i+2])>60)n++;}return n;};
+      const r={early:far(0.05),done:far(2),power:c.power};c.born=b0;return r;})()`);
+    check('crack spreads out over half a second, at strength 1.8x', spread.early === 0 && spread.done > 50 && spread.power === 1.8, JSON.stringify(spread));
     await b.evaluate(`__cp.restore()`); await sleep(1600);
     check('restore: clears the cracks', await b.evaluate(`__cp.cracks.length===0 && __cp.pieces.every(p=>p.body.pinned)`));
     await sleep(1200);
@@ -140,6 +145,10 @@ const STATS = `(()=>{const P=__cp.pieces,W=__cp.world.walls;return {n:P.length,p
     await mouse('mousePressed', sl); for (let i = 1; i <= 8; i++) { await mouse('mouseMoved', [sl[0] + (sr[0] - sl[0]) * i / 8, sl[1]]); await sleep(16); } await mouse('mouseReleased', sr); await sleep(200);
     let st = await b.evaluate(`(()=>{const s=__cp.state;return {layout:s.layout,mode:s.mode,wallpaper:s.wallpaper,icons:s.icons,strength:s.strength,loose:s.loose}})()`);
     check('sheet: screen, gravity, wallpaper, icons, strength', st.layout === 'dash' && st.mode === 'drive' && st.wallpaper === 'rose' && st.icons === 'dark' && Math.abs(st.strength - 2) < 0.06, JSON.stringify(st));
+    await click(await b.evaluate(`__cp.menuPoint('cracks',0.1)`)); await sleep(100);
+    const cpw = await b.evaluate(`__cp.state.crackPower`);
+    check('sheet: Cracks slider sets crack strength', Math.abs(cpw - 0.525) < 0.06, String(cpw));
+    await b.evaluate(`__cp.state.crackPower=1.8`);
     await shot('menu');
     const dc = await b.evaluate(`__cp.menuPoint('dial',0.5)`);
     await mouse('mousePressed', [dc[0] - 40, dc[1]]); await mouse('mouseMoved', [dc[0] - 45, dc[1]]); await mouse('mouseReleased', [dc[0] - 45, dc[1]]); await sleep(200);

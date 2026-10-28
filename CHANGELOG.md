@@ -1,6 +1,7 @@
 # Logs
 
 28 Oct 2026
+- CarPlay Gravity: Cracks strength slider in the sheet (0.25× to 3×, default 1.8×, `?cracks=`) for crack count, reach, shard shift and shock; cracks run out from the impact over half a second with a glint on the tips; each wedge between cracks shifts and turns as one piece and shades as it tilts (after ksenia-k's broken glass pen); smaller colour split on text; Shake and Drop moved clear of the Direction label. `node smoke.js` 38 checks.
 - Aquarelle: fitting the page (100%, the % button, opening a page) uses the whole screen below the top bars; the tool strip, sliders, palette and zoom float over the page instead of shrinking it.
 - CarPlay Gravity: ripples off by default (a crack no longer splashes when they are off), bolder crack lines with a dark shadow edge, and the WebGL pass holds GPU memory only while it runs: the GL canvas and textures shrink to 1 × 1 when idle, crack maps at up to 1.5 px per logical px with their 2D canvases freed after upload, the frame texture updated in place. `node smoke.js` 36 checks.
 - CarPlay Gravity: cracks and liquid ripples as a WebGL2 after-effect (`fx.js`) over the canvas frame. Shards shift the picture under them, crack edges split colour and catch the light, the panel bleeds ink from the impact with an oily rim; touches send ripple rings, drags leave a wake, Shake and cracks splash. Ripples On / Off in the sheet (`?ripples=off`); 2D fallback without WebGL2. Smoke Chromium runs with SwiftShader WebGL. `node smoke.js` 35 checks.
