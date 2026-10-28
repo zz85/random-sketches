@@ -306,22 +306,17 @@ function layoutPanels() {
   }
   fitColumns();
 }
-/** The free rectangle the floating panels leave: wide panels (bars) bound it from above or
- *  below, tall ones (tool strip, sliders, zoom) from the side. */
+/** The rectangle the page is fitted to: the whole viewport below the top bars. The other
+ *  panels (tools, sliders, palette, zoom) float over the page instead of shrinking it. */
 function freeArea() {
-  const gap = box.w < 720 ? 8 : 14;
-  let top = box.y, bottom = box.y + box.h, left = box.x, right = box.x + box.w;
-  for (const sel of ['#topL', '#topR', '#pages', '#tools', '#sliders', '#zoomBar', '#palette', '#penBar']) {
-    const r = rectOf(sel); if (!r || (MOVABLE.includes(sel.slice(1)) && floating(sel.slice(1)))) continue;
-    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
-    if (r.width >= r.height) { if (cy < box.y + box.h / 2) top = Math.max(top, r.bottom); else bottom = Math.min(bottom, r.top); }
-    else if (cx < box.x + box.w / 2) left = Math.max(left, r.right); else right = Math.min(right, r.left);
+  const gap = box.w < 720 ? 6 : 10;
+  let top = box.y;
+  for (const sel of ['#topL', '#topR', '#pages']) {
+    const r = rectOf(sel); if (!r || r.width < r.height || r.top > box.y + box.h / 3) continue;
+    top = Math.max(top, r.bottom);
   }
-  top += gap; bottom -= gap; left += gap; right -= gap;
-  // on wide screens keep the sheet centred: as much room on the right as the panels take on the left
-  if (box.w >= 720) { const inset = Math.max(left - box.x, box.x + box.w - right); left = box.x + inset; right = box.x + box.w - inset; }
-  if (bottom - top < 120) { top = box.y + gap; bottom = box.y + box.h - gap; }
-  if (right - left < 120) { left = box.x + gap; right = box.x + box.w - gap; }
+  const left = box.x + gap, right = box.x + box.w - gap, bottom = box.y + box.h - gap;
+  top += gap;
   return { left, top, right, bottom, w: right - left, h: bottom - top };
 }
 /** Zoom at which the whole sheet just fits the free area ("100%"); on an infinite page,

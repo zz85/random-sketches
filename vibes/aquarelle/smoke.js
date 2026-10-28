@@ -128,6 +128,9 @@ try {
   check(errors().length === 0, 'no console errors on load', errors().join(' | '));
   check(await ev('__aq.sim.W > 1000 && __aq.sim.H > 600 && !!__aq.doc.id'), 'first visit opens a screen-shaped canvas');
   await ev('__aq.createPainting(1600, 1200).then(() => true)');
+  // the page now fills the screen under the floating panels: zoom out a little so every
+  // test stroke lands on the page, not on the palette
+  await ev('__aq.fit(0.8); true');
   const W = await ev('__aq.sim.W'), H = await ev('__aq.sim.H');
   await sleep(300); await shot('ui');
 
@@ -258,7 +261,7 @@ try {
   await c.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await sleep(100);
   check(await ev('__aq.sim.undo.length') === undoBefore - 1, 'two-finger tap undoes');
-  await ev('__aq.fit(); true');
+  await ev('__aq.fit(0.8); true');
   await ev(`__aq.S.fingers = 'paint'; true`);
   await setT('paint', 'round', 'cadred', { size: 22 });
   const tp = []; for (const [x, y] of line(900, 1150, 1450, 1150, 30)) tp.push(await scr(x, y));
@@ -333,9 +336,9 @@ try {
   check(Math.abs(z125 - 1.25) < 0.01 && top125, 'a 7" screen opens pages at 125%, from the top left', (z125 * 100).toFixed(0) + '%');
   await ev('__aq.fit(1); true'); await sleep(200);
   check(await ev('document.body.classList.contains("penmode") && getComputedStyle(document.querySelector("#penBar")).display === "flex"'), 'pen mode shows nibs and ink colours');
-  // fits between the bars
-  const fitOk = await ev(`(() => { const a = __aq.toScreen(0, 0), b = __aq.toScreen(__aq.sim.W, __aq.sim.H), top = Math.max(document.querySelector('#topL').getBoundingClientRect().bottom, document.querySelector('#topR').getBoundingClientRect().bottom), pb = document.querySelector('#penBar').getBoundingClientRect().top; return a.y >= top - 1 && b.y <= pb + 1 && a.x >= 0 && b.x <= innerWidth; })()`);
-  check(fitOk, 'page fits between the top bar and the pen bar');
+  // fits the whole screen below the top bar (the other panels float over it)
+  const fitOk = await ev(`(() => { const a = __aq.toScreen(0, 0), b = __aq.toScreen(__aq.sim.W, __aq.sim.H), top = Math.max(document.querySelector('#topL').getBoundingClientRect().bottom, document.querySelector('#topR').getBoundingClientRect().bottom); return a.y >= top - 1 && b.y <= innerHeight && a.x >= 0 && b.x <= innerWidth && (b.x - a.x > innerWidth - 30 || b.y - a.y > innerHeight - top - 30); })()`);
+  check(fitOk, 'the whole page fills the screen below the top bar');
   const tgt = await ev(`[...document.querySelectorAll('.panel button:not(.grip)')].filter((b) => b.offsetParent).map((b) => { const r = b.getBoundingClientRect(); return Math.min(r.width, r.height); }).sort((a, b) => a - b)[0]`);
   check(tgt >= 30, 'touch targets at least 30 CSS px (≈ 5 mm on the B7 Pro)', tgt.toFixed(0) + ' px');
   const grp = await ev(`[...document.querySelectorAll('.panel .grip')].filter((b) => b.offsetParent).map((b) => { const r = b.getBoundingClientRect(); return [Math.min(r.width, r.height), Math.max(r.width, r.height)]; })`);
@@ -629,7 +632,6 @@ try {
   await sleep(400);
   const qg1 = await gripAt('tools');
   check(Math.abs(qg1[0] - qg0[0] - 250) < 3 && Math.abs(qg1[1] - qg0[1] - 50) < 3, 'dragging the grip moves the tool strip', `${(qg1[0] - qg0[0]).toFixed(0)}, ${(qg1[1] - qg0[1]).toFixed(0)}`);
-  check(await ev(`__aq.freeArea().left < 40`), 'a floating panel leaves the page its room');
   check(await load('nosw=1&nohelp=1&nosave=1&eink=1'), 'reload keeps the panel'); await sleep(300);
   const qg2 = await gripAt('tools');
   check(Math.abs(qg2[0] - qg1[0]) < 3 && Math.abs(qg2[1] - qg1[1]) < 3, 'the tool strip is still where it was put');
