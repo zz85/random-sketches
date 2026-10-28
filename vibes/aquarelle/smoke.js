@@ -336,8 +336,10 @@ try {
   // fits between the bars
   const fitOk = await ev(`(() => { const a = __aq.toScreen(0, 0), b = __aq.toScreen(__aq.sim.W, __aq.sim.H), top = Math.max(document.querySelector('#topL').getBoundingClientRect().bottom, document.querySelector('#topR').getBoundingClientRect().bottom), pb = document.querySelector('#penBar').getBoundingClientRect().top; return a.y >= top - 1 && b.y <= pb + 1 && a.x >= 0 && b.x <= innerWidth; })()`);
   check(fitOk, 'page fits between the top bar and the pen bar');
-  const tgt = await ev(`[...document.querySelectorAll('.panel button')].filter((b) => b.offsetParent).map((b) => { const r = b.getBoundingClientRect(); return Math.min(r.width, r.height); }).sort((a, b) => a - b)[0]`);
+  const tgt = await ev(`[...document.querySelectorAll('.panel button:not(.grip)')].filter((b) => b.offsetParent).map((b) => { const r = b.getBoundingClientRect(); return Math.min(r.width, r.height); }).sort((a, b) => a - b)[0]`);
   check(tgt >= 30, 'touch targets at least 30 CSS px (≈ 5 mm on the B7 Pro)', tgt.toFixed(0) + ' px');
+  const grp = await ev(`[...document.querySelectorAll('.panel .grip')].filter((b) => b.offsetParent).map((b) => { const r = b.getBoundingClientRect(); return [Math.min(r.width, r.height), Math.max(r.width, r.height)]; })`);
+  check(grp.length && grp.every(([a, b]) => a >= 22 && b >= 34), 'panel grips at least 22 × 34 px', JSON.stringify(grp));
   // handwriting: a few cursive-ish words as pen strokes
   const word = (x0, y0, n) => { const pts = []; for (let i = 0; i <= n * 12; i++) { const t = i / 12; pts.push([x0 + t * 34, y0 - 26 * Math.abs(Math.sin(t * Math.PI * 0.9)) + 6 * Math.sin(t * 7)]); } return pts; };
   const ls = await ev('__aq.sim.pattern.sp');
@@ -595,6 +597,38 @@ try {
   const far2 = await ev(`(() => { const q = __aq.toScreen(${farPt[0]} - __aq.sim.origin[0], ${farPt[1]} - __aq.sim.origin[1]); return [q.x, q.y]; })()`);
   check(far2[0] > 0 && far2[0] < 632 && (await scr2(far2[0], far2[1])) < 120, 'far writing restored too', far2.map((v) => v.toFixed(0)).join(','));
   check(errors().length === 0, 'no console errors (new controls, pastel, infinite page)', errors().join(' | '));
+  // panels fold and move by their grips
+  await c.send('Emulation.setDeviceMetricsOverride', { width: 632, height: 840, deviceScaleFactor: 2, mobile: true });
+  check(await load('fresh=1&nosw=1&nohelp=1&nosave=1&eink=1'), 'loads for movable panels'); await sleep(300);
+  const gripAt = (id) => ev(`(() => { const r = document.querySelector('#${id} > .grip').getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
+  const tapAt = async ([x, y]) => { for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1 }); };
+  const qpw0 = await ev(`document.querySelector('#palette').getBoundingClientRect().width`);
+  await tapAt(await gripAt('palette')); await sleep(500);
+  const qpw1 = await ev(`document.querySelector('#palette').getBoundingClientRect().width`);
+  check(qpw1 < qpw0 * 0.3 && (await ev(`document.querySelector('#palette').classList.contains('folded')`)), 'tapping the palette grip folds it', `${qpw0.toFixed(0)} -> ${qpw1.toFixed(0)} px`);
+  await tapAt(await ev(`(() => { const r = document.querySelector('#mixWell').getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`)); await sleep(300);
+  check(!(await ev(`document.querySelector('#palette').classList.contains('folded')`)) && !(await ev(`document.querySelector('#colPop').classList.contains('open')`)), 'tapping the folded palette opens it again');
+  await tapAt(await gripAt('tools')); await sleep(500);
+  check(await ev(`(() => { const v = [...document.querySelectorAll('#tools > button:not(.grip)')].filter((b) => b.offsetParent); return v.length === 1 && v[0].classList.contains('on'); })()`), 'a folded tool strip shows just the selected tool');
+  await tapAt(await gripAt('tools')); await sleep(500);
+  // drag the tool strip by its grip into the middle: it stays there, floats, and survives a reload
+  const qg0 = await gripAt('tools');
+  await c.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: qg0[0], y: qg0[1], button: 'left', buttons: 1, clickCount: 1 });
+  for (let i = 1; i <= 10; i++) await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: qg0[0] + i * 25, y: qg0[1] + i * 5, button: 'left', buttons: 1 });
+  await c.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: qg0[0] + 250, y: qg0[1] + 50, button: 'left', buttons: 0, clickCount: 1 });
+  await sleep(400);
+  const qg1 = await gripAt('tools');
+  check(Math.abs(qg1[0] - qg0[0] - 250) < 3 && Math.abs(qg1[1] - qg0[1] - 50) < 3, 'dragging the grip moves the tool strip', `${(qg1[0] - qg0[0]).toFixed(0)}, ${(qg1[1] - qg0[1]).toFixed(0)}`);
+  check(await ev(`__aq.freeArea().left < 40`), 'a floating panel leaves the page its room');
+  check(await load('nosw=1&nohelp=1&nosave=1&eink=1'), 'reload keeps the panel'); await sleep(300);
+  const qg2 = await gripAt('tools');
+  check(Math.abs(qg2[0] - qg1[0]) < 3 && Math.abs(qg2[1] - qg1[1]) < 3, 'the tool strip is still where it was put');
+  // double-tap: back in place
+  const qgp = await gripAt('tools'); await tapAt(qgp); await sleep(80); await tapAt(qgp); await sleep(500);
+  const qg3 = await gripAt('tools');
+  check(Math.abs(qg3[0] - qg0[0]) < 3, 'double-tapping the grip puts it back');
+  await ev('__aq.resetPanels(); true');
+
   // every panel fits small and short screens: scrolling tool strip, ⋯ menu, popovers inside
   const panelsFit = () => ev(`(() => { const rs = [...document.querySelectorAll('.panel')].map((p) => [p.id, p.getBoundingClientRect()]).filter(([, r]) => r.width), bad = [];
     for (let i = 0; i < rs.length; i++) { const [n, r] = rs[i]; if (r.left < -1 || r.top < -1 || r.right > innerWidth + 1 || r.bottom > innerHeight + 1) bad.push(n + ' off'); for (let j = i + 1; j < rs.length; j++) { const [m, q] = rs[j]; if (r.left < q.right && q.left < r.right && r.top < q.bottom && q.top < r.bottom) bad.push(n + '/' + m); } }

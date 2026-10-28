@@ -32,6 +32,10 @@ The interface is the first one's floating toolbars, with everything added since.
 - **Size / water / paint:** one slim column of three values over one slider (top right on
   a phone or a 7" e-reader). Tap a value to put it on the slider, or drag up and down on
   the value itself. For Lift, Smudge and Eraser paint is their strength; pastel has no water.
+- **Move and fold panels:** the palette, pen bar, tool strip and size / water / paint column
+  have a ⋮⋮ grip. Drag it to put the panel anywhere (a panel moved off the edges floats over
+  the page), tap it to fold the panel down to what is selected (tap the folded panel to open
+  it), double-tap it to put the panel back. Preferences → Panels → Put back resets them all.
 - **Small or short screens:** everything stays on screen. Top-right buttons that do not fit
   go into a ⋯ menu, the tool strip scrolls (swipe it up and down), the slider shortens and
   then leaves just the values (drag them), and popovers move in and scroll.

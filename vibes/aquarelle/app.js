@@ -183,14 +183,15 @@ function fitTopBars() {
 function fitColumns() {
   const tools = $('#tools'), sl = $('#sliders'), track = $('#slTrack'), zb = $('#zoomBar');
   tools.style.top = tools.style.maxHeight = tools.style.transform = '';
-  track.style.height = ''; track.style.display = ''; sl.style.top = sl.style.transform = sl.style.maxHeight = sl.style.overflowY = '';
+  track.style.height = ''; track.style.display = ''; sl.style.top = sl.style.transform = sl.style.maxHeight = sl.style.overflowY = ''; if (!pstate('sliders').pos) sl.style.left = '';
   $('#zoomPct').style.display = '';
   const topB = Math.max(...['#topL', '#topR', '#pages'].map(rectOf).filter(Boolean).map((r) => r.bottom), box.y) + 6;
   const bar = rectOf(S.mode === 'pen' ? '#penBar' : '#palette');
   // tool strip: between the top bars and the palette (on the left both reach it)
-  const t = rectOf('#tools');
+  const t = !pstate('tools').pos && rectOf('#tools');
+  if (pstate('tools').pos) { placePanel('tools'); const r = rectOf('#tools'); if (r && r.height > innerHeight - 16) { tools.style.maxHeight = innerHeight - 16 + 'px'; placePanel('tools'); } }
   if (t) {
-    const lo = bar && bar.left < t.right ? bar.top - 6 : box.y + box.h - 8, room = lo - topB;
+    const lo = bar && bar.left < t.right + 12 ? bar.top - 6 : box.y + box.h - 8, room = lo - topB;
     if (t.height > room) { tools.style.top = topB + 'px'; tools.style.transform = 'none'; tools.style.maxHeight = Math.max(100, room) + 'px'; }
     else if (t.top < topB || t.bottom > lo) { tools.style.top = (topB + lo) / 2 + 'px'; }
   }
@@ -198,7 +199,10 @@ function fitColumns() {
   const z = rectOf('#zoomBar');
   if (z && bar && bar.left < z.right && bar.right > z.left && bar.top < z.bottom) zb.style.bottom = box.y + box.h - bar.top + 8 + 'px';
   // slider column: above the zoom bar when they share the edge
-  const s = rectOf('#sliders'), z2 = rectOf('#zoomBar');
+  const s = !pstate('sliders').pos && rectOf('#sliders'), z2 = rectOf('#zoomBar');
+  if (pstate('sliders').pos) placePanel('sliders');
+  // beside the tool strip (a scrolling strip is a little wider)
+  if (s && !pstate('tools').pos) { const t2 = rectOf('#tools'); if (t2 && s.left < t2.right + 2 && s.right > t2.left && s.top < t2.bottom && s.bottom > t2.top) sl.style.left = t2.right + 4 + 'px'; }
   if (s) {
     let lo = box.y + box.h - 8;
     if (z2 && z2.left < s.right && z2.right > s.left) lo = Math.min(lo, z2.top - 6);
@@ -216,9 +220,76 @@ function fitColumns() {
   const z3 = rectOf('#zoomBar');
   if (z3 && z3.top < topB) $('#zoomPct').style.display = 'none';
 }
+// ---------- movable, foldable panels ----------
+// The palette, the pen bar, the tool strip and the size / water / paint column have a grip:
+// drag it to put the panel anywhere, tap it to fold the panel down to what is selected
+// (tap the folded panel to open it again), double-tap it to put the panel back.
+// S.panels[id] = { folded, pos: { ax: 'l' | 'r', x, ay: 't' | 'b', y } } (px from the nearest edges).
+const MOVABLE = ['palette', 'penBar', 'tools', 'sliders'];
+const pstate = (id) => ((S.panels ??= {})[id] ??= {});
+for (const id of MOVABLE) {
+  const el = document.getElementById(id);
+  const g = Object.assign(document.createElement('button'), { className: 'grip', title: 'Move or fold — drag to move, tap to fold, double-tap to put back', innerHTML: '<svg><use href="#i-grip"/></svg>' });
+  el.prepend(g);
+  let d = null, lastTap = 0;
+  g.addEventListener('pointerdown', (e) => {
+    e.preventDefault(); e.stopPropagation(); g.setPointerCapture(e.pointerId);
+    const r = el.getBoundingClientRect();
+    d = { x: e.clientX, y: e.clientY, ox: e.clientX - r.left, oy: e.clientY - r.top, moved: false };
+  });
+  g.addEventListener('pointermove', (e) => {
+    if (!d) return;
+    if (!d.moved && Math.hypot(e.clientX - d.x, e.clientY - d.y) < 6) return;
+    d.moved = true; labelEl.style.display = 'none';
+    const w = el.offsetWidth, h = el.offsetHeight;
+    const L = Math.max(0, Math.min(innerWidth - w, e.clientX - d.ox)), T = Math.max(0, Math.min(innerHeight - h, e.clientY - d.oy));
+    const ax = L + w / 2 < innerWidth / 2 ? 'l' : 'r', ay = T + h / 2 < innerHeight / 2 ? 't' : 'b';
+    pstate(id).pos = { ax, x: ax === 'l' ? L : innerWidth - L - w, ay, y: ay === 't' ? T : innerHeight - T - h };
+    placePanel(id);
+  });
+  const up = (e) => {
+    if (!d) return;
+    const moved = d.moved; d = null;
+    if (e.type !== 'pointerup') return;
+    if (moved) { savePrefs(); panelsChanged(); return; }
+    const now = performance.now();
+    if (now - lastTap < 350) { // double-tap: back where it belongs, unfolded
+      clearTimeout(g.t); lastTap = 0; delete pstate(id).pos; pstate(id).folded = false; applyPanel(id); savePrefs(); panelsChanged(); return;
+    }
+    lastTap = now;
+    g.t = setTimeout(() => setFolded(id, !pstate(id).folded), 260);
+  };
+  g.addEventListener('pointerup', up); g.addEventListener('pointercancel', up);
+  g.addEventListener('click', (e) => e.stopPropagation());
+  // a folded panel opens again when you tap it
+  el.addEventListener('click', (e) => { if (el.classList.contains('folded') && !e.target.closest('.grip')) { e.stopPropagation(); e.preventDefault(); setFolded(id, false); } }, true);
+}
+function setFolded(id, v) { pstate(id).folded = v; applyPanel(id); savePrefs(); panelsChanged(); }
+function applyPanel(id) { document.getElementById(id).classList.toggle('folded', !!pstate(id).folded); placePanel(id); }
+/** Put a moved panel where it was put, kept on the screen; a panel that was not moved: clear. */
+function placePanel(id) {
+  const el = document.getElementById(id), p = pstate(id).pos;
+  el.classList.toggle('placed', !!p);
+  if (!p) { for (const k of ['left', 'top', 'right', 'bottom', 'transform', 'translate']) el.style[k] = ''; return; }
+  const w = el.offsetWidth, h = el.offsetHeight;
+  let L = p.ax === 'l' ? p.x : innerWidth - p.x - w, T = p.ay === 't' ? p.y : innerHeight - p.y - h;
+  L = Math.max(0, Math.min(innerWidth - w, L)); T = Math.max(0, Math.min(innerHeight - h, T));
+  Object.assign(el.style, { left: L + 'px', top: T + 'px', right: 'auto', bottom: 'auto', transform: 'none', translate: 'none' });
+}
+function panelsChanged() { if (!sim) return; if (!userMovedView) fit(); else layoutPanels(); needsRender = true; }
+/** A panel that was moved away from every edge floats over the page and leaves it its room. */
+function floating(id) {
+  if (!pstate(id).pos) return false;
+  const r = rectOf('#' + id); if (!r) return false;
+  const m = 36; return r.left > m && r.top > m && r.right < innerWidth - m && r.bottom < innerHeight - m;
+}
+function resetPanels() { for (const id of MOVABLE) { delete pstate(id).pos; pstate(id).folded = false; applyPanel(id); } savePrefs(); panelsChanged(); }
+for (const id of MOVABLE) applyPanel(id);
+
 function layoutPanels() {
   const pg = $('#pages'), zb = $('#zoomBar');
   pg.style.top = ''; zb.style.bottom = '';
+  placePanel('palette'); placePanel('penBar');
   fitTopBars();
   const p = rectOf('#pages');
   if (p) {
@@ -233,7 +304,7 @@ function freeArea() {
   const gap = box.w < 720 ? 8 : 14;
   let top = box.y, bottom = box.y + box.h, left = box.x, right = box.x + box.w;
   for (const sel of ['#topL', '#topR', '#pages', '#tools', '#sliders', '#zoomBar', '#palette', '#penBar']) {
-    const r = rectOf(sel); if (!r) continue;
+    const r = rectOf(sel); if (!r || (MOVABLE.includes(sel.slice(1)) && floating(sel.slice(1)))) continue;
     const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
     if (r.width >= r.height) { if (cy < box.y + box.h / 2) top = Math.max(top, r.bottom); else bottom = Math.min(bottom, r.top); }
     else if (cx < box.x + box.w / 2) left = Math.max(left, r.right); else right = Math.min(right, r.left);
@@ -1223,6 +1294,7 @@ function buildActions() {
   chk('#optFs', () => !!S.autoFs, (v) => { S.autoFs = v; if (v) setFullscreen(true); });
   chk('#optEink', () => !!S.eink, (v) => { S.eink = v; applyTheme(); });
   chk('#optLabels', () => S.labels !== false, (v) => (S.labels = v));
+  $('#optPanels').onclick = () => { resetPanels(); toast('Panels are back in place'); };
   chk('#optCursor', () => S.cursor, (v) => { S.cursor = v; updateCursor(); });
   chk('#optQuick', () => S.quick, (v) => (S.quick = v));
   chk('#optRotate', () => S.rotate, (v) => { S.rotate = v; if (!v) { view.r = 0; needsRender = true; } });
@@ -1765,6 +1837,6 @@ if ('serviceWorker' in navigator && !qs.has('nosw') && location.protocol !== 'fi
 window.__aq = {
   box, get dpr() { return dpr; }, setFullscreen, get sim() { return sim; }, get doc() { return doc; }, view, S, get stroke() { return stroke; }, fit, setTool, selectBrush, choosePigment, useCustom, render,
   redraw: () => { needsRender = true; }, get world() { return world; }, worldKeep, infMinZ, visibleRect, placeAt, freeAreaRect: () => freeArea(), baseZ, zoomBy, zoomToggle, freeArea, gotoPage, insertPage, deletePage, movePage, get pageCache() { return pageCache; }, useBrush, setMode, setNib, setPenColour, exportImage, save, toSheet, toScreen, openGallery, openById, createPainting, rec, togglePop, dupLayer,
-  get penSeen() { return penSeen; }, togglePop, closePops,
+  get penSeen() { return penSeen; }, togglePop, closePops, setFolded, resetPanels, layoutPanels,
 };
 window.__ready = true;
