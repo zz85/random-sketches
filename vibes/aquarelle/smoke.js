@@ -233,6 +233,29 @@ try {
   const circ = Array.from({ length: 50 }, (_, i) => [1200 + Math.cos(i / 49 * 6.4) * 90 + Math.sin(i) * 4, 750 + Math.sin(i / 49 * 6.4) * 70]);
   await pen(circ, { pressure: () => 0.7, hold: 800 });
   check(await ev('window.__quick && window.__quick.closed'), 'QuickShape makes a held loop an ellipse');
+  // shading back and forth that ends near its start, then a rest: stays as drawn
+  await ev('window.__quick = null; true');
+  const zz = []; for (let i = 0; i < 14; i++) zz.push([300 + (i % 2) * 260, 300 + i * 12]);
+  const zd = []; for (let i = 1; i < zz.length; i++) for (let t = 0; t < 1; t += 0.1) zd.push([zz[i - 1][0] + (zz[i][0] - zz[i - 1][0]) * t, zz[i - 1][1] + (zz[i][1] - zz[i - 1][1]) * t]);
+  zd.push([320, 320], [310, 310]);
+  await pen(zd, { pressure: () => 0.7, hold: 900 });
+  check(!(await ev('window.__quick')), 'resting after shading back and forth does not snap it to an ellipse');
+  // undo of a stroke over most of the sheet: used to need a second copy of the whole sheet,
+  // ran out of room, lost the step and every later undo
+  await ev('__aq.sim.dryNow(); true');
+  const bigBefore = await stat(100, 100, W - 100, H - 100), slots0 = await ev('__aq.sim.atlas.free.length');
+  await setT('paint', 'wash', 'ultra', { size: 75, water: 0.8 });
+  const zig = []; for (let y = 60; y < H - 60; y += 90) zig.push([60, y], [W - 60, y + 45]);
+  const zigD = []; for (let i = 1; i < zig.length; i++) for (let t = 0; t < 1; t += 0.05) zigD.push([zig[i - 1][0] + (zig[i][0] - zig[i - 1][0]) * t, zig[i - 1][1] + (zig[i][1] - zig[i - 1][1]) * t]);
+  await pen(zigD, { pressure: () => 0.8 });
+  await sleep(600);
+  check((await stat(100, 100, W - 100, H - 100)).mean < bigBefore.mean - 10, 'a wash over the whole sheet');
+  await waitFor('!__aq.stroke');
+  await sel('#undoBtn'); await sleep(400);
+  const bigAfter = await stat(100, 100, W - 100, H - 100);
+  check(Math.abs(bigAfter.mean - bigBefore.mean) < 0.5, 'undo takes back a stroke over the whole sheet', `${bigBefore.mean.toFixed(1)} vs ${bigAfter.mean.toFixed(1)}`);
+  await sel('#redoBtn'); await sleep(300); await sel('#undoBtn'); await sleep(300);
+  check(Math.abs((await stat(100, 100, W - 100, H - 100)).mean - bigBefore.mean) < 0.5 && (await ev('__aq.sim.atlas.free.length')) >= slots0 - 2, 'redo and undo again, and no undo room lost', `${await ev('__aq.sim.atlas.free.length')} of ${slots0} free`);
 
   // 8. colour disc: dragging in the disc loads a custom colour
   await ev(`__aq.togglePop('colPop'); true`); await sleep(200);
@@ -247,6 +270,8 @@ try {
 
   // 9. touch: pinch zoom, two-finger tap undo, finger painting
   await ev(`__aq.S.fingers = 'auto'; true`);
+  // (the whole-sheet wash above filled the undo room: a fresh stroke to undo)
+  await setT('paint', 'round', 'ultra', { size: 20 }); await pen(line(300, 200, 600, 220, 20)); await waitFor('!__aq.stroke');
   const z0 = await ev('__aq.view.z');
   const [cx, cy] = [640, 430];
   await c.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: cx - 60, y: cy, id: 1 }, { x: cx + 60, y: cy, id: 2 }] });

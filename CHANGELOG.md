@@ -1,5 +1,8 @@
 # Logs
 
+29 Oct 2026
+- Aquarelle fixes: undo of a stroke over most of the sheet failed and lost the step (it needed a second copy of the whole sheet in the undo atlas; then every later undo stopped working too) - tiles now swap in place through a one-tile scratch. QuickShape no longer turns shading back and forth into a wet ellipse ring (which a wet brush filled into a blot) when the pen rests: a loop must go once round its middle, a line must be straight, anything else stays as drawn; the hold is 650 ms.
+
 28 Oct 2026
 - CarPlay Gravity: Dashboard slabs split along the crack lines: a crack cuts the slabs still in place where the glass cracked, breaking across a bend too, and the break lines between slabs are uneven and slanted instead of a grid. The physics engine takes convex polygons. A live panel is drawn once a frame and shared by its slabs. `node smoke.js` 44 checks.
 - CarPlay Gravity: Dashboard panels break apart into slabs (map 3 x 3, cards 2 or 3) that look whole at home, burst apart when knocked loose and fall back to 74% size so the pile has room to tumble, each still drawing its live part of the panel; Restore reassembles them. Moving glass takes turns at the live blur fairly. Triple-tap cracks vary more in angle (up to about 40 degrees off level). `node smoke.js` 42 checks.

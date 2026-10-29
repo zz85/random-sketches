@@ -484,7 +484,7 @@ function addSample(q) {
   // QuickShape: holding still after a real stroke snaps it to a line or an ellipse
   if (S.quick && stroke.len > 40) {
     const h = stroke.hold;
-    if (!h || Math.hypot(q.x - h.x, q.y - h.y) * view.z > 6) { clearTimeout(h?.t); stroke.hold = { x: q.x, y: q.y, t: setTimeout(quickShape, 520) }; }
+    if (!h || Math.hypot(q.x - h.x, q.y - h.y) * view.z > 6) { clearTimeout(h?.t); stroke.hold = { x: q.x, y: q.y, t: setTimeout(quickShape, 650) }; }
   }
   emit(stroke.sm.push(q));
 }
@@ -622,12 +622,29 @@ function quickShape() {
   const pts = st.raw, a = pts[0], b = pts.at(-1);
   let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9, len = 0;
   for (let i = 0; i < pts.length; i++) { const p = pts[i]; x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); if (i) len += Math.hypot(p.x - pts[i - 1].x, p.y - pts[i - 1].y); }
-  const diag = Math.hypot(x1 - x0, y1 - y0), closed = Math.hypot(b.x - a.x, b.y - a.y) < diag * 0.3 && len > diag * 1.8;
+  const diag = Math.hypot(x1 - x0, y1 - y0), chord = Math.hypot(b.x - a.x, b.y - a.y);
+  let mx = 0, my = 0; for (const p of pts) { mx += p.x; my += p.y; } mx /= pts.length; my /= pts.length;
+  // a loop: goes once round its middle (1.7 to 2.4 turns of angle, nearly all one way) at a
+  // fairly even distance from it, and ends near where it began. Shading back and forth also
+  // ends near its start and is long for its size, and used to pass as a loop: it became a
+  // wet ring, which a wet brush fills into a blot.
+  let turn = 0, back = 0, rs = [];
+  for (let i = 1; i < pts.length; i++) {
+    let d = Math.atan2(pts[i].y - my, pts[i].x - mx) - Math.atan2(pts[i - 1].y - my, pts[i - 1].x - mx);
+    d -= Math.round(d / (2 * Math.PI)) * 2 * Math.PI; turn += d; back += Math.abs(d);
+  }
+  for (const p of pts) rs.push(Math.hypot(p.x - mx, p.y - my));
+  const rMean = rs.reduce((u, v) => u + v, 0) / rs.length, rMin = Math.min(...rs);
+  const loopy = Math.abs(turn) > 1.7 * Math.PI && Math.abs(turn) < 2.4 * Math.PI && Math.abs(turn) > 0.85 * back && rMin > 0.35 * rMean;
+  const closed = chord < diag * 0.3 && loopy;
+  // a line: no point strays from the chord by more than 6% of its length
+  let dev = 0; for (const p of pts) dev = Math.max(dev, Math.abs((b.x - a.x) * (a.y - p.y) - (a.x - p.x) * (b.y - a.y)) / Math.max(chord, 1e-6));
+  const straight = !closed && chord > diag * 0.9 && dev < 0.06 * chord;
+  if (!closed && !straight) { st.hold = null; return; } // neither: leave the stroke as drawn
   const ps = pts.map((p) => p.p ?? 0.6).sort((u, v) => u - v), pr = ps[Math.floor(ps.length / 2)];
   let shape = [];
   if (closed) {
     // ellipse from the points' mean and covariance (principal axes)
-    let mx = 0, my = 0; for (const p of pts) { mx += p.x; my += p.y; } mx /= pts.length; my /= pts.length;
     let sxx = 0, syy = 0, sxy = 0; for (const p of pts) { const dx = p.x - mx, dy = p.y - my; sxx += dx * dx; syy += dy * dy; sxy += dx * dy; }
     sxx /= pts.length; syy /= pts.length; sxy /= pts.length;
     const tr = sxx + syy, det = sxx * syy - sxy * sxy, l1 = tr / 2 + Math.sqrt(Math.max(0, tr * tr / 4 - det)), l2 = tr / 2 - Math.sqrt(Math.max(0, tr * tr / 4 - det));
@@ -646,7 +663,7 @@ function quickShape() {
   let t = a.t;
   for (const q of shape) emit({ x: q.x, y: q.y, p: pr, t: (t += 8), alt: a.alt, az: a.az });
   window.__quick = { closed, n: shape.length };
-  toast(closed ? 'QuickShape: ellipse' : 'QuickShape: line', 900);
+  toast(closed ? 'QuickShape: ellipse (off in Preferences)' : 'QuickShape: line (off in Preferences)', 1600);
 }
 
 // ---------- eyedropper ----------

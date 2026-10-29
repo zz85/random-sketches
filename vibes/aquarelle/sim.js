@@ -1084,14 +1084,23 @@ export class Sim {
     if (from.op) { (to === this.redo ? from.op.undo : from.op.redo)(); to.push(from); return true; }
     // a stroke on another layer: that layer becomes the active one (its wet state is dry now)
     if (from.layer && from.layer !== this.layer && this.layers.includes(from.layer)) this.setLayer(from.layer);
-    // save current state of from's tiles into a new record, restore from's tiles
-    const rec = { tiles: [], keys: new Set(from.keys), layer: from.layer };
-    for (const t of from.tiles) { const slot = this.allocSlot(); if (slot < 0) return false; rec.tiles.push({ tx: t.tx, ty: t.ty, slot }); }
-    this.copyTiles(rec.tiles, true);
+    // swap each tile in place: the sheet's tile and the record's saved tile change places, so
+    // the record then holds the state to go back to. Only a one-tile scratch is needed: a
+    // stroke over most of the sheet holds most of the atlas, and taking a second copy of it
+    // (as this did before) failed, lost the record and its slots, and undo stopped working.
     if (this.active) this.sync(this.active);
-    this.copyTiles(from.tiles, false);
-    for (const t of from.tiles) this.atlas.free.push(t.slot);
-    to.push(rec);
+    this.swapTmp ??= Object.fromEntries(Sim.KEYS.map((k) => [k, this.tex(TILE, TILE)]));
+    for (const t of from.tiles) {
+      const [ax, ay] = this.slotXY(t.slot), x = t.tx * TILE, y = t.ty * TILE, w = Math.min(TILE, this.W - x), h = Math.min(TILE, this.H - y);
+      for (const k of Sim.KEYS) {
+        const tmp = this.swapTmp[k];
+        this.blitTile(this.s[k].cur, x, y, tmp, 0, 0, w, h);
+        for (const dst of this.s[k].t) this.blitTile(this.atlas.tex[k], ax, ay, dst, x, y, w, h);
+        this.blitTile(tmp, 0, 0, this.atlas.tex[k], ax, ay, w, h);
+      }
+    }
+    this.gl.bindFramebuffer(this.gl.READ_FRAMEBUFFER, null); this.gl.bindFramebuffer(this.gl.DRAW_FRAMEBUFFER, null);
+    to.push(from);
     let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1;
     for (const t of from.tiles) { x0 = Math.min(x0, t.tx * TILE); y0 = Math.min(y0, t.ty * TILE); x1 = Math.max(x1, (t.tx + 1) * TILE); y1 = Math.max(y1, (t.ty + 1) * TILE); }
     if (x1 > 0) this.markDirty([x0, y0, x1, y1], from.layer || this.layer);
@@ -1305,7 +1314,7 @@ export class Sim {
     for (const r of this.undo) r.op?.free?.(false);
     for (const r of this.redo) r.op?.free?.(true);
     for (const k in this.atlas.tex) gl.deleteTexture(this.atlas.tex[k]);
-    for (const t of [this.F, this.Fn, this.paperTex, this.litTex, this.probeTex, this.comp, this.comp2, this.shiftTmp]) if (t) gl.deleteTexture(t);
+    for (const t of [this.F, this.Fn, this.paperTex, this.litTex, this.probeTex, this.comp, this.comp2, this.shiftTmp, ...Object.values(this.swapTmp || {})]) if (t) gl.deleteTexture(t);
     for (const f of this.fbos.values()) gl.deleteFramebuffer(f);
     for (const k in this.prog) gl.deleteProgram(this.prog[k].p);
   }
