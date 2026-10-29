@@ -705,6 +705,7 @@ export class Sim {
       const n = new Set(); for (const k of set) { const [x, y] = k.split(',').map(Number); if (inside(x - sx, y - sy)) n.add(x - sx + ',' + (y - sy)); }
       this.dirty.set(L, n);
     }
+    for (const r of [...this.undo, ...this.redo]) if (r.hand && !this.undo.includes(r.hand) && !this.redo.includes(r.hand)) { const h = r.hand; r.hand = null; this.freeRecord(h, false); }
     for (const r of [...this.undo, ...this.redo]) {
       if (r.op || !r.tiles.length) continue;
       const tiles = [], keys = new Set();
@@ -1040,7 +1041,14 @@ export class Sim {
     gl.blitFramebuffer(fx, fy, fx + w, fy + h, tx, ty, tx + w, ty + h, gl.COLOR_BUFFER_BIT, gl.NEAREST);
   }
   slotXY(slot) { return [(slot % this.atlas.cols) * TILE, Math.floor(slot / this.atlas.cols) * TILE]; }
-  freeRecord(r, inRedo) { for (const t of r.tiles) this.atlas.free.push(t.slot); r.op?.free?.(inRedo); }
+  freeRecord(r, inRedo) {
+    if (r.freed) return; r.freed = true;
+    for (const t of r.tiles) this.atlas.free.push(t.slot); r.op?.free?.(inRedo);
+    // a replaced stroke kept with this step, unless it is in the history itself
+    const h = r.hand; r.hand = null;
+    if (h && !this.undo.includes(h) && !this.redo.includes(h)) this.freeRecord(h, inRedo);
+    for (const q of [...this.undo, ...this.redo]) if (q.hand === r) q.hand = null;
+  }
   allocSlot() {
     while (!this.atlas.free.length) {
       // evict the oldest history
@@ -1113,15 +1121,31 @@ export class Sim {
     this.rec = null;
     const r = this.undo.pop(); if (!r) return false;
     if (r.broken) return false;
-    return this.swapRecord(r, this.redo);
+    if (!this.swapRecord(r, this.redo)) return false;
+    // a step that replaced another (QuickShape): the replaced one comes back, as its own step
+    if (r.hand) this.swapRecord(r.hand, this.undo);
+    return true;
   }
   redoStep() {
     this.rec = null;
     const r = this.redo.pop(); if (!r) return false;
+    // redoing a step that replaced the stroke on top of the history: that stroke goes first
+    if (r.hand && this.undo.at(-1) === r.hand) { this.undo.pop(); this.swapRecord(r.hand, []); }
     return this.swapRecord(r, this.undo);
   }
   /** Undo the last step without keeping it for redo. */
   discardLast() { if (this.undoStep()) this.freeRecord(this.redo.pop(), true); }
+  /**
+   * Take back the stroke being drawn and start a new undo step in its place, which keeps the
+   * stroke as it was: undoing the new step brings the old stroke back (one more undo removes
+   * it), and redo goes forward again. For QuickShape.
+   */
+  replaceLast() {
+    const r = this.undo.at(-1);
+    if (!r || r.op || !this.undoStep()) { this.begin(); return; }
+    const hand = this.redo.pop(); // now holds the stroke as drawn
+    this.begin(); this.rec.hand = hand;
+  }
   get canUndo() { return this.undo.length > 0 && !this.undo.at(-1).broken; }
   get canRedo() { return this.redo.length > 0; }
 

@@ -226,13 +226,32 @@ try {
   check(await ev('__aq.sim.layers.length === 2'), 'undo brings the merged layer back');
   await ev(`__aq.togglePop('layerPop'); true`);
 
-  // 7. QuickShape: hold at the end of a stroke
+  // 7. QuickShape (off by default now): hold at the end of a stroke
+  check(!(await ev('__aq.S.quick')), 'QuickShape is off by default');
+  await ev('__aq.S.quick = true; true');
   await setT('paint', 'detail', 'payne', { size: 4 });
-  await pen(line(200, 1150, 700, 1120, 40, 14), { pressure: () => 0.7, hold: 800 });
+  await pen(line(200, 1150, 700, 1120, 40, 14), { pressure: () => 0.7, hold: 1200 });
   check(await ev('window.__quick && !window.__quick.closed'), 'QuickShape snaps a held stroke to a line');
   const circ = Array.from({ length: 50 }, (_, i) => [1200 + Math.cos(i / 49 * 6.4) * 90 + Math.sin(i) * 4, 750 + Math.sin(i / 49 * 6.4) * 70]);
-  await pen(circ, { pressure: () => 0.7, hold: 800 });
+  await pen(circ, { pressure: () => 0.7, hold: 1200 });
   check(await ev('window.__quick && window.__quick.closed'), 'QuickShape makes a held loop an ellipse');
+  // undo after QuickShape gives the hand-drawn loop back, undo again removes it, redo twice
+  {
+    await waitFor('!__aq.stroke'); await ev('__aq.sim.dryNow(); true');
+    const box2 = [1080, 650, 1320, 850];
+    const shapeS = await stat(...box2);
+    await ev('window.__pxShape = __aq.sim.exportPixels(); true');
+    await sel('#undoBtn'); await sleep(300); await ev('__aq.sim.dryNow(); true');
+    const handS = await stat(...box2);
+    // pixels that differ between the shape and the stroke undo gave back (a hand loop is close to an ellipse)
+    const differ = await ev(`(() => { const a = window.__pxShape, b = __aq.sim.exportPixels(); let n = 0; for (let i = 0; i < a.length; i += 4) if (Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2]) > 30) n++; return n; })()`);
+    await sel('#undoBtn'); await sleep(300);
+    const noneS = await stat(...box2);
+    check(handS.mean < noneS.mean - 2 && differ > 300, 'undo after QuickShape gives your own stroke back', `${differ} px differ from the shape; stroke ${handS.mean.toFixed(1)}, none ${noneS.mean.toFixed(1)}`);
+    await sel('#redoBtn'); await sleep(300); await sel('#redoBtn'); await sleep(300);
+    const reS = await stat(...box2);
+    check(Math.abs(reS.mean - shapeS.mean) < 0.3, 'redo goes forward to the shape again', `${reS.mean.toFixed(1)} vs ${shapeS.mean.toFixed(1)}`);
+  }
   // shading back and forth that ends near its start, then a rest: stays as drawn
   await ev('window.__quick = null; true');
   const zz = []; for (let i = 0; i < 14; i++) zz.push([300 + (i % 2) * 260, 300 + i * 12]);
@@ -243,7 +262,7 @@ try {
   // undo of a stroke over most of the sheet: used to need a second copy of the whole sheet,
   // ran out of room, lost the step and every later undo
   await ev('__aq.sim.dryNow(); true');
-  const bigBefore = await stat(100, 100, W - 100, H - 100), slots0 = await ev('__aq.sim.atlas.free.length');
+  const bigBefore = await stat(100, 100, W - 100, H - 100);
   await setT('paint', 'wash', 'ultra', { size: 75, water: 0.8 });
   const zig = []; for (let y = 60; y < H - 60; y += 90) zig.push([60, y], [W - 60, y + 45]);
   const zigD = []; for (let i = 1; i < zig.length; i++) for (let t = 0; t < 1; t += 0.05) zigD.push([zig[i - 1][0] + (zig[i][0] - zig[i - 1][0]) * t, zig[i - 1][1] + (zig[i][1] - zig[i - 1][1]) * t]);
@@ -255,7 +274,8 @@ try {
   const bigAfter = await stat(100, 100, W - 100, H - 100);
   check(Math.abs(bigAfter.mean - bigBefore.mean) < 0.5, 'undo takes back a stroke over the whole sheet', `${bigBefore.mean.toFixed(1)} vs ${bigAfter.mean.toFixed(1)}`);
   await sel('#redoBtn'); await sleep(300); await sel('#undoBtn'); await sleep(300);
-  check(Math.abs((await stat(100, 100, W - 100, H - 100)).mean - bigBefore.mean) < 0.5 && (await ev('__aq.sim.atlas.free.length')) >= slots0 - 2, 'redo and undo again, and no undo room lost', `${await ev('__aq.sim.atlas.free.length')} of ${slots0} free`);
+  const room = await ev(`(() => { const s = __aq.sim, recs = new Set([...s.undo, ...s.redo]); for (const r of [...recs]) if (r.hand) recs.add(r.hand); let held = 0; for (const r of recs) held += r.tiles?.length || 0; return [s.atlas.free.length, held, s.atlas.cols * s.atlas.rows]; })()`);
+  check(Math.abs((await stat(100, 100, W - 100, H - 100)).mean - bigBefore.mean) < 0.5 && room[0] + room[1] === room[2], 'redo and undo again, and no undo room lost', `${room[0]} free + ${room[1]} held of ${room[2]}`);
 
   // 8. colour disc: dragging in the disc loads a custom colour
   await ev(`__aq.togglePop('colPop'); true`); await sleep(200);
@@ -272,6 +292,7 @@ try {
   await ev(`__aq.S.fingers = 'auto'; true`);
   // (the whole-sheet wash above filled the undo room: a fresh stroke to undo)
   await setT('paint', 'round', 'ultra', { size: 20 }); await pen(line(300, 200, 600, 220, 20)); await waitFor('!__aq.stroke');
+  await sleep(400); // pen events just now: touches are ignored for 300 ms (palm rejection)
   const z0 = await ev('__aq.view.z');
   const [cx, cy] = [640, 430];
   await c.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: cx - 60, y: cy, id: 1 }, { x: cx + 60, y: cy, id: 2 }] });
@@ -286,7 +307,37 @@ try {
   await c.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await sleep(100);
   check(await ev('__aq.sim.undo.length') === undoBefore - 1, 'two-finger tap undoes');
-  await ev('__aq.fit(0.8); true');
+  await ev('__aq.fit(0.8); true'); await sleep(200);
+  // palm rejection: with the pen down, a palm on the screen does not pan, zoom, paint or undo
+  {
+    const v0 = await ev('JSON.stringify([__aq.view.x, __aq.view.y, __aq.view.z])'), u0 = await ev('__aq.sim.undo.length');
+    const pp = await scr(300, 900), pq = await scr(700, 900);
+    await c.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: pp[0], y: pp[1], button: 'left', buttons: 1, clickCount: 1, pointerType: 'pen', force: 0.6 });
+    await c.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 900, y: 700, id: 11 }, { x: 980, y: 720, id: 12 }] });
+    for (let i = 1; i <= 8; i++) {
+      await c.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: 900 - i * 12, y: 700 + i * 6, id: 11 }, { x: 980 + i * 10, y: 720, id: 12 }] });
+      await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: pp[0] + (pq[0] - pp[0]) * i / 8, y: pp[1], button: 'left', buttons: 1, pointerType: 'pen', force: 0.6 });
+      await sleep(30);
+    }
+    await c.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await c.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: pq[0], y: pq[1], button: 'left', buttons: 0, clickCount: 1, pointerType: 'pen' });
+    await sleep(200);
+    check((await ev('JSON.stringify([__aq.view.x, __aq.view.y, __aq.view.z])')) === v0, 'a palm while the pen is down does not move or zoom the page');
+    check((await ev('__aq.sim.undo.length')) === u0 + 1, 'the pen stroke is kept and the palm adds nothing', `${u0} -> ${await ev('__aq.sim.undo.length')}`);
+    // a palm already resting when the pen lands is dropped too
+    await sleep(400);
+    await c.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 900, y: 700, id: 13 }] });
+    await sleep(80);
+    for (let i = 1; i <= 4; i++) { await c.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: 900 + i * 6, y: 700 + i * 3, id: 13 }] }); await sleep(20); }
+    const u1 = await ev('__aq.sim.undo.length');
+    await c.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: pp[0], y: pp[1] + 60, button: 'left', buttons: 1, clickCount: 1, pointerType: 'pen', force: 0.6 });
+    await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: pq[0], y: pp[1] + 60, button: 'left', buttons: 1, pointerType: 'pen', force: 0.6 });
+    await c.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: pq[0], y: pp[1] + 60, button: 'left', buttons: 0, clickCount: 1, pointerType: 'pen' });
+    await c.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await sleep(200);
+    check((await ev('__aq.sim.undo.length')) <= u1 + 1, 'a palm resting before the pen lands is taken back', `${u1} -> ${await ev('__aq.sim.undo.length')}`);
+    await sleep(400);
+  }
   await ev(`__aq.S.fingers = 'paint'; true`);
   await setT('paint', 'round', 'cadred', { size: 22 });
   const tp = []; for (const [x, y] of line(900, 1150, 1450, 1150, 30)) tp.push(await scr(x, y));

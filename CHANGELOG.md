@@ -1,6 +1,7 @@
 # Logs
 
 29 Oct 2026
+- Aquarelle: QuickShape is off by default (Preferences; existing prefs turned off once) and undo after it gives back the stroke as you drew it (one more undo removes it, redo goes forward). Palm rejection: touches are ignored while the pen is down or was used in the last 300 ms (hover counts), and touches already down when the pen lands are dropped, a stroke a palm began just before taken back (Preferences -> Ignore the palm).
 - Aquarelle fixes: undo of a stroke over most of the sheet failed and lost the step (it needed a second copy of the whole sheet in the undo atlas; then every later undo stopped working too) - tiles now swap in place through a one-tile scratch. QuickShape no longer turns shading back and forth into a wet ellipse ring (which a wet brush filled into a blot) when the pen rests: a loop must go once round its middle, a line must be straight, anything else stays as drawn; the hold is 650 ms.
 
 28 Oct 2026

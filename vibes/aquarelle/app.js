@@ -30,7 +30,7 @@ const DEF = {
   brush: Object.fromEntries(Object.entries(BRUSHES).map(([k, b]) => [k, { size: b.size, water: b.water, paint: b.paint, sizePressure: b.sizePressure, paintPressure: b.paintPressure, spacing: b.spacing }])),
   tools: { smudge: { size: 26, paint: 0.6 }, erase: { size: 30, paint: 0.9 } },
   pig: ['ultra'], weights: [1], customs: [], history: [], colOpacity: 0.15, colGran: 0.15,
-  drying: 1, runDry: true, fingers: 'auto', smooth: 0.3, rotate: true, right: false, cursor: true, pressure: 1, quick: true, record: true,
+  drying: 1, runDry: true, fingers: 'auto', smooth: 0.3, rotate: true, right: false, cursor: true, pressure: 1, quick: false, palm: true, record: true,
   helpSeen: false, currentId: null,
   autoFs: /Android/i.test(navigator.userAgent) && matchMedia('(pointer: coarse)').matches,
   // zoom a page opens at, relative to the whole page (1) or 'width'; null = 125% on small
@@ -44,6 +44,8 @@ const DEF = {
 let S;
 try { S = { ...structuredClone(DEF), ...JSON.parse(localStorage.getItem('aquarelle:prefs') || '{}') }; } catch { S = structuredClone(DEF); }
 if (qs.has('fresh')) S = structuredClone(DEF);
+// prefs v2: QuickShape became opt-in (it snapped shading into wet rings)
+if ((S.pv || 1) < 2) { S.quick = false; S.pv = 2; }
 for (const k in DEF.brush) S.brush[k] = { ...DEF.brush[k], ...(S.brush[k] || {}) };
 for (const k in DEF.tools) S.tools[k] = { ...DEF.tools[k], ...(S.tools?.[k] || {}) };
 S.sel = { ...DEF.sel, ...S.sel };
@@ -657,13 +659,14 @@ function quickShape() {
     const n = Math.max(2, Math.round(Math.hypot(b.x - a.x, b.y - a.y) / 3));
     for (let i = 0; i <= n; i++) shape.push({ x: a.x + (b.x - a.x) * i / n, y: a.y + (b.y - a.y) * i / n });
   }
-  // take the hand-drawn stroke back (with everything its water did) and paint the shape
-  sim.discardLast(); sim.begin();
+  // take the hand-drawn stroke back (with everything its water did) and paint the shape; the
+  // hand-drawn state is kept with the shape's undo step, so undo gives you your own stroke
+  sim.replaceLast();
   Object.assign(st, { last: null, rest: 0, load: 1, v: 0.15, len: 0, snapped: true });
   let t = a.t;
   for (const q of shape) emit({ x: q.x, y: q.y, p: pr, t: (t += 8), alt: a.alt, az: a.az });
   window.__quick = { closed, n: shape.length };
-  toast(closed ? 'QuickShape: ellipse (off in Preferences)' : 'QuickShape: line (off in Preferences)', 1600);
+  toast(closed ? 'QuickShape: ellipse (undo keeps your stroke)' : 'QuickShape: line (undo keeps your stroke)', 1600);
 }
 
 // ---------- eyedropper ----------
@@ -703,13 +706,27 @@ function pushHistory(id) {
 const touches = new Map();
 let penSeen = qs.get('pen') === '1', gesture = null, tapCand = null, pendingTouch = null, mouseDrag = null, spaceDown = false, hoverPt = null, lpTimer = 0;
 const fingersNavigate = () => S.fingers === 'auto' && penSeen;
+// Palm rejection: while the pen is on or near the screen (down, or any pen event in the last
+// 300 ms, hover included) touches are ignored, and touches already down when the pen lands
+// are dropped (a stroke a palm began just before is taken back).
+let lastPen = -1e9;
+const palms = new Set();
+const penNear = () => S.palm !== false && (stroke?.type === 'pen' || performance.now() - lastPen < 300);
+function dropTouches() {
+  for (const id of touches.keys()) palms.add(id);
+  touches.clear(); tapCand = null; gesture = null;
+  if (pendingTouch) { pendingTouch = null; clearTimeout(lpTimer); }
+  if (stroke && stroke.type === 'touch') { const young = performance.now() - stroke0 < 1500; endStroke(); if (young) { sim.discardLast(); updateUndo(); } }
+}
+for (const ev of ['pointerdown', 'pointermove', 'pointerup']) canvas.addEventListener(ev, (e) => { if (e.pointerType === 'pen') lastPen = performance.now(); }, true);
 const copyEv = (e) => ({ clientX: e.clientX, clientY: e.clientY, pressure: e.pressure, pointerType: e.pointerType, timeStamp: e.timeStamp, tiltX: 0, tiltY: 0 });
 
 canvas.addEventListener('pointerdown', (e) => {
   e.preventDefault();
   if (closePops()) { if (e.pointerType !== 'pen') return; }
   canvas.setPointerCapture?.(e.pointerId);
-  if (e.pointerType === 'pen') penSeen = true;
+  if (e.pointerType === 'pen') { penSeen = true; if (S.palm !== false && (touches.size || pendingTouch)) dropTouches(); }
+  if (e.pointerType === 'touch' && penNear()) { palms.add(e.pointerId); return; }
   if (e.pointerType === 'touch') {
     touches.set(e.pointerId, { x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, t0: performance.now() });
     if (touches.size === 1) tapCand = { n: 1, t0: performance.now(), moved: false };
@@ -735,6 +752,7 @@ canvas.addEventListener('pointerdown', (e) => {
 });
 
 canvas.addEventListener('pointermove', (e) => {
+  if (e.pointerType === 'touch' && palms.has(e.pointerId)) return;
   if (e.pointerType === 'touch' && touches.has(e.pointerId)) {
     const t = touches.get(e.pointerId); t.x = e.clientX; t.y = e.clientY;
     if (Math.hypot(t.x - t.x0, t.y - t.y0) > 10 && tapCand) tapCand.moved = true;
@@ -759,6 +777,7 @@ canvas.addEventListener('pointermove', (e) => {
 });
 
 function pointerEnd(e) {
+  if (e.pointerType === 'touch' && palms.delete(e.pointerId)) return;
   if (e.pointerType === 'touch') {
     const had = touches.has(e.pointerId);
     touches.delete(e.pointerId);
@@ -1317,6 +1336,7 @@ function buildActions() {
   $('#optPanels').onclick = () => { resetPanels(); toast('Panels are back in place'); };
   chk('#optCursor', () => S.cursor, (v) => { S.cursor = v; updateCursor(); });
   chk('#optQuick', () => S.quick, (v) => (S.quick = v));
+  chk('#optPalm', () => S.palm !== false, (v) => (S.palm = v));
   chk('#optRotate', () => S.rotate, (v) => { S.rotate = v; if (!v) { view.r = 0; needsRender = true; } });
   chk('#optLoad', () => S.runDry, (v) => (S.runDry = v));
   $('#optPressure').value = S.pressure; $('#optPressure').oninput = (e) => { S.pressure = +e.target.value; savePrefs(); };

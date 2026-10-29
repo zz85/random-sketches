@@ -519,7 +519,8 @@
       <div class="row"><span>Fingers once a pen is used</span><div class="seg" id="fingerSeg"><button data-v="auto">Navigate</button><button data-v="paint">Paint</button></div></div>
       <div class="row"><span>Pressure<small style="display:block;color:var(--dim);font-size:11.5px">soft … firm</small></span><input type="range" id="optPressure" class="slim" min="0.4" max="2.2" step="0.05"></div>
       <div class="row"><span>Stroke smoothing</span><input type="range" id="optSmooth" class="slim" min="0" max="0.9" step="0.05"></div>
-      <div class="row"><span>QuickShape (hold at the end of a stroke)</span><input type="checkbox" id="optQuick"></div>
+      <div class="row"><span>QuickShape<small>hold the pen still at the end of a stroke to straighten it into a line or an ellipse; undo gives your stroke back</small></span><input type="checkbox" id="optQuick"></div>
+      <div class="row"><span>Ignore the palm<small>touches are ignored while the pen is on or near the screen</small></span><input type="checkbox" id="optPalm"></div>
       <div class="row"><span>Open pages at<small>tap the % by the zoom buttons to switch to the whole page and back</small></span><div class="seg" id="zoomSeg"><button data-v="1">Page</button><button data-v="1.25">125%</button><button data-v="1.5">150%</button><button data-v="width">Width</button></div></div>
       <div class="row"><span>Rotate with two fingers<small>a twist must start the gesture; two fingers that start moving together only pan</small></span><input type="checkbox" id="optRotate"></div>
       <div class="row"><span>Brush runs dry</span><input type="checkbox" id="optLoad"></div>

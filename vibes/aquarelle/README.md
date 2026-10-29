@@ -78,7 +78,8 @@ page, and undo history starts afresh each time you turn to a page.
 | Two fingers | decided by how they start moving, then locked for the gesture: moving together pans (no zoom, no rotation), spreading or pinching zooms, a clear twist rotates (snaps square; Prefs → Rotate with two fingers). A quick pinch in shows the whole page |
 | Two / three / four-finger tap | undo / redo / hide or show the panels |
 | Touch and hold | eyedropper (also the dropper at the bottom of the brushes, Alt-click or I) |
-| Hold at the end of a stroke | QuickShape: the stroke is taken back, with everything its water did, and painted again as a straight line or an ellipse (circle when nearly round) |
+| Hold at the end of a stroke | QuickShape (off by default, Preferences): a straight stroke or a loop is taken back, with everything its water did, and painted again as a straight line or an ellipse (circle when nearly round); undo gives your own stroke back |
+| Palm on the screen | ignored while the pen is down or near (Preferences → Ignore the palm) |
 | Mouse | left paints (speed stands in for pressure), middle/right or Space-drag pans, wheel zooms |
 | Keys | Page Up / Page Down pages, + / − zoom, 0 whole page, B W T R Y X brushes, Q water, K lift, P pen / paint, S smudge, E erase, L layers, C colours, I eyedropper, `[` `]` size, 1–9 pigments (Shift adds to the mix), F dry now, ⌘Z / ⇧⌘Z, Tab hide UI |
 
