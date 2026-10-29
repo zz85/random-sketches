@@ -57,3 +57,36 @@ test('the mouse joint carries a body to the pointer', () => {
   const ax = b.x + c * j.lx - s * j.ly, ay = b.y + s * j.lx + c * j.ly;
   assert.ok(Math.hypot(ax - 200, ay - 200) < 25, `anchor ${ax},${ay}`);
 });
+
+const hexagon = (r) => Array.from({ length: 6 }, (_, i) => [Math.cos(i * Math.PI / 3) * r, Math.sin(i * Math.PI / 3) * r]);
+const wedge = [[-40, -20], [50, -26], [30, 30], [-44, 18]];
+
+test('a convex polygon comes to rest on a flat side', () => {
+  const w = new World(); w.setBounds(0, 0, 400, 300);
+  const b = w.add(new Body({ x: 200, y: 60, w: 0, h: 0, shape: 'poly', verts: wedge, angle: 0.7 }));
+  settle(w, 5);
+  const low = Math.max(...wedge.map(([x, y]) => b.y + Math.sin(b.angle) * x + Math.cos(b.angle) * y));
+  assert.ok(Math.abs(low - 300) < 1.5, `lowest corner ${low}`);
+  assert.ok(Math.hypot(b.vx, b.vy) < 5 && Math.abs(b.w) < 0.1, 'still');
+});
+
+test('polygons pile on boxes and circles without passing through', () => {
+  const w = new World(); w.setBounds(0, 0, 300, 400);
+  const bs = [w.add(new Body({ x: 150, y: 370, w: 200, h: 40 }))];
+  for (let i = 0; i < 5; i++) bs.push(w.add(new Body({ x: 110 + (i % 3) * 40, y: 250 - i * 70, w: 0, h: 0, shape: 'poly', verts: i % 2 ? hexagon(26) : wedge, angle: i })));
+  bs.push(w.add(new Body({ x: 150, y: 20, w: 40, h: 40, shape: 'circle' })));
+  settle(w, 6);
+  for (const b of bs) assert.ok(b.y < 400 && b.y > 0 && b.x > 0 && b.x < 300, `inside ${b.x},${b.y}`);
+  const sp = Math.max(...bs.map((b) => Math.hypot(b.vx, b.vy)));
+  assert.ok(sp < 20, `settled, max speed ${sp}`);
+  const P = bs.filter((b) => b.shape === 'poly');
+  for (const b of P) assert.ok(b.y < 350 + 1, `rests on the box, y ${b.y}`);
+});
+
+test('a polygon\'s mass and inertia scale with its outline', () => {
+  const b = new Body({ x: 0, y: 0, w: 0, h: 0, shape: 'poly', verts: [[-10, -5], [10, -5], [10, 5], [-10, 5]] });
+  const box = new Body({ x: 0, y: 0, w: 20, h: 10 });
+  assert.ok(Math.abs(b.mass - box.mass) < 1e-9 && Math.abs(b.I - box.I) < 1e-6, `${b.I} vs ${box.I}`);
+  b.setScale(0.5);
+  assert.ok(Math.abs(b.mass - box.mass / 4) < 1e-9 && Math.abs(b.I - box.I / 16) < 1e-6);
+});

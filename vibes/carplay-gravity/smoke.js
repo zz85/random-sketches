@@ -22,9 +22,10 @@ let failed = 0;
 const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}${extra ? '  ' + extra : ''}`); if (!ok) failed++; };
 
 // layout sanity: inside the screen, no two pieces overlapping (axis-aligned boxes at home)
-const LAYOUT = `(()=>{const P=__cp.pieces,{LW,LH}=__cp.size;let out=0,ov=[];
+const LAYOUT = `(()=>{const P=[...new Set(__cp.pieces.map(p=>p.whole||p))],{LW,LH}=__cp.size;let out=0,ov=[];
   for(const p of P){if(p.x-p.w/2<-0.5||p.y-p.h/2<-0.5||p.x+p.w/2>LW+0.5||p.y+p.h/2>LH+0.5)out++;}
   for(let i=0;i<P.length;i++)for(let j=i+1;j<P.length;j++){const a=P[i],b=P[j];if(a.under||b.under)continue;if(Math.abs(a.x-b.x)<(a.w+b.w)/2-0.5&&Math.abs(a.y-b.y)<(a.h+b.h)/2-0.5)ov.push(a.id+'/'+b.id);}
+  for(const W of P){const S=__cp.pieces.filter(p=>p.whole===W);if(!S.length)continue;const A=Q=>Math.abs(Q.reduce((s,[x,y],i)=>{const [u,v]=Q[(i+1)%Q.length];return s+x*v-u*y},0)/2);const o=W.w*W.h-(4-Math.PI)*400;if(Math.abs(S.reduce((s,p)=>s+A(p.poly),0)-o)>o*0.01)ov.push(W.id+' slabs do not tile it');}
   return {n:P.length,out,ov,LW:Math.round(LW),LH:Math.round(LH)}})()`;
 const STATS = `(()=>{const P=__cp.pieces,W=__cp.world.walls;return {n:P.length,pinned:P.filter(p=>p.body.pinned).length,
   off:Math.max(...P.map(p=>Math.hypot(p.body.x-p.home.x,p.body.y-p.home.y)+Math.abs(p.body.angle)*100)),
@@ -105,7 +106,10 @@ const STATS = `(()=>{const P=__cp.pieces,W=__cp.world.walls;return {n:P.length,p
     for (const xy of [[500, 452], [502, 453], [501, 452]]) { await mouse('mousePressed', xy); await mouse('mouseReleased', xy); await sleep(300); }
     check('slow triple tap leaves a single hairline', await b.evaluate(`__cp.cracks.length===1 && __cp.cracks[0].kind==='hair' && __cp.cracks[0].blot===0`));
     await b.evaluate(`__cp.restore()`); await sleep(1600);
-    for (const xy of [[500, 452], [502, 453], [501, 452], [500, 451]]) { await mouse('mousePressed', xy); await mouse('mouseReleased', xy); await sleep(60); }
+    { // stamped 60 ms apart, so a busy headless browser can't stretch the taps out
+      const t0 = Date.now() / 1000, at = (type, [x, y], t) => b.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1, timestamp: t });
+      for (const [i, xy] of [[500, 452], [502, 453], [501, 452], [500, 451]].entries()) { await at('mousePressed', xy, t0 + i * 0.06); await at('mouseReleased', xy, t0 + i * 0.06 + 0.02); await sleep(60); }
+    }
     await sleep(150);
     check('quadruple tap turns it into a spider web', await b.evaluate(`__cp.cracks.length===1 && __cp.cracks[0].kind==='web' && __cp.fx.cracks.length===1 && __cp.cracks[0].lines.length>40`), await b.evaluate(`JSON.stringify(__cp.cracks.map(c=>[c.kind,c.lines.length]))+__cp.fx.cracks.length`));
     await b.evaluate(`__cp.restore()`); await sleep(1600);
@@ -129,8 +133,19 @@ const STATS = `(()=>{const P=__cp.pieces,W=__cp.world.walls;return {n:P.length,p
     s = await b.evaluate(STATS);
     check('a thrown card knocks others loose', s.n - s.pinned >= 2, `${s.n - s.pinned} loose`);
     await shot('knock');
-    const slabs = await b.evaluate(`(()=>{const q=__cp.pieces.filter(p=>p.whole);return {n:q.length,map:q.filter(p=>p.whole.id==='map').length,loose:q.filter(p=>!p.body.pinned).length,small:q.filter(p=>!p.body.pinned&&p.sc<0.8).length}})()`);
-    check('dashboard panels are slabs that come apart and fall back smaller', slabs.n === 18 && slabs.map === 9 && slabs.loose >= 2 && slabs.small === slabs.loose, JSON.stringify(slabs));
+    const slabs = await b.evaluate(`(()=>{const q=__cp.pieces.filter(p=>p.whole);return {n:q.length,map:q.filter(p=>p.whole.id==='map').length,loose:q.filter(p=>!p.body.pinned).length,small:q.filter(p=>!p.body.pinned&&p.sc<0.8).length,slanted:q.filter(p=>p.poly.some((v,i,P)=>{const w=P[(i+1)%P.length],dx=Math.abs(w[0]-v[0]),dy=Math.abs(w[1]-v[1]);return Math.min(dx,dy)>20&&Math.min(dx,dy)/Math.max(dx,dy)>0.15})).length}})()`);
+    check('dashboard panels are slabs that come apart and fall back smaller', slabs.n === 12 && slabs.map === 5 && slabs.loose >= 2 && slabs.small === slabs.loose && slabs.slanted >= 4, JSON.stringify(slabs));
+    const cut = await b.evaluate(`(()=>{__cp.restore();return new Promise(r=>setTimeout(()=>{const n0=__cp.pieces.filter(p=>p.whole).length;__cp.crack(330,240,1);const q=__cp.pieces.filter(p=>p.whole);
+      const c=__cp.cracks[0],on=(x,y)=>c.lines.some(L=>L.pts.some((p,i)=>i&&Math.hypot(p[0]-x,p[1]-y)<3));
+      // slab edges that follow a crack, within 6 px of it
+      let near=0;const along=q.filter(p=>p.id.includes('#c')).every(p=>p.world.every(([x,y],i,P)=>{const [x2,y2]=P[(i+1)%P.length],mx=(x+x2)/2,my=(y+y2)/2,W=p.whole;
+        if(Math.hypot(x2-x,y2-y)<20||Math.abs(mx-(W.x-W.w/2))<1||Math.abs(mx-(W.x+W.w/2))<1||Math.abs(my-(W.y-W.h/2))<1||Math.abs(my-(W.y+W.h/2))<1)return true;
+        let d=1e9;for(const L of c.lines)for(let k=1;k<L.pts.length;k++){const a=L.pts[k],b=L.pts[k-1],ex=a[0]-b[0],ey=a[1]-b[1],l=Math.hypot(ex,ey)||1,t=((mx-b[0])*ex+(my-b[1])*ey)/(l*l);if(t>-0.5&&t<1.5)d=Math.min(d,Math.abs((mx-b[0])*ey-(my-b[1])*ex)/l);}
+        if(d<6)near++;return true;}));
+      r({n0,n:q.length,cut:q.filter(p=>p.id.includes('#c')).length,along,near});},1400));})()`);
+    check('a crack splits the panels along the crack', cut.n0 === 12 && cut.cut >= 4 && cut.near >= 2, JSON.stringify(cut));
+    await b.evaluate(`__cp.restore()`); await sleep(1600);
+    check('restore mends the breaks', await b.evaluate(`__cp.pieces.filter(p=>p.whole).length===12 && __cp.pieces.every(p=>p.body.pinned)`));
     await b.evaluate(`__cp.setMode('drive')`);
     const lat = await b.evaluate(`new Promise(r=>{let mx=0;const t0=performance.now();(function f(){mx=Math.max(mx,Math.abs(__cp.world.gx));performance.now()-t0<25000?setTimeout(f,50):r(mx)})()})`);
     check('drive: turns push sideways', lat > 200, `max sideways ${lat.toFixed(0)} px/s²`);

@@ -1,6 +1,7 @@
 # Logs
 
 28 Oct 2026
+- CarPlay Gravity: Dashboard slabs split along the crack lines: a crack cuts the slabs still in place where the glass cracked, breaking across a bend too, and the break lines between slabs are uneven and slanted instead of a grid. The physics engine takes convex polygons. A live panel is drawn once a frame and shared by its slabs. `node smoke.js` 44 checks.
 - CarPlay Gravity: Dashboard panels break apart into slabs (map 3 x 3, cards 2 or 3) that look whole at home, burst apart when knocked loose and fall back to 74% size so the pile has room to tumble, each still drawing its live part of the panel; Restore reassembles them. Moving glass takes turns at the live blur fairly. Triple-tap cracks vary more in angle (up to about 40 degrees off level). `node smoke.js` 42 checks.
 - CarPlay Gravity: a slow triple tap leaves a single hairline (no blot, no streaks, a light shock); a quadruple tap turns the crack into a spider web of radial cracks and rings. Tap timing uses the event time, so a slow frame no longer drops a tap. `node smoke.js` 41 checks.
 - CarPlay Gravity: cracks need a triple tap, and how quick the three taps are sets how hard the knock is (more and longer cracks, more LCD streaks, a bigger shock); thicker crack lines; a smaller ink blot at the impact. `node smoke.js` 39 checks.

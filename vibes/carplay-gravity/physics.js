@@ -1,11 +1,16 @@
-// Small 2D rigid-body engine for DOM pieces: oriented boxes and circles, sequential impulses with
+// Small 2D rigid-body engine for DOM pieces: oriented boxes, convex polygons and circles, sequential impulses with
 // warm starting (Box2D Lite's box-box clipping, Catto 2006), friction, a little restitution, a
 // soft mouse joint for dragging, and "pinned" bodies that hold their place until something hits
 // them hard enough to knock them loose. Units are CSS pixels and seconds; y points down.
 
 export class Body {
-  constructor({ x, y, w, h, r = 0, shape = 'box', angle = 0, density = 1, friction = 0.5, restitution = 0.12, pinned = false, el = null }) {
+  // a 'poly' takes `verts`, [[x, y], ...], a convex outline about its centroid (the body's x, y)
+  constructor({ x, y, w, h, r = 0, shape = 'box', verts = null, angle = 0, density = 1, friction = 0.5, restitution = 0.12, pinned = false, el = null }) {
     this.shape = shape;
+    if (shape === 'poly') {
+      let A = 0; for (let i = 0; i < verts.length; i++) { const [ax, ay] = verts[i], [bx, by] = verts[(i + 1) % verts.length]; A += ax * by - bx * ay; }
+      this.base = (A < 0 ? verts.slice().reverse() : verts).map(([vx, vy]) => [vx, vy]); // counter-clockwise
+    }
     this.x = x; this.y = y; this.angle = angle;
     this.hw = w / 2; this.hh = h / 2; this.r = shape === 'circle' ? (r || Math.min(w, h) / 2) : 0;
     this.vx = 0; this.vy = 0; this.w = 0;
@@ -13,6 +18,7 @@ export class Body {
     const area = shape === 'circle' ? Math.PI * this.r * this.r : w * h;
     this.area = area; this.mass = density * area / 1000;
     this.I = shape === 'circle' ? this.mass * this.r * this.r / 2 : this.mass * (w * w + h * h) / 12;
+    if (shape === 'poly') { this.density = density; this.setScale(1, false); }
     this.el = el;
     this.id = Body.nextId++;
     this.setPinned(pinned);
@@ -32,8 +38,24 @@ export class Body {
     this.I = this.shape === 'circle' ? this.mass * this.r * this.r / 2 : this.mass * (w * w + h * h) / 12;
     this.setPinned(this.pinned);
   }
+  // a polygon at a scale of its outline, about its centroid: its area, mass and inertia follow
+  setScale(k, keep = true) {
+    const v = this.verts = this.base.map(([x, y]) => [x * k, y * k]), n = v.length;
+    let A = 0, I = 0, rad = 0, hw = 0, hh = 0;
+    this.normals = [];
+    for (let i = 0; i < n; i++) {
+      const [ax, ay] = v[i], [bx, by] = v[(i + 1) % n], c = ax * by - bx * ay;
+      A += c / 2; I += c * (ax * ax + ax * bx + bx * bx + ay * ay + ay * by + by * by) / 12;
+      const ex = bx - ax, ey = by - ay, l = Math.hypot(ex, ey) || 1;
+      this.normals.push([ey / l, -ex / l]);
+      rad = Math.max(rad, Math.hypot(ax, ay)); hw = Math.max(hw, Math.abs(ax)); hh = Math.max(hh, Math.abs(ay));
+    }
+    this.area = A; this.mass = this.density * A / 1000; this.I = this.density * I / 1000;
+    this.rad = rad; this.hw = hw; this.hh = hh;
+    if (keep) this.setPinned(this.pinned);
+  }
   // bounding radius, for the broad phase
-  get bound() { return this.shape === 'circle' ? this.r : Math.hypot(this.hw, this.hh); }
+  get bound() { return this.shape === 'circle' ? this.r : this.shape === 'poly' ? this.rad : Math.hypot(this.hw, this.hh); }
 }
 Body.nextId = 1;
 
@@ -134,11 +156,67 @@ export function collideBoxCircle(A, B) {
   return [{ x: A.x + c * px - s * py, y: A.y + s * px + c * py, nx: c * nlx - s * nly, ny: s * nlx + c * nly, sep }];
 }
 
+// a box or a polygon in world space: its corners and outward edge normals, counter-clockwise
+const BOX = [[-1, -1], [1, -1], [1, 1], [-1, 1]], BOXN = [[0, -1], [1, 0], [0, 1], [-1, 0]];
+function outline(b) {
+  const c = Math.cos(b.angle), s = Math.sin(b.angle), P = b.shape === 'poly';
+  const lv = P ? b.verts : BOX.map(([u, v]) => [u * b.hw, v * b.hh]), ln = P ? b.normals : BOXN;
+  return { v: lv.map(([x, y]) => ({ x: b.x + c * x - s * y, y: b.y + s * x + c * y })), n: ln.map(([x, y]) => ({ x: c * x - s * y, y: s * x + c * y })) };
+}
+function maxSeparation(P, Q) {
+  let best = -Infinity, at = 0;
+  for (let i = 0; i < P.v.length; i++) {
+    const n = P.n[i], v = P.v[i];
+    let m = Infinity;
+    for (const q of Q.v) m = Math.min(m, n.x * (q.x - v.x) + n.y * (q.y - v.y));
+    if (m > best) { best = m; at = i; }
+  }
+  return [best, at];
+}
+// convex against convex (Box2D's b2CollidePolygons): the face of least penetration, the other
+// shape's edge most against it, clipped to that face's side planes
+export function collidePolys(A, B) {
+  const PA = outline(A), PB = outline(B);
+  const [sa, ea] = maxSeparation(PA, PB); if (sa > 0) return [];
+  const [sb, eb] = maxSeparation(PB, PA); if (sb > 0) return [];
+  const flip = sb > 0.98 * sa + 0.1, R = flip ? PB : PA, I = flip ? PA : PB, e = flip ? eb : ea;
+  const n = R.n[e], v1 = R.v[e], v2 = R.v[(e + 1) % R.v.length];
+  let j = 0, low = Infinity;
+  for (let k = 0; k < I.n.length; k++) { const d = I.n[k].x * n.x + I.n[k].y * n.y; if (d < low) { low = d; j = k; } }
+  const i1 = I.v[j], i2 = I.v[(j + 1) % I.v.length];
+  const tl = Math.hypot(v2.x - v1.x, v2.y - v1.y) || 1, tx = (v2.x - v1.x) / tl, ty = (v2.y - v1.y) / tl;
+  const c1 = [], c2 = [];
+  if (clipSegment(c1, i1, i2, -tx, -ty, -(tx * v1.x + ty * v1.y)) < 2) return [];
+  if (clipSegment(c2, c1[0], c1[1], tx, ty, tx * v2.x + ty * v2.y) < 2) return [];
+  const out = [], nx = flip ? -n.x : n.x, ny = flip ? -n.y : n.y;
+  for (const p of c2) {
+    const s = n.x * (p.x - v1.x) + n.y * (p.y - v1.y);
+    if (s <= 0) out.push({ x: p.x - s * n.x, y: p.y - s * n.y, nx, ny, sep: s });
+  }
+  return out;
+}
+// a polygon (A) against a circle (B): its nearest face, or a corner
+export function collidePolyCircle(A, B) {
+  const P = outline(A), c = { x: B.x, y: B.y }, m = P.v.length;
+  let best = -Infinity, e = 0;
+  for (let i = 0; i < m; i++) { const d = P.n[i].x * (c.x - P.v[i].x) + P.n[i].y * (c.y - P.v[i].y); if (d > best) { best = d; e = i; } }
+  if (best > B.r) return [];
+  const n = P.n[e], v1 = P.v[e], v2 = P.v[(e + 1) % m];
+  const corner = (v) => { const dx = c.x - v.x, dy = c.y - v.y, d = Math.hypot(dx, dy); return d > B.r ? [] : [{ x: v.x, y: v.y, nx: dx / (d || 1), ny: dy / (d || 1), sep: d - B.r }]; };
+  if (best > 1e-6) {
+    if ((c.x - v1.x) * (v2.x - v1.x) + (c.y - v1.y) * (v2.y - v1.y) <= 0) return corner(v1);
+    if ((c.x - v2.x) * (v1.x - v2.x) + (c.y - v2.y) * (v1.y - v2.y) <= 0) return corner(v2);
+  }
+  return [{ x: c.x - n.x * best, y: c.y - n.y * best, nx: n.x, ny: n.y, sep: best - B.r }];
+}
+
 function collide(A, B) {
   if (A.shape === 'box' && B.shape === 'box') return collideBoxes(A, B);
   if (A.shape === 'circle' && B.shape === 'circle') return collideCircles(A, B);
-  if (A.shape === 'box') return collideBoxCircle(A, B);
-  return collideBoxCircle(B, A).map((k) => ({ ...k, nx: -k.nx, ny: -k.ny }));
+  if (A.shape !== 'circle' && B.shape !== 'circle') return collidePolys(A, B);
+  const flipped = A.shape === 'circle', P = flipped ? B : A, C = flipped ? A : B;
+  const cs = P.shape === 'box' ? collideBoxCircle(P, C) : collidePolyCircle(P, C);
+  return flipped ? cs.map((k) => ({ ...k, nx: -k.nx, ny: -k.ny })) : cs;
 }
 
 // ---------- world ----------
@@ -293,6 +371,7 @@ export class World {
 }
 
 export function corners(b) {
+  if (b.shape === 'poly') return outline(b).v;
   const c = Math.cos(b.angle), s = Math.sin(b.angle), out = [];
   for (const [u, v] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
     const lx = u * b.hw, ly = v * b.hh;

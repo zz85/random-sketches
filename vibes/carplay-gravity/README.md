@@ -48,10 +48,13 @@ tumble: clocks tick, the map keeps driving, play / pause / skip work and the gau
   turn, Now Playing and Up Next) and Cluster (speedometer and tachometer as rolling circles, gear,
   turn signals, a mini map, warning lamps, odometer).
 - **Dashboard panels break apart**: the map and cards fill the screen edge to edge, so each is made
-  of a few slabs (map 3 × 3, cards 2 or 3) that fit exactly at home and look whole. Knocked loose,
-  a panel bursts into its slabs, and each slab falls back behind the glass at 74% of its size so
-  the pile has room to tumble. Every slab keeps drawing its part of the panel live (the map keeps
-  driving, buttons on a slab still work). Restore puts the panels back together.
+  of a few slabs (map 5, cards 2 or 3) that fit exactly at home and look whole. The break lines are
+  uneven and slanted 10-35 degrees off square, like broken glass. Cracking the screen cuts the
+  slabs still in place along the crack lines (where a crack bends, the slab also breaks across it
+  at the bend), so the pieces that fall come apart where the glass cracked. Knocked loose, a panel
+  bursts into its slabs, and each slab falls back behind the glass at 74% of its size so the pile
+  has room to tumble. Every slab keeps drawing its part of the panel live (the map is drawn once a
+  frame and shared; it keeps driving, and buttons on a slab still work). Restore mends the breaks.
 - **Dashboard map**: an Apple Maps-style driving view in perspective, the camera behind and above
   the car: arterials, parks, extruded buildings, the route as a ribbon on the road (and faintly
   through buildings), street labels on the ground, fog to the horizon, the blue puck.
@@ -90,7 +93,8 @@ cached, needle and arc live) are drawn every frame. Taps hit-test through each b
 About 1.7 ms of CPU a frame in headless Chromium at rest (the 3D map is most of it); with a
 crack or ripples on, the frame is uploaded to the GPU and redrawn, about 5.5 ms in SwiftShader.
 
-Physics (`physics.js`, no dependencies): oriented boxes and circles, Box2D Lite's box-box
+Physics (`physics.js`, no dependencies): oriented boxes, convex polygons (reference face and
+clipping, as for boxes) and circles, Box2D Lite's box-box
 clipping, sequential impulses with warm starting, friction, restitution on new contacts only,
 a soft mouse joint, and pinned bodies that a hard hit sets free.
 
