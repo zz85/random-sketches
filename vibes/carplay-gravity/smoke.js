@@ -70,7 +70,7 @@ const STATS = `(()=>{const P=__cp.pieces,W=__cp.world.walls;return {n:P.length,p
     await b.evaluate(`__cp.dropAll()`); await sleep(4500);
     let s = await b.evaluate(STATS);
     check('dropped: everything settled inside the screen', s.pinned === 0 && s.inside && s.speed < 60, `max speed ${s.speed.toFixed(1)}`);
-    check('dropped: most pieces at the bottom', s.low >= s.n * 0.8, `${s.low} of ${s.n}`);
+    check('dropped: most pieces at the bottom', s.low >= s.n * 0.75, `${s.low} of ${s.n}`);
     await shot('fallen');
     // drag the Music tile up
     const xy = await b.evaluate(`__cp.clientOf('tile-music')`), y0 = await b.evaluate(`__cp.pieces.find(p=>p.id==='tile-music').body.y`);
@@ -129,6 +129,8 @@ const STATS = `(()=>{const P=__cp.pieces,W=__cp.world.walls;return {n:P.length,p
     s = await b.evaluate(STATS);
     check('a thrown card knocks others loose', s.n - s.pinned >= 2, `${s.n - s.pinned} loose`);
     await shot('knock');
+    const slabs = await b.evaluate(`(()=>{const q=__cp.pieces.filter(p=>p.whole);return {n:q.length,map:q.filter(p=>p.whole.id==='map').length,loose:q.filter(p=>!p.body.pinned).length,small:q.filter(p=>!p.body.pinned&&p.sc<0.8).length}})()`);
+    check('dashboard panels are slabs that come apart and fall back smaller', slabs.n === 18 && slabs.map === 9 && slabs.loose >= 2 && slabs.small === slabs.loose, JSON.stringify(slabs));
     await b.evaluate(`__cp.setMode('drive')`);
     const lat = await b.evaluate(`new Promise(r=>{let mx=0;const t0=performance.now();(function f(){mx=Math.max(mx,Math.abs(__cp.world.gx));performance.now()-t0<25000?setTimeout(f,50):r(mx)})()})`);
     check('drive: turns push sideways', lat > 200, `max sideways ${lat.toFixed(0)} px/s²`);

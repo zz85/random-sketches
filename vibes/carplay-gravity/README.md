@@ -23,7 +23,7 @@ tumble: clocks tick, the map keeps driving, play / pause / skip work and the gau
 - **Triple-tap cracks the glass**: the quicker the three taps, the harder the knock (three taps in
   150 ms hit about 1.6 times as hard as the Cracks slider says, in 700 ms about half). A slow
   triple tap (over half a second) leaves just one thin hairline; a fourth quick tap turns the crack
-  into a spider web: eight to twelve radial cracks joined by sagging rings, a bigger blot and more streaks. One to four long cracks running across the screen, roughly
+  into a spider web: eight to twelve radial cracks joined by sagging rings, a bigger blot and more streaks. One to four long cracks, each set at its own angle up to about 40 degrees off level, running across the screen, roughly
   sideways through the point, nearly straight with small kinks, the odd fork and short dead-end
   hairlines, a crushed spot where it hit, and thin blue and red streaks of light from the LCD
   layers it knocked loose, mostly columns down the panel, some rows along the crack. The cracks run out from the impact over half a second, with a glint
@@ -47,6 +47,11 @@ tumble: clocks tick, the map keeps driving, play / pause / skip work and the gau
   screens; labels fall separately), Dashboard (map with the arrival pill, glass cards for the next
   turn, Now Playing and Up Next) and Cluster (speedometer and tachometer as rolling circles, gear,
   turn signals, a mini map, warning lamps, odometer).
+- **Dashboard panels break apart**: the map and cards fill the screen edge to edge, so each is made
+  of a few slabs (map 3 × 3, cards 2 or 3) that fit exactly at home and look whole. Knocked loose,
+  a panel bursts into its slabs, and each slab falls back behind the glass at 74% of its size so
+  the pile has room to tumble. Every slab keeps drawing its part of the panel live (the map keeps
+  driving, buttons on a slab still work). Restore puts the panels back together.
 - **Dashboard map**: an Apple Maps-style driving view in perspective, the camera behind and above
   the car: arterials, parks, extruded buildings, the route as a ribbon on the road (and faintly
   through buildings), street labels on the ground, fog to the horizon, the blue puck.

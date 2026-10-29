@@ -46,16 +46,16 @@ export function fracture(x, y, W, H, rnd = Math.random, P = 1, kind = 'crack') {
     }
   } else if (hair) {
     // one thin line; one half often stops partway
-    const ang = (rnd() - 0.5) * 0.5;
+    const ang = (rnd() - 0.5) * 1.2;
     for (const side of [0, Math.PI]) {
       const full = side === 0 || rnd() < 0.5, L = run(x, y, ang + side + (rnd() - 0.5) * 0.06, full ? R : 120 + rnd() * 260, 0.8);
       L.full = full; L.ang = ang + side; if (full) rays.push(L);
     }
   }
   const n = hair || web ? 0 : Math.max(1, Math.min(4, Math.round(0.5 + 0.8 * P + rnd() * 1.2)));
-  const tilt = (rnd() - 0.5) * 0.5, gap = 0.16 + rnd() * 0.18;
+  const tilt = (rnd() - 0.5) * 1.3, gap = 0.3 + rnd() * 0.5; // up to about 37 degrees off level, spread apart
   for (let i = 0; i < n; i++) {
-    const head = tilt + (i - (n - 1) / 2) * gap * (0.7 + 0.6 * rnd()), w = (1.3 + rnd() * 0.6) * (0.75 + 0.25 * P);
+    const head = tilt + (i - (n - 1) / 2) * gap * (0.6 + 0.8 * rnd()) + (rnd() - 0.5) * 0.25, w = (1.3 + rnd() * 0.6) * (0.75 + 0.25 * P);
     for (const side of [0, Math.PI]) {
       const full = i === 0 || rnd() > 0.25 / P, ang = head + side + (rnd() - 0.5) * 0.08;
       const L = run(x, y, ang, full ? R : (80 + rnd() * 220) * Math.sqrt(P), w);

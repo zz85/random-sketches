@@ -151,7 +151,7 @@ function frostInto(c, buf) {
 // the device-pixel box under a (possibly rotated) piece, padded so the blur has something to pull in
 function regionUnder(p, ox, oy, pad) {
   const b = p.body, c = Math.abs(Math.cos(b.angle)), sn = Math.abs(Math.sin(b.angle));
-  const hw = (p.w * c + p.h * sn) / 2 + pad, hh = (p.w * sn + p.h * c) / 2 + pad;
+  const hw = (p.w * c + p.h * sn) * sc(p) / 2 + pad, hh = (p.w * sn + p.h * c) * sc(p) / 2 + pad;
   const x0 = Math.max(0, Math.floor((b.x + ox - hw) * K)), y0 = Math.max(0, Math.floor((b.y + oy - hh) * K));
   const x1 = Math.min(cv.width, Math.ceil((b.x + ox + hw) * K)), y1 = Math.min(cv.height, Math.ceil((b.y + oy + hh) * K));
   return x1 - x0 < 2 || y1 - y0 < 2 ? null : { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
@@ -159,6 +159,7 @@ function regionUnder(p, ox, oy, pad) {
 function glassShape(c, p) {
   if (p.glass === 'squircle') squircle(c, 0, 0, p.w);
   else if (p.shape === 'circle') { c.beginPath(); c.arc(p.w / 2, p.h / 2, p.w / 2, 0, TAU); }
+  else if (p.corners) { c.beginPath(); c.roundRect(0, 0, p.w, p.h, p.corners); }
   else rrect(c, 0, 0, p.w, p.h, p.glass);
 }
 
@@ -290,7 +291,42 @@ function widgetSpecs() {
   return out;
 }
 
-function dashSpecs() {
+// A big panel is made of a few slabs that fit together exactly while it sits at home, so it looks
+// whole, but each slab is its own body: knocked loose, the panel comes apart and the slabs tumble,
+// each still drawing (and answering taps on) its part of the panel. Restore puts it back together.
+// The cuts are uneven but fixed per panel, so a resize or a theme change keeps the same slabs.
+function split(sp, cols, rows, r = 20) {
+  let h = 0; for (const ch of sp.id) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  const rnd = () => ((h = (h * 1664525 + 1013904223) >>> 0) / 4294967296);
+  const cuts = (n, len) => { const c = [0]; for (let i = 1; i < n; i++) c.push(Math.round(len * (i + (rnd() - 0.5) * 0.5) / n)); c.push(len); return c; };
+  const whole = { ...sp, home: null }, X = cuts(cols, sp.w), Y = cuts(rows, sp.h), x0 = sp.x - sp.w / 2, y0 = sp.y - sp.h / 2, out = [];
+  for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
+    const ox = X[i], oy = Y[j], w = X[i + 1] - ox, h2 = Y[j + 1] - oy;
+    const L = i === 0, R = i === cols - 1, T = j === 0, B = j === rows - 1;
+    const e = 0, cx0 = L ? 0 : -e, cy0 = T ? 0 : -e, cx1 = R ? w : w + e, cy1 = B ? h2 : h2 + e;
+    out.push({ id: `${sp.id}#${j * cols + i}`, whole, x: x0 + ox + w / 2, y: y0 + oy + h2 / 2, w, h: h2, act: sp.act, dyn: sp.dyn,
+      glass: sp.glass, corners: [T && L ? r : 0, T && R ? r : 0, B && R ? r : 0, B && L ? r : 0],
+      hits: sp.hits?.map((q) => ({ ...q, x: q.x - ox, y: q.y - oy })), key: sp.key,
+      draw: (c, p) => { c.save(); c.beginPath(); c.rect(cx0, cy0, cx1 - cx0, cy1 - cy0); c.clip(); c.translate(-ox, -oy); sp.draw(c, whole); c.restore(); } });
+  }
+  return out;
+}
+const SLABS = { map: [3, 3], turn: [2, 1], np: [3, 1], upnext: [2, 2] };
+// The panels fill the screen edge to edge, so loose slabs at full size could only jam. A slab that
+// breaks free falls back behind the cover glass, drawn and colliding at SLACK of its size, which
+// leaves the pile room to tumble; it grows back as Restore puts it home.
+const SLACK = 0.74, sc = (p) => p.sc || 1;
+function stepSlack(dt) {
+  for (const p of pieces) {
+    if (!p.whole) continue;
+    const to = p.body.pinned ? 1 : SLACK, s = sc(p);
+    if (s === to) continue;
+    p.sc = to > s ? Math.min(to, s + dt * 1.2) : Math.max(to, s - dt * 1.6);
+    p.body.resize(p.w * p.sc, p.h * p.sc);
+  }
+}
+function dashSpecs() { return dashWhole().flatMap((sp) => (SLABS[sp.id] ? split(sp, ...SLABS[sp.id]) : [sp])); }
+function dashWhole() {
   const g = 6, x0 = SB + 2, y0 = g, AW = LW - g - x0, AH = LH - 2 * g;
   const mapW = Math.round((AW - g) * 0.6), RW = AW - mapW - g, cH = (AH - 2 * g) / 3, rx = x0 + mapW + g;
   const out = sidebar('grid');
@@ -463,7 +499,7 @@ function shelter() {
 // rebuild the specs in place (appearance or icon style changed: glass flags and draw functions)
 function respec() {
   const specs = new Map(LAYOUTS[state.layout]().map((s) => [s.id, s]));
-  for (const p of pieces) { const sp = specs.get(p.id); if (sp) Object.assign(p, { ...sp, body: p.body, home: p.home, mapCv: p.mapCv, cache: null }); }
+  for (const p of pieces) { const sp = specs.get(p.id); if (sp) { if (sp.whole && p.whole) Object.assign(sp.whole, { mapCv: p.whole.mapCv, mapBlur: p.whole.mapBlur }); Object.assign(p, { ...sp, body: p.body, home: p.home, mapCv: p.mapCv, cache: null }); } }
   backdrop = null;
 }
 
@@ -474,6 +510,7 @@ function relayout() {
   const specs = new Map(LAYOUTS[state.layout]().map((s) => [s.id, s])), W = world.walls;
   for (const p of pieces) {
     const sp = specs.get(p.id); if (!sp) continue;
+    if (sp.whole && p.whole) Object.assign(sp.whole, { mapCv: p.whole.mapCv, mapBlur: p.whole.mapBlur });
     Object.assign(p, { ...sp, body: p.body, home: { x: sp.x, y: sp.y }, cache: null });
     const b = p.body; b.resize(sp.w, sp.h);
     if (b.pinned && !tweens.has(b)) { b.x = sp.x; b.y = sp.y; b.angle = 0; }
@@ -493,6 +530,7 @@ function dropAll() {
     b.w = (Math.random() - 0.5) * (zero ? 1.2 : 0.6);
     b.vx = (Math.random() - 0.5) * (zero ? 160 : 30);
     b.vy = zero ? (Math.random() - 0.5) * 160 : -Math.random() * 40;
+    if (p.whole) { b.w = (Math.random() - 0.5) * 3; b.vy -= 80 + Math.random() * 160; b.vx += (Math.random() - 0.5) * 120; } // a panel bursts apart
     if (p.under) { b.w = 0.8 + Math.random() * 0.3; b.vx = b.w * p.h / 2; } // a tall toolbar would just stand there: tip it over its foot
   }
 }
@@ -739,7 +777,7 @@ const toLogical = (e) => { const r = cv.getBoundingClientRect(); return { x: (e.
 function pieceAt(x, y, slop = 4) {
   for (let i = pieces.length - 1; i >= 0; i--) {
     const p = pieces[i], b = p.body, c = Math.cos(-b.angle), s = Math.sin(-b.angle), dx = x - b.x, dy = y - b.y;
-    const u = c * dx - s * dy + p.w / 2, v = s * dx + c * dy + p.h / 2;
+    const u = (c * dx - s * dy) / sc(p) + p.w / 2, v = (s * dx + c * dy) / sc(p) + p.h / 2;
     const inside = p.shape === 'circle' ? Math.hypot(u - p.w / 2, v - p.h / 2) <= p.w / 2 + slop : u >= -slop && v >= -slop && u <= p.w + slop && v <= p.h + slop;
     if (inside) return { p, u, v };
   }
@@ -903,7 +941,8 @@ function drawPiece(p) {
 function render(dt) {
   drawBackdrop();
   frameNo++;
-  for (const p of pieces) if (p.map && (frameNo % 2 === 0 || !p.mapCv)) { // maps at 30 fps, at the piece's own resolution
+  const maps = new Set(); for (const q of pieces) { const m = q.whole || q; if (m.map) maps.add(m); } // a slab draws its panel's map
+  for (const p of maps) if (frameNo % 2 === 0 || !p.mapCv) { // maps at 30 fps, at the piece's own resolution
     const w = Math.round(p.w * K), h = Math.round(p.h * K);
     if (!p.mapCv) p.mapCv = document.createElement('canvas');
     if (p.mapCv.width !== w || p.mapCv.height !== h) { p.mapCv.width = w; p.mapCv.height = h; }
@@ -918,10 +957,11 @@ function render(dt) {
   // screen shake from Shake, potholes and cracks
   state.quake *= Math.exp(-dt * 7);
   const qx = (Math.random() - 0.5) * state.quake, qy = (Math.random() - 0.5) * state.quake;
-  let snaps = 0;
+  // moving glass takes turns at the live blur, the longest-waiting first, four a frame
+  const fresh = new Set(pieces.filter((p) => p.glass && !p.body.pinned).sort((a, b) => (a.frost?.at ?? -1) - (b.frost?.at ?? -1)).slice(0, 4));
   for (const p of pieces) {
     const b = p.body;
-    const T = (c) => { c.setTransform(K, 0, 0, K, qx * K, qy * K); c.translate(b.x, b.y); c.rotate(b.angle); c.translate(-p.w / 2, -p.h / 2); };
+    const T = (c) => { c.setTransform(K, 0, 0, K, qx * K, qy * K); c.translate(b.x, b.y); c.rotate(b.angle); if (p.sc && p.sc !== 1) c.scale(p.sc, p.sc); c.translate(-p.w / 2, -p.h / 2); };
     if (p.glass) { // blur what is under it
       // Reading the live canvas back stalls the GPU, and clipping to a curved outline every frame
       // is not free either. So a piece at rest blurs the backdrop under it (wallpaper and sidebar,
@@ -948,8 +988,8 @@ function render(dt) {
       } else {
         const r = regionUnder(p, qx, qy, 10);
         if (r) {
-          if (snaps < 4 || !p.frost) { p.frost ||= { buf: document.createElement('canvas'), baked: document.createElement('canvas') }; snapshot(cv, 7, r, p.frost.buf); snaps++; }
-          p.frost.buf.rect = r; p.frost.key = null;
+          if (fresh.has(p) || !p.frost) { p.frost ||= { buf: document.createElement('canvas'), baked: document.createElement('canvas') }; snapshot(cv, 7, r, p.frost.buf); p.frost.buf.rect = r; p.frost.at = frameNo; }
+          p.frost.key = null;
           T(ctx); glassShape(ctx, p); frostInto(ctx, p.frost.buf);
         }
       }
@@ -1012,7 +1052,7 @@ function frame(now) {
   let n = 0;
   while (acc >= STEP && n < 4) { world.step(STEP); acc -= STEP; n++; }
   if (n === 4) acc = 0;
-  stepTweens(dt);
+  stepTweens(dt); stepSlack(dt);
   const W = world.walls;
   for (const { body: b } of pieces) { // anything that escaped comes back in the middle
     if (!Number.isFinite(b.x + b.y + b.angle) || b.x < W.l - 200 || b.x > W.r + 200 || b.y < W.t - 200 || b.y > W.b + 200) {
@@ -1034,9 +1074,10 @@ if (!params.has('still')) setTimeout(() => { if (!state.started) dropAll(); }, A
 else state.started = true; // ?still: nothing falls until asked
 
 // for the smoke test: client coordinates of a piece (or one of its buttons), or of a sheet control
-function clientOf(id, act) {
-  const p = pieces.find((q) => q.id === id), b = p.body, h = act && p.hits.find((q) => q.act === act);
-  const u = h ? h.x + h.w / 2 - p.w / 2 : 0, v = h ? h.y + h.h / 2 - p.h / 2 : 0, c = Math.cos(b.angle), s = Math.sin(b.angle);
+function clientOf(id, act) { // a split panel: the slab holding the button, or else its first slab
+  const own = (q) => q.id === id || q.whole?.id === id, inside = (q, h) => h.x + h.w / 2 >= 0 && h.y + h.h / 2 >= 0 && h.x + h.w / 2 <= q.w && h.y + h.h / 2 <= q.h;
+  const p = pieces.find((q) => own(q) && (!act || q.hits?.some((h) => h.act === act && inside(q, h)))), b = p.body, h = act && p.hits.find((q) => q.act === act && inside(p, q));
+  const u = h ? (h.x + h.w / 2 - p.w / 2) * sc(p) : 0, v = h ? (h.y + h.h / 2 - p.h / 2) * sc(p) : 0, c = Math.cos(b.angle), s = Math.sin(b.angle);
   const r = cv.getBoundingClientRect();
   return [r.left + (b.x + c * u - s * v) * S, r.top + (b.y + s * u + c * v) * S];
 }
