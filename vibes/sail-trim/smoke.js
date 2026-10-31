@@ -30,6 +30,10 @@ try {
   await b.evaluate("document.getElementById('preset').value='run'; document.getElementById('preset').dispatchEvent(new Event('change'))");
   await sleep(4000);
   await shot('smoke_run.png');
+  await b.evaluate("document.getElementById('auto').click()");
+  await sleep(6000);
+  check('auto-trim on a jib run wings the jib out', await b.evaluate("document.getElementById('wing').classList.contains('on')"));
+  await shot('smoke_wing.png');
   await b.evaluate("document.querySelector('[data-head=spin]').click()");
   await sleep(500);
   check('spinnaker controls shown, jib hidden', await b.evaluate("getComputedStyle(document.getElementById('controls').querySelectorAll('input')[0]).display!=='none' && [...document.querySelectorAll('label')].find(l=>l.textContent==='Pole height').offsetParent!==null && [...document.querySelectorAll('label')].find(l=>l.textContent==='Jib car').offsetParent===null"));

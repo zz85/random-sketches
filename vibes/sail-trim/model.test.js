@@ -73,3 +73,12 @@ test('a kite collapses close-hauled', () => {
   const f = M.forces(Object.assign(M.defaultControls(), { head: 'spin' }), { tws: 6, twa: 45, bs: 3 }, 5);
   assert.ok(f.flow.head.every((x) => x.state === 'luff' || x.state === 'flog'));
 });
+test('auto-trim on a jib run finds the same trim from sheeted-in, and wings the jib out dead downwind', () => {
+  for (const twa of [150, 170]) {
+    const e = env(12, twa), from = (p) => kn(M.steady(M.autoTrim(Object.assign({}, M.PRESETS[p].c, { head: 'jib' }), e), e));
+    assert.ok(Math.abs(from('medium') - from('run')) < 0.15, `${twa}: ${from('medium')} vs ${from('run')}`);
+  }
+  const e = env(12, 172), c = M.autoTrim(M.PRESETS.medium.c, e);
+  assert.equal(c.wing, true);
+  assert.ok(kn(M.steady(c, e)) > kn(M.steady(Object.assign({}, c, { wing: false }), e)));
+});

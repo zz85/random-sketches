@@ -96,7 +96,7 @@ const CTRL = [
     ['backstay', 'Backstay', 'Bends the mast, flattening the main (mostly the top) and twisting the upper leech open; tightens the forestay so the jib sags less and points higher.', pct],
   ]],
   ['Headsail', 'jib', [
-    ['jibSheet', 'Jib sheet', 'In: jib closer to the centreline, leech tighter. Out: opens the slot and the leech twists off.', (v) => 'out ' + pct(v)],
+    ['jibSheet', 'Jib sheet', 'In: jib closer to the centreline, leech tighter. Out: opens the slot and the leech twists off. Winged out, the sheet and pole set how far forward the clew is held (30 to 90 deg off the bow).', (v) => c.wing ? Math.round(30 + 60 * v) + '° wing' : 'out ' + pct(v)],
     ['jibLead', 'Jib car', 'Lead block fore/aft. Forward: more leech tension, deeper foot, less twist (top luffs later). Aft: flatter foot, open leech.', (v) => (v > 0 ? 'fwd ' : 'aft ') + Math.round(Math.abs(v) * 100)],
     ['jibHalyard', 'Halyard', 'Jib luff tension. Moves the jib draft forward and rounds the entry; too little scallops the luff.', pct],
   ]],
@@ -119,7 +119,8 @@ for (const [group, key, items] of CTRL) {
   fs.innerHTML = group ? `<legend>${group}</legend>` : '';
   if (key === 'jib') {
     // Headsail selector lives in the jib's fieldset; each sail's controls show only while it is set.
-    fs.innerHTML += `<div class="row" id="heads">${Object.entries(M.HEADSAILS).map(([k, n]) => `<button data-head="${k}">${n}</button>`).join('')}</div>`;
+    fs.innerHTML += `<div class="row" id="heads">${Object.entries(M.HEADSAILS).map(([k, n]) => `<button data-head="${k}">${n}</button>`).join('')}</div>`
+      + `<div class="row" id="wing-row"><button id="wing" title="Pole the jib out to windward with a whisker pole, so it gets out of the main's wind shadow on a run. Only works within about 30 deg of dead downwind.">Wing on wing</button></div>`;
   }
   for (const [k, label, tip, fmt, step] of items) {
     const [lo, hi] = M.RANGES[k];
@@ -136,6 +137,7 @@ for (const [group, key, items] of CTRL) {
   else aside.appendChild(fs);
 }
 for (const b of document.querySelectorAll('#heads button')) b.onclick = () => setHead(b.dataset.head);
+document.getElementById('wing').onclick = () => { c.wing = !c.wing; toast(c.wing ? 'Jib poled out to windward.' : 'Whisker pole down.'); showHead(); };
 function setHead(h) {
   if (h !== c.head) toast(h === 'jib' ? 'Kite down, jib up.' : `${M.HEADSAILS[h]} up${c.head !== 'jib' ? '' : ', jib down'}.`);
   c.head = h; showHead();
@@ -144,6 +146,9 @@ function showHead() {
   for (const k of ['spin', 'gen']) groups[k].style.display = c.head === k ? '' : 'none';
   for (const d of groups.jib.querySelectorAll(':scope > .ctl')) d.style.display = c.head === 'jib' ? '' : 'none';
   for (const b of document.querySelectorAll('#heads button')) b.classList.toggle('on', b.dataset.head === c.head);
+  document.getElementById('wing-row').style.display = c.head === 'jib' ? '' : 'none';
+  document.getElementById('wing').classList.toggle('on', !!c.wing);
+  outs.jibSheet && outs.jibSheet();
 }
 function boatInfo() {
   const B = M.BOAT;
@@ -174,7 +179,15 @@ const hold = (btn, dir) => {
 hold($('up'), () => -Math.sign(course || 1));   // head up = smaller |TWA|
 hold($('down'), () => Math.sign(course || 1));
 $('tack').onclick = tack;
-$('auto').onclick = () => setTrim(M.autoTrim(c, { tws: baseTws * KN, twa: course, bs: S.bs, heel: S.heel }), true);
+$('auto').onclick = () => {
+  const btn = $('auto'); btn.textContent = 'Trimming...'; btn.disabled = true;
+  setTimeout(() => {
+    const to = M.autoTrim(c, { tws: baseTws * KN, twa: course, bs: S.bs, heel: S.heel });
+    if (!!to.wing !== !!c.wing) toast(to.wing ? 'Auto-trim: jib poled out wing on wing.' : 'Auto-trim: whisker pole down.');
+    if (to.reef !== Math.round(c.reef)) toast(`Auto-trim: ${REEFS[to.reef]}.`);
+    setTrim(to, true); btn.textContent = 'Auto-trim'; btn.disabled = false;
+  }, 30);
+};
 $('reset').onclick = () => setTrim(Object.assign(M.defaultControls(), { head: c.head }), true);
 addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT' && e.key !== ' ') return;
@@ -185,7 +198,7 @@ addEventListener('keydown', (e) => {
 addEventListener('keyup', (e) => { if (e.key.startsWith('Arrow')) steer = 0; });
 
 function setTrim(to, animate) {
-  if (to.head !== c.head) c.head = to.head;
+  c.head = to.head; c.wing = !!to.wing;
   showHead();
   if (!animate) { c = Object.assign({}, to); syncInputs(); return; }
   trimAnim = { from: Object.assign({}, c), to, t: 0 };
@@ -269,7 +282,7 @@ function drawTop(f) {
   const carY = (0.1 - 0.5 * c.jibLead) * sc;
   g.strokeStyle = '#666'; g.lineWidth = 2;
   for (const s of [-1, 1]) { g.beginPath(); g.moveTo(s * beam * 0.75, -0.6 * sc); g.lineTo(s * beam * 0.8, 0.8 * sc); g.stroke(); }
-  if (hd.kind === 'jib') { g.fillStyle = '#ffd04d'; g.fillRect(lee * beam * 0.78 - 3, carY - 3, 6, 6); }
+  if (hd.kind === 'jib' && !hd.wing) { g.fillStyle = '#ffd04d'; g.fillRect(lee * beam * 0.78 - 3, carY - 3, 6, 6); }
   // headsail: luff on the forestay, the pole end or the bowsprit; top section first so the foot draws over it
   let lx = 0, ly = tackY, chord = (h) => M.BOAT.jibFoot / K * (1 - 0.6 * h) * sc;
   if (hd.kind === 'spin') {
@@ -283,9 +296,14 @@ function drawTop(f) {
     lx = side * c.tackLine * 0.5 * sc; ly = spritY;
     chord = (h) => 5.8 * (1 - 0.45 * h) * sc;
   }
+  const hlee = hd.wing ? side : lee;
+  if (hd.wing) {
+    const s = hd.sections[0], cl = chord(0.2), cxp = side * Math.sin(s.angle * D) * cl, cyp = tackY + Math.cos(s.angle * D) * cl;
+    g.strokeStyle = '#cfd6dc'; g.lineWidth = 2; g.beginPath(); g.moveTo(0, mastY); g.lineTo(cxp, cyp); g.stroke();
+  }
   for (let i = 2; i >= 0; i--) {
     const s = hd.sections[i], a = f.flow.head[i], st = stateOf(a);
-    drawSection(g, lx, ly, s.angle, chord(s.h), s.camber, s.draft, lee, COL[st], (hd.kind === 'jib' ? 3.2 : 4.2) - i * 0.8, st === 'flog');
+    drawSection(g, lx, ly, s.angle, chord(s.h), s.camber, s.draft, hlee, COL[st], (hd.kind === 'jib' ? 3.2 : 4.2) - i * 0.8, st === 'flog');
   }
   for (let i = 2; i >= 0; i--) {
     const s = sh.main.sections[i], a = f.flow.main[i], st = stateOf(a);

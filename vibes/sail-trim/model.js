@@ -42,6 +42,7 @@
       jibSheet: 0.08,    // 0 = in hard
       jibLead: 0,        // -1 aft .. +1 forward
       jibHalyard: 0.45,
+      wing: false,       // jib poled out to windward with a whisker pole
       spinSheet: 0.5,    // 0 = in .. 1 = eased
       spinPole: 0.6,     // 0 = at the forestay .. 1 = squared back abeam
       poleHeight: 0.45,  // 0 = low .. 1 = high
@@ -114,13 +115,14 @@
         sections: sections(base, twist, [0.17, 0.19, 0.16].map((x) => x + 0.03 * c.tackLine), draft, [0.02, 0, -0.02]),
       };
     } else {
-      const clew = 8 + 55 * c.jibSheet;
+      // Winged out, the whisker pole holds the clew to windward, from 30 to 90 deg off the bow.
+      const clew = c.wing ? 30 + 60 * c.jibSheet : 8 + 55 * c.jibSheet;
       const twist = 6 - 8 * c.jibLead + 16 * c.jibSheet + 2 * L;
       const tJ = c.jibHalyard, needJ = 0.3 + 0.35 * L;
       const draft = clamp(0.4 - 0.25 * (tJ - needJ) + 0.04 * sag, 0.25, 0.6);
       const cam = [0.11 + 0.03 * c.jibLead, 0.11 + 0.035 * sag, 0.09 + 0.025 * sag - 0.01 * c.jibLead].map((x) => clamp(x, 0.04, 0.18));
       head = {
-        kind: 'jib', area: BOAT.jib, weights: JIB_W, zTop: 0.85, ideal: IDEAL_DRAFT.jib, clFactor: 1,
+        kind: 'jib', wing: !!c.wing, area: BOAT.jib, weights: JIB_W, zTop: 0.85, ideal: IDEAL_DRAFT.jib, clFactor: 1,
         clew, twist, sag, draft, tension: tJ, need: needJ,
         luff: tJ < needJ - 0.15 ? 'scallops' : tJ > needJ + 0.35 ? 'crease' : 'smooth',
         sections: sections(clew, twist, cam, draft, [0.02, 0, -0.01]),
@@ -142,10 +144,10 @@
     else if (alpha <= stallA) { cl = clMax * (0.85 + 0.15 * (alpha - luffA) / w); state = 'ok'; }
     else {
       cl = clMax * Math.max(0.55, 1 - 0.025 * (alpha - stallA));
-      if (alpha > 45) cl *= Math.max(0, Math.cos(((alpha - 45) / 45) * Math.PI / 2));
+      if (alpha > 45) cl *= Math.max(0, Math.cos((Math.min(alpha - 45, 45) / 45) * Math.PI / 2));
       state = 'stall';
     }
-    const s2 = Math.sin(Math.min(alpha, 90) * D) ** 2;
+    const s2 = Math.sin(clamp(alpha, 0, 180) * D) ** 2;
     let cd = 0.02 + 0.08 * cl * cl + 0.3 * camber * camber + (state === 'stall' ? 1.25 * s2 : 0.05 * s2);
     if (state === 'flog') cd += 0.12;
     // Telltales: windward lifts when luffing, leeward stalls when over-trimmed.
@@ -196,8 +198,13 @@
     for (let i = 0; i < 3; i++) {
       const s = hd.sections[i], z = k + H[i] * BOAT.mast * hd.zTop;
       const aw = apparent(env.tws * grad(z), twa, env.bs, heel);
-      const a = aero(aw.awa - s.angle, s.camber, s.draft, hd.ideal);
-      fHead += add(aw, a, hd.area * hd.weights[i], z, blk * factor);
+      // A winged jib sits on the windward side: it meets the wind from the other side of the stern and
+      // is clear of the main's wind shadow; its side force pushes to windward.
+      const alpha = hd.wing ? s.angle - (180 - aw.awa) : aw.awa - s.angle;
+      const a = aero(alpha, s.camber, s.draft, hd.ideal);
+      const sd0 = side, hm0 = hm;
+      fHead += add(aw, a, hd.area * hd.weights[i], z, hd.wing ? factor : blk * factor);
+      if (hd.wing) { side = sd0 - (side - sd0); hm = hm0 - (hm - hm0); }
       out.head.push(Object.assign({ awa: aw.awa, aws: aw.aws }, a));
     }
     for (let i = 0; i < 3; i++) {
@@ -205,8 +212,8 @@
       const aw = apparent(env.tws * grad(z), twa, env.bs, heel);
       // The headsail heads the main a little (upwash), and a jib or gennaker backwinds its luff when sheeted inside it.
       const j = out.head[i], js = hd.sections[i], close = aw0.awa < 100 ? 1 : 0;
-      const working = j.state === 'ok' || j.state === 'stall' ? 1 : 0.4;
-      const backwind = hd.kind === 'spin' ? 0 : working * clamp((s.angle - js.angle + 2) / 8, 0, 1) * close;
+      const working = hd.wing ? 0 : j.state === 'ok' || j.state === 'stall' ? 1 : 0.4;
+      const backwind = hd.kind === 'spin' || hd.wing ? 0 : working * clamp((s.angle - js.angle + 2) / 8, 0, 1) * close;
       const headed = 2 * working * close + 6 * backwind;
       const a = aero(aw.awa - s.angle - headed, s.camber, s.draft, IDEAL_DRAFT.main);
       a.backwind = backwind;
@@ -258,8 +265,13 @@
   function autoTrim(c0, env) {
     const keys = trimKeys(c0);
     let bestC = null, bestV = -Infinity;
-    for (const reef of [0, 1, 2]) {
-      let c = Object.assign({}, c0, { reef }), best = score(c, env).value, stepSz = 0.2;
+    const awa = apparent(env.tws * grad(7 * BOAT.k), Math.abs(env.twa), env.bs != null ? env.bs : 2, env.heel || 0).awa;
+    const wings = c0.head === 'jib' && awa > 130 ? [false, true] : [c0.head === 'jib' && awa > 130 ? !!c0.wing : false];
+    // Off the wind also start from eased sheets, so a search begun close-hauled doesn't stop short.
+    const eased = { mainsheet: 0.8, traveler: -1, vang: 0.6, jibSheet: 0.85, spinSheet: 0.6, spinPole: clamp((awa - 95) / 85, 0, 1), genSheet: 0.7, tackLine: clamp((awa - 90) / 60, 0, 1) };
+    const starts = awa > 100 ? [{}, eased] : [{}];
+    for (const wing of wings) for (const reef of [0, 1, 2]) for (const st of starts) {
+      let c = Object.assign({}, c0, st, { reef, wing }), best = score(c, env).value, stepSz = 0.2;
       while (stepSz > 0.01) {
         let improved = false;
         for (const k of keys) {
@@ -294,8 +306,11 @@
     if (m.some((x) => x.backwind > 0.5 && (x.state === 'luff' || x.state === 'flog'))) say(8, `${HEADSAILS[hd.kind]} is backwinding the main luff: ease it or trim the main in.`);
     if (hd.kind === 'jib') {
       if (down && tws < 20) say(4, 'Off the wind: hoist the spinnaker or gennaker for more power.');
+      if (!hd.wing && awa > 150) say(6.5, 'Jib collapsing behind the main: pole it out to windward, wing on wing.');
+      if (hd.wing && awa < 140) say(8, 'Too high for wing on wing: the poled jib is aback. Bear away or take the pole down.');
       // Jib lead: which height luffs first
-      if (j[2].windward === 'lift' && j[0].windward !== 'lift') say(7, 'Jib top luffs first: move the jib car forward (or trim the sheet).');
+      if (hd.wing) { /* telltales read the other way round on a poled-out jib */ }
+      else if (j[2].windward === 'lift' && j[0].windward !== 'lift') say(7, 'Jib top luffs first: move the jib car forward (or trim the sheet).');
       else if (j[0].windward === 'lift' && j[2].windward !== 'lift') say(7, 'Jib foot luffs first: move the jib car aft.');
       else if (j.every((x) => x.windward === 'lift')) say(7, 'Jib windward telltales lifting: trim the jib sheet or bear away.');
       else if (!down && j.every((x) => x.leeward === 'stall')) say(7, 'Jib leeward telltales stalled: ease the jib sheet or head up.');
@@ -345,6 +360,7 @@
     reach: { label: 'Beam reach', tws: 12, twa: 95, c: P({ mainsheet: 0.5, traveler: -1, vang: 0.45, mainHalyard: 0.5, outhaul: 0.35, backstay: 0.1, jibSheet: 0.55, jibLead: 0.4, jibHalyard: 0.5 }) },
     genReach: { label: 'Gennaker broad reach', tws: 12, twa: 125, c: P({ head: 'gen', mainsheet: 0.75, traveler: -1, vang: 0.55, outhaul: 0.3, backstay: 0, genSheet: 0.7, tackLine: 0.15 }) },
     run: { label: 'Run, jib', tws: 12, twa: 165, c: P({ mainsheet: 1, traveler: -1, vang: 0.6, outhaul: 0.2, backstay: 0, jibSheet: 0.9, jibLead: 0.5, jibHalyard: 0.4 }) },
+    wing: { label: 'Run, wing on wing', tws: 12, twa: 172, c: P({ wing: true, mainsheet: 1, traveler: -1, vang: 0.6, outhaul: 0.2, backstay: 0, jibSheet: 0.85, jibLead: 0.3, jibHalyard: 0.4 }) },
     spinRun: { label: 'Spinnaker run', tws: 14, twa: 160, c: P({ head: 'spin', mainsheet: 1, traveler: -1, vang: 0.6, outhaul: 0.2, backstay: 0, spinSheet: 0.7, spinPole: 0.75, poleHeight: 0.5 }) },
   };
 

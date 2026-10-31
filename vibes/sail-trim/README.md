@@ -18,6 +18,7 @@ Open `index.html` (no build, no deps). `?preset=light|medium|breezy|gale|reach|g
 | Jib car | Twist of the jib and depth of its foot: aft, the top luffs first; forward, the foot does. |
 | Jib halyard | Jib luff tension and draft position. |
 | Headsail | Jib, spinnaker or gennaker; each shows only its own controls. |
+| Wing on wing | The jib poled out to windward on a whisker pole, clear of the main's wind shadow. Only works within about 30 degrees of dead downwind; higher, the poled jib is aback. |
 | Spinnaker sheet, guy / pole, pole height | Sheet sets the clew. The pole angle should be at right angles to the apparent wind: too far forward on a run hides the kite behind the main, too far aft on a reach collapses the luff. Pole height should keep tack and clew level (a little lower in light air): too high curls the top of the luff first, too low the foot. A symmetric kite loses some efficiency on a tight reach. |
 | Gennaker sheet, tack line | Tack down on the bowsprit for a tight reach, eased up on a broad reach so the sail rotates out from behind the main. It can't go as deep as a spinnaker: on a run it sits in the main's wind shadow. |
 
@@ -36,7 +37,7 @@ Over 30 degrees of heel under a kite the boat broaches: she rounds up about 45 d
 - Each section has a groove of angle of attack between luffing (windward telltale lifts) and stalling (leeward telltale stalls). The groove is wider for a deep sail with the draft forward, narrower for a flat one or the draft aft, which is why light air wants full sails and a breeze lets you flatten them. Past the stall the section turns into drag, which is how a run works.
 - The jib heads the main a little, backwinds its luff when sheeted inside it, and sits in the main's shadow on a run.
 - Heel: heeling moment against a righting moment; heel reduces the wind the sails see (cos heel) and adds hull drag. Hull: friction, a wave wall near hull speed (about 6.8 kn), keel induced drag and leeway from side force, rudder drag from weather helm. Helm comes from heel and from main versus jib power.
-- Auto-trim: coordinate search over the controls of the sails that are up, for each number of reefs, for the fastest steady speed, with a penalty past 25 degrees of heel and for a heavy helm. A reef must gain a little to be chosen. It keeps the headsail you chose.
+- Auto-trim: coordinate search over the controls of the sails that are up, for each number of reefs, for the fastest steady speed, with a penalty past 25 degrees of heel and for a heavy helm. A reef must gain a little to be chosen. Off the wind it also starts from eased sheets (a search from close-hauled sheets stops short), and with the jib it tries wing on wing. It keeps the headsail you chose.
 - Trim coach: advice from the telltales and shape, the way a trim guide reads them.
 
 The numbers are tuned to feel right (12 kn of wind: about 5.6 kn close-hauled at 40 degrees, 7.2 kn on a beam reach, best VMG upwind near 40 degrees TWA), not fitted to a velocity prediction program.
