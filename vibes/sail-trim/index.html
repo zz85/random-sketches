@@ -1,0 +1,546 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sail Trim</title>
+<style>
+  :root { --bg:#0b1a26; --panel:#11283a; --line:#244a66; --text:#dbe8f2; --dim:#86a3b8; --ok:#3ad07a; --luff:#4aa3ff; --stall:#ff6a4d; --warn:#ffc34d; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--text); font:14px/1.35 system-ui, -apple-system, Segoe UI, sans-serif; }
+  body { display:grid; grid-template-columns: 1fr 1fr 330px; grid-template-rows: auto 1fr auto; height:100vh; gap:8px; padding:8px; }
+  header { grid-column: 1 / 4; display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+  header h1 { font-size:16px; margin:0 10px 0 2px; font-weight:600; }
+  .ro { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:3px 9px; min-width:76px; }
+  .ro b { display:block; font-size:18px; font-variant-numeric: tabular-nums; }
+  .ro span { font-size:11px; color:var(--dim); text-transform:uppercase; letter-spacing:.04em; }
+  #spark { background:var(--panel); border:1px solid var(--line); border-radius:8px; height:44px; width:180px; }
+  .view { position:relative; background:#0d2232; border:1px solid var(--line); border-radius:10px; overflow:hidden; min-height:0; }
+  .view canvas { position:absolute; inset:0; width:100%; height:100%; }
+  .view .cap { position:absolute; left:10px; top:6px; color:var(--dim); font-size:12px; pointer-events:none; }
+  aside { grid-row: 2 / 4; grid-column: 3; overflow:auto; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:8px 10px; }
+  fieldset { border:1px solid var(--line); border-radius:8px; margin:0 0 8px; padding:4px 8px 6px; }
+  legend { color:var(--dim); font-size:12px; padding:0 4px; }
+  .ctl { display:grid; grid-template-columns: 90px 1fr 62px; align-items:center; gap:6px; margin:3px 0; }
+  .ctl label { font-size:13px; cursor:help; }
+  .ctl output { text-align:right; font-variant-numeric: tabular-nums; color:var(--dim); font-size:12px; }
+  input[type=range] { width:100%; accent-color:#5fb4ff; }
+  .row { display:flex; gap:6px; flex-wrap:wrap; margin:4px 0; }
+  button, select { background:#1a3a52; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:5px 9px; font:inherit; font-size:13px; cursor:pointer; }
+  button:hover { background:#22496a; }
+  button.on { background:#2b6a46; }
+  #coach { grid-column: 1 / 3; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:6px 12px; min-height:64px; }
+  #coach h2 { font-size:12px; color:var(--dim); margin:0 0 2px; font-weight:500; text-transform:uppercase; letter-spacing:.04em; }
+  #coach ol { margin:0; padding-left:18px; }
+  #coach li:first-child { color:#fff; }
+  #toast { position:fixed; left:50%; top:70px; transform:translateX(-50%); background:#7a2a1c; padding:8px 14px; border-radius:8px; opacity:0; transition:opacity .3s; pointer-events:none; }
+  .legend { font-size:11px; color:var(--dim); }
+  .legend i { display:inline-block; width:10px; height:3px; margin:0 3px 2px 8px; vertical-align:middle; }
+  @media (max-width: 900px) {
+    body { grid-template-columns: 1fr; grid-template-rows: auto 46vh 46vh auto auto; height:auto; }
+    header, #coach, aside { grid-column: 1; grid-row: auto; }
+    .view { min-height: 46vh; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>⛵ Sail Trim</h1>
+  <div class="ro"><span>Boat speed</span><b id="r-bs">-</b></div>
+  <div class="ro"><span>VMG</span><b id="r-vmg">-</b></div>
+  <div class="ro"><span>TWS / TWA</span><b id="r-tw">-</b></div>
+  <div class="ro"><span>AWS / AWA</span><b id="r-aw">-</b></div>
+  <div class="ro"><span>Heel</span><b id="r-heel">-</b></div>
+  <div class="ro"><span>Leeway</span><b id="r-lee">-</b></div>
+  <div class="ro"><span>Helm</span><b id="r-helm">-</b></div>
+  <canvas id="spark" title="Boat speed, last 90 s"></canvas>
+</header>
+
+<div class="view"><canvas id="top"></canvas><div class="cap">From above: sail sections at 20 / 50 / 80% height (twist)
+  <div class="legend"><i style="background:var(--ok)"></i>attached <i style="background:var(--luff)"></i>luffing <i style="background:var(--stall)"></i>stalled <i style="background:#888"></i>flogging</div></div></div>
+<div class="view"><canvas id="side"></canvas><div class="cap">From abeam: draft stripes (depth exaggerated 2x), telltales, luff, mast bend, forestay sag</div></div>
+
+<aside id="controls"></aside>
+<section id="coach"><h2>Trim coach</h2><ol id="tips"></ol></section>
+<div id="toast"></div>
+
+<script src="model.js"></script>
+<script>
+'use strict';
+const M = window.SailModel, KN = M.KN, D = M.D;
+const COL = { ok:'#3ad07a', luff:'#4aa3ff', stall:'#ff6a4d', flog:'#8a9aa6' };
+
+// ---------- state ----------
+const params = new URLSearchParams(location.search);
+const preset = M.PRESETS[params.get('preset')] || M.PRESETS.medium;
+let c = Object.assign({}, preset.c);
+const S = { tws: preset.tws * KN, twa: preset.twa, bs: 2.5, heel: 5, leeway: 0 };
+let baseTws = preset.tws, course = preset.twa, targetCourse = null, turnDir = 0, gusts = true, t = 0, steer = 0;
+const ph = Array.from({ length: 6 }, () => Math.random() * 100);
+let last = null, trimAnim = null, spark = [], broachCool = 0;
+
+// ---------- controls ----------
+const pct = (v) => Math.round(v * 100) + '%';
+const REEFS = ['full main', '1 reef', '2 reefs'];
+const CTRL = [
+  ['Mainsail', 'main', [
+    ['mainsheet', 'Mainsheet', 'Sheet length. In: boom to the centreline and the leech held down (less twist). Out: boom swings off, and past about a third eased the sheet stops holding the leech.', (v) => 'out ' + pct(v)],
+    ['traveler', 'Traveler', 'Moves the boom across without changing leech tension. Drop it to leeward to depower in a puff while keeping the leech shape.', (v) => (v > 0 ? 'up ' : 'down ') + Math.round(Math.abs(v) * 100)],
+    ['vang', 'Vang', 'Pulls the boom down. Holds leech tension (twist) once the sheet is eased off the wind; bends the lower mast a little.', pct],
+    ['mainHalyard', 'Halyard', 'Luff tension. More pulls the draft forward; too little shows horizontal wrinkles, too much a vertical crease.', pct],
+    ['cunningham', 'Cunningham', 'Extra luff tension once the halyard is two-blocked. Pulls draft forward, flattens a bit, opens the top leech. A heavy-air control.', pct],
+    ['outhaul', 'Outhaul', 'Foot tension. Tighter flattens the lower third of the main (depower, point); eased adds depth and power.', pct],
+    ['reef', 'Reef', 'Slab reefs: each takes about a fifth of the main off its foot, lowering the centre of effort, so the boat heels less for the same drive. A reefed sail is a little less efficient, so reef when you are overpowered with everything else pulled on.', (v) => REEFS[Math.round(v)], 1],
+  ]],
+  ['Rig', 'rig', [
+    ['backstay', 'Backstay', 'Bends the mast, flattening the main (mostly the top) and twisting the upper leech open; tightens the forestay so the jib sags less and points higher.', pct],
+  ]],
+  ['Headsail', 'jib', [
+    ['jibSheet', 'Jib sheet', 'In: jib closer to the centreline, leech tighter. Out: opens the slot and the leech twists off.', (v) => 'out ' + pct(v)],
+    ['jibLead', 'Jib car', 'Lead block fore/aft. Forward: more leech tension, deeper foot, less twist (top luffs later). Aft: flatter foot, open leech.', (v) => (v > 0 ? 'fwd ' : 'aft ') + Math.round(Math.abs(v) * 100)],
+    ['jibHalyard', 'Halyard', 'Jib luff tension. Moves the jib draft forward and rounds the entry; too little scallops the luff.', pct],
+  ]],
+  ['', 'spin', [
+    ['spinSheet', 'Spin sheet', 'Trims the clew. Ease until the luff just curls, then trim a touch: the fastest trim sits right at the curl.', (v) => 'out ' + pct(v)],
+    ['spinPole', 'Guy / pole', 'Pole angle, set with the guy. Keep it at right angles to the apparent wind: squared back on a run, forward on a reach. Too far forward on a run hides the kite behind the main.', (v) => Math.round(5 + 85 * v) + '° aft'],
+    ['poleHeight', 'Pole height', 'Set so the tack and clew are level. Too high: the top of the luff curls first. Too low: the foot curls first. A little lower in light air.', pct],
+  ]],
+  ['', 'gen', [
+    ['genSheet', 'Gen sheet', 'Trims the clew of the asymmetric. Ease until the luff just curls.', (v) => 'out ' + pct(v)],
+    ['tackLine', 'Tack line', 'Tack down on the bowsprit for a tight reach (tighter luff). Eased up on a broad reach so the sail rotates out to windward from behind the main.', pct],
+  ]],
+];
+const aside = document.getElementById('controls'), outs = {}, inputs = {}, groups = {};
+const boatFs = document.createElement('fieldset');
+boatFs.innerHTML = `<legend>Boat</legend><div class="ctl"><label title="Length overall. Sail area grows with L squared, the heeling moment with L cubed and the righting moment with about L to the fourth, so a bigger boat is stiffer, faster (hull speed grows with the square root of length) and needs depowering later.">Length</label><input id="loa" type="range" min="20" max="50" step="1" value="${M.BOAT.loa}"><output id="loa-o">${M.BOAT.loa} ft</output></div><div class="legend" id="boat-info"></div>`;
+aside.appendChild(boatFs);
+for (const [group, key, items] of CTRL) {
+  const fs = document.createElement('fieldset');
+  fs.innerHTML = group ? `<legend>${group}</legend>` : '';
+  if (key === 'jib') {
+    // Headsail selector lives in the jib's fieldset; each sail's controls show only while it is set.
+    fs.innerHTML += `<div class="row" id="heads">${Object.entries(M.HEADSAILS).map(([k, n]) => `<button data-head="${k}">${n}</button>`).join('')}</div>`;
+  }
+  for (const [k, label, tip, fmt, step] of items) {
+    const [lo, hi] = M.RANGES[k];
+    const d = document.createElement('div'); d.className = 'ctl';
+    d.innerHTML = `<label title="${tip}">${label}</label><input type="range" min="${lo}" max="${hi}" step="${step || 0.01}"><output></output>`;
+    const inp = d.querySelector('input'), out = d.querySelector('output');
+    inp.value = c[k]; out.textContent = fmt(c[k]);
+    inp.addEventListener('input', () => { trimAnim = null; c[k] = +inp.value; out.textContent = fmt(c[k]); });
+    inputs[k] = inp; outs[k] = () => (out.textContent = fmt(c[k]));
+    fs.appendChild(d);
+  }
+  groups[key] = fs;
+  if (key === 'spin' || key === 'gen') groups.jib.appendChild(fs), fs.style.border = 'none', fs.style.padding = '0', fs.style.margin = '0';
+  else aside.appendChild(fs);
+}
+for (const b of document.querySelectorAll('#heads button')) b.onclick = () => setHead(b.dataset.head);
+function setHead(h) {
+  if (h !== c.head) toast(h === 'jib' ? 'Kite down, jib up.' : `${M.HEADSAILS[h]} up${c.head !== 'jib' ? '' : ', jib down'}.`);
+  c.head = h; showHead();
+}
+function showHead() {
+  for (const k of ['spin', 'gen']) groups[k].style.display = c.head === k ? '' : 'none';
+  for (const d of groups.jib.querySelectorAll(':scope > .ctl')) d.style.display = c.head === 'jib' ? '' : 'none';
+  for (const b of document.querySelectorAll('#heads button')) b.classList.toggle('on', b.dataset.head === c.head);
+}
+function boatInfo() {
+  const B = M.BOAT;
+  $('boat-info').textContent = `Main ${B.main.toFixed(0)} m², jib ${B.jib.toFixed(0)}, spinnaker ${B.spin.toFixed(0)}, gennaker ${B.gen.toFixed(0)}; ${(B.mass / 1000).toFixed(1)} t; hull speed ${(B.hullV / KN).toFixed(1)} kn`;
+}
+const env = document.createElement('fieldset');
+env.innerHTML = `<legend>Wind & helm</legend>
+  <div class="ctl"><label title="True wind speed at 10 m">Wind</label><input id="tws" type="range" min="2" max="35" step="0.5" value="${baseTws}"><output id="tws-o">${baseTws} kn</output></div>
+  <div class="row"><button id="gust" class="on" title="Puffs, lulls and wind shifts">Gusts & shifts</button>
+  <select id="preset">${Object.entries(M.PRESETS).map(([k, p]) => `<option value="${k}" ${p === preset ? 'selected' : ''}>${p.label}</option>`).join('')}</select></div>
+  <div class="row"><button id="up" title="Head up (Left arrow on starboard tack)">Head up</button><button id="down" title="Bear away">Bear away</button><button id="tack" title="Space">Tack / gybe</button></div>
+  <div class="row"><button id="auto" title="Search every control of the sails that are up, and the number of reefs, for the fastest steady trim at this wind and angle">Auto-trim</button><button id="reset">Reset trim</button></div>
+  <div class="legend">Keys: ← → steer, Space tack/gybe. Hover a control's name for what it does.</div>`;
+aside.appendChild(env);
+const $ = (id) => document.getElementById(id);
+$('loa').oninput = (e) => { M.setBoat(+e.target.value); $('loa-o').textContent = M.BOAT.loa + ' ft'; boatInfo(); };
+boatInfo(); showHead();
+$('tws').oninput = (e) => { baseTws = +e.target.value; $('tws-o').textContent = baseTws + ' kn'; };
+$('gust').onclick = (e) => { gusts = !gusts; e.target.classList.toggle('on', gusts); };
+$('preset').onchange = (e) => {
+  const p = M.PRESETS[e.target.value]; setTrim(p.c, false); baseTws = p.tws; course = Math.sign(course || 1) * p.twa;
+  $('tws').value = baseTws; $('tws-o').textContent = baseTws + ' kn';
+};
+const hold = (btn, dir) => {
+  const on = (e) => { e.preventDefault(); steer = dir(); }, off = () => (steer = 0);
+  btn.addEventListener('pointerdown', on); btn.addEventListener('pointerup', off); btn.addEventListener('pointerleave', off);
+};
+hold($('up'), () => -Math.sign(course || 1));   // head up = smaller |TWA|
+hold($('down'), () => Math.sign(course || 1));
+$('tack').onclick = tack;
+$('auto').onclick = () => setTrim(M.autoTrim(c, { tws: baseTws * KN, twa: course, bs: S.bs, heel: S.heel }), true);
+$('reset').onclick = () => setTrim(Object.assign(M.defaultControls(), { head: c.head }), true);
+addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT' && e.key !== ' ') return;
+  if (e.key === 'ArrowLeft') { steer = -1; e.preventDefault(); }       // bow to port
+  if (e.key === 'ArrowRight') { steer = 1; e.preventDefault(); }
+  if (e.key === ' ') { tack(); e.preventDefault(); }
+});
+addEventListener('keyup', (e) => { if (e.key.startsWith('Arrow')) steer = 0; });
+
+function setTrim(to, animate) {
+  if (to.head !== c.head) c.head = to.head;
+  showHead();
+  if (!animate) { c = Object.assign({}, to); syncInputs(); return; }
+  trimAnim = { from: Object.assign({}, c), to, t: 0 };
+}
+function syncInputs() { for (const k in inputs) { inputs[k].value = c[k]; outs[k](); } }
+function tack() {
+  if (targetCourse != null) return;
+  targetCourse = -course;
+  turnDir = Math.abs(course) < 90 ? -Math.sign(course) : Math.sign(course); // tack through the wind, gybe through dead downwind
+  if (Math.abs(course) > 120 && c.mainsheet > 0.6) toast('Crash gybe! Sheet the main in before you gybe.');
+}
+let toastT = 0;
+function toast(msg) { const el = $('toast'); el.textContent = msg; el.style.opacity = 1; clearTimeout(toastT); toastT = setTimeout(() => (el.style.opacity = 0), 2600); }
+
+// ---------- canvases ----------
+function fit(cv) {
+  const r = cv.getBoundingClientRect(), dpr = Math.min(devicePixelRatio || 1, 2);
+  const w = Math.round(r.width * dpr), h = Math.round(r.height * dpr);
+  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { g, w: r.width, h: r.height };
+}
+// Camber profile along the chord: 0 at luff and leech, 1 at the draft.
+const prof = (x, d) => (x < d ? 1 - ((d - x) / d) ** 2 : 1 - ((x - d) / (1 - d)) ** 2);
+const stateOf = (a) => (a.state === 'flog' ? 'flog' : a.state === 'luff' ? 'luff' : a.state === 'stall' ? 'stall' : 'ok');
+
+// Section of a sail seen from above, as a polyline from the luff point.
+function drawSection(g, x0, y0, ang, chord, camber, draft, lee, color, width, flog) {
+  const dx = lee * Math.sin(ang * D), dy = Math.cos(ang * D);  // chord direction (aft is +y)
+  const nx = lee * Math.cos(ang * D), ny = -Math.sin(ang * D); // bulge to leeward
+  g.beginPath();
+  for (let i = 0; i <= 24; i++) {
+    const x = i / 24;
+    let off = camber * chord * prof(x, draft);
+    if (flog) off = 0.18 * chord * Math.sin(x * 9 - t * 18) * x * (1 - x) * 2;
+    const px = x0 + dx * chord * x + nx * off, py = y0 + dy * chord * x + ny * off;
+    i ? g.lineTo(px, py) : g.moveTo(px, py);
+  }
+  g.strokeStyle = color; g.lineWidth = width; g.stroke();
+}
+
+function drawTop(f) {
+  const { g, w, h } = fit($('top'));
+  g.clearRect(0, 0, w, h);
+  const sc = Math.min(w, h) / 13, cx = w / 2, cy = h * 0.5;
+  const side = Math.sign(S.twa || 1), lee = -side;   // twa>0: wind from starboard, sails to port (screen left)
+  // true wind streaks across the water
+  const wx = -side * Math.sin(Math.abs(S.twa) * D), wy = Math.cos(Math.abs(S.twa) * D); // direction the wind blows to
+  g.save(); g.strokeStyle = 'rgba(140,190,230,.18)'; g.lineWidth = 1.2;
+  const sp = (S.tws / KN) * 6, L = 26;
+  for (let i = 0; i < 60; i++) {
+    const a = (i * 97.3) % w, b = (i * 53.7) % h;
+    const k = ((t * sp + i * 41) % (w + h));
+    const x = (a + wx * k) % (w + 40) - 20, y = (b + wy * k) % (h + 40) - 20;
+    const X = x < -20 ? x + w + 40 : x, Y = y < -20 ? y + h + 40 : y;
+    g.beginPath(); g.moveTo(X, Y); g.lineTo(X + wx * L, Y + wy * L); g.stroke();
+  }
+  g.restore();
+  // boat wake: water passes aft at boat speed
+  g.save(); g.translate(cx, cy);
+  g.strokeStyle = 'rgba(255,255,255,.12)';
+  for (let i = 0; i < 14; i++) {
+    const y = ((t * S.bs * sc + i * 40) % (h)) - h / 2;
+    g.beginPath(); g.moveTo(-sc * 2.2, y); g.lineTo(-sc * 2.2, y + 10); g.moveTo(sc * 2.2, y); g.lineTo(sc * 2.2, y + 10); g.stroke();
+  }
+  g.rotate(-lee * (S.leeway || 0) * D * 0.5);
+  // hull
+  const bowY = -4.6 * sc, sternY = 4.4 * sc, beam = 1.6 * sc;
+  g.beginPath(); g.moveTo(0, bowY);
+  g.bezierCurveTo(beam * 1.05, bowY + 2.2 * sc, beam, sternY - 1.5 * sc, beam * 0.85, sternY);
+  g.lineTo(-beam * 0.85, sternY);
+  g.bezierCurveTo(-beam, sternY - 1.5 * sc, -beam * 1.05, bowY + 2.2 * sc, 0, bowY);
+  g.fillStyle = '#e9eef2'; g.fill(); g.strokeStyle = '#90a4b4'; g.lineWidth = 1; g.stroke();
+  g.fillStyle = '#c9d3db'; g.fillRect(-beam * 0.5, 0.6 * sc, beam, 2.4 * sc);
+  // traveler track
+  const travY = 3.4 * sc;
+  g.strokeStyle = '#555'; g.lineWidth = 3; g.beginPath(); g.moveTo(-beam * 0.75, travY); g.lineTo(beam * 0.75, travY); g.stroke();
+  const sh = f.shape, mastY = -1.1 * sc, tackY = -4.4 * sc;
+  const K = M.BOAT.k, hd = sh.head;
+  // jib car tracks
+  const carY = (0.1 - 0.5 * c.jibLead) * sc;
+  g.strokeStyle = '#666'; g.lineWidth = 2;
+  for (const s of [-1, 1]) { g.beginPath(); g.moveTo(s * beam * 0.75, -0.6 * sc); g.lineTo(s * beam * 0.8, 0.8 * sc); g.stroke(); }
+  if (hd.kind === 'jib') { g.fillStyle = '#ffd04d'; g.fillRect(lee * beam * 0.78 - 3, carY - 3, 6, 6); }
+  // headsail: luff on the forestay, the pole end or the bowsprit; top section first so the foot draws over it
+  let lx = 0, ly = tackY, chord = (h) => M.BOAT.jibFoot / K * (1 - 0.6 * h) * sc;
+  if (hd.kind === 'spin') {
+    const p = hd.poleDeg * D, pl = M.BOAT.pole / K * sc;
+    lx = side * Math.sin(p) * pl; ly = mastY - Math.cos(p) * pl;
+    g.strokeStyle = '#cfd6dc'; g.lineWidth = 2.5; g.beginPath(); g.moveTo(0, mastY); g.lineTo(lx, ly); g.stroke();
+    chord = (h) => 5.6 * (1 - 0.35 * h) * sc;
+  } else if (hd.kind === 'gen') {
+    const spritY = bowY - 1.1 * sc;
+    g.strokeStyle = '#cfd6dc'; g.lineWidth = 2.5; g.beginPath(); g.moveTo(0, bowY + 0.4 * sc); g.lineTo(0, spritY); g.stroke();
+    lx = side * c.tackLine * 0.5 * sc; ly = spritY;
+    chord = (h) => 5.8 * (1 - 0.45 * h) * sc;
+  }
+  for (let i = 2; i >= 0; i--) {
+    const s = hd.sections[i], a = f.flow.head[i], st = stateOf(a);
+    drawSection(g, lx, ly, s.angle, chord(s.h), s.camber, s.draft, lee, COL[st], (hd.kind === 'jib' ? 3.2 : 4.2) - i * 0.8, st === 'flog');
+  }
+  for (let i = 2; i >= 0; i--) {
+    const s = sh.main.sections[i], a = f.flow.main[i], st = stateOf(a);
+    drawSection(g, 0, mastY, s.angle, M.BOAT.boom / K * (1 - 0.5 * s.h) * sc, s.camber, s.draft, lee, COL[st], 3.6 - i * 0.9, st === 'flog');
+  }
+  // boom + mainsheet to traveler car
+  const bAng = sh.main.boom * D, bl = M.BOAT.boom / K * sc;
+  const bx = lee * Math.sin(bAng) * bl, by = mastY + Math.cos(bAng) * bl;
+  g.strokeStyle = '#cfd6dc'; g.lineWidth = 2.5; g.beginPath(); g.moveTo(0, mastY); g.lineTo(bx, by); g.stroke();
+  const tcx = side * c.traveler * beam * 0.7;   // traveler up = to windward
+  g.strokeStyle = 'rgba(255,255,255,.5)'; g.lineWidth = 1; g.setLineDash([3, 3]);
+  const sx = bx * 0.85, sy = mastY + (by - mastY) * 0.85;
+  g.beginPath(); g.moveTo(sx, sy); g.lineTo(tcx, travY); g.stroke(); g.setLineDash([]);
+  g.fillStyle = '#ffd04d'; g.fillRect(tcx - 4, travY - 3, 8, 6);
+  g.fillStyle = '#222'; g.beginPath(); g.arc(0, mastY, 3.5, 0, 7); g.fill();
+  // masthead fly: apparent wind
+  const awa = f.aw.awa * D, fl = 1.2 * sc;
+  g.strokeStyle = '#ffc34d'; g.lineWidth = 2; g.beginPath();
+  g.moveTo(0, mastY); g.lineTo(-side * Math.sin(awa) * fl, mastY + Math.cos(awa) * fl); g.stroke();
+  g.restore();
+  // wind arrow at the edge
+  const ax = cx - wx * Math.min(w, h) * 0.42, ay = cy - wy * Math.min(w, h) * 0.42;
+  arrow(g, ax, ay, ax + wx * 34, ay + wy * 34, '#8cc8ff');
+  g.fillStyle = '#8cc8ff'; g.font = '12px system-ui'; g.fillText(`TWS ${(S.tws / KN).toFixed(1)} kn`, ax - 30 + wx * 40, ay + wy * 50 + 4);
+  // twist readouts
+  g.fillStyle = '#9fb6c7'; g.font = '12px system-ui';
+  g.fillText(`Main twist ${sh.main.twist.toFixed(0)}°   boom ${sh.main.boom.toFixed(0)}°`, 10, h - 26);
+  g.fillText(`${M.HEADSAILS[sh.head.kind]} twist ${sh.head.twist.toFixed(0)}°   sheeted ${sh.head.clew.toFixed(0)}°` + (sh.head.kind === "spin" ? `   pole ${sh.head.poleDeg.toFixed(0)}° (best ${sh.head.idealPole.toFixed(0)}°)` : ""), 10, h - 10);
+  g.fillText(`${M.BOAT.loa} ft`, w - 46, h - 10);
+}
+function clamp(x, a, b) { return x < a ? a : x > b ? b : x; }
+function arrow(g, x0, y0, x1, y1, col) {
+  g.strokeStyle = g.fillStyle = col; g.lineWidth = 2.5;
+  g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
+  const a = Math.atan2(y1 - y0, x1 - x0);
+  g.beginPath(); g.moveTo(x1, y1); g.lineTo(x1 - 9 * Math.cos(a - 0.4), y1 - 9 * Math.sin(a - 0.4)); g.lineTo(x1 - 9 * Math.cos(a + 0.4), y1 - 9 * Math.sin(a + 0.4)); g.fill();
+}
+
+// Telltale ribbon: 'stream' straight aft, 'flutter' wavy, 'lift' curls up, 'stall' droops and spins.
+function telltale(g, x, y, mode, col, dash) {
+  g.beginPath(); g.moveTo(x, y);
+  for (let i = 1; i <= 8; i++) {
+    const k = i / 8, wob = Math.sin(t * 16 + i) * k;
+    let dx = k * 18, dy = 0;
+    if (mode === 'flutter') dy = wob * 3;
+    if (mode === 'lift') { dx = 18 * Math.sin(k * 2.2) * 0.8; dy = -k * 12 + wob * 2; }
+    if (mode === 'stall') { dx = 10 * Math.sin(k * 3 + t * 6) * 0.6; dy = k * 13 + wob * 2; }
+    g.lineTo(x + dx, y + dy);
+  }
+  g.strokeStyle = col; g.lineWidth = 2; g.setLineDash(dash ? [3, 2] : []); g.stroke(); g.setLineDash([]);
+}
+
+function drawSide(f) {
+  const { g, w, h } = fit($('side'));
+  g.clearRect(0, 0, w, h);
+  const sh = f.shape, sc = Math.min(h / 15.5, w / 11.5);
+  const deckY = h - 1.8 * sc, bowX = w / 2 - 4.4 * sc, mastX = w / 2 - 0.9 * sc;
+  const K = M.BOAT.k, hd = sh.head, kite = hd.kind !== 'jib';
+  const mastTop = deckY - M.BOAT.mast / K * sc, boomY = deckY - 1.2 * sc;
+  // sea + hull
+  g.fillStyle = '#123247'; g.fillRect(0, deckY + 0.5 * sc, w, h);
+  g.beginPath(); g.moveTo(bowX - 0.3 * sc, deckY); g.lineTo(w / 2 + 4.6 * sc, deckY); g.lineTo(w / 2 + 4.3 * sc, deckY + 0.9 * sc);
+  g.quadraticCurveTo(w / 2, deckY + 1.3 * sc, bowX + 0.4 * sc, deckY + 0.7 * sc); g.closePath();
+  g.fillStyle = '#e9eef2'; g.fill();
+  // mast (bends forward in the middle with backstay)
+  const bendPx = sh.main.bend * 0.35 * sc * 2;   // exaggerated 2x
+  const mastAt = (k) => ({ x: mastX - bendPx * Math.sin(Math.PI * k) * (0.6 + 0.4 * k), y: boomY - (boomY - mastTop) * k });
+  g.strokeStyle = '#d0d6db'; g.lineWidth = 3; g.beginPath();
+  for (let i = 0; i <= 20; i++) { const p = mastAt(i / 20); i ? g.lineTo(p.x, p.y) : g.moveTo(p.x, deckY); }
+  g.stroke();
+  // backstay
+  g.strokeStyle = `rgba(200,210,220,${0.35 + 0.5 * c.backstay})`; g.lineWidth = 1 + c.backstay * 1.5;
+  g.beginPath(); g.moveTo(mastAt(1).x, mastTop); g.lineTo(w / 2 + 4.5 * sc, deckY); g.stroke();
+  // forestay with sag (bows aft)
+  const head = { x: mastAt(1).x, y: mastTop + 0.2 * sc }, tack = { x: bowX, y: deckY - 0.3 * sc };
+  const sagPx = sh.jib.sag * 0.35 * sc * 2;
+  const stayAt = (k) => { // k: 0 tack .. 1 head
+    const x = tack.x + (head.x - tack.x) * k, y = tack.y + (head.y - tack.y) * k;
+    const nx = 0.9, ny = 0.35, s = Math.sin(Math.PI * k) * sagPx; return { x: x + nx * s, y: y + ny * s * 0.3 };
+  };
+  // headsail outline: luff(k) and leech(k), k 0 = foot .. 1 = head
+  let luffAt, leechAt, fill;
+  if (!kite) {
+    const clew = { x: mastX + 0.6 * sc, y: deckY - 0.6 * sc }, jHead = stayAt(0.92);
+    luffAt = (k) => stayAt(k * 0.92);
+    leechAt = (k) => ({ x: clew.x + (jHead.x - clew.x) * k + Math.sin(Math.PI * k) * 0.2 * sc, y: clew.y + (jHead.y - clew.y) * k });
+    fill = 'rgba(230,236,242,.78)';
+  } else {
+    // bare forestay
+    g.strokeStyle = 'rgba(200,210,220,.6)'; g.lineWidth = 1; g.beginPath(); g.moveTo(tack.x, tack.y); g.lineTo(head.x, head.y); g.stroke();
+    let tk, hk, cl, bulge;
+    if (hd.kind === 'spin') {
+      const px = mastX - Math.cos(hd.poleDeg * D) * M.BOAT.pole / K * sc, py = deckY - (1.2 + c.poleHeight * 2.4) * sc;
+      g.strokeStyle = '#cfd6dc'; g.lineWidth = 2.5; g.beginPath(); g.moveTo(mastX, deckY - 1.6 * sc); g.lineTo(px, py); g.stroke();
+      tk = { x: px, y: py }; hk = { x: head.x - 0.3 * sc, y: mastTop + 0.1 * sc }; cl = { x: mastX + 0.5 * sc, y: deckY - 1.5 * sc }; bulge = 1.9;
+      fill = 'rgba(226,78,66,.72)';
+    } else {
+      const sx = bowX - 1.1 * sc;
+      g.strokeStyle = '#cfd6dc'; g.lineWidth = 3; g.beginPath(); g.moveTo(bowX + 0.2 * sc, deckY - 0.2 * sc); g.lineTo(sx, deckY - 0.25 * sc); g.stroke();
+      tk = { x: sx, y: deckY - (0.3 + c.tackLine * 1.1) * sc }; hk = mastAt(0.9); cl = { x: mastX + 0.9 * sc, y: deckY - 1.3 * sc }; bulge = 1.3;
+      g.strokeStyle = '#ffd04d'; g.lineWidth = 1; g.beginPath(); g.moveTo(sx, deckY - 0.25 * sc); g.lineTo(tk.x, tk.y); g.stroke();
+      fill = 'rgba(62,140,228,.7)';
+    }
+    luffAt = (k) => ({ x: tk.x + (hk.x - tk.x) * k - Math.sin(Math.PI * k) * bulge * sc, y: tk.y + (hk.y - tk.y) * k });
+    leechAt = (k) => ({ x: cl.x + (hk.x - cl.x) * k + Math.sin(Math.PI * k) * 0.3 * sc, y: cl.y + (hk.y - cl.y) * k });
+  }
+  const drawHead = () => {
+    g.beginPath(); for (let i = 0; i <= 20; i++) { const p = luffAt(i / 20); i ? g.lineTo(p.x, p.y) : g.moveTo(p.x, p.y); }
+    for (let i = 20; i >= 0; i--) { const p = leechAt(i / 20); g.lineTo(p.x, p.y); }
+    g.closePath(); g.fillStyle = fill; g.fill(); g.strokeStyle = '#aab8c4'; g.lineWidth = 1; g.stroke();
+  };
+  if (!kite) drawHead();
+  // main outline (luff on the mast, foot on the boom, roach on the leech)
+  const hoist = 0.97 * sh.main.hoist, mHead = mastAt(hoist), mClew = { x: mastX + M.BOAT.boom / K * sc, y: boomY };
+  const mLeech = (k) => ({ x: mClew.x + (mHead.x - mClew.x) * k + Math.sin(Math.PI * k) * 0.5 * sc, y: mClew.y + (mHead.y - mClew.y) * k });
+  g.beginPath(); for (let i = 0; i <= 20; i++) { const p = mastAt(i / 20 * hoist); i ? g.lineTo(p.x + 2, p.y) : g.moveTo(p.x + 2, p.y); }
+  for (let i = 20; i >= 0; i--) { const p = mLeech(i / 20); g.lineTo(p.x, p.y); }
+  g.closePath(); g.fillStyle = 'rgba(240,244,248,.9)'; g.fill(); g.strokeStyle = '#aab8c4'; g.stroke();
+  g.strokeStyle = '#9aa6b0'; g.lineWidth = 3.5; g.beginPath(); g.moveTo(mastX, boomY); g.lineTo(mClew.x + 0.2 * sc, boomY); g.stroke();
+  // reefed sail bundled along the boom, with reef points
+  if (sh.main.reef) {
+    g.fillStyle = 'rgba(225,232,238,.95)'; g.fillRect(mastX + 2, boomY - (2 + 3 * sh.main.reef), mClew.x - mastX - 2, 2 + 3 * sh.main.reef);
+    g.fillStyle = '#5a6b78'; for (let x = mastX + 10; x < mClew.x - 4; x += 12) g.fillRect(x, boomY - 3 - 3 * sh.main.reef, 1.5, 4);
+  }
+  if (kite) drawHead();
+  // cunningham / outhaul tension marks
+  g.fillStyle = '#ffd04d';
+  g.fillRect(mastX + 2, boomY - 0.6 * sc - c.cunningham * 0.4 * sc, 4, 4);
+  // draft stripes
+  const stripe = (lu, le, s, a, isMain) => {
+    const st = stateOf(a), chord = Math.hypot(le.x - lu.x, le.y - lu.y);
+    g.beginPath();
+    for (let i = 0; i <= 24; i++) {
+      const x = i / 24, off = s.camber * prof(x, s.draft) * chord * 2;
+      const px = lu.x + (le.x - lu.x) * x, py = lu.y + (le.y - lu.y) * x - off;
+      i ? g.lineTo(px, py) : g.moveTo(px, py);
+    }
+    g.strokeStyle = COL[st]; g.lineWidth = 2; g.stroke();
+    g.strokeStyle = 'rgba(40,60,80,.35)'; g.lineWidth = 1; g.beginPath(); g.moveTo(lu.x, lu.y); g.lineTo(le.x, le.y); g.stroke();
+    const dx = lu.x + (le.x - lu.x) * s.draft, dy = lu.y + (le.y - lu.y) * s.draft - s.camber * chord * 2;
+    g.fillStyle = COL[st]; g.beginPath(); g.arc(dx, dy, 3, 0, 7); g.fill();
+    g.fillStyle = '#28445a'; g.font = '11px system-ui';
+    g.fillText(`${(s.camber * 100).toFixed(0)}% @ ${(s.draft * 100).toFixed(0)}`, dx - 22, dy - 6);
+    // telltales: jib luff pair (windward solid, leeward dashed), main leech; a kite shows its luff curling
+    if (isMain === 'kite') {
+      if (a.state === 'luff' || a.state === 'flog' || a.alpha < a.luffA + 1.5) {
+        const p = lu, amp = a.state === 'flog' ? 14 : a.state === 'luff' ? 9 : 4 + 2 * Math.sin(t * 9);
+        g.strokeStyle = '#fff'; g.lineWidth = 2; g.beginPath(); g.moveTo(p.x, p.y - 10); g.quadraticCurveTo(p.x + amp, p.y, p.x, p.y + 10); g.stroke();
+      }
+    } else if (!isMain) {
+      const tx = lu.x + (le.x - lu.x) * 0.12, ty = lu.y + (le.y - lu.y) * 0.12 + 8;
+      telltale(g, tx, ty, a.windward, '#c0392b', false);
+      telltale(g, tx, ty + 7, a.leeward, '#1f8f4e', true);
+    } else {
+      telltale(g, le.x + 2, le.y, a.leeward === 'stall' ? 'stall' : a.leeward === 'flutter' ? 'flutter' : 'stream', a.leeward === 'stall' ? '#c0392b' : '#1f8f4e', false);
+    }
+  };
+  for (let i = 0; i < 3; i++) {
+    const s = hd.sections[i], k = s.h;
+    stripe(luffAt(k), leechAt(k), s, f.flow.head[i], kite ? 'kite' : false);
+  }
+  for (let i = 0; i < 3; i++) {
+    const s = sh.main.sections[i], k = s.h, lu = mastAt(k * hoist);
+    stripe({ x: lu.x + 3, y: lu.y }, mLeech(k), s, f.flow.main[i], true);
+  }
+  // luff wrinkles
+  const wrinkles = (luffAt, kind, upto, dirx) => {
+    g.strokeStyle = 'rgba(60,80,100,.55)'; g.lineWidth = 1;
+    if (kind === 'scallops') for (let k = 0.08; k < upto; k += 0.07) {
+      const p = luffAt(k); g.beginPath(); g.moveTo(p.x + 3, p.y); g.quadraticCurveTo(p.x + dirx * 12, p.y - 6, p.x + dirx * 20, p.y - 2); g.stroke();
+    }
+    if (kind === 'crease') { g.beginPath(); for (let i = 0; i <= 20; i++) { const p = luffAt(0.05 + i / 20 * (upto - 0.1)); i ? g.lineTo(p.x + dirx * 14, p.y) : g.moveTo(p.x + dirx * 14, p.y); } g.stroke(); }
+  };
+  wrinkles((k) => mastAt(k), sh.main.luff, 0.95, 1);
+  if (!kite) wrinkles(luffAt, hd.luff, 0.95, 1);
+  g.fillStyle = '#9fb6c7'; g.font = '12px system-ui';
+  const tx = w - 170;
+  g.fillText(`Mast bend ${(sh.main.bend * 100).toFixed(0)}%`, tx, 40);
+  g.fillText(`Forestay sag ${(sh.jib.sag * 20).toFixed(0)} cm`, tx, 56);
+  g.fillText(`Main luff: ${sh.main.luff}`, tx, 72);
+  if (!kite) g.fillText(`Jib luff: ${hd.luff}`, tx, 88);
+  else if (hd.kind === 'spin') g.fillText(`Pole height ${pct(c.poleHeight)} (level ${pct(hd.phIdeal)})`, tx - 40, 88);
+  else g.fillText(`Tack line ${pct(c.tackLine)} (best ~${pct(hd.tackIdeal)})`, tx - 40, 88);
+  if (sh.main.reef) g.fillText(REEFS[sh.main.reef], tx, 104);
+  g.fillText(kite ? 'White curl at the kite luff: just curling is fastest' : 'Jib telltales: red windward, green leeward', 10, h - 10);
+}
+
+function drawSpark() {
+  const { g, w, h } = fit($('spark'));
+  g.clearRect(0, 0, w, h);
+  if (spark.length < 2) return;
+  const max = Math.max(4, ...spark) * 1.1;
+  g.beginPath(); spark.forEach((v, i) => { const x = (i / 450) * w, y = h - (v / max) * (h - 6) - 3; i ? g.lineTo(x, y) : g.moveTo(x, y); });
+  g.strokeStyle = '#5fb4ff'; g.lineWidth = 1.5; g.stroke();
+  g.fillStyle = '#86a3b8'; g.font = '10px system-ui'; g.fillText(max.toFixed(0) + ' kn', 3, 10);
+}
+
+// ---------- loop ----------
+let tipsShown = '', sparkT = 0, readT = 0;
+function frame(now) {
+  const dt = Math.min(0.05, last == null ? 0.016 : (now - last) / 1000); last = now; t += dt;
+  // wind
+  const g1 = gusts ? 1 + 0.18 * Math.sin(t * 0.13 + ph[0]) + 0.1 * Math.sin(t * 0.37 + ph[1]) + 0.06 * Math.sin(t * 0.9 + ph[2]) : 1;
+  const shift = gusts ? 6 * Math.sin(t * 0.05 + ph[3]) + 3 * Math.sin(t * 0.21 + ph[4]) : 0;
+  S.tws = baseTws * KN * g1;
+  // steering and tacking
+  if (targetCourse != null) {
+    course += turnDir * 14 * dt;
+    if (Math.abs(course) > 180) course = -Math.sign(course) * (360 - Math.abs(course));
+    if (Math.sign(course) === Math.sign(targetCourse) && Math.abs(Math.abs(course) - Math.abs(targetCourse)) < 1) { course = targetCourse; targetCourse = null; }
+  } else if (steer) {
+    const prev = course; course += steer * 25 * dt;
+    if (course > 180) course -= 360; if (course < -180) course += 360;
+    if (Math.abs(prev) > 150 && Math.sign(prev) !== Math.sign(course) && c.mainsheet > 0.6) toast('Crash gybe! Sheet the main in before you gybe.');
+  }
+  let twa = course + shift; if (twa > 180) twa -= 360; if (twa < -180) twa += 360;
+  S.twa = twa;
+  // trim animation
+  if (trimAnim) {
+    trimAnim.t = Math.min(1, trimAnim.t + dt / 1.2);
+    const e = trimAnim.t * trimAnim.t * (3 - 2 * trimAnim.t);
+    for (const k in c) if (typeof c[k] === 'number') c[k] = trimAnim.from[k] + (trimAnim.to[k] - trimAnim.from[k]) * e;
+    if (trimAnim.t >= 1) c.reef = Math.round(c.reef);
+    syncInputs(); if (trimAnim.t >= 1) trimAnim = null;
+  }
+  // physics in small steps
+  let r; for (let i = 0; i < 4; i++) r = M.step(S, c, dt / 4);
+  const f = r.f;
+  // Broach: overpowered under a kite the rudder stalls and she rounds up hard, knocked flat.
+  broachCool -= dt;
+  if (c.head !== 'jib' && S.heel > 30 && broachCool <= 0 && targetCourse == null) {
+    broachCool = 8; toast('Broach! Rounded up and knocked flat. Ease the kite sheet and vang in the puffs, or bear away.');
+    course = Math.sign(course) * Math.max(40, Math.abs(course) - 45); S.bs *= 0.45; S.heel = 50;
+  }
+  drawTop(f); drawSide(f);
+  readT += dt;
+  if (readT > 0.15) {
+    readT = 0;
+    const bsKn = S.bs / KN;
+    $('r-bs').textContent = bsKn.toFixed(2) + ' kn';
+    $('r-vmg').textContent = (bsKn * Math.cos(S.twa * D)).toFixed(2);
+    $('r-tw').textContent = `${(S.tws / KN).toFixed(1)} / ${Math.abs(S.twa).toFixed(0)}° ${S.twa >= 0 ? 'S' : 'P'}`;
+    $('r-aw').textContent = `${(f.aw.aws / KN).toFixed(1)} / ${f.aw.awa.toFixed(0)}°`;
+    $('r-heel').textContent = S.heel.toFixed(0) + '°';
+    $('r-heel').style.color = S.heel > 26 ? 'var(--stall)' : S.heel > 20 ? 'var(--warn)' : '';
+    $('r-lee').textContent = (S.leeway || 0).toFixed(1) + '°';
+    $('r-helm').textContent = (f.helm >= 0 ? 'weather ' : 'lee ') + Math.abs(f.helm).toFixed(0) + '°';
+    const tips = M.coach(f, S, c).slice(0, 4), key = tips.join('|');
+    if (key !== tipsShown) { tipsShown = key; $('tips').innerHTML = tips.map((x) => `<li>${x}</li>`).join(''); }
+  }
+  sparkT += dt;
+  if (sparkT > 0.2) { sparkT = 0; spark.push(S.bs / KN); if (spark.length > 450) spark.shift(); drawSpark(); }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
