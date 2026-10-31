@@ -112,7 +112,7 @@ const CTRL = [
 ];
 const aside = document.getElementById('controls'), outs = {}, inputs = {}, groups = {};
 const boatFs = document.createElement('fieldset');
-boatFs.innerHTML = `<legend>Boat</legend><div class="ctl"><label title="Length overall. Sail area grows with L squared, the heeling moment with L cubed and the righting moment with about L to the fourth, so a bigger boat is stiffer, faster (hull speed grows with the square root of length) and needs depowering later.">Length</label><input id="loa" type="range" min="20" max="50" step="1" value="${M.BOAT.loa}"><output id="loa-o">${M.BOAT.loa} ft</output></div><div class="legend" id="boat-info"></div>`;
+boatFs.innerHTML = `<legend>Boat: Catalina 30, scaled</legend><div class="ctl"><label title="Length overall. Sail area grows with L squared, the heeling moment with L cubed and the righting moment with about L to the fourth, so a bigger boat is stiffer, faster (hull speed grows with the square root of length) and needs depowering later.">Length</label><input id="loa" type="range" min="20" max="50" step="0.1" value="${M.BOAT.loa}"><output id="loa-o">${M.BOAT.loa} ft</output></div><div class="legend" id="boat-info"></div>`;
 aside.appendChild(boatFs);
 for (const [group, key, items] of CTRL) {
   const fs = document.createElement('fieldset');

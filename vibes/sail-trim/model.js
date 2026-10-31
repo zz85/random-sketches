@@ -5,20 +5,32 @@
   const KN = 0.514444, RHO = 1.225, RHO_W = 1025, D = Math.PI / 180;
   const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
 
-  // A masthead sloop scaled from a 30 footer. Areas go with L^2, displacement with L^3,
-  // righting moment with L^4 (beam and keel depth both grow), hull speed with sqrt(L).
+  // The base boat is a Catalina 30 (masthead sloop) as its ORC certificate measures it; other lengths scale
+  // from it: areas with L^2, displacement with L^3, righting moment with L^4 (beam and keel depth both grow).
+  const BASE = { loa: 29.3, lwl: 7.628, main: 22.57, jib: 33.4, spin: 60.3, gen: 50, mast: 12.2, boom: 3.7, jibFoot: 5.6, pole: 3.7, mass: 5648, crew: 465, wet: 21.73 };
+  // Coefficients the model can't measure, fitted to the ORC polar by calib/calibrate.js (calib/cal.json).
+  const CAL = {
+    lift: 0.7783, parasitic: 0.02859, kite: 0.7559,   // sail lift scale, sail parasitic drag, spinnaker efficiency
+    fric: 0.003263, heelDrag: 1.443,                 // hull skin friction coefficient, extra friction at 30 deg heel
+    cw: 0.0189, fnExp: 9.529,  // residuary resistance / weight at Froude number 0.4, and how fast it rises
+    rm: 41130,                // righting moment per unit sin(heel) of the base boat, N m
+    spinClear: 0.4509,          // how much of the main's wind shadow a squared-back spinnaker gets out of
+    windage: 3.154,              // hull, rig and crew windage area x drag coefficient, m^2
+  };
   function makeBoat(ft) {
-    const k = ft / 30;
+    const k = ft / BASE.loa, lwl = BASE.lwl * k;
     return {
-      loa: ft, k,
-      main: 25 * k * k, jib: 20 * k * k, spin: 55 * k * k, gen: 46 * k * k,
-      mast: 12 * k, boom: 4.2 * k, jibFoot: 4.6 * k, pole: 3.6 * k,
-      mass: 4200 * k ** 3, rm: 42000 * k ** 4,   // righting moment per unit tan(heel), N m
-      keelA: 2.0 * k * k, keelAR: 2.5, keelZ: 1.2 * k, wet: 20 * k * k, hullV: 3.5 * Math.sqrt(k),
+      loa: Math.round(ft * 10) / 10, k, lwl,
+      main: BASE.main * k * k, jib: BASE.jib * k * k, spin: BASE.spin * k * k, gen: BASE.gen * k * k,
+      mast: BASE.mast * k, boom: BASE.boom * k, jibFoot: BASE.jibFoot * k, pole: BASE.pole * k,
+      mass: BASE.mass * k ** 3, crew: BASE.crew * k ** 3, rm: CAL.rm * k ** 4,
+      keelA: 1.6 * k * k, keelAR: 2.5, keelZ: 1.2 * k, wet: BASE.wet * k * k,
+      hullV: 1.34 * Math.sqrt(lwl / 0.3048) * KN, // the classic "hull speed", for display
     };
   }
-  const BOAT = makeBoat(30);
+  const BOAT = makeBoat(BASE.loa);
   function setBoat(ft) { return Object.assign(BOAT, makeBoat(clamp(ft, 16, 60))); }
+  function setCal(o) { Object.assign(CAL, o); return setBoat(BOAT.loa); }
 
   const H = [0.2, 0.5, 0.8];          // section heights (fraction of hoist)
   const MAIN_W = [0.42, 0.35, 0.23];  // area share per section
@@ -137,7 +149,7 @@
     const opt = 4 + 70 * camber;
     const w = Math.max(2, 3 + 30 * camber + (0.5 - draft) * 16);
     const luffA = opt - w / 2, stallA = opt + w / 2;
-    const clMax = (0.7 + 5 * camber) * (1 - 4 * (draft - ideal) * (draft - ideal));
+    const clMax = CAL.lift * (0.7 + 5 * camber) * (1 - 4 * (draft - ideal) * (draft - ideal));
     let cl, state;
     if (alpha <= 0) { cl = 0; state = 'flog'; }
     else if (alpha < luffA) { cl = clMax * 0.85 * Math.pow(alpha / luffA, 1.5); state = 'luff'; }
@@ -148,7 +160,7 @@
       state = 'stall';
     }
     const s2 = Math.sin(clamp(alpha, 0, 180) * D) ** 2;
-    let cd = 0.02 + 0.08 * cl * cl + 0.3 * camber * camber + (state === 'stall' ? 1.25 * s2 : 0.05 * s2);
+    let cd = CAL.parasitic + 0.08 * cl * cl + 0.3 * camber * camber + (state === 'stall' ? 1.25 * s2 : 0.05 * s2);
     if (state === 'flog') cd += 0.12;
     // Telltales: windward lifts when luffing, leeward stalls when over-trimmed.
     const near = 1.5;
@@ -180,13 +192,14 @@
       hd.idealPole = clamp(aw0.awa - 90, 5, 90);
       const e = (hd.poleDeg - hd.idealPole) / 60;
       factor *= clamp(1 - 0.6 * e * e, 0.4, 1) * (1 - 0.25 * clamp((115 - aw0.awa) / 40, 0, 1));
-      blk = blanket + (1 - blanket) * 0.85 * clamp(hd.poleDeg / Math.max(hd.idealPole, 10), 0, 1);
+      blk = blanket + (1 - blanket) * CAL.spinClear * clamp(hd.poleDeg / Math.max(hd.idealPole, 10), 0, 1);
     } else if (hd.kind === 'gen') {
       // Tack down on a tight reach (luff tension), eased up on a broad one (the sail rotates out from behind the main).
       hd.tackIdeal = clamp((aw0.awa - 90) / 60, 0, 1);
       const e = c.tackLine - hd.tackIdeal;
       factor *= 1 - 0.7 * e * e;
     }
+    if (hd.kind !== 'jib') factor *= CAL.kite;
     hd.factor = factor;
     const add = (aw, a, area, z, q0) => {
       const q = 0.5 * RHO * aw.aws * aw.aws * q0;
@@ -220,6 +233,9 @@
       fMain += add(aw, a, mn.area * MAIN_W[i], z, 1 - 0.04 * mn.reef);
       out.main.push(Object.assign({ awa: aw.awa, aws: aw.aws }, a));
     }
+    // Windage of hull, rig and crew: drag along the apparent wind, acting about 40% up the mast.
+    const dw = 0.5 * RHO * aw0.aws * aw0.aws * CAL.windage * k * k;
+    drive -= dw * Math.cos(aw0.awa * D); side += dw * Math.sin(aw0.awa * D); hm += dw * Math.sin(aw0.awa * D) * (0.4 * BOAT.mast + BOAT.keelZ);
     // Rudder angle needed (deg, + = weather helm): heel and an aft centre of effort round the boat up.
     const helm = 0.22 * heel + 6 * (fMain - 1.1 * fHead) / (fMain + fHead + 50 * k * k);
     return { drive, side, hm, aw: aw0, shape: sh, flow: out, helm, fMain, fHead, fJib: fHead };
@@ -227,8 +243,10 @@
 
   function hullDrag(bs, heel, side) {
     const v = Math.max(bs, 0);
-    const fric = 0.5 * RHO_W * v * v * BOAT.wet * 0.0045 * (1 + 0.6 * (heel / 30) ** 2);
-    const wave = 320 * BOAT.k ** 3 * Math.pow(v / BOAT.hullV, 6);
+    const fric = 0.5 * RHO_W * v * v * BOAT.wet * CAL.fric * (1 + CAL.heelDrag * (heel / 30) ** 2);
+    // Wave-making: a power of the Froude number, steep past Fn 0.4 (the "hull speed").
+    const fn = v / Math.sqrt(9.81 * BOAT.lwl);
+    const wave = BOAT.mass * 9.81 * CAL.cw * Math.pow(fn / 0.4, CAL.fnExp);
     const vk = Math.max(v, 0.8), qw = 0.5 * RHO_W * vk * vk;
     const induced = (side * side) / (qw * Math.PI * BOAT.keelAR * BOAT.keelA) * clamp(v / 0.8, 0, 1);
     const leeway = clamp((side / (qw * BOAT.keelA)) / (2 * Math.PI * 0.7) / D, 0, 15);
@@ -238,7 +256,10 @@
   // Advance boat speed and heel by dt seconds. s: { tws, twa, bs, heel }.
   function step(s, c, dt) {
     const f = forces(c, s, s.heel);
-    const heelEq = Math.atan(f.hm / BOAT.rm) / D;
+    // Heel where the righting moment (hull form and keel, plus the crew on the rail) meets the heeling moment.
+    const crewRM = BOAT.crew * 9.81 * 1.0 * BOAT.k;
+    let heelEq = 0;
+    for (let i = 0; i < 4; i++) heelEq = Math.asin(clamp((f.hm - crewRM * Math.cos(heelEq * D)) / BOAT.rm, 0, 0.99)) / D;
     s.heel += (heelEq - s.heel) * Math.min(1, dt * 1.5);
     const h = hullDrag(s.bs, s.heel, f.side);
     // Rudder held against weather helm costs speed too.
@@ -364,7 +385,7 @@
     spinRun: { label: 'Spinnaker run', tws: 14, twa: 160, c: P({ head: 'spin', mainsheet: 1, traveler: -1, vang: 0.6, outhaul: 0.2, backstay: 0, spinSheet: 0.7, spinPole: 0.75, poleHeight: 0.5 }) },
   };
 
-  const api = { KN, D, BOAT, H, RANGES, KEYS, REEF, HEADSAILS, PRESETS, IDEAL_DRAFT, makeBoat, setBoat, trimKeys, defaultControls, shape, aero, apparent, forces, hullDrag, step, steady, score, autoTrim, coach, clamp };
+  const api = { KN, D, BASE, CAL, setCal, BOAT, H, RANGES, KEYS, REEF, HEADSAILS, PRESETS, IDEAL_DRAFT, makeBoat, setBoat, trimKeys, defaultControls, shape, aero, apparent, forces, hullDrag, step, steady, score, autoTrim, coach, clamp };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.SailModel = api;
 })(typeof self !== 'undefined' ? self : this);

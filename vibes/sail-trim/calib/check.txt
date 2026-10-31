@@ -1,0 +1,36 @@
+TWA                 4           6           8          10          12          14          16          20          24
+beat        2.98/3.06   4.12/4.08   4.89/4.76   5.28/5.25   5.45/5.54   5.57/5.70   5.67/5.77   5.80/5.78   5.96/5.75
+52          3.23/3.32   4.57/4.51   5.35/5.30   5.75/5.80   5.99/6.09   6.15/6.26   6.24/6.33   6.38/6.36   6.48/6.33
+60          3.51/3.58   4.83/4.76   5.56/5.53   5.96/5.99   6.16/6.26   6.39/6.42   6.52/6.51   6.67/6.55   6.72/6.57
+75          3.70/3.76   5.01/4.91   5.70/5.69   6.13/6.14   6.42/6.40   6.63/6.58   6.80/6.72   7.04/6.90   7.18/6.96
+90          3.69/3.66   4.98/4.83   5.93/5.64   6.34/6.18   6.67/6.49   6.91/6.68   7.06/6.82   7.37/7.14   7.58/7.35
+110         3.62/3.42   5.01/4.73   5.72/5.67   6.16/6.25   6.47/6.59   6.83/6.86   6.99/7.12   7.47/7.52   7.83/7.70
+120         3.34/3.27   4.73/4.57   5.43/5.52   5.98/6.17   6.43/6.54   6.75/6.83   6.99/7.12   7.45/7.64   7.82/7.99
+135         2.86/2.89   4.18/4.16   5.15/5.12   5.77/5.87   6.21/6.35   6.49/6.67   6.80/6.96   7.27/7.56   7.66/8.04
+150         2.38/2.44   3.54/3.61   4.49/4.59   5.21/5.38   5.77/6.00   6.19/6.41   6.53/6.70   7.06/7.26   7.47/7.79
+165         2.06/2.06   3.10/3.10   4.09/4.04   4.92/4.84   5.54/5.53   6.00/6.06   6.37/6.42   6.93/6.95   7.36/7.49
+180         1.93/1.90   2.93/2.87   3.89/3.77   4.74/4.56   5.39/5.25   5.88/5.83   6.26/6.26   6.84/6.80   7.29/7.32
+run         2.51/2.60   3.55/3.67   4.36/4.48   5.07/5.12   5.58/5.62   5.97/6.01   6.27/6.28   6.84/6.81   7.28/7.34
+model/ORC knots. RMS error 2.3%, worst 6.0%
+
+ 4 kn  beat 36 deg VMG 2.39 (ORC 46.6 deg 2.10)   run 175 deg VMG 2.47 (ORC 144.4 deg 2.11)
+ 6 kn  beat 40 deg VMG 3.03 (ORC 43.7 deg 2.95)   run 150 deg VMG 3.14 (ORC 148.5 deg 3.13)
+ 8 kn  beat 40 deg VMG 3.62 (ORC 42.1 deg 3.53)   run 165 deg VMG 3.96 (ORC 152.8 deg 3.98)
+10 kn  beat 38 deg VMG 3.98 (ORC 41.2 deg 3.95)   run 170 deg VMG 4.77 (ORC 156.8 deg 4.71)
+12 kn  beat 38 deg VMG 4.17 (ORC 40.2 deg 4.23)   run 175 deg VMG 5.40 (ORC 162.1 deg 5.35)
+14 kn  beat 38 deg VMG 4.28 (ORC 40.1 deg 4.36)   run 175 deg VMG 5.88 (ORC 167.5 deg 5.87)
+16 kn  beat 38 deg VMG 4.35 (ORC 40 deg 4.42)   run 175 deg VMG 6.26 (ORC 176.3 deg 6.27)
+20 kn  beat 38 deg VMG 4.41 (ORC 40.5 deg 4.39)   run 175 deg VMG 6.83 (ORC 178.6 deg 6.81)
+24 kn  beat 40 deg VMG 4.47 (ORC 41.8 deg 4.29)   run 175 deg VMG 7.27 (ORC 178.1 deg 7.33)
+52     jib, jib, jib, jib, jib, jib, jib, jib, jib r1
+60     jib, jib, jib, jib, jib, jib, jib, jib, jib
+75     jib, jib, jib, jib, jib, jib, jib, jib, jib
+90     jib, jib, spin, spin, spin, spin, spin, spin, spin
+110    spin, spin, spin, spin, spin, spin, spin, spin, spin
+120    spin, spin, spin, spin, spin, spin, spin, spin, spin
+135    spin, spin, spin, spin, spin, spin, spin, spin, spin
+150    spin, spin, spin, spin, spin, spin, spin, spin, spin
+165    spin, spin, spin, spin, spin, spin, spin, spin, spin
+180    jib+wing, jib+wing, jib+wing, jib+wing, jib+wing, jib+wing, jib+wing, jib+wing, jib+wing
+beat   jib, jib, jib, jib, jib, jib, jib, jib, jib r2
+run    spin, spin, spin, spin, spin, spin, spin, jib+wing, jib+wing

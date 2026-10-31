@@ -10,7 +10,7 @@ test('no-go zone: pointing at the wind stops the boat', () => {
 });
 test('close-hauled speed and heel are plausible for a 30 footer', () => {
   const p = M.PRESETS.medium, s = M.steady(p.c, env(p.tws, p.twa));
-  assert.ok(kn(s) > 4.5 && kn(s) < 7, `bs ${kn(s)}`);
+  assert.ok(kn(s) > 4.5 && kn(s) < 6.5, `bs ${kn(s)}`);
   assert.ok(s.heel > 8 && s.heel < 25, `heel ${s.heel}`);
 });
 test('auto-trim never makes it slower', () => {
@@ -50,20 +50,37 @@ test('a bigger boat is stiffer and faster for the same trim', () => {
   const e = env(14, 42), c = M.PRESETS.medium.c;
   M.setBoat(22); const small = M.steady(c, e);
   M.setBoat(45); const big = M.steady(c, e);
-  M.setBoat(30);
+  M.setBoat(M.BASE.loa);
   assert.ok(big.heel < small.heel && kn(big) > kn(small), `22ft ${kn(small)} kn ${small.heel} deg, 45ft ${kn(big)} kn ${big.heel} deg`);
 });
-test('reefing cuts heel; auto-trim reefs in a gale but not in light air', () => {
-  const e = env(26, 44), c = M.PRESETS.breezy.c;
-  assert.ok(M.steady(Object.assign({}, c, { reef: 2 }), e).heel < M.steady(Object.assign({}, c, { reef: 0 }), e).heel - 3);
-  assert.ok(M.autoTrim(c, e).reef >= 1);
+test('auto-trim reefs in a gale but not in light air, and the reef keeps her on her feet', () => {
+  const e = env(26, 44), c = M.autoTrim(M.PRESETS.breezy.c, e);
+  assert.ok(c.reef >= 1, `reef ${c.reef}`);
+  assert.ok(M.steady(Object.assign({}, c, { reef: 0 }), e).heel > M.steady(c, e).heel + 2);
   assert.equal(M.autoTrim(M.PRESETS.light.c, env(6, 44)).reef, 0);
 });
-test('downwind, a kite beats the jib; the spinnaker goes deeper than the gennaker', () => {
-  const best = (head, twa) => { const e = env(12, twa); return kn(M.steady(M.autoTrim(Object.assign(M.defaultControls(), { head, mainsheet: 0.6 }), e), e)); };
-  assert.ok(best('spin', 150) > best('jib', 150) + 0.5);
-  assert.ok(best('gen', 120) > best('jib', 120) + 0.5);
+test('downwind the kite gains about what ORC gives a 30 ft masthead boat over jib alone; the spinnaker goes deeper than the gennaker', () => {
+  // ORC Club vs non-spinnaker certificates of an S2 9.1 at 12 kn: jib alone 5% slower at 120 deg, 9% at 150
+  const best = (head, twa) => { const e = env(12, twa); return kn(M.steady(M.autoTrim(Object.assign(M.defaultControls(), { head, mainsheet: 0.6, spinSheet: 0.6, spinPole: 0.7 }), e), e)); };
+  for (const twa of [120, 150]) {
+    const loss = 1 - best('jib', twa) / best('spin', twa);
+    assert.ok(loss > 0.02 && loss < 0.14, `${twa}: jib ${(loss * 100).toFixed(1)}% slower`);
+  }
+  assert.ok(best('gen', 120) > best('jib', 120));
   assert.ok(best('spin', 170) > best('gen', 170));
+});
+test('matches the Catalina 30 ORC polar at a few points', () => {
+  const O = require('./calib/orc-catalina30.json'), i = (t) => O.tws.indexOf(t);
+  const at = (tws, twa, head, target) => {
+    const e = Object.assign(env(tws, twa), { bs: target * M.KN });
+    const c = M.autoTrim(Object.assign(M.defaultControls(), { head, mainsheet: twa > 90 ? 0.6 : 0.06, jibSheet: twa > 90 ? 0.7 : 0.1, spinSheet: 0.6, spinPole: 0.7 }), e);
+    const v = kn(M.steady(c, e));
+    assert.ok(Math.abs(v / target - 1) < 0.07, `${tws} kn ${twa} deg: ${v.toFixed(2)} vs ORC ${target.toFixed(2)}`);
+  };
+  for (const t of [6, 12, 20]) at(t, O.beatAngle[i(t)], 'jib', O.beatVmg[i(t)] / Math.cos(O.beatAngle[i(t)] * M.D));
+  at(12, 60, 'jib', O.speeds['60'][i(12)]);
+  at(12, 120, 'spin', O.speeds['120'][i(12)]);
+  at(16, 150, 'spin', O.speeds['150'][i(16)]);
 });
 test('spinnaker pole: squared back on a run is faster than at the forestay', () => {
   const e = env(14, 165), c = M.PRESETS.spinRun.c;
