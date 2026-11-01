@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Committee Boat</title>
+<meta name="theme-color" content="#0b3d63">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<script src="../pwa/install.js"></script>
+<style>
+:root {
+  --bg: #f4f6f8; --card: #fff; --ink: #0d1b26; --dim: #5b6b78; --line: #d5dde4; --acc: #0b3d63; --acc2: #1167a8;
+  --ok: #15803d; --okbg: #dcfce7; --warn: #b45309; --warnbg: #fef3c7; --bad: #b91c1c; --badbg: #fee2e2; --mute: #6b7280; --mutebg: #e5e7eb;
+  --clear: #0e7490; --clearbg: #cffafe; --r: 10px; --tap: 48px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+:root[data-theme=night] {
+  --bg: #0b0f14; --card: #151b22; --ink: #e6edf3; --dim: #8b9aa7; --line: #26313c; --acc: #7dc4ff; --acc2: #4aa3e8;
+  --ok: #4ade80; --okbg: #12301f; --warn: #fbbf24; --warnbg: #352a0b; --bad: #f87171; --badbg: #3a1414; --mute: #9ca3af; --mutebg: #232a33;
+  --clear: #67e8f9; --clearbg: #0d2f36;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--ink); -webkit-tap-highlight-color: transparent; }
+body { padding-bottom: calc(env(safe-area-inset-bottom) + 8px); }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; border: 1px solid var(--line); background: var(--card); border-radius: 8px; padding: 8px 12px; min-height: 40px; }
+button:active { transform: translateY(1px); }
+button.pri { background: var(--acc); border-color: var(--acc); color: #fff; font-weight: 600; }
+:root[data-theme=night] button.pri { color: #04121e; }
+button.ghost { background: transparent; border-color: transparent; }
+button.sm { min-height: 32px; padding: 4px 9px; font-size: 14px; }
+button.on { background: var(--acc); color: #fff; border-color: var(--acc); }
+:root[data-theme=night] button.on { color: #04121e; }
+input, select, textarea { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; min-height: 40px; }
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--acc2); outline-offset: -1px; }
+label { color: var(--dim); font-size: 14px; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.grow { flex: 1; min-width: 0; }
+.dim { color: var(--dim); }
+.mono { font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.hidden { display: none !important; }
+
+/* header */
+header { position: sticky; top: 0; z-index: 20; background: var(--acc); color: #fff; padding: calc(env(safe-area-inset-top) + 6px) 12px 0; }
+:root[data-theme=night] header { background: #0f1720; color: var(--ink); border-bottom: 1px solid var(--line); }
+.hbar { display: flex; align-items: center; gap: 10px; }
+.clock { font-size: 34px; font-weight: 700; letter-spacing: .5px; line-height: 1; }
+.clock small { font-size: 18px; opacity: .7; }
+#clocksrc { font-size: 12px; opacity: .85; display: block; margin-top: 2px; }
+#nextsig { font-size: 15px; line-height: 1.25; text-align: right; }
+#nextsig b { font-size: 22px; }
+header button { background: rgba(255,255,255,.12); border-color: rgba(255,255,255,.25); color: inherit; min-height: 40px; }
+header select { background: rgba(255,255,255,.12); border-color: rgba(255,255,255,.25); color: inherit; max-width: 46vw; }
+header select option { color: #000; }
+nav { display: flex; gap: 2px; margin-top: 6px; }
+nav button { flex: 1; background: transparent; border: 0; border-radius: 8px 8px 0 0; color: inherit; opacity: .75; font-weight: 600; min-height: 44px; }
+nav button.on, :root[data-theme=night] nav button.on { background: var(--bg); color: var(--ink); opacity: 1; }
+nav .badge { display: inline-block; min-width: 20px; padding: 0 5px; border-radius: 10px; background: var(--bad); color: #fff; font-size: 12px; margin-left: 4px; }
+
+main { padding: 10px 10px 120px; max-width: 980px; margin: 0 auto; }
+section.view { display: none; }
+section.view.on { display: block; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: var(--r); padding: 10px; margin-bottom: 10px; }
+h2 { font-size: 17px; margin: 0; }
+h3 { font-size: 15px; margin: 0 0 6px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; min-height: 36px; }
+.seg button + button { border-left: 1px solid var(--line); }
+
+/* boat rows */
+.list { display: flex; flex-direction: column; gap: 6px; }
+.boat { display: grid; grid-template-columns: 78px 1fr auto; gap: 8px; align-items: center; background: var(--card); border: 1px solid var(--line); border-radius: var(--r); padding: 6px 8px; min-height: 56px; }
+.boat .sail { font-weight: 700; font-size: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.boat .nm { font-weight: 600; font-size: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.boat .sub { font-size: 13px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.boat .acts { display: flex; gap: 6px; align-items: center; }
+.boat .acts button { min-height: var(--tap); min-width: 56px; font-weight: 600; }
+.chip { display: inline-block; font-size: 12px; font-weight: 700; padding: 2px 7px; border-radius: 999px; background: var(--mutebg); color: var(--mute); vertical-align: 1px; letter-spacing: .3px; }
+.st-clear { border-left: 6px solid var(--clear); } .st-clear .chip { background: var(--clearbg); color: var(--clear); }
+.st-waiting { border-left: 6px solid var(--line); }
+.st-started { border-left: 6px solid var(--ok); background: color-mix(in srgb, var(--okbg) 45%, var(--card)); } .st-started .chip { background: var(--okbg); color: var(--ok); }
+.st-ocs { border-left: 6px solid var(--bad); background: var(--badbg); } .st-ocs .chip { background: var(--bad); color: #fff; }
+.st-dns, .st-dnc, .st-out { border-left: 6px solid var(--mute); opacity: .7; }
+.st-fin { border-left: 6px solid var(--ok); }
+button.cross { background: var(--ok); border-color: var(--ok); color: #fff; }
+button.ocs { background: var(--card); border-color: var(--bad); color: var(--bad); }
+:root[data-theme=night] button.cross { color: #04121e; }
+
+/* starts */
+.starthead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 14px 2px 6px; }
+.starthead .cd { font-size: 26px; font-weight: 800; }
+.phase-started .cd { color: var(--clear); }
+.phase-sequence .cd { color: var(--warn); }
+.banner { border-radius: var(--r); padding: 10px 12px; margin-bottom: 10px; font-size: 16px; line-height: 1.4; }
+.banner.clear { background: var(--clearbg); color: var(--clear); border: 1px solid var(--clear); }
+.banner.early { background: var(--warnbg); color: var(--warn); border: 1px solid var(--warn); }
+.setup .srow { display: grid; grid-template-columns: 1fr 1.4fr 132px auto; gap: 6px; align-items: center; margin-bottom: 6px; }
+.fleetchips { display: flex; gap: 4px; flex-wrap: wrap; }
+.fleetchips button { min-height: 30px; padding: 2px 8px; font-size: 13px; }
+details > summary { cursor: pointer; font-weight: 600; padding: 4px 0; list-style: none; }
+details > summary::before { content: '▸ '; } details[open] > summary::before { content: '▾ '; }
+
+/* finish */
+#finishbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 15; padding: 8px 10px calc(env(safe-area-inset-bottom) + 8px); background: color-mix(in srgb, var(--bg) 85%, transparent); backdrop-filter: blur(8px); border-top: 1px solid var(--line); }
+#finishbtn { width: 100%; max-width: 980px; display: block; margin: 0 auto; min-height: 76px; font-size: 22px; font-weight: 800; background: var(--bad); border: 0; color: #fff; border-radius: 14px; letter-spacing: .5px; }
+#finishbtn small { display: block; font-size: 15px; font-weight: 600; opacity: .9; }
+.lookup { display: flex; gap: 6px; }
+.lookup input { flex: 1; font-size: 22px; min-height: 52px; }
+.lookup button { min-width: 52px; font-size: 20px; }
+.sugg { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.sugg button { min-height: 52px; text-align: left; line-height: 1.15; }
+.sugg button b { font-size: 18px; }
+.deck { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.deck .boat { grid-template-columns: 34px 78px 1fr auto; }
+.deck .n { font-weight: 800; color: var(--dim); text-align: center; font-size: 18px; }
+.deck .boat:first-child { border: 2px solid var(--bad); }
+.fin { display: grid; grid-template-columns: 34px 112px 1fr auto; gap: 8px; align-items: center; padding: 6px 8px; border-bottom: 1px solid var(--line); min-height: 52px; }
+.fin:last-child { border-bottom: 0; }
+.fin .t { font-size: 20px; font-weight: 700; }
+.fin .who { cursor: pointer; }
+.fin.unk .who { color: var(--bad); font-weight: 700; }
+.fin .n { color: var(--dim); font-weight: 700; text-align: center; }
+.tedit { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.tedit input { width: 58px; font-size: 20px; text-align: center; padding: 6px 4px; }
+.meter { height: 8px; background: var(--mutebg); border-radius: 4px; overflow: hidden; position: relative; width: 120px; }
+.meter i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--ok); width: 0; }
+.meter u { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--bad); }
+.meter.hit i { background: var(--bad); }
+
+/* results */
+table { border-collapse: collapse; width: 100%; font-size: 15px; }
+th, td { padding: 6px 6px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+th { font-size: 12px; color: var(--dim); text-transform: uppercase; letter-spacing: .4px; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.tablewrap { overflow-x: auto; }
+
+/* dialogs, toast */
+dialog { border: 1px solid var(--line); border-radius: 14px; background: var(--card); color: var(--ink); padding: 14px; width: min(560px, 96vw); max-height: 92vh; }
+dialog::backdrop { background: rgba(0,0,0,.45); }
+dialog h2 { margin-bottom: 10px; }
+.form { display: grid; grid-template-columns: 110px 1fr; gap: 8px; align-items: center; }
+.form input, .form select { width: 100%; }
+.dlgbtns { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; flex-wrap: wrap; }
+.setgrp { border-top: 1px solid var(--line); padding: 10px 0; }
+.setgrp:first-of-type { border-top: 0; }
+.setgrp h3 { margin-bottom: 8px; }
+#toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: 104px; z-index: 50; background: #111827; color: #fff; padding: 10px 14px; border-radius: 10px; display: flex; gap: 12px; align-items: center; box-shadow: 0 6px 24px rgba(0,0,0,.3); max-width: 92vw; }
+#toast button { background: transparent; color: #93c5fd; border: 0; font-weight: 700; min-height: 32px; }
+#cam { width: 100%; border-radius: 10px; background: #000; display: block; max-height: 50vh; object-fit: cover; }
+.camwrap { position: relative; }
+.camwrap .guide { position: absolute; left: 8%; right: 8%; top: 30%; bottom: 30%; border: 2px dashed rgba(255,255,255,.8); border-radius: 8px; pointer-events: none; }
+#ocrtext { font-size: 13px; white-space: pre-wrap; max-height: 70px; overflow: auto; }
+.empty { text-align: center; color: var(--dim); padding: 24px 8px; }
+kbd { font-size: 12px; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+@media (max-width: 560px) {
+  .clock { font-size: 28px; }
+  .boat { grid-template-columns: 84px 1fr auto; }
+  .boat .sail { font-size: 16px; }
+  .boat .acts button { min-width: 48px; padding: 6px 8px; }
+  .setup .srow { grid-template-columns: 1fr 120px auto; }
+  .setup .srow .fleetchips { grid-column: 1 / -1; order: 5; }
+  .fin { grid-template-columns: 28px 96px 1fr auto; }
+  .hide-sm { display: none; }
+}
+@media print {
+  header, nav, #finishbar, .noprint, button { display: none !important; }
+  section.view { display: none !important; } #v-results { display: block !important; }
+  .card { border: 0; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="hbar">
+    <div>
+      <div class="clock mono" id="clock">--:--:--</div>
+      <span id="clocksrc">device clock</span>
+    </div>
+    <div class="grow"></div>
+    <div id="nextsig"></div>
+    <button id="speakbtn" title="Narration on / off" aria-label="Narration">🔊</button>
+    <button id="setbtn" title="Settings" aria-label="Settings">⚙︎</button>
+  </div>
+  <div class="row" style="margin-top:6px">
+    <select id="racesel" aria-label="Race"></select>
+    <button class="sm" id="newrace">+ Race</button>
+  </div>
+  <nav>
+    <button data-tab="fleet">Fleet</button>
+    <button data-tab="start">Start<span class="badge hidden" id="ocsbadge"></span></button>
+    <button data-tab="finish">Finish<span class="badge hidden" id="unkbadge"></span></button>
+    <button data-tab="results">Results</button>
+  </nav>
+</header>
+
+<main>
+  <!-- FLEET -->
+  <section class="view" id="v-fleet">
+    <div class="row card">
+      <div class="seg" id="fleetsort">
+        <button data-sort="name">A–Z</button><button data-sort="sail">Sail no.</button><button data-sort="fleet">Fleet</button><button data-sort="rating">Rating</button>
+      </div>
+      <input class="grow" id="fleetfilter" placeholder="Filter" type="search" style="min-width:120px">
+      <button class="pri" id="addboat">+ Boat</button>
+      <button id="importbtn">Import</button>
+      <button id="exportfleet" class="hide-sm">Export CSV</button>
+    </div>
+    <div class="dim" id="fleetcount" style="margin:0 4px 6px"></div>
+    <div class="list" id="fleetlist"></div>
+  </section>
+
+  <!-- START -->
+  <section class="view" id="v-start">
+    <details class="card setup" id="setup">
+      <summary>Starts <span class="dim" id="setupsum"></span></summary>
+      <div class="row" style="margin:8px 0">
+        <label>Sequence</label>
+        <select id="sequence"><option value="5-4-1-0">5-4-1-0 (RRS 26)</option><option value="3-2-1-0">3-2-1-0</option></select>
+      </div>
+      <div id="startrows"></div>
+      <div class="row" style="margin-top:6px">
+        <button id="addstart">+ Start</button>
+        <span class="grow"></span>
+        <label>First start</label><input type="time" step="1" id="firststart">
+        <label>every</label><input type="number" id="interval" value="5" min="1" max="60" style="width:64px"><label>min</label>
+        <button id="autostarts">One per fleet</button>
+      </div>
+      <div class="dim" id="unassigned" style="margin-top:6px"></div>
+    </details>
+    <div id="crossbanner"></div>
+    <div class="row noprint" style="margin:0 2px 6px">
+      <span class="dim">Sort</span>
+      <div class="seg" id="startsort"><button data-sort="sail">Sail no.</button><button data-sort="name">A–Z</button></div>
+      <span class="grow"></span>
+      <span class="dim" id="startcounts"></span>
+    </div>
+    <div id="startlist"></div>
+  </section>
+
+  <!-- FINISH -->
+  <section class="view" id="v-finish">
+    <div class="card">
+      <div class="lookup">
+        <input id="lookup" placeholder="Sail no. or name of the next boat" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go">
+        <button id="micbtn" title="Say the sail number or name" aria-label="Voice">🎤</button>
+        <button id="cambtn" title="Read the name or sail number with the camera" aria-label="Camera">📷</button>
+      </div>
+      <div class="sugg" id="sugg"></div>
+      <div class="row" style="margin-top:10px">
+        <h3 style="margin:0">On deck</h3><span class="dim" style="font-size:13px">next boat to finish first; the finish time goes to it</span>
+      </div>
+      <div class="deck" id="deck"></div>
+    </div>
+    <div class="card row">
+      <button id="hornbtn">👂 Listen for horn</button>
+      <div class="meter" id="meter" title="horn band level over the noise floor"><i></i><u></u></div>
+      <span class="dim grow" id="hornstat" style="font-size:13px"></span>
+      <button id="addtime">+ Time</button>
+    </div>
+    <div class="card" id="addtimecard" style="display:none"></div>
+    <div class="card">
+      <div class="row"><h3 style="margin:0">Finishes</h3><span class="grow"></span><span class="dim" id="fincount"></span></div>
+      <div id="finlist"></div>
+    </div>
+    <div class="card">
+      <h3>Still racing</h3>
+      <div class="list" id="racinglist"></div>
+    </div>
+    <div class="card">
+      <h3>Out</h3>
+      <div class="list" id="outlist"></div>
+    </div>
+  </section>
+
+  <!-- RESULTS -->
+  <section class="view" id="v-results">
+    <div class="card row noprint">
+      <label>Scoring</label>
+      <select id="scoring"><option value="tod">PHRF time on distance</option><option value="tot">PHRF time on time</option><option value="elapsed">Elapsed (one design)</option></select>
+      <span id="todopts" class="row"><label>Course</label><input type="number" id="distance" step="0.1" min="0" style="width:84px"><label>nm</label></span>
+      <span id="totopts" class="row"><label>A</label><input type="number" id="totA" style="width:72px"><label>B</label><input type="number" id="totB" style="width:72px"></span>
+      <label class="row"><input type="checkbox" id="closed" style="min-height:0"> Race closed (still racing = DNF)</label>
+    </div>
+    <div class="row noprint" style="margin-bottom:10px">
+      <button id="copyres">Copy text</button><button id="csvres">Download CSV</button><button id="printres">Print</button>
+    </div>
+    <div id="reslist"></div>
+  </section>
+</main>
+
+<div id="finishbar" class="hidden"><button id="finishbtn">FINISH</button></div>
+<div id="toast" class="hidden"></div>
+
+<dialog id="boatdlg">
+  <h2 id="boatdlgtitle">Boat</h2>
+  <form class="form" id="boatform" method="dialog">
+    <label for="bf-sail">Sail no.</label><input id="bf-sail" name="sail" autocomplete="off">
+    <label for="bf-name">Name</label><input id="bf-name" name="name" autocomplete="off">
+    <label for="bf-type">Type</label><input id="bf-type" name="type" placeholder="J/105, Catalina 30…" autocomplete="off">
+    <label for="bf-rating">Rating</label><input id="bf-rating" name="rating" type="number" step="any" placeholder="PHRF s/nm">
+    <label for="bf-fleet">Fleet</label><input id="bf-fleet" name="fleet" list="fleetnames" placeholder="PHRF A" autocomplete="off">
+    <label for="bf-skipper">Skipper</label><input id="bf-skipper" name="skipper" autocomplete="off">
+  </form>
+  <datalist id="fleetnames"></datalist>
+  <div class="dlgbtns"><button id="bf-del" class="ghost" style="color:var(--bad);margin-right:auto">Delete</button><button id="bf-cancel">Cancel</button><button class="pri" id="bf-save">Save</button></div>
+</dialog>
+
+<dialog id="importdlg">
+  <h2>Import fleet</h2>
+  <p class="dim" style="margin-top:0">Paste rows from a spreadsheet or CSV. With a header row the columns are found by name (Sail, Boat, Type, Rating / PHRF, Fleet, Skipper); without one the order is sail, name, type, rating, fleet.</p>
+  <textarea id="importtext" rows="9" style="width:100%" placeholder="Sail,Boat,Type,PHRF,Fleet&#10;42,Salty Dog,Olson 911,129,PHRF A"></textarea>
+  <div class="row" style="margin-top:6px"><input type="file" id="importfile" accept=".csv,.txt,.tsv,text/csv,text/plain"></div>
+  <div class="dlgbtns"><button id="im-demo" style="margin-right:auto">Demo fleet</button><button id="im-cancel">Cancel</button><button id="im-add">Add</button><button class="pri" id="im-replace">Replace fleet</button></div>
+</dialog>
+
+<dialog id="pickdlg">
+  <h2 id="picktitle">Which boat?</h2>
+  <input id="pickq" placeholder="Sail no. or name" style="width:100%;font-size:20px" autocomplete="off">
+  <div class="list" id="picklist" style="margin-top:8px;max-height:52vh;overflow:auto"></div>
+  <div class="dlgbtns"><button id="pick-none" style="margin-right:auto">Unknown boat</button><button id="pick-cancel">Cancel</button></div>
+</dialog>
+
+<dialog id="camdlg">
+  <h2>Read a name or sail number</h2>
+  <div class="camwrap"><video id="cam" playsinline muted></video><div class="guide"></div></div>
+  <div class="row" style="margin-top:8px">
+    <button class="pri" id="camread">Read</button>
+    <label class="row"><input type="checkbox" id="camauto" style="min-height:0"> keep reading</label>
+    <label class="row" style="cursor:pointer"><input type="file" id="camfile" accept="image/*" capture="environment" style="display:none"><span style="text-decoration:underline">photo…</span></label>
+    <span class="grow"></span><span class="dim" id="camstat" style="font-size:13px"></span>
+  </div>
+  <div id="ocrtext" class="dim"></div>
+  <div class="sugg" id="camsugg"></div>
+  <div class="dlgbtns"><button id="camclose">Close</button></div>
+</dialog>
+
+<dialog id="setdlg">
+  <h2>Settings</h2>
+  <div class="setgrp">
+    <h3>Clock</h3>
+    <label class="row"><input type="checkbox" id="s-gps" style="min-height:0"> Use GPS time</label>
+    <div class="dim" id="gpsstat" style="font-size:13px;margin:4px 0 8px"></div>
+    <div class="row">
+      <span>Offset</span><b class="mono" id="offsetval">0.0 s</b>
+      <button class="sm" data-nudge="-1000">−1 s</button><button class="sm" data-nudge="-100">−0.1</button><button class="sm" data-nudge="100">+0.1</button><button class="sm" data-nudge="1000">+1 s</button>
+      <button class="sm" id="s-minute" title="Tap the moment a reference clock (the RC's GPS, a phone set to network time) turns a whole minute">Tap on the minute</button>
+      <button class="sm ghost" id="s-offreset">reset</button>
+    </div>
+  </div>
+  <div class="setgrp">
+    <h3>Narration</h3>
+    <div class="row"><label class="row"><input type="checkbox" id="s-speak" style="min-height:0"> Speak signals and countdowns</label></div>
+    <div class="row"><label class="row"><input type="checkbox" id="s-names" style="min-height:0"> Read out the boats clear to cross at each start</label></div>
+    <div class="row"><label class="row"><input type="checkbox" id="s-precount" style="min-height:0"> Count down to every signal (10, 3, 2, 1)</label></div>
+    <div class="row"><label class="row"><input type="checkbox" id="s-sayocs" style="min-height:0"> Say boats over early</label></div>
+    <div class="row"><label class="row"><input type="checkbox" id="s-sayfin" style="min-height:0"> Say each finish</label></div>
+    <div class="row"><label class="row"><input type="checkbox" id="s-beep" style="min-height:0"> Beep at each signal</label></div>
+    <div class="row" style="margin-top:4px"><label>Voice</label><select id="s-voice" class="grow"></select><label>Speed</label><input type="range" id="s-rate" min="0.7" max="1.6" step="0.05" style="width:100px"><button class="sm" id="s-test">Test</button></div>
+  </div>
+  <div class="setgrp">
+    <h3>Horn</h3>
+    <div class="row"><label>Sensitivity</label><input type="range" id="s-rise" min="6" max="30" step="1" class="grow"><span class="mono dim" id="s-riseval"></span></div>
+    <div class="row"><label>Shortest blast</label><input type="range" id="s-min" min="60" max="600" step="10" class="grow"><span class="mono dim" id="s-minval"></span></div>
+    <div class="row"><label class="row"><input type="checkbox" id="s-hornstart" style="min-height:0"> Ignore horns within 5 s of a start signal</label></div>
+  </div>
+  <div class="setgrp">
+    <h3>Display</h3>
+    <div class="row"><label>Theme</label><div class="seg" id="s-theme"><button data-theme="day">Day</button><button data-theme="night">Night</button></div>
+      <label class="row"><input type="checkbox" id="s-wake" style="min-height:0"> Keep the screen on</label></div>
+  </div>
+  <div class="setgrp">
+    <h3>Data</h3>
+    <div class="row">
+      <button id="s-backup">Back up (JSON)</button>
+      <label class="row" style="cursor:pointer"><input type="file" id="s-restore" accept=".json,application/json" style="display:none"><span class="sm" style="border:1px solid var(--line);border-radius:8px;padding:8px 12px">Restore…</span></label>
+      <button id="s-renamerace">Rename race</button>
+      <button id="s-delrace" style="color:var(--bad)">Delete race</button>
+      <button data-pwa-install style="display:none">Install app</button>
+    </div>
+  </div>
+  <div class="dlgbtns"><button class="pri" id="setclose">Done</button></div>
+</dialog>
+
+<script src="race.js"></script>
+<script src="horn.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
