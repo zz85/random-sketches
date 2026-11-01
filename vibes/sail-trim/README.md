@@ -63,5 +63,5 @@ At the finish it gives your time from the gun against the ORC VMG time for the c
 ## Tests
 
 - `node --test model.test.js`: physics sanity (no-go zone, plausible speed and heel, auto-trim never slower, stall and luff, backstay, cunningham, outhaul, vang, depower, jib lead, boat size, reefing, kite gain against ORC, spinnaker pole, kite collapse close-hauled, six points of the Catalina 30 polar).
-- `node --test race.test.js`: crossings, a lap, the wrong-way rounding, OCS, a mark touch and its 360, two laps through the gate, the ORC time, and an autopilot that sails two laps with the model (16:05 against ORC's 13:39 in 12 kn, with its tacks and gybes).
+- `node --test race.test.js`: crossings, a lap, the wrong-way rounding, OCS, a mark touch and its 360, two laps through the gate, the ORC time, and an autopilot that sails two laps with the model (16:26 against ORC's 13:39 in 12 kn, with its tacks and gybes).
 - `node smoke.js`: headless Chromium (Playwright's, via `cdp.js`): loads, sails, auto-trims, tacks, hoists the spinnaker and gennaker, reefs, changes the boat length, computes the polar in workers and checks it against ORC, starts a race, screenshots.
