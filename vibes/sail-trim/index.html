@@ -10,6 +10,8 @@
   html, body { margin:0; height:100%; background:var(--bg); color:var(--text); font:14px/1.35 system-ui, -apple-system, Segoe UI, sans-serif; }
   body { display:grid; grid-template-columns: 1fr 1fr 330px; grid-template-rows: auto 1fr auto; height:100vh; gap:8px; padding:8px; }
   header { grid-column: 1 / 4; display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+  body.racing #spark { display:none; }
+  .ro.race b { font-size:16px; }
   header h1 { font-size:16px; margin:0 10px 0 2px; font-weight:600; }
   .ro { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:3px 9px; min-width:76px; }
   .ro b { display:block; font-size:18px; font-variant-numeric: tabular-nums; }
@@ -35,6 +37,12 @@
   #coach li:first-child { color:#fff; }
   #toast { position:fixed; left:50%; top:70px; transform:translateX(-50%); background:#7a2a1c; padding:8px 14px; border-radius:8px; opacity:0; transition:opacity .3s; pointer-events:none; }
   .legend { font-size:11px; color:var(--dim); }
+  .tabs { position:absolute; right:8px; top:6px; display:flex; gap:4px; z-index:2; }
+  .tabs button { padding:3px 9px; font-size:12px; }
+  #polar-tws { position:absolute; left:8px; bottom:8px; display:none; gap:4px; z-index:2; flex-wrap:wrap; }
+  #polar-tws button { padding:2px 7px; font-size:12px; }
+  .ro.race b { min-width:150px; }
+  .ro.alert b { color:var(--stall); }
   .legend i { display:inline-block; width:10px; height:3px; margin:0 3px 2px 8px; vertical-align:middle; }
   @media (max-width: 900px) {
     body { grid-template-columns: 1fr; grid-template-rows: auto 46vh 46vh auto auto; height:auto; }
@@ -53,18 +61,26 @@
   <div class="ro"><span>Heel</span><b id="r-heel">-</b></div>
   <div class="ro"><span>Leeway</span><b id="r-lee">-</b></div>
   <div class="ro"><span>Helm</span><b id="r-helm">-</b></div>
+  <div class="ro race" id="ro-race" hidden><span id="r-race-l">Race</span><b id="r-race">-</b></div>
+  <div class="ro race" id="ro-mark" hidden><span id="r-mark-l">Next mark</span><b id="r-mark">-</b></div>
   <canvas id="spark" title="Boat speed, last 90 s"></canvas>
 </header>
 
-<div class="view"><canvas id="top"></canvas><div class="cap">From above: sail sections at 20 / 50 / 80% height (twist)
-  <div class="legend"><i style="background:var(--ok)"></i>attached <i style="background:var(--luff)"></i>luffing <i style="background:var(--stall)"></i>stalled <i style="background:#888"></i>flogging</div></div></div>
-<div class="view"><canvas id="side"></canvas><div class="cap">From abeam: draft stripes (depth exaggerated 2x), telltales, luff, mast bend, forestay sag</div></div>
+<div class="view"><canvas id="top"></canvas><div class="tabs" id="tabs-left"><button data-tab="boat" class="on">Boat</button><button data-tab="course">Course</button></div>
+  <div class="cap" id="cap-left"><span id="cap-left-t">From above: sail sections at 20 / 50 / 80% height (twist)</span>
+  <div class="legend" id="cap-left-l"><i style="background:var(--ok)"></i>attached <i style="background:var(--luff)"></i>luffing <i style="background:var(--stall)"></i>stalled <i style="background:#888"></i>flogging</div></div></div>
+<div class="view"><canvas id="side"></canvas><div class="tabs" id="tabs-right"><button data-tab="sails" class="on">Sails</button><button data-tab="polar">Polar</button></div>
+  <div class="cap" id="cap-right">From abeam: draft stripes (depth exaggerated 2x), telltales, luff, mast bend, forestay sag</div>
+  <div id="polar-tws"></div></div>
 
 <aside id="controls"></aside>
 <section id="coach"><h2>Trim coach</h2><ol id="tips"></ol></section>
 <div id="toast"></div>
 
 <script src="model.js"></script>
+<script src="race.js"></script>
+<script src="calib/orc-catalina30.js"></script>
+<script src="polar.js"></script>
 <script>
 'use strict';
 const M = window.SailModel, KN = M.KN, D = M.D;
@@ -163,6 +179,15 @@ env.innerHTML = `<legend>Wind & helm</legend>
   <div class="row"><button id="auto" title="Search every control of the sails that are up, and the number of reefs, for the fastest steady trim at this wind and angle">Auto-trim</button><button id="reset">Reset trim</button></div>
   <div class="legend">Keys: ← → steer, Space tack/gybe. Hover a control's name for what it does.</div>`;
 aside.appendChild(env);
+const raceFs = document.createElement('fieldset');
+raceFs.innerHTML = `<legend>Race: windward-leeward</legend>
+  <div class="row"><select id="race-len" title="Distance from the start line to the windward mark">${[0.25, 0.5, 1].map((n) => `<option value="${n}">${n} nm legs</option>`).join('')}</select>
+  <select id="race-laps"><option value="1">1 lap</option><option value="2">2 laps</option></select>
+  <select id="race-cd" title="Start sequence"><option value="60">1 min start</option><option value="180">3 min start</option><option value="300">5 min start</option></select></div>
+  <div class="row"><button id="race-go">Start race</button><button id="race-stop" hidden>Abandon</button>
+  <select id="speed" title="Time runs faster: the boat, the wind and the race clock"><option value="1">Time x1</option><option value="2">Time x2</option><option value="4">Time x4</option><option value="8">Time x8</option></select></div>
+  <div class="legend" id="race-info">Start between the pin (left) and the committee boat (right), round the windward mark to port (leave it on your left), and finish back through the line. Touch a mark and you owe a 360.</div>`;
+aside.appendChild(raceFs);
 const $ = (id) => document.getElementById(id);
 $('loa').oninput = (e) => { M.setBoat(+e.target.value); $('loa-o').textContent = M.BOAT.loa + ' ft'; boatInfo(); };
 boatInfo(); showHead();
@@ -182,6 +207,7 @@ $('tack').onclick = tack;
 $('auto').onclick = () => {
   const btn = $('auto'); btn.textContent = 'Trimming...'; btn.disabled = true;
   setTimeout(() => {
+    if (race && race.phase !== 'finished') raceAssist = true;
     const to = M.autoTrim(c, { tws: baseTws * KN, twa: course, bs: S.bs, heel: S.heel });
     if (!!to.wing !== !!c.wing) toast(to.wing ? 'Auto-trim: jib poled out wing on wing.' : 'Auto-trim: whisker pole down.');
     if (to.reef !== Math.round(c.reef)) toast(`Auto-trim: ${REEFS[to.reef]}.`);
@@ -214,6 +240,7 @@ let toastT = 0;
 function toast(msg) { const el = $('toast'); el.textContent = msg; el.style.opacity = 1; clearTimeout(toastT); toastT = setTimeout(() => (el.style.opacity = 0), 2600); }
 
 // ---------- canvases ----------
+function fit2(cv) { const r = cv.getBoundingClientRect(), dpr = Math.min(devicePixelRatio || 1, 2); const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); return { g, w: r.width, h: r.height }; }
 function fit(cv) {
   const r = cv.getBoundingClientRect(), dpr = Math.min(devicePixelRatio || 1, 2);
   const w = Math.round(r.width * dpr), h = Math.round(r.height * dpr);
@@ -501,13 +528,157 @@ function drawSpark() {
   g.fillStyle = '#86a3b8'; g.font = '10px system-ui'; g.fillText(max.toFixed(0) + ' kn', 3, 10);
 }
 
+// ---------- tabs ----------
+let leftTab = 'boat', rightTab = 'sails';
+for (const [id, set] of [['tabs-left', (t) => (leftTab = t)], ['tabs-right', (t) => (rightTab = t)]])
+  for (const b of document.querySelectorAll(`#${id} button`)) b.onclick = () => { set(b.dataset.tab); showTabs(); };
+function showTabs() {
+  for (const b of document.querySelectorAll('#tabs-left button')) b.classList.toggle('on', b.dataset.tab === leftTab);
+  for (const b of document.querySelectorAll('#tabs-right button')) b.classList.toggle('on', b.dataset.tab === rightTab);
+  $('cap-left-t').textContent = leftTab === 'boat' ? 'From above: sail sections at 20 / 50 / 80% height (twist)' : 'Course: north up, mean wind from the top, laylines';
+  $('cap-left-l').style.display = leftTab === 'boat' ? '' : 'none';
+  $('cap-right').textContent = rightTab === 'sails' ? 'From abeam: draft stripes (depth exaggerated 2x), telltales, luff, mast bend, forestay sag' : 'Speed polar: boat speed by true wind angle';
+  $('polar-tws').style.display = rightTab === 'polar' ? 'flex' : 'none';
+  if (rightTab === 'polar') polarNeed();
+}
+
+// ---------- polar ----------
+const ORC = window.ORC_POLAR;
+const polarSel = new Set([6, 12, 20]), polarData = {};
+let polarPool = null;
+$('polar-tws').innerHTML = ORC.tws.map((t) => `<button data-tws="${t}" style="border-color:${Polar.COLORS[t]}">${t} kn</button>`).join('');
+for (const b of document.querySelectorAll('#polar-tws button')) b.onclick = () => {
+  const t = +b.dataset.tws; polarSel.has(t) ? polarSel.delete(t) : polarSel.add(t); polarNeed();
+};
+function polarNeed() {
+  for (const b of document.querySelectorAll('#polar-tws button')) b.classList.toggle('on', polarSel.has(+b.dataset.tws));
+  polarPool = polarPool || Polar.pool();
+  for (const t of polarSel) {
+    const key = M.BOAT.loa + '/' + t;
+    if (polarData[key]) continue;
+    const arr = polarData[key] = new Array(Polar.ANGLES.length).fill(null);
+    polarPool.run(t, M.BOAT.loa, (m) => { if (!m.done) arr[m.i] = m; });
+  }
+}
+function drawPolar() {
+  const { g, w, h } = fit($('side')), model = {};
+  for (const t of polarSel) model[t] = polarData[M.BOAT.loa + '/' + t] || [];
+  Polar.draw(g, w, h, { orc: ORC, model, selected: [...polarSel].sort((a, b) => a - b), live: { twa: S.twa, bs: S.bs / KN, tws: S.tws / KN },
+    loa: M.BOAT.loa, baseLoa: M.BASE.loa, orcDim: Math.abs(M.BOAT.loa - M.BASE.loa) > 0.2 });
+}
+
+// ---------- race ----------
+let race = null, pos = { x: 0, y: -120 }, track = [], trackT = 0, timeScale = 1, raceAssist = false, windShift = 0, audio = null;
+$('speed').onchange = (e) => { timeScale = +e.target.value; };
+function beep(f, ms) {
+  try {
+    audio = audio || new AudioContext();
+    const o = audio.createOscillator(), g = audio.createGain();
+    o.frequency.value = f; g.gain.value = 0.08; o.connect(g); g.connect(audio.destination);
+    o.start(); o.stop(audio.currentTime + ms / 1000);
+  } catch (e) { /* no audio */ }
+}
+$('race-go').onclick = () => {
+  const crs = Race.makeCourse({ legNm: +$('race-len').value, laps: +$('race-laps').value });
+  race = Race.newRace(crs, { countdown: +$('race-cd').value });
+  pos = { x: 40, y: -130 }; track = []; raceAssist = false;
+  course = 90; targetCourse = null;  // starboard beam reach, heading west
+  $('race-go').textContent = 'Restart'; $('race-stop').hidden = false;
+  $('ro-race').hidden = $('ro-mark').hidden = false; document.body.classList.add('racing');
+  leftTab = leftTab === 'boat' ? 'boat' : 'course'; showTabs();
+  beep(880, 250); toast(`Start sequence: ${Race.fmt(-race.t)} to the gun.`);
+};
+$('race-stop').onclick = () => { race = null; $('race-go').textContent = 'Start race'; $('race-stop').hidden = true; $('ro-race').hidden = $('ro-mark').hidden = true; document.body.classList.remove('racing'); };
+const beatAngleNow = () => Race.interp(ORC.tws, ORC.beatAngle, S.tws / KN);
+function bestKey() { const r = race.course; return `${r.legNm}nm x${r.laps}, ${baseTws} kn${gusts ? ' gusty' : ''}, ${M.BOAT.loa} ft`; }
+function raceFinished() {
+  const r = race, k = Math.sqrt(M.BOAT.k);
+  const orc = Race.targetTime(r.course, Race.interp(ORC.tws, ORC.beatVmg, baseTws) * k, Race.interp(ORC.tws, ORC.runVmg, baseTws) * k);
+  const best = JSON.parse(localStorage.getItem('sailtrim.best') || '{}'), key = bestKey(), prev = best[key];
+  if (!prev || r.finish < prev) { best[key] = r.finish; localStorage.setItem('sailtrim.best', JSON.stringify(best)); }
+  $('race-info').innerHTML = `<b>Finished ${Race.fmt(r.finish)}</b> from the gun (started ${Race.fmt(r.started)} late). ORC VMG time ${Race.fmt(orc)}${Math.abs(M.BOAT.loa - M.BASE.loa) > 0.2 ? ' (scaled to length)' : ''}: you sailed at ${(100 * orc / r.finish).toFixed(0)}% of it.${raceAssist ? ' Auto-trim used.' : ''}<br>Best for ${key}: ${Race.fmt(Math.min(r.finish, prev || Infinity))}${prev && r.finish < prev ? ' (new best)' : ''}.`;
+  beep(660, 200); setTimeout(() => beep(990, 400), 250);
+}
+function raceStep(dt, p0, p1, dHeading) {
+  if (!race) return;
+  for (const e of Race.update(race, p0, p1, dt, dHeading)) {
+    if (e.type === 'signal') beep(700, 120);
+    if (e.type === 'gun') beep(1000, 600);
+    if (e.type === 'ocs' || e.type === 'hit') beep(300, 500);
+    toast(e.text);
+    if (e.type === 'finished') raceFinished();
+  }
+}
+function raceHud() {
+  if (!race) return;
+  const r = race, leg = r.course.legs[r.leg], nm = Race.nextMark(r);
+  let txt;
+  if (r.phase === 'pre') txt = `Gun in ${Race.fmt(-r.t)}`;
+  else if (r.phase === 'finished') txt = `Finished ${Race.fmt(r.finish)}`;
+  else txt = `${Race.fmt(r.t)}  leg ${Math.max(1, r.leg)}/${r.course.legs.length - 1}`;
+  const alert = r.ocs ? 'OCS: go back' : r.penalty ? `${r.penalty} x 360 owed` : '';
+  $('r-race').textContent = txt + (alert ? `  ${alert}` : '');
+  $('ro-race').classList.toggle('alert', !!alert);
+  const dx = nm.p.x - pos.x, dy = nm.p.y - pos.y, brg = Math.atan2(dx, dy) / D;
+  let rel = ((brg + course + 540) % 360) - 180;  // relative to the bow (heading = -course)
+  $('r-mark-l').textContent = r.phase === 'finished' ? 'Done' : 'Next: ' + nm.name;
+  $('r-mark').textContent = r.phase === 'finished' ? '-' : `${Math.hypot(dx, dy).toFixed(0)} m, ${Math.abs(rel).toFixed(0)}° ${Math.abs(rel) < 3 ? 'ahead' : rel > 0 ? 'stbd' : 'port'}`;
+}
+
+// Course map in the rectangle (x0, y0, w, h).
+function drawCourse(g, x0, y0, w, h, mini) {
+  const c = race ? race.course : Race.makeCourse({ legNm: +$('race-len').value, laps: +$('race-laps').value });
+  const L = c.L, hw = Math.max(0.42 * L, 160), ymin = -230, ymax = L + 90;
+  const sc = Math.min(w / (2 * hw), h / (ymax - ymin));
+  const X = (x) => x0 + w / 2 + x * sc, Y = (y) => y0 + h / 2 - (y - (ymin + ymax) / 2) * sc;
+  g.save();
+  g.beginPath(); g.rect(x0, y0, w, h); g.clip();
+  g.fillStyle = mini ? 'rgba(8,24,36,.85)' : '#0d2232'; g.fillRect(x0, y0, w, h);
+  if (mini) { g.strokeStyle = '#244a66'; g.strokeRect(x0 + 0.5, y0 + 0.5, w - 1, h - 1); }
+  // laylines from the windward mark at the beat angle plus leeway, in the wind as it is now
+  const lay = beatAngleNow() + 4, len = L * 1.3;
+  g.strokeStyle = 'rgba(255,255,255,.18)'; g.setLineDash([4, 4]); g.lineWidth = 1;
+  for (const sgn of [1, -1]) {
+    const a = (windShift + 180 + sgn * lay) * D;
+    g.beginPath(); g.moveTo(X(c.windward.x), Y(c.windward.y)); g.lineTo(X(c.windward.x + len * Math.sin(a)), Y(c.windward.y + len * Math.cos(a))); g.stroke();
+  }
+  g.setLineDash([]);
+  // start / finish line, committee boat, pin, marks
+  g.strokeStyle = '#ffd04d'; g.setLineDash([6, 4]); g.beginPath(); g.moveTo(X(c.pin.x), Y(0)); g.lineTo(X(c.committee.x), Y(0)); g.stroke(); g.setLineDash([]);
+  const mark = (p, col, r) => { g.fillStyle = col; g.beginPath(); g.arc(X(p.x), Y(p.y), Math.max(r, Race.HIT * sc), 0, 7); g.fill(); };
+  mark(c.pin, '#ff8c2e', 3); mark(c.windward, '#ff8c2e', 4); c.laps > 1 && c.gate.forEach((p) => mark(p, '#ffd04d', 3));
+  g.fillStyle = '#e9eef2'; g.fillRect(X(c.committee.x) - 3, Y(0) - 7, 6, 14);
+  // track and boat
+  if (race) {
+    g.strokeStyle = 'rgba(95,180,255,.7)'; g.lineWidth = 1.5; g.beginPath();
+    track.forEach((p, i) => (i ? g.lineTo(X(p.x), Y(p.y)) : g.moveTo(X(p.x), Y(p.y)))); g.lineTo(X(pos.x), Y(pos.y)); g.stroke();
+    const nm = Race.nextMark(race);
+    if (race.phase !== 'finished') { g.strokeStyle = 'rgba(255,208,77,.35)'; g.setLineDash([2, 5]); g.beginPath(); g.moveTo(X(pos.x), Y(pos.y)); g.lineTo(X(nm.p.x), Y(nm.p.y)); g.stroke(); g.setLineDash([]); }
+  }
+  g.save(); g.translate(X(pos.x), Y(pos.y)); g.rotate(-course * D);
+  const bl = mini ? 6 : 9;
+  g.fillStyle = race ? '#fff' : 'rgba(255,255,255,.4)'; g.beginPath(); g.moveTo(0, -bl); g.lineTo(bl * 0.45, bl * 0.8); g.lineTo(-bl * 0.45, bl * 0.8); g.closePath(); g.fill();
+  g.restore();
+  // wind
+  const wx = x0 + (mini ? 16 : 30), wy = y0 + (mini ? 16 : 54), a = windShift * D;
+  arrow(g, wx - 12 * Math.sin(a), wy - 12 * Math.cos(a), wx + 12 * Math.sin(a), wy + 12 * Math.cos(a), '#8cc8ff');
+  if (!mini) {
+    g.fillStyle = '#9fb6c7'; g.font = '12px system-ui';
+    g.fillText(`wind from ${((windShift + 360) % 360).toFixed(0)}°, ${(S.tws / KN).toFixed(1)} kn`, wx + 18, wy + 4);
+    g.fillText(`${c.legNm} nm legs, ${c.laps} lap${c.laps > 1 ? 's' : ''}: start, windward mark to port${c.laps > 1 ? ', leeward gate, windward mark' : ''}, finish`, x0 + 10, y0 + h - 10);
+    if (!race) g.fillText('Start a race (Race panel) to sail it.', x0 + 10, y0 + h - 28);
+  }
+  g.restore();
+}
+
 // ---------- loop ----------
 let tipsShown = '', sparkT = 0, readT = 0;
 function frame(now) {
-  const dt = Math.min(0.05, last == null ? 0.016 : (now - last) / 1000); last = now; t += dt;
+  const dt = Math.min(0.05, last == null ? 0.016 : (now - last) / 1000) * timeScale; last = now; t += dt;
+  const course0 = course, p0 = { x: pos.x, y: pos.y };
   // wind
   const g1 = gusts ? 1 + 0.18 * Math.sin(t * 0.13 + ph[0]) + 0.1 * Math.sin(t * 0.37 + ph[1]) + 0.06 * Math.sin(t * 0.9 + ph[2]) : 1;
-  const shift = gusts ? 6 * Math.sin(t * 0.05 + ph[3]) + 3 * Math.sin(t * 0.21 + ph[4]) : 0;
+  const shift = windShift = gusts ? 6 * Math.sin(t * 0.05 + ph[3]) + 3 * Math.sin(t * 0.21 + ph[4]) : 0;
   S.tws = baseTws * KN * g1;
   // steering and tacking
   if (targetCourse != null) {
@@ -530,7 +701,8 @@ function frame(now) {
     syncInputs(); if (trimAnim.t >= 1) trimAnim = null;
   }
   // physics in small steps
-  let r; for (let i = 0; i < 4; i++) r = M.step(S, c, dt / 4);
+  const sub = 4 * timeScale;
+  let r; for (let i = 0; i < sub; i++) r = M.step(S, c, dt / sub);
   const f = r.f;
   // Broach: overpowered under a kite the rudder stalls and she rounds up hard, knocked flat.
   broachCool -= dt;
@@ -538,7 +710,14 @@ function frame(now) {
     broachCool = 8; toast('Broach! Rounded up and knocked flat. Ease the kite sheet and vang in the puffs, or bear away.');
     course = Math.sign(course) * Math.max(40, Math.abs(course) - 45); S.bs *= 0.45; S.heel = 50;
   }
-  drawTop(f); drawSide(f);
+  // where the boat goes: along its heading, slipping to leeward by the leeway angle
+  const cog = -(course + Math.sign(course || 1) * (S.leeway || 0)) * D;
+  pos.x += S.bs * Math.sin(cog) * dt; pos.y += S.bs * Math.cos(cog) * dt;
+  raceStep(dt, p0, { x: pos.x, y: pos.y }, -(((course - course0 + 540) % 360) - 180));
+  trackT += dt; if (race && trackT > 1) { trackT = 0; track.push({ x: pos.x, y: pos.y }); if (track.length > 4000) track.shift(); }
+  if (leftTab === 'boat') { drawTop(f); if (race) { const cv = $('top'), { g, w, h } = fit2(cv); drawCourse(g, w - 178, 40, 170, 210, true); } }
+  else { const { g, w, h } = fit($('top')); drawCourse(g, 0, 0, w, h, false); }
+  if (rightTab === 'sails') drawSide(f); else drawPolar();
   readT += dt;
   if (readT > 0.15) {
     readT = 0;
@@ -551,6 +730,7 @@ function frame(now) {
     $('r-heel').style.color = S.heel > 26 ? 'var(--stall)' : S.heel > 20 ? 'var(--warn)' : '';
     $('r-lee').textContent = (S.leeway || 0).toFixed(1) + '°';
     $('r-helm').textContent = (f.helm >= 0 ? 'weather ' : 'lee ') + Math.abs(f.helm).toFixed(0) + '°';
+    raceHud();
     const tips = M.coach(f, S, c).slice(0, 4), key = tips.join('|');
     if (key !== tipsShown) { tipsShown = key; $('tips').innerHTML = tips.map((x) => `<li>${x}</li>`).join(''); }
   }
@@ -558,6 +738,7 @@ function frame(now) {
   if (sparkT > 0.2) { sparkT = 0; spark.push(S.bs / KN); if (spark.length > 450) spark.shift(); drawSpark(); }
   requestAnimationFrame(frame);
 }
+showTabs();
 requestAnimationFrame(frame);
 </script>
 </body>

@@ -11,6 +11,7 @@ const shot = async (f) => { const r = await b.send('Page.captureScreenshot', { f
 try {
   await b.send('Page.navigate', { url });
   await sleep(2500);
+  await b.evaluate("document.getElementById('gust').click()"); // steady wind, so speeds compare
   for (const e of b.events) if (e.method === 'Runtime.exceptionThrown') errors.push(e.params.exceptionDetails.exception?.description);
   check('no exceptions on load', errors.length === 0, errors.join('\n'));
   const bs = await b.evaluate("parseFloat(document.getElementById('r-bs').textContent)");
@@ -32,6 +33,7 @@ try {
   await shot('smoke_run.png');
   await b.evaluate("document.getElementById('auto').click()");
   await sleep(6000);
+  const bsWing = await b.evaluate("parseFloat(document.getElementById('r-bs').textContent)");
   check('auto-trim on a jib run wings the jib out', await b.evaluate("document.getElementById('wing').classList.contains('on')"));
   await shot('smoke_wing.png');
   await b.evaluate("document.querySelector('[data-head=spin]').click()");
@@ -40,7 +42,7 @@ try {
   await b.evaluate("document.getElementById('auto').click()");
   await sleep(6000);
   const bsSpin = await b.evaluate("parseFloat(document.getElementById('r-bs').textContent)");
-  check('spinnaker run faster than the jib run', bsSpin > 5.2, bsSpin + ' kn');
+  check('spinnaker run faster than the jib run', bsSpin > bsWing, `${bsSpin} kn vs ${bsWing} winged out`);
   await shot('smoke_spin.png');
   await b.evaluate("document.getElementById('preset').value='genReach'; document.getElementById('preset').dispatchEvent(new Event('change'))");
   await sleep(4000);
@@ -49,9 +51,36 @@ try {
   await sleep(4000);
   check('gale preset is reefed', await b.evaluate("document.querySelectorAll('output')[7].textContent") === '2 reefs', await b.evaluate("document.querySelectorAll('output')[7].textContent"));
   await shot('smoke_gale.png');
-  await b.evaluate("const l=document.getElementById('loa'); l.value=45; l.dispatchEvent(new Event('input'))");
+  await b.evaluate("{ const l=document.getElementById('loa'); l.value=45; l.dispatchEvent(new Event('input')); }");
   await sleep(1500);
   check('boat length slider', await b.evaluate("SailModel.BOAT.loa") === 45);
+  // polar: workers compute the model's lines, drawn against ORC
+  await b.evaluate("{ const l=document.getElementById('loa'); l.value=SailModel.BASE.loa; l.dispatchEvent(new Event('input')); }");
+  await b.evaluate("document.getElementById('preset').value='medium'; document.getElementById('preset').dispatchEvent(new Event('change'))");
+  await b.evaluate("document.querySelector('#tabs-right [data-tab=polar]').click()");
+  check('polar uses web workers', await b.evaluate("polarPool.workers") > 0, 'workers ' + await b.evaluate("polarPool.workers"));
+  const t0 = Date.now();
+  for (let i = 0; i < 120; i++) { if (await b.evaluate("[6,12,20].every((t) => (polarData[SailModel.BOAT.loa + '/' + t] || []).every(Boolean))")) break; await sleep(500); }
+  const done = await b.evaluate("[6,12,20].map((t) => (polarData[SailModel.BOAT.loa + '/' + t] || []).filter(Boolean).length)");
+  check('polar computed for 6, 12 and 20 kn', done.every((n) => n === 15), done.join(',') + ` in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
+  const err = await b.evaluate("[6,12,20].map((t) => Polar.rms(ORC, t, polarData[SailModel.BOAT.loa + '/' + t]))");
+  check('model polar within 6% RMS of ORC', err.every((e) => e < 6), err.map((e) => e.toFixed(1) + '%').join(', '));
+  await sleep(300);
+  await shot('smoke_polar.png');
+  // race: start, the gun, a leg in the HUD, the course map
+  await b.evaluate("document.querySelector('#tabs-right [data-tab=sails]').click()");
+  await b.evaluate("document.getElementById('speed').value='8'; document.getElementById('speed').dispatchEvent(new Event('change'))");
+  await b.evaluate("document.getElementById('race-go').click()");
+  await sleep(500);
+  check('race HUD counts down', /Gun in/.test(await b.evaluate("document.getElementById('r-race').textContent")), await b.evaluate("document.getElementById('r-race').textContent"));
+  await shot('smoke_race_mini.png');
+  await sleep(9000);
+  const hud = await b.evaluate("document.getElementById('r-race').textContent");
+  check('after the gun the race clock runs', /leg/.test(hud), hud);
+  await b.evaluate("document.querySelector('#tabs-left [data-tab=course]').click()");
+  await sleep(1500);
+  await shot('smoke_course.png');
+  await b.evaluate("document.getElementById('race-stop').click(); document.getElementById('speed').value='1'; document.getElementById('speed').dispatchEvent(new Event('change')); document.querySelector('#tabs-left [data-tab=boat]').click()");
   await b.evaluate("document.getElementById('preset').value='breezy'; document.getElementById('preset').dispatchEvent(new Event('change'))");
   await sleep(4000);
   await shot('smoke_breezy.png');

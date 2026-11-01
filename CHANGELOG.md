@@ -1,6 +1,11 @@
 # Logs
 
 1 Nov 2026
+- Sail Trim: light-air pointing fixed. The genoa's sheeting angle with the sheet in hard is now fitted (16 degrees, a toe-rail track; it was 8) and the calibration adds 36 pointing checks (sailing 7 degrees off ORC's beat angle mustn't beat ORC's VMG); the steady-state solver now runs until speed settles (light air settled too slowly and read fast). VMG beat angle in 4 kn 48 degrees (ORC 46.6, was 36), 6 kn 46 (43.7). 2.6% RMS against the polar.
+- Sail Trim: Polar tab, the model's auto-trimmed polar against the ORC certificate for the wind speeds you pick, with RMS error, VMG optimums and your boat; computed in Web Workers built from the model's source (works from file://).
+- Sail Trim: timed windward-leeward races (`race.js`): 0.25 / 0.5 / 1 nm legs, 1 or 2 laps with a leeward gate, 1 / 3 / 5 min start with signals, OCS, a 360 for touching a mark, finish through the start line; race clock and next-mark HUD, Course tab with laylines and track, minimap, Time x1 to x8, ORC VMG target time and bests in localStorage. `node --test` 24 (with an autopilot that sails two laps), `node smoke.js` 16 checks.
+
+1 Nov 2026
 - Add [Committee Boat](vibes/committee-boat/): race committee app. Fleet (import from a spreadsheet, sort A–Z or by sail number), starts per fleet (rolling, 5-4-1-0 or 3-2-1-0) with spoken signals, countdowns and the boats clear to cross at each gun; Crossed before the gun is OCS, after it a start, an OCS boat crossing again has returned; DNS / DNC, general recall. Finish: partial sail number or name puts a boat on deck, FINISH (on press) or a detected horn gives it the time, a time with nobody on deck waits for a name; edit h:m:s, DNF / RET, still racing and out lists. Results per fleet: PHRF time on distance or time on time, ties share points, codes score entries + 1, CSV / text. Clock from GPS fix timestamps or a manual offset (tap on the minute). Voice lookup (speech recognition), camera OCR (TextDetector or Tesseract.js) matched fuzzily to the fleet. `node --test race.test.js` (12), `node smoke.js` (32 checks).
 
 31 Oct 2026

@@ -9,7 +9,7 @@ test('no-go zone: pointing at the wind stops the boat', () => {
   assert.ok(kn(s) < 1, `bs ${kn(s)}`);
 });
 test('close-hauled speed and heel are plausible for a 30 footer', () => {
-  const p = M.PRESETS.medium, s = M.steady(p.c, env(p.tws, p.twa));
+  const p = M.PRESETS.medium, e = env(p.tws, p.twa), s = M.steady(M.autoTrim(p.c, e), e);
   assert.ok(kn(s) > 4.5 && kn(s) < 6.5, `bs ${kn(s)}`);
   assert.ok(s.heel > 8 && s.heel < 25, `heel ${s.heel}`);
 });
@@ -70,7 +70,7 @@ test('downwind the kite gains about what ORC gives a 30 ft masthead boat over ji
   assert.ok(best('spin', 170) > best('gen', 170));
 });
 test('matches the Catalina 30 ORC polar at a few points', () => {
-  const O = require('./calib/orc-catalina30.json'), i = (t) => O.tws.indexOf(t);
+  const O = require('./calib/orc-catalina30.js'), i = (t) => O.tws.indexOf(t);
   const at = (tws, twa, head, target) => {
     const e = Object.assign(env(tws, twa), { bs: target * M.KN });
     const c = M.autoTrim(Object.assign(M.defaultControls(), { head, mainsheet: twa > 90 ? 0.6 : 0.06, jibSheet: twa > 90 ? 0.7 : 0.1, spinSheet: 0.6, spinPole: 0.7 }), e);

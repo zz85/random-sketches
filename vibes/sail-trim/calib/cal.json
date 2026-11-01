@@ -1,12 +1,13 @@
 {
- "lift": 0.7783,
- "parasitic": 0.02859,
- "kite": 0.7559,
- "fric": 0.003263,
- "heelDrag": 1.443,
- "cw": 0.0189,
- "fnExp": 9.529,
- "rm": 41130,
- "windage": 3.154,
- "spinClear": 0.4509
+ "lift": 0.7989,
+ "parasitic": 0.02939,
+ "kite": 0.7514,
+ "fric": 0.003328,
+ "heelDrag": 1.903,
+ "cw": 0.01949,
+ "fnExp": 9.195,
+ "rm": 42220,
+ "windage": 2.529,
+ "spinClear": 0.4892,
+ "sheetMin": 16.06
 }

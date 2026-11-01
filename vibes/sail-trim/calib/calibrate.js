@@ -6,7 +6,7 @@
 const { Worker, isMainThread, parentPort, workerData } = require('worker_threads');
 const path = require('path'), fs = require('fs');
 const M = require('../model.js');
-const ORC = require('./orc-catalina30.json');
+const ORC = require('./orc-catalina30.js');
 const KN = M.KN, D = M.D;
 
 // Polar points: the VMG beat and run at ORC's optimal angles, and the fixed angles 52 to 150.
@@ -16,12 +16,15 @@ function points() {
     pts.push({ tws, twa: ORC.beatAngle[i], target: ORC.beatVmg[i] / Math.cos(ORC.beatAngle[i] * D), kind: 'beat', w: 3 });
     for (const a of ORC.twa) pts.push({ tws, twa: a, target: ORC.speeds[a][i], kind: String(a), w: 1 });
     pts.push({ tws, twa: ORC.gybeAngle[i], target: ORC.runVmg[i] / -Math.cos(ORC.gybeAngle[i] * D), kind: 'run', w: 2 });
+    // Pointing: sailing higher or lower than ORC's VMG angle must not make a better VMG than ORC's.
+    for (const d of [-7, 7]) pts.push({ tws, twa: ORC.beatAngle[i] + d, vmgMax: ORC.beatVmg[i], kind: 'beat' + (d > 0 ? '+' : '-'), w: 3 });
+    for (const d of [-12, 12]) { const a = Math.min(180, ORC.gybeAngle[i] + d); if (a < ORC.gybeAngle[i] + 1) { if (d > 0) continue; } pts.push({ tws, twa: a, vmgMax: ORC.runVmg[i], kind: 'run' + (d > 0 ? '+' : '-'), w: 2 }); }
   });
   return pts;
 }
 // The sails a crew would try: the genoa upwind, the genoa or the spinnaker from 75 deg (ORC takes the faster).
 const sailsFor = (p) => (p.twa < 75 ? ['jib'] : ['jib', 'spin']);
-const envOf = (p) => ({ tws: p.tws * KN, twa: p.twa, bs: p.target * KN * 0.95 });
+const envOf = (p) => ({ tws: p.tws * KN, twa: p.twa, bs: (p.target || p.vmgMax / Math.abs(Math.cos(p.twa * D))) * KN * 0.95 });
 
 function trimAll(pts, trims) {
   return pts.map((p, i) => sailsFor(p).map((sail, j) => {
@@ -37,9 +40,11 @@ function speeds(pts, trims) {
     return { bs: best, sail };
   });
 }
-const loss = (pts, sp) => pts.reduce((a, p, i) => a + p.w * ((sp[i].bs - p.target) / p.target) ** 2, 0) / pts.reduce((a, p) => a + p.w, 0);
+const vmgOf = (p, bs) => bs * Math.abs(Math.cos(p.twa * D));
+const errOf = (p, s) => (p.target ? (s.bs - p.target) / p.target : Math.max(0, vmgOf(p, s.bs) - p.vmgMax) / p.vmgMax);
+const loss = (pts, sp) => pts.reduce((a, p, i) => a + p.w * errOf(p, sp[i]) ** 2, 0) / pts.reduce((a, p) => a + p.w, 0);
 
-const PARAMS = { lift: [0.6, 1.5], parasitic: [0.005, 0.06], kite: [0.5, 1.5], fric: [0.0025, 0.0045], heelDrag: [0, 2], cw: [0.003, 0.05], fnExp: [2, 10], rm: [15000, 120000], windage: [0.5, 8], spinClear: [0.1, 1] };
+const PARAMS = { lift: [0.6, 1.5], parasitic: [0.005, 0.06], kite: [0.5, 1.5], fric: [0.0025, 0.0045], heelDrag: [0, 2], cw: [0.003, 0.05], fnExp: [2, 10], rm: [15000, 120000], windage: [0.5, 8], spinClear: [0.1, 1], sheetMin: [8, 17] };
 const KEYS = Object.keys(PARAMS);
 const toCal = (x) => Object.fromEntries(KEYS.map((k, i) => [k, PARAMS[k][0] + Math.min(1, Math.max(0, x[i])) * (PARAMS[k][1] - PARAMS[k][0])]));
 const toX = (cal) => KEYS.map((k) => (cal[k] - PARAMS[k][0]) / (PARAMS[k][1] - PARAMS[k][0]));
@@ -86,7 +91,9 @@ function table(pts, sp) {
     });
     out += '\n';
   }
-  const err = pts.map((p, i) => (sp[i].bs - p.target) / p.target * 100);
+  const err = pts.filter((p) => p.target).map((p) => (sp[pts.indexOf(p)].bs - p.target) / p.target * 100);
+  const over = pts.filter((p) => !p.target).map((p) => errOf(p, sp[pts.indexOf(p)]) * 100);
+  out += `pointing checks: ${over.filter((e) => e > 0.5).length} of ${over.length} beat ORC's VMG by more than 0.5% (worst ${Math.max(...over).toFixed(1)}%)\n`;
   out += `model/ORC knots. RMS error ${Math.sqrt(err.reduce((a, e) => a + e * e, 0) / err.length).toFixed(1)}%, worst ${Math.max(...err.map(Math.abs)).toFixed(1)}%\n`;
   return out;
 }

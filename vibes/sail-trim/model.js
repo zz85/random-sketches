@@ -1,6 +1,6 @@
 // Sail trim model: controls -> sail shape -> per-height flow -> forces -> boat speed / heel.
 // SI inside (m/s, N, m), angles in degrees. Works in the browser (window.SailModel) and in node.
-(function (root) {
+function SailModelFactory(root) {
   'use strict';
   const KN = 0.514444, RHO = 1.225, RHO_W = 1025, D = Math.PI / 180;
   const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
@@ -10,12 +10,13 @@
   const BASE = { loa: 29.3, lwl: 7.628, main: 22.57, jib: 33.4, spin: 60.3, gen: 50, mast: 12.2, boom: 3.7, jibFoot: 5.6, pole: 3.7, mass: 5648, crew: 465, wet: 21.73 };
   // Coefficients the model can't measure, fitted to the ORC polar by calib/calibrate.js (calib/cal.json).
   const CAL = {
-    lift: 0.7783, parasitic: 0.02859, kite: 0.7559,   // sail lift scale, sail parasitic drag, spinnaker efficiency
-    fric: 0.003263, heelDrag: 1.443,                 // hull skin friction coefficient, extra friction at 30 deg heel
-    cw: 0.0189, fnExp: 9.529,  // residuary resistance / weight at Froude number 0.4, and how fast it rises
-    rm: 41130,                // righting moment per unit sin(heel) of the base boat, N m
-    spinClear: 0.4509,          // how much of the main's wind shadow a squared-back spinnaker gets out of
-    windage: 3.154,              // hull, rig and crew windage area x drag coefficient, m^2
+    lift: 0.7989, parasitic: 0.02939, kite: 0.7514,   // sail lift scale, sail parasitic drag, spinnaker efficiency
+    fric: 0.003328, heelDrag: 1.903,                 // hull skin friction coefficient, extra friction at 30 deg heel
+    cw: 0.01949, fnExp: 9.195,  // residuary resistance / weight at Froude number 0.4, and how fast it rises
+    rm: 42220,                // righting moment per unit sin(heel) of the base boat, N m
+    spinClear: 0.4892,          // how much of the main's wind shadow a squared-back spinnaker gets out of
+    sheetMin: 16.06,             // genoa sheeting angle with the sheet in hard (lead on the track), deg
+    windage: 2.529,              // hull, rig and crew windage area x drag coefficient, m^2
   };
   function makeBoat(ft) {
     const k = ft / BASE.loa, lwl = BASE.lwl * k;
@@ -128,7 +129,8 @@
       };
     } else {
       // Winged out, the whisker pole holds the clew to windward, from 30 to 90 deg off the bow.
-      const clew = c.wing ? 30 + 60 * c.jibSheet : 8 + 55 * c.jibSheet;
+      // Sheeted in hard, the clew sits on the genoa track: on a cruiser's toe rail that is 12 to 16 deg off the centreline (fitted: CAL.sheetMin).
+      const clew = c.wing ? 30 + 60 * c.jibSheet : CAL.sheetMin + 55 * c.jibSheet;
       const twist = 6 - 8 * c.jibLead + 16 * c.jibSheet + 2 * L;
       const tJ = c.jibHalyard, needJ = 0.3 + 0.35 * L;
       const draft = clamp(0.4 - 0.25 * (tJ - needJ) + 0.04 * sag, 0.25, 0.6);
@@ -271,8 +273,13 @@
 
   function steady(c, env, iters) {
     const s = { tws: env.tws, twa: env.twa, bs: env.bs != null ? env.bs : 2, heel: env.heel || 0 };
-    let r;
-    for (let i = 0; i < (iters || 120); i++) r = step(s, c, 0.6);
+    // Step until speed and heel settle (light air settles slowly), at most three times `iters`.
+    let r, n = iters || 120;
+    for (let i = 0; i < 3 * n; i++) {
+      const bs = s.bs, heel = s.heel;
+      r = step(s, c, 0.6);
+      if (i >= n / 4 && Math.abs(s.bs - bs) < 2e-4 && Math.abs(s.heel - heel) < 0.02) break;
+    }
     return Object.assign(s, { result: r });
   }
 
@@ -283,7 +290,8 @@
   }
 
   // Coordinate search over the continuous controls of the hoisted sails, for each number of reefs.
-  function autoTrim(c0, env) {
+  function autoTrim(c0, env, opts) {
+    opts = opts || {};
     const keys = trimKeys(c0);
     let bestC = null, bestV = -Infinity;
     const awa = apparent(env.tws * grad(7 * BOAT.k), Math.abs(env.twa), env.bs != null ? env.bs : 2, env.heel || 0).awa;
@@ -291,7 +299,7 @@
     // Off the wind also start from eased sheets, so a search begun close-hauled doesn't stop short.
     const eased = { mainsheet: 0.8, traveler: -1, vang: 0.6, jibSheet: 0.85, spinSheet: 0.6, spinPole: clamp((awa - 95) / 85, 0, 1), genSheet: 0.7, tackLine: clamp((awa - 90) / 60, 0, 1) };
     const starts = awa > 100 ? [{}, eased] : [{}];
-    for (const wing of wings) for (const reef of [0, 1, 2]) for (const st of starts) {
+    for (const wing of wings) for (const reef of opts.reefs || [0, 1, 2]) for (const st of starts) {
       let c = Object.assign({}, c0, st, { reef, wing }), best = score(c, env).value, stepSz = 0.2;
       while (stepSz > 0.01) {
         let improved = false;
@@ -386,6 +394,8 @@
   };
 
   const api = { KN, D, BASE, CAL, setCal, BOAT, H, RANGES, KEYS, REEF, HEADSAILS, PRESETS, IDEAL_DRAFT, makeBoat, setBoat, trimKeys, defaultControls, shape, aero, apparent, forces, hullDrag, step, steady, score, autoTrim, coach, clamp };
-  if (typeof module !== 'undefined' && module.exports) module.exports = api;
-  else root.SailModel = api;
-})(typeof self !== 'undefined' ? self : this);
+  return api;
+}
+// The factory is a named function so the polar view can start Web Workers from its source.
+if (typeof module !== 'undefined' && module.exports) module.exports = SailModelFactory();
+else self.SailModel = SailModelFactory(self);
