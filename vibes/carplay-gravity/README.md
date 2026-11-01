@@ -92,6 +92,10 @@ the body's transform; the two maps (into their own canvases at 30 fps) and the g
 cached, needle and arc live) are drawn every frame. Taps hit-test through each body's rotation.
 About 1.7 ms of CPU a frame in headless Chromium at rest (the 3D map is most of it); with a
 crack or ripples on, the frame is uploaded to the GPU and redrawn, about 5.5 ms in SwiftShader.
+The glass pass runs at no more than 1.5 device pixels per logical pixel, whatever the screen's
+DPR. A new crack is drawn into the crack maps on top of the others, with its glow blurred once
+as a layer, so a crack lands without a stall. The shader skips the ink blot and each LCD streak
+for pixels too far away to show them, and the streaks are placed once per crack on the CPU.
 
 Physics (`physics.js`, no dependencies): oriented boxes, convex polygons (reference face and
 clipping, as for boxes) and circles, Box2D Lite's box-box

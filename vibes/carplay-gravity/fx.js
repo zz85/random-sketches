@@ -154,6 +154,7 @@ uniform sampler2D uScene, uMap1, uMap2;
 uniform vec2 uRes; uniform float uK, uTime, uCracked;
 uniform vec4 uRip[24]; uniform int uNRip;
 uniform vec4 uImp[8]; uniform vec4 uImp2[8]; uniform int uNImp;
+uniform vec4 uStr[56]; // each crack's LCD streaks, 7 a crack: where, width, reach, row + 2 x tint
 in vec2 vUv; out vec4 o;
 
 float h21(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
@@ -217,7 +218,9 @@ void main() {
     if (i >= uNImp) break;
     vec4 a = uImp[i], b = uImp2[i];
     if (b.x <= 0.0) continue; // a hairline leaves the panel alone
-    float dist = length(sq - a.xy), nz = fbm(sq / 14.0 + a.z * 37.0), nz2 = fbm(sq / 5.0 - a.z * 11.0);
+    float dist = length(sq - a.xy);
+    if (dist > b.x * 20.0 + 10.0) continue; // past the halo and the fingers' fade: nothing to draw
+    float nz = fbm(sq / 14.0 + a.z * 37.0), nz2 = fbm(sq / 5.0 - a.z * 11.0);
     float grow = min(1.0, 0.25 + a.w * 0.9) * (1.0 + min(a.w, 30.0) * 0.012);
     float R = b.x * grow * (0.7 + 0.75 * nz);
     float blot = 1.0 - smoothstep(R - 1.5, R + 1.0, dist);
@@ -236,16 +239,17 @@ void main() {
     vec4 a = uImp[i], b = uImp2[i];
     for (int k = 0; k < 7; k++) {
       if (float(k) >= b.y) break;
-      float h1 = h21(vec2(a.z * 91.0, float(k))), h2 = h21(vec2(float(k), a.z * 53.0)), h3 = h21(vec2(a.z + float(k), 7.7));
-      bool row = h3 < 0.28;
-      float c0 = (row ? a.y : a.x) + (h1 - 0.5) * (row ? 70.0 : 260.0);   // where the streak sits
-      float along = row ? sq.x - a.x : sq.y - a.y, across = (row ? sq.y : sq.x) - c0;
-      float w = 0.6 + h2 * 2.6, reach = 90.0 + h1 * 330.0 * b.z;
+      vec4 st = uStr[i * 7 + k];
+      bool row = mod(st.w, 2.0) > 0.5;
+      float across = (row ? sq.y : sq.x) - st.x, w = st.y;
+      if (abs(across) > w * 7.0 + 1.0) continue; // off the streak and its halo
+      float along = row ? sq.x - a.x : sq.y - a.y, reach = st.z;
       float core = 1.0 - smoothstep(w * 0.5, w * 0.5 + 0.7, abs(across));
       float halo = exp(-across * across / (w * w * 9.0)) * 0.35;
       float fade = exp(-abs(along) / reach) * (0.75 + 0.25 * vnoise(vec2(along / 9.0, a.z * 13.0 + float(k))));
       float on = smoothstep(abs(along) + 20.0, abs(along) + 60.0, front(a.w, a.xy)) * smoothstep(0.0, 0.25, a.w);
-      vec3 tint = h2 < 0.5 ? vec3(0.2, 0.45, 1.0) : h2 < 0.8 ? vec3(1.0, 0.16, 0.22) : vec3(0.85, 0.25, 1.0);
+      float ti = floor(st.w / 2.0);
+      vec3 tint = ti < 0.5 ? vec3(0.2, 0.45, 1.0) : ti < 1.5 ? vec3(1.0, 0.16, 0.22) : vec3(0.85, 0.25, 1.0);
       col = mix(col, tint * 1.25, clamp(core * fade * on, 0.0, 1.0) * 0.7) + tint * halo * fade * on * 0.5;
     }
   }
@@ -281,7 +285,7 @@ export function createFX(cv) {
   const buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
   const aP = gl.getAttribLocation(prog, 'aP'); gl.enableVertexAttribArray(aP); gl.vertexAttribPointer(aP, 2, gl.FLOAT, false, 0, 0);
-  const U = {}; for (const n of ['uScene', 'uMap1', 'uMap2', 'uRes', 'uK', 'uTime', 'uCracked', 'uRip', 'uNRip', 'uImp', 'uImp2', 'uNImp']) U[n] = gl.getUniformLocation(prog, n);
+  const U = {}; for (const n of ['uScene', 'uMap1', 'uMap2', 'uRes', 'uK', 'uTime', 'uCracked', 'uRip', 'uNRip', 'uImp', 'uImp2', 'uNImp', 'uStr']) U[n] = gl.getUniformLocation(prog, n);
   const tex = (unit) => { const t = gl.createTexture(); gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, t);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
@@ -289,18 +293,26 @@ export function createFX(cv) {
   const T = [tex(0), tex(1), tex(2)];
   gl.uniform1i(U.uScene, 0); gl.uniform1i(U.uMap1, 1); gl.uniform1i(U.uMap2, 2);
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-  const map1 = document.createElement('canvas'), map2 = document.createElement('canvas');
-  let mapsDirty = true, K = 1, awake = false, sceneW = 0, sceneH = 0;
+  const map1 = document.createElement('canvas'), map2 = document.createElement('canvas'), glowL = document.createElement('canvas');
+  // the maps hold out.cracks[0 .. drawn); a new crack is drawn on top, anything else redraws them all
+  let mapsDirty = true, drawn = 0, K = 1, awake = false, sceneW = 0, sceneH = 0;
   const MK = () => Math.min(K, 1.5); // map resolution: device px per logical px, capped
+  const GK = () => Math.min(K, 1.5); // the pass's own resolution, capped the same: 2.25 x fewer pixels than DPR 3, 1.8 x than DPR 2
+  const passSize = () => [Math.round(cv.width / K * GK()), Math.round(cv.height / K * GK())];
 
   function rasterise() {
     const mk = MK(), w = Math.round(cv.width / K * mk), h = Math.round(cv.height / K * mk);
-    for (const m of [map1, map2]) { m.width = w; m.height = h; }
     const g1 = map1.getContext('2d'), g2 = map2.getContext('2d');
-    g1.fillStyle = 'rgb(128,128,128)'; g1.fillRect(0, 0, w, h);
-    g2.fillStyle = '#000'; g2.fillRect(0, 0, w, h);
-    g1.setTransform(mk, 0, 0, mk, 0, 0); g2.setTransform(mk, 0, 0, mk, 0, 0);
-    for (const C of out.cracks) {
+    if (mapsDirty || map1.width !== w || map1.height !== h) {
+      for (const m of [map1, map2, glowL]) { m.width = w; m.height = h; }
+      g1.fillStyle = 'rgb(128,128,128)'; g1.fillRect(0, 0, w, h);
+      g2.fillStyle = '#000'; g2.fillRect(0, 0, w, h);
+      drawn = 0;
+    }
+    const gg = glowL.getContext('2d');
+    for (const g of [g1, g2, gg]) { g.setTransform(mk, 0, 0, mk, 0, 0); g.lineCap = 'round'; g.lineJoin = 'round'; }
+    for (; drawn < out.cracks.length; drawn++) {
+      const C = out.cracks[drawn];
       // each crack's shards fade out with distance, so an older crack keeps its shards elsewhere
       for (const s of C.shards) {
         const cl = (v) => Math.max(1, Math.min(255, Math.round(128 + v))), c = (a) => `rgba(${cl(s.dx * 8)},${cl(s.dy * 8)},${cl(s.rot * 3000)},${a})`;
@@ -308,17 +320,32 @@ export function createFX(cv) {
         g1.fillStyle = rg; g1.beginPath(); s.poly.forEach(([x, y], i) => (i ? g1.lineTo(x, y) : g1.moveTo(x, y))); g1.closePath(); g1.fill();
       }
       g1.fillStyle = 'rgb(128,128,128)'; g1.beginPath(); g1.arc(C.x, C.y, 5, 0, TAU); g1.fill();
+      g2.globalCompositeOperation = 'lighten';
+      // B: which crack a pixel belongs to (1-based x 20, unblurred so it decodes cleanly; newest wins)
+      g2.strokeStyle = `rgb(0,0,${(drawn + 1) * 20})`; for (const L of C.lines) ribbon(g2, L, 5, 1, true);
+      // G: the glow, every line drawn sharp on a layer of its own, then blurred once onto the map
+      gg.save(); gg.setTransform(1, 0, 0, 1, 0, 0); gg.clearRect(0, 0, w, h); gg.restore();
+      gg.globalCompositeOperation = 'lighten'; gg.strokeStyle = '#0f0';
+      for (const L of C.lines) ribbon(gg, L, 4.2, 0.9);
+      g2.save(); g2.setTransform(1, 0, 0, 1, 0, 0); g2.filter = `blur(${(1.6 * mk).toFixed(1)}px)`; g2.drawImage(glowL, 0, 0); g2.restore();
+      // R: the thin core
+      g2.strokeStyle = '#f00';
+      for (const L of C.lines) ribbon(g2, L, 1.5, 1);
     }
-    g2.lineCap = 'round'; g2.lineJoin = 'round'; g2.globalCompositeOperation = 'lighten';
-    // B: which crack a pixel belongs to (1-based x 20, unblurred so it decodes cleanly; newest wins)
-    out.cracks.forEach((C, i) => { g2.strokeStyle = `rgb(0,0,${(i + 1) * 20})`; for (const L of C.lines) ribbon(g2, L, 5, 1, true); });
-    g2.save(); g2.filter = `blur(${(1.6 * mk).toFixed(1)}px)`; g2.strokeStyle = '#0f0';
-    for (const C of out.cracks) for (const L of C.lines) ribbon(g2, L, 4.2, 0.9);
-    g2.restore();
-    g2.strokeStyle = '#f00';
-    for (const C of out.cracks) for (const L of C.lines) ribbon(g2, L, 1.5, 1);
-    for (const [unit, m] of [[1, map1], [2, map2]]) { gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, T[unit]); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, m); m.width = m.height = 0; }
+    for (const [unit, m] of [[1, map1], [2, map2]]) { gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, T[unit]); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, m); }
     mapsDirty = false;
+  }
+  // a crack's LCD streaks, fixed when it is made: where each sits, how wide, how far it reaches, which way and what colour
+  function streaksOf(C) {
+    let t = Math.floor(C.seed * 4294967295) >>> 0;
+    const rnd = () => { t = (t + 0x6d2b79f5) >>> 0; let r = Math.imul(t ^ (t >>> 15), 1 | t); r ^= r + Math.imul(r ^ (r >>> 7), 61 | r); return ((r ^ (r >>> 14)) >>> 0) / 4294967296; };
+    const S = new Float32Array(28);
+    for (let k = 0; k < 7; k++) {
+      const h1 = rnd(), h2 = rnd(), row = rnd() < 0.28;
+      const c0 = (row ? C.y : C.x) + (h1 - 0.5) * (row ? 70 : 260);
+      S.set([c0, 0.6 + h2 * 2.6, 90 + h1 * 330 * C.power, (row ? 1 : 0) + 2 * (h2 < 0.5 ? 0 : h2 < 0.8 ? 1 : 2)], k * 4);
+    }
+    return S;
   }
 
   // a lost context hands the cracks back to the 2D fallback
@@ -329,13 +356,14 @@ export function createFX(cv) {
     const px = new Uint8Array([128, 128, 128, 255]);
     for (let u = 0; u < 3; u++) { gl.activeTexture(gl.TEXTURE0 + u); gl.bindTexture(gl.TEXTURE_2D, T[u]); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, px); }
     sceneW = sceneH = 0; mapsDirty = true;
+    for (const m of [map1, map2, glowL]) m.width = m.height = 0;
   }
-  const rip = new Float32Array(24 * 4), imp = new Float32Array(8 * 4), imp2 = new Float32Array(8 * 4);
+  const rip = new Float32Array(24 * 4), imp = new Float32Array(8 * 4), imp2 = new Float32Array(8 * 4), str = new Float32Array(56 * 4);
   Object.assign(out, {
     ok: true, canvas: glc,
-    resize(k) { K = k; mapsDirty = true; if (awake) { glc.width = cv.width; glc.height = cv.height; } },
+    resize(k) { K = k; mapsDirty = true; if (awake) [glc.width, glc.height] = passSize(); },
     removeCrack(C) { const i = out.cracks.indexOf(C); if (i >= 0) { out.cracks.splice(i, 1); mapsDirty = true; } },
-    addCrack(C) { out.cracks.push(C); if (out.cracks.length > 8) out.cracks.shift(); mapsDirty = true; },
+    addCrack(C) { C.fxStreaks ||= streaksOf(C); out.cracks.push(C); if (out.cracks.length > 8) { out.cracks.shift(); mapsDirty = true; } },
     clear() { out.cracks.length = 0; out.ripples.length = 0; mapsDirty = true; },
     ripple(x, y, amp = 1) { out.ripples.push({ x, y, t: performance.now() / 1000, amp }); if (out.ripples.length > 24) out.ripples.shift(); },
     render() {
@@ -343,9 +371,10 @@ export function createFX(cv) {
       const now = performance.now() / 1000;
       out.ripples = out.ripples.filter((r) => now - r.t < 2.6);
       if (!out.cracks.length && !out.ripples.length) { if (awake) sleep(); return; }
-      if (!awake) { awake = true; glc.width = cv.width; glc.height = cv.height; }
-      if (glc.width !== cv.width || glc.height !== cv.height) { glc.width = cv.width; glc.height = cv.height; }
-      if (mapsDirty) rasterise();
+      const [pw, ph] = passSize();
+      if (!awake) awake = true;
+      if (glc.width !== pw || glc.height !== ph) { glc.width = pw; glc.height = ph; }
+      if (mapsDirty || drawn < out.cracks.length) rasterise();
       glc.style.visibility = 'visible';
       gl.viewport(0, 0, glc.width, glc.height);
       gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, T[0]);
@@ -353,10 +382,10 @@ export function createFX(cv) {
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cv); sceneW = cv.width; sceneH = cv.height;
       } else gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, cv);
       out.ripples.forEach((r, i) => rip.set([r.x, r.y, now - r.t, r.amp], i * 4));
-      out.cracks.forEach((C, i) => { imp.set([C.x, C.y, C.seed, now - C.born], i * 4); imp2.set([C.blot, C.streaks, C.power, 0], i * 4); });
-      gl.uniform2f(U.uRes, glc.width, glc.height); gl.uniform1f(U.uK, K); gl.uniform1f(U.uTime, now); gl.uniform1f(U.uCracked, out.cracks.length ? 1 : 0);
+      out.cracks.forEach((C, i) => { imp.set([C.x, C.y, C.seed, now - C.born], i * 4); imp2.set([C.blot, C.streaks, C.power, 0], i * 4); str.set(C.fxStreaks || streaksOf(C), i * 28); });
+      gl.uniform2f(U.uRes, glc.width, glc.height); gl.uniform1f(U.uK, glc.width / (cv.width / K)); gl.uniform1f(U.uTime, now); gl.uniform1f(U.uCracked, out.cracks.length ? 1 : 0);
       gl.uniform4fv(U.uRip, rip); gl.uniform1i(U.uNRip, out.ripples.length);
-      gl.uniform4fv(U.uImp, imp); gl.uniform4fv(U.uImp2, imp2); gl.uniform1i(U.uNImp, out.cracks.length);
+      gl.uniform4fv(U.uStr, str); gl.uniform4fv(U.uImp, imp); gl.uniform4fv(U.uImp2, imp2); gl.uniform1i(U.uNImp, out.cracks.length);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     },
   });
