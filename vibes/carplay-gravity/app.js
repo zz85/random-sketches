@@ -866,6 +866,13 @@ function pieceAt(x, y, slop = 4) {
   }
   return null;
 }
+// How forgiving the triple-tap is: three taps within TAP_MS of each other and
+// TAP_R px of the first crack the glass. The defaults suit a finger on glass;
+// a remote touch path (CarPlay) adds latency and jitter, so ?taps=<ms> and
+// ?tapspread=<px> loosen the window without a rebuild.
+const TAP_MS = Math.max(120, Math.min(2000, parseInt(params.get('taps'), 10) || 380));
+const TAP_R = Math.max(10, Math.min(200, parseInt(params.get('tapspread'), 10) || 40));
+const TAP_DEBUG = params.has('tapdebug');
 let drag = null, menuPointer = null, taps = [];
 cv.addEventListener('pointerdown', (e) => {
   if (drag || menuPointer != null) return;
@@ -876,7 +883,9 @@ cv.addEventListener('pointerdown', (e) => {
   if (Math.hypot(pt.x - o.x, pt.y - o.y) < o.r + 6) { menuPointer = e.pointerId; openMenu(true); return; }
   // a triple tap anywhere cracks the glass; the quicker the three taps, the harder the knock
   const now = e.timeStamp || performance.now(); // when the finger landed, even if a frame was slow
-  if (taps.length && (now - taps.at(-1).t > 380 || Math.hypot(pt.x - taps[0].x, pt.y - taps[0].y) > 40)) taps = [];
+  const gap = taps.length ? now - taps.at(-1).t : 0, reach = taps.length ? Math.hypot(pt.x - taps[0].x, pt.y - taps[0].y) : 0;
+  if (TAP_DEBUG) console.log(`tap ${taps.length + 1} gap=${gap | 0}ms reach=${reach | 0}px (window ${TAP_MS}ms/${TAP_R}px)`);
+  if (taps.length && (gap > TAP_MS || reach > TAP_R)) taps = [];
   taps.push({ t: now, x: pt.x, y: pt.y });
   // a slow one leaves a single hairline; a fourth tap turns the crack into a spider web
   if (taps.length === 3) {
