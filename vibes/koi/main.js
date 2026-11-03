@@ -11,6 +11,7 @@ import { makeCausticPass, makeBottom, makeComposite, makeGrade, mulberry32 } fro
 import { Koi, RESIDENTS } from './koi.js';
 import { Surface, seasonNow } from './surface.js';
 import { makePaint, glaze } from './paint.js';
+import { makeInk, NF } from './ink.js';
 import { makeAudio } from './audio.js';
 
 const Q = new URLSearchParams(location.search);
@@ -25,7 +26,7 @@ const S = {
   mode: Q.get('mode') || store.mode || 'ripple',       // ripple | feed | call
   motion: Q.has('motion') ? Q.get('motion') !== '0' : store.motion ?? false,
   cam: Q.get('cam') || store.cam || 'top',              // top | angle | orbit (the realistic view)
-  fps: Q.has('fps') ? num('fps', 60) : store.fps || 60, // frames a second the painting is shown at
+  fps: Q.has('fps') ? num('fps', 60) : store.fps || 8,  // frames a second the painting is shown at
   floor: Q.get('floor') || store.floor || 'pebble',     // pebble | sky | dark (the realistic pond's bottom)
   still: Q.has('still'),                                // painting held on one frame
 };
@@ -65,6 +66,8 @@ const comp = makeComposite(shared), grade = makeGrade(), paint = makePaint(comp)
 const compScene = new THREE.Scene(); compScene.add(comp.mesh);
 const gradeScene = new THREE.Scene(); gradeScene.add(grade.mesh);
 const paintScene = new THREE.Scene(); paintScene.add(paint.mesh);
+const ink = makeInk(renderer, comp);
+const inky = () => S.style === 'ink';
 const fishScene = new THREE.Scene(), shadowScene = new THREE.Scene(), surfScene = new THREE.Scene();
 
 let bottomRT = null, fishRT = null, sceneRT = null, shadowRT = null, pigRT = null, causticRT = null;
@@ -141,13 +144,15 @@ function sizeTargets() {
   shared.uPaint.value = painted() ? 1 : 0; paint.u.uInk.value = S.style === 'ink' ? 1 : 0;
   for (const k of fish) glaze(k.fins.material, painted());
   paint.u.uGrain.value = view.h / 3.5; paint.u.uPx.value = H / 700; paint.u.uRes.value.set(W, H);
+  ink.vu.uGrain.value = view.h / 3.5;
+  if (inky()) ink.size(W, H); else ink.free();
   if (painted()) {
     // only the pigment layer is needed; free the realistic targets
     fishRT?.dispose(); sceneRT?.dispose(); fishRT = sceneRT = null;
     if (pigRT && pigRT.width === W && pigRT.height === H) return;
     pigRT?.dispose();
     pigRT = rt(W, H, 4); pigRT.texture.minFilter = THREE.LinearMipmapLinearFilter; pigRT.texture.generateMipmaps = true;
-    paint.u.uPig.value = pigRT.texture;
+    paint.u.uPig.value = pigRT.texture; ink.su.uPig.value = ink.vu.uPig.value = pigRT.texture;
     return;
   }
   pigRT?.dispose(); pigRT = null;
@@ -358,7 +363,21 @@ function simulate(dt) {
   surface.update({ dt, t: time, hx: view.hx, hy: view.hy, tilt: motion.tilt, ripples, ripple });
 }
 
-function render() {
+// the fish that stir the ink, as the camera sees them: head and velocity, tail, length and tail beat
+const _a = new THREE.Vector3(), _b = new THREE.Vector3();
+let inkDt = 0;
+function inkStir() {
+  const n = Math.min(NF, fish.length); ink.su.uFN.value = n;
+  const toUV = (v) => { v.project(cam); return [v.x * 0.5 + 0.5, v.y * 0.5 + 0.5]; };
+  for (let i = 0; i < n; i++) {
+    const k = fish[i], dx = Math.cos(k.h), dy = Math.sin(k.h);
+    const [hx, hy] = toUV(_a.set(k.x, k.y, k.z)), [fx, fy] = toUV(_b.set(k.x + dx * k.v, k.y + dy * k.v, k.z));
+    const [tx, ty] = toUV(_a.set(k.x - dx * k.L * 0.85, k.y - dy * k.L * 0.85, k.z)), [ex] = toUV(_b.set(k.x + k.L, k.y, k.z));
+    ink.su.uFP.value[i].set(hx, hy, fx - hx, fy - hy);
+    ink.su.uFT.value[i].set(tx, ty, Math.abs(ex - hx) * 1.6, time * (5 + k.v * 12) + i * 1.7);
+  }
+}
+function render(key = true) {
   uploadRipples();
   // camera: on a sphere round the middle of the pond, straight down unless angled, leaning
   // with the tilt so the surface slides over the deep bottom
@@ -373,7 +392,8 @@ function render() {
     paint.u.uBoil.value = Math.floor(time * Math.min(S.fps, 12));
     // pigment on white: deeper fish first so the shallow ones paint over them, then the surface
     renderer.setRenderTarget(pigRT); renderer.setClearColor(0xffffff, 1); renderer.clear(); renderer.setClearColor(0x000000, 0);
-    renderer.render(fishScene, cam); renderer.render(surfScene, cam);
+    if (!inky() || key) { renderer.render(fishScene, cam); renderer.render(surfScene, cam); }
+    if (inky()) { inkStir(); if (inkDt > 0 || key) ink.step(inkDt, key, ORTHO); inkDt = 0; renderer.setRenderTarget(null); renderer.clear(); ink.show(ORTHO); return; }
     renderer.setRenderTarget(null); renderer.clear(); renderer.render(paintScene, ORTHO);
     return;
   }
@@ -405,7 +425,11 @@ function loop(now) {
   // the painting can be shown at a few frames a second, like hand-painted animation, or held
   paintAcc += dt;
   const due = !painted() || (!held && (S.fps >= 60 || paintAcc >= 1 / S.fps - 0.004));
-  if (due || dirty) { render(); dirty = false; if (painted()) paintAcc = S.fps >= 60 ? 0 : paintAcc % (1 / S.fps); }
+  if (inky() && !held && !Q.has('pause')) {
+    // ink: painted at the keyframe rate, while the water carries it every frame in between
+    inkDt += dt; render(due || dirty); dirty = false;
+    if (due) paintAcc = S.fps >= 60 ? 0 : paintAcc % (1 / S.fps);
+  } else if (due || dirty) { render(); dirty = false; if (painted()) paintAcc = S.fps >= 60 ? 0 : paintAcc % (1 / S.fps); }
   frames++;
   if (frames > 30) adapt(ms, now);
   idle += dt;
@@ -427,7 +451,11 @@ if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.se
 // hooks for the smoke test
 window.__koi = {
   fish, surface, ripples, S, view, perf, motion,
-  step(n = 30, dt = 1 / 30) { for (let i = 0; i < n; i++) simulate(dt); render(); },
+  step(n = 30, dt = 1 / 30) {
+    if (!inky()) { for (let i = 0; i < n; i++) simulate(dt); render(); return; }
+    const every = S.fps >= 60 ? 1 : Math.max(1, Math.round(1 / (S.fps * dt)));
+    for (let i = 0; i < n; i++) { simulate(dt); inkDt += dt; render(i % every === 0 || i === n - 1 && n === 1); }
+  },
   render, ripple, setStyle(s) { S.style = s; resize(); refreshUI(); }, setCam, orbit, setFloor(f) { S.floor = f; setFloor(); refreshUI(); }, setMode(m) { S.mode = m; refreshUI(); },
   touch(x, y, type = 'down') { const ev = { pointerId: 99, clientX: x, clientY: y }; if (type === 'down') canvas.dispatchEvent(new PointerEvent('pointerdown', ev)); else if (type === 'move') canvas.dispatchEvent(new PointerEvent('pointermove', ev)); else canvas.dispatchEvent(new PointerEvent('pointerup', ev)); },
   tilt(x, y) { motion.tiltT = [x, y]; S.motion = true; },
