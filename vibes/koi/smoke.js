@@ -30,7 +30,7 @@ const W = +(process.env.W || 390), H = +(process.env.H || 844);
   const errors = () => b.events.filter((e) => (e.method === 'Runtime.consoleAPICalled' && (e.params.type === 'error' || e.params.type === 'warning')) || e.method === 'Runtime.exceptionThrown')
     .map((e) => e.params.exceptionDetails?.exception?.description || e.params.args?.map((a) => a.value ?? a.description).join(' ')).filter((s) => !/GPU stall|ReadPixels|WebGL-/.test(s || ''));
   const open = async (q) => {
-    await b.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/koi/?seed=3&q=1&pause&shot&${q}` });
+    await b.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/koi/?seed=3&q=1&pause&shot&${/style=/.test(q) ? '' : 'style=real&'}${q}` });
     await waitFor(() => b.evaluate('!!window.__koi'), 60000);
   };
   try {
@@ -47,6 +47,7 @@ const W = +(process.env.W || 390), H = +(process.env.H || 844);
       await open(base + '&style=ink'); await b.evaluate('__koi.step(60)'); await sleep(300); await shot('ink');
       await open(base + '&style=real&cam=angle'); await b.evaluate('__koi.orbit.el = __koi.orbit.elT; __koi.step(1)'); await sleep(300); await shot('angle');
       await b.evaluate(`__koi.setCam('orbit'); __koi.orbit.el = __koi.orbit.elT; __koi.orbit.az = __koi.orbit.azT = 2.2; __koi.ripple(0, 0, 1); __koi.ripple(0.5, 1, 1); __koi.step(20)`); await sleep(300); await shot('orbit');
+      for (const f of ['sky', 'dark']) { await open(base + `&style=real&cam=top&floor=${f}`); await b.evaluate('__koi.step(1)'); await sleep(300); await shot(f); }
       er = errors(); check('paint: no errors', er.length === 0, er.slice(0, 3).join(' | ').slice(0, 600));
       return;
     }

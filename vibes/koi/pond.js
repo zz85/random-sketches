@@ -57,6 +57,7 @@ export function mulberry32(a) { return () => { a |= 0; a = (a + 0x6d2b79f5) | 0;
 const BOTTOM_FS = /* glsl */ `
 ${COMMON}
 uniform vec4 uRect;
+uniform float uFloor;
 varying vec2 vUv;
 vec3 voro(vec2 p) {
   vec2 i = floor(p), f = fract(p); float f1 = 9., f2 = 9., id = 0.;
@@ -113,10 +114,23 @@ void main() {
   // algae film and silt patches: greener and duller in the low spots, thin on the domes
   float alg = smoothstep(0.35, 0.75, fbm(p * 0.9 + 4.));
   float moss = smoothstep(0.45, 0.8, fbm(p * 6.0)) * (1. - a.x * 0.6);
-  col = mix(col, col * s2l(vec3(0.62, 0.66, 0.42)), 0.35 + alg * 0.5);
-  col *= 0.75;
-  col = mix(col, s2l(vec3(0.20, 0.26, 0.12)), moss * 0.45);
-  col = mix(col, silt * 0.9, smoothstep(0.55, 0.85, fbm(p * 0.45 + 20.)) * 0.55);
+  float silty = smoothstep(0.55, 0.85, fbm(p * 0.45 + 20.));
+  if (uFloor < 0.5) {
+    // clean river pebbles: a faint brown film in the low spots, no green
+    col = mix(col, col * s2l(vec3(0.78, 0.72, 0.62)), 0.2 + alg * 0.25);
+    col *= 0.9;
+    col = mix(col, silt, silty * 0.4);
+  } else if (uFloor < 1.5) {
+    // a pale sky-blue pool, its plaster mottled, with a scatter of pebbles settled on it
+    float mott = vnoise(p * 3.) * 0.5 + vnoise(p * 23.) * 0.3 + vnoise(p * 160.) * 0.2;
+    vec3 plaster = s2l(mix(vec3(0.52, 0.72, 0.86), vec3(0.66, 0.82, 0.93), mott));
+    float few = step(0.9, fract(a.y * 37.1)) * inStone;
+    col = mix(plaster * (0.94 + 0.06 * lit), col, few);
+  } else {
+    // a dark liner: near-black slate and basalt, a little sheen on the domes
+    float lum = dot(col, vec3(0.3, 0.5, 0.2));
+    col = vec3(lum) * vec3(0.30, 0.31, 0.33) * (0.7 + 0.5 * a.x);
+  }
   // a few fallen leaves rotting on the bottom
   vec3 lv = voro(p * 2.2 + 30.);
   float leaf = step(0.93, lv.z) * smoothstep(0.16, 0.10, lv.x);

@@ -21,14 +21,22 @@ const store = (() => { try { return JSON.parse(localStorage.getItem('koi') || '{
 const save = () => { try { localStorage.setItem('koi', JSON.stringify(S)); } catch { /* private mode */ } };
 
 const S = {
-  style: Q.get('style') || store.style || 'real',      // real | paint
+  style: Q.get('style') || store.style || 'ink',       // ink | paint | real
   mode: Q.get('mode') || store.mode || 'ripple',       // ripple | feed | call
   motion: Q.has('motion') ? Q.get('motion') !== '0' : store.motion ?? false,
   cam: Q.get('cam') || store.cam || 'top',              // top | angle | orbit (the realistic view)
   fps: Q.has('fps') ? num('fps', 60) : store.fps || 60, // frames a second the painting is shown at
+  floor: Q.get('floor') || store.floor || 'pebble',     // pebble | sky | dark (the realistic pond's bottom)
   still: Q.has('still'),                                // painting held on one frame
 };
 // camera angles of the realistic view: elevation from straight down, symbol, name
+// pond bottoms of the realistic view: symbol, name, floor id, water absorption per metre, in-scatter
+const FLOORS = {
+  pebble: ['石', 'Pebble', 0, [0.42, 0.24, 0.26], [0.006, 0.008, 0.008]],
+  sky: ['空', 'Sky', 1, [0.70, 0.17, 0.09], [0.004, 0.012, 0.020]],
+  dark: ['黒', 'Dark', 2, [0.55, 0.36, 0.36], [0.003, 0.004, 0.005]],
+};
+if (!FLOORS[S.floor]) S.floor = 'pebble';
 const CAMS = { top: [0, '視', 'Top'], angle: [0.62, '斜', '2.5D'], orbit: [0.62, '巡', 'Orbit'] };
 if (!CAMS[S.cam]) S.cam = 'top';
 const SEED = Q.has('seed') ? num('seed', 1) : Math.floor(Math.random() * 1e6);
@@ -41,6 +49,7 @@ renderer.autoClear = false;
 document.body.prepend(renderer.domElement);
 const GL2 = renderer.capabilities.isWebGL2;
 const shared = makeShared();
+shared.uFloor = { value: 0 };
 const sd = shared.uSunDir.value; shared.uShadowDir.value.set(-sd.x / sd.z, -sd.y / sd.z);
 
 const FOV = 30, D = shared.uD.value;
@@ -242,26 +251,29 @@ function refreshUI() {
   $('sound').innerHTML = '<b>音</b> Sound'; $('sound').classList.toggle('on', audio.on);
   const c = CAMS[S.cam]; $('cam').innerHTML = `<b>${c[1]}</b> ${c[2]}`; $('cam').style.display = painted() ? 'none' : '';
   $('still').innerHTML = S.still ? '<b>動</b> Play' : '<b>止</b> Still'; $('still').classList.toggle('on', S.still);
-  $('fps').innerHTML = S.fps >= 60 ? '<b>齣</b> Smooth' : `<b>齣</b> ${S.fps} fps`;
+  $('fps').innerHTML = S.fps >= 60 ? '<b>齣</b> Smooth' : `<b>齣</b> ${{ 0.5: '½', 0.25: '¼' }[S.fps] || S.fps} fps`;
+  const f = FLOORS[S.floor]; $('floor').innerHTML = `<b>${f[0]}</b> ${f[1]}`; $('floor').style.display = painted() ? 'none' : '';
   for (const id of ['still', 'fps']) $(id).style.display = painted() ? '' : 'none';
 }
 let hintTimer = 0;
 function hint(text) { const h = $('hint'); h.textContent = text; h.classList.add('show'); clearTimeout(hintTimer); hintTimer = setTimeout(() => h.classList.remove('show'), 3600); }
 let idle = 0;
 function poke() { idle = 0; document.body.classList.remove('calm'); }
-$('style').onclick = () => { S.style = { real: 'paint', paint: 'ink', ink: 'real' }[S.style] || 'paint'; if (!painted()) S.still = false; save(); resize(); refreshUI(); poke(); };
+$('style').onclick = () => { S.style = { ink: 'paint', paint: 'real', real: 'ink' }[S.style] || 'ink'; if (!painted()) S.still = false; save(); resize(); refreshUI(); poke(); };
 $('mode').onclick = () => { const k = Object.keys(MODES); S.mode = k[(k.indexOf(S.mode) + 1) % k.length]; save(); refreshUI(); hint(MODES[S.mode][2]); poke(); };
 $('motion').onclick = () => { if (S.motion) { S.motion = false; save(); refreshUI(); } else enableMotion(); poke(); };
 $('cam').onclick = () => { const k = Object.keys(CAMS); setCam(k[(k.indexOf(S.cam) + 1) % k.length]); hint(S.cam === 'top' ? 'Straight down.' : 'Two fingers (or right-drag) turn and tilt the view.'); poke(); };
 $('still').onclick = () => { S.still = !S.still; dirty = true; refreshUI(); poke(); };
-const FPS = [60, 24, 16, 12, 8, 4];
-$('fps').onclick = () => { S.fps = FPS[(FPS.indexOf(S.fps) + 1) % FPS.length]; save(); refreshUI(); hint(S.fps >= 60 ? 'Painted every frame.' : `Painted ${S.fps} times a second.`); poke(); };
+const FPS = [60, 24, 16, 12, 8, 4, 2, 1, 0.5, 0.25];
+$('fps').onclick = () => { S.fps = FPS[(FPS.indexOf(S.fps) + 1) % FPS.length]; save(); refreshUI(); hint(S.fps >= 60 ? 'Painted every frame.' : S.fps >= 2 ? `Painted ${S.fps} times a second.` : S.fps === 1 ? 'A new painting every second.' : `A new painting every ${1 / S.fps} seconds.`); poke(); };
+$('floor').onclick = () => { const k = Object.keys(FLOORS); S.floor = k[(k.indexOf(S.floor) + 1) % k.length]; setFloor(); save(); refreshUI(); hint({ pebble: 'River pebbles, clear water.', sky: 'A pale blue pool.', dark: 'A dark-lined pond.' }[S.floor]); poke(); };
 $('sound').onclick = async () => { await audio.toggle(); refreshUI(); poke(); };
 if (!('DeviceOrientationEvent' in window) || !MOBILE) $('motion').style.display = Q.has('motion') ? '' : 'none';
 addEventListener('keydown', (e) => {
   if (e.key === 'p' || e.key === 'w') $('style').click();
   else if (e.key === 'm') $('mode').click();
   else if (e.key === 'c') $('cam').click();
+  else if (e.key === 'b' && !painted()) $('floor').click();
   else if (e.key === ' ' && painted()) { e.preventDefault(); $('still').click(); }
   else if (e.key === 'f' && painted()) $('fps').click();
   else if (e.key === 's') $('sound').click();
@@ -309,6 +321,12 @@ function orbitStep(dt) {
   else if (S.cam === 'orbit' && !fingers.size) orbit.azT += dt * 0.025;
   const e = Math.min(1, dt * 2.5);
   orbit.el += (orbit.elT - orbit.el) * e; orbit.az += (orbit.azT - orbit.az) * e;
+}
+// the pond's bottom and the water over it: clear over pebbles, blue over a pale pool, deep over a dark liner
+function setFloor() {
+  const f = FLOORS[S.floor];
+  shared.uFloor.value = f[2]; shared.uSigma.value.set(...f[3]); shared.uScatter.value.set(...f[4]);
+  if (bottomRT) { bottomRT.dispose(); bottomRT = null; resize(); }
 }
 function setCam(c) {
   S.cam = c; if (CAMS[c]) orbit.elT = CAMS[c][0];
@@ -395,7 +413,7 @@ function loop(now) {
   requestAnimationFrame(loop);
 }
 
-resize();
+setFloor(); resize();
 // let the pond settle before the first frame: fish spread out, spines relax
 for (let i = 0; i < num('warm', 600); i++) simulate(1 / 30);
 for (let i = 0; i < num('t', 0) * 30; i++) simulate(1 / 30);
@@ -410,7 +428,7 @@ if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.se
 window.__koi = {
   fish, surface, ripples, S, view, perf, motion,
   step(n = 30, dt = 1 / 30) { for (let i = 0; i < n; i++) simulate(dt); render(); },
-  render, ripple, setStyle(s) { S.style = s; resize(); refreshUI(); }, setCam, orbit, setMode(m) { S.mode = m; refreshUI(); },
+  render, ripple, setStyle(s) { S.style = s; resize(); refreshUI(); }, setCam, orbit, setFloor(f) { S.floor = f; setFloor(); refreshUI(); }, setMode(m) { S.mode = m; refreshUI(); },
   touch(x, y, type = 'down') { const ev = { pointerId: 99, clientX: x, clientY: y }; if (type === 'down') canvas.dispatchEvent(new PointerEvent('pointerdown', ev)); else if (type === 'move') canvas.dispatchEvent(new PointerEvent('pointermove', ev)); else canvas.dispatchEvent(new PointerEvent('pointerup', ev)); },
   tilt(x, y) { motion.tiltT = [x, y]; S.motion = true; },
   get time() { return time; },
