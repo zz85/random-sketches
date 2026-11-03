@@ -27,6 +27,11 @@ float psi(vec2 q) {
        + vnoise(q * 11. + vec2(t * 0.09, 3.)) * 0.15;
 }
 vec2 perp(vec2 v) { return vec2(-v.y, v.x); }
+// small eddies that turn as they drift, for the ink to curl around
+float eddy(vec2 q) {
+  float t = uTime;
+  return vnoise(q * 16. + vec2(t * 0.11, -t * 0.07)) * 0.65 + vnoise(q * 37. - vec2(t * 0.2, t * 0.16) + 5.) * 0.35;
+}
 void main() {
   vec2 asp = vec2(uRes.x / uRes.y, 1.), q = vUv * asp;
   // slow currents: the curl of a drifting stream function, so the water neither piles up nor thins
@@ -54,6 +59,10 @@ void main() {
     v += perp(dt) / max(T.z, 1e-3) * w * sin(T.w) * sp * 0.9;
     churn = max(churn, sp / max(T.z, 1e-3) * max(max(wj, wb), w));
   }
+  // curl noise in each fish's wake: divergence-free swirls where its tail just stirred the water
+  float ee = 0.004, e0 = eddy(q);
+  vec2 cv = vec2(eddy(q + vec2(0., ee)) - e0, -(eddy(q + vec2(ee, 0.)) - e0)) / ee;
+  v += cv * 0.0055 * smoothstep(0., 1., min(churn, 1.));
   // a touch's rings push the ink out as they pass
   vec4 far = uInvVP * vec4(vUv * 2. - 1., 1., 1.);
   vec3 rd = normalize(far.xyz / far.w - uCam);
