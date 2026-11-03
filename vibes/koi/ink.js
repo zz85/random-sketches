@@ -33,6 +33,8 @@ void main() {
   float e = 0.01, p0 = psi(q);
   vec2 v = vec2(psi(q + vec2(0., e)) - p0, -(psi(q + vec2(e, 0.)) - p0)) / e * 0.0022;
   // each fish drags the water along its body, and its tail sheds vortices turning left and right in turn
+  // how hard the fish nearby are swimming: the faster, the quicker their ink thins
+  float churn = 0.;
   for (int i = 0; i < ${NF}; i++) {
     if (float(i) >= uFN) break;
     vec4 F = uFP[i], T = uFT[i];
@@ -40,16 +42,17 @@ void main() {
     vec2 fv = F.zw * asp; float sp = length(fv); vec2 dir = fv / max(sp, 1e-4), side = perp(dir);
     // the body drags a little water along, and parts it sideways at the shoulders
     float wb = exp(-dot(d, d) / r2.x);
-    v += fv * 0.25 * wb + side * dot(d, side) / max(T.z, 1e-3) * sp * 0.6 * wb;
+    v += (fv * 0.25 * wb + side * dot(d, side) / max(T.z, 1e-3) * sp * 0.6 * wb) * 0.35;
     // behind the tail: a jet thrown back against the swim, flicked left and right with each beat,
     // with the vortices it sheds turning in turn, so the trail shows how the fish pushes
     vec2 dt = q - T.xy * asp;
     float back = dot(dt, -dir), lat = dot(dt, side);
     float wj = smoothstep(-0.2 * T.z, 0.1 * T.z, back) * exp(-max(back, 0.) / (T.z * 1.4)) * exp(-lat * lat / (T.z * T.z * 0.06));
     float beat = sin(T.w - back / max(T.z, 1e-3) * 4.);
-    v += (-dir * 0.7 + side * beat * 0.9) * sp * wj;
+    v += (-dir * 0.7 + side * beat * 0.9) * sp * wj * 0.35;
     float w = exp(-dot(dt, dt) / r2.y);
-    v += perp(dt) / max(T.z, 1e-3) * w * sin(T.w) * sp * 2.5;
+    v += perp(dt) / max(T.z, 1e-3) * w * sin(T.w) * sp * 0.9;
+    churn = max(churn, sp / max(T.z, 1e-3) * max(max(wj, wb), w));
   }
   // a touch's rings push the ink out as they pass
   vec4 far = uInvVP * vec4(vUv * 2. - 1., 1., 1.);
@@ -66,7 +69,7 @@ void main() {
   float fray = vnoise(q * 38. + vec2(uTime * 0.4, -uTime * 0.3)) * 0.6 + vnoise(q * 90. - uTime * 0.7) * 0.4;
   d -= uDt * 0.5 * smoothstep(0.45, 0.8, fray) * min(d, 1.);
   // dense ink thins out quickly into wisps, and the wisps linger
-  d = max(0., d * exp(-uDt * (0.6 + 9. * min(length(v), 0.25) + 1.6 * smoothstep(0.5, 2.5, d))) - uDt * 0.02);
+  d = max(0., d * exp(-uDt * (0.6 + 2.2 * min(churn, 1.5) + 1.6 * smoothstep(0.5, 2.5, d))) - uDt * 0.02);
   // a keyframe: the fresh painting drops its ink in, dark where it is dense
   if (uStamp > 0.5) {
     // softened, so what it leaves behind is a cloud and not a copy of the fish
