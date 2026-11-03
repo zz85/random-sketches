@@ -215,12 +215,13 @@ vec3 koiColour(vec3 rest, float up, out float white) {
   vec3 q = vec3(s * 4.2, rest.y * 7., rest.z * 7.) * uPat3.x + uPat2.w;
   float dors = smoothstep(-0.6, 0.15, up + uPat.z * 0.4);
   float m1 = fbm3(q);
-  float red = smoothstep(uPat.x - 0.018, uPat.x + 0.018, m1) * dors;
+  float ew = mix(0.018, 0.05, uPaint);
+  float red = smoothstep(uPat.x - ew, uPat.x + ew, m1) * dors;
   red = max(red, uPat.w * smoothstep(0.045, 0.075, s) * smoothstep(0.23, 0.18, s) * smoothstep(-0.1, 0.45, up) * smoothstep(0.38, 0.45, m1 + 0.1));
   if (uPat3.z > 1.5) red = smoothstep(0.048, 0.038, length(vec2((s - 0.125) * 0.9, rest.y))) * step(0., up);
   else if (uPat3.z > 0.5) red = smoothstep(0.15, -0.35, up) * smoothstep(0.06, 0.14, s) + smoothstep(0.2, 0.12, s) * smoothstep(0.2, -0.1, up);
   float m2 = fbm3(vec3(s * 9., rest.y * 14., rest.z * 14.) * uPat3.y + uPat2.w + 11.);
-  float blk = smoothstep(uPat.y - 0.02, uPat.y + 0.02, m2) * mix(dors, 1., step(uPat.z, -0.5));
+  float blk = smoothstep(uPat.y - ew, uPat.y + ew, m2) * mix(dors, 1., step(uPat.z, -0.5));
   vec3 c = mix(uBase, uC1, clamp(red, 0., 1.));
   c = mix(c, uC2, clamp(blk, 0., 1.));
   white = (1. - clamp(red, 0., 1.)) * (1. - clamp(blk, 0., 1.)) * uWhite;
@@ -245,7 +246,7 @@ void main() {
   q.y += 0.5 * floor(q.x);
   vec2 cell = floor(q), fq = fract(q) - 0.5;
   float d = length(vec2(fq.x + 0.5, fq.y * 1.25));
-  float scaleOn = smoothstep(0.17, 0.25, s) * uPat2.z;
+  float scaleOn = smoothstep(0.17, 0.25, s) * uPat2.z * (1. - 0.75 * uPaint);
   float rim = smoothstep(0.78, 1.0, d) * smoothstep(1.15, 1.0, d);
   float sparkle = hash12(cell + uPat2.w);
   alb *= 1. + scaleOn * (0.10 * smoothstep(0.1, 0.85, d) - 0.18 * rim);
@@ -256,6 +257,29 @@ void main() {
   alb = mix(alb, vec3(0.008), smoothstep(0.012, 0.009, eye));
   float nos = length(vec2(s - 0.035, abs(vRest.y) - 0.026)) + max(0., -vRest.z) * 2.;
   alb = mix(alb, alb * 0.45, smoothstep(0.009, 0.005, nos));
+  if (uPaint > 0.5) {
+    // watercolour: white skin is bare paper shaped by a cool shade on the flanks; colour
+    // patches bloom wet-in-wet, darker at their cores and in backrun rims; deeper fish fade
+    float wrapP = clamp((dot(N, uSunDir) + 0.4) / 1.4, 0., 1.);
+    float side = clamp(1. - N.z, 0., 1.);
+    float shade = clamp(side * 1.1 + (1. - wrapP) * 0.55 - 0.2, 0., 1.);
+    vec3 cool = vec3(0.50, 0.63, 0.78);
+    float col1 = 1. - white / max(uWhite, 1e-3) * step(0.01, uWhite);
+    float n = fbm3(vRest * vec3(16., 26., 26.) + uPat2.w * 3.1);
+    float n2 = fbm3(vRest * vec3(6., 11., 11.) + uPat2.w + 5.);
+    float inten = clamp(0.55 + (n - 0.5) * 1.6 + 0.35, 0.45, 1.45);
+    vec3 pig = pow(clamp(alb, 0.02, 1.), vec3(inten));
+    float backrun = smoothstep(0.035, 0.0, abs(n2 - 0.5)) * col1;
+    pig = pow(pig, vec3(1. + 0.6 * backrun));
+    pig = mix(pig, vec3(0.98), smoothstep(0.62, 0.8, n2) * col1 * 0.45);      // lifted bloom
+    pig *= mix(vec3(1.), cool, shade * 0.85);
+    pig = mix(pig, pig * cool, smoothstep(0.75, 0.98, side) * 0.6);   // a darker stroke down the flanks
+    pig = mix(pig, vec3(1.), smoothstep(0.94, 0.995, N.z) * smoothstep(0.15, 0.3, s) * 0.4); // highlight on the back
+    float dk = clamp((-vW.z - 0.1) / 0.8, 0., 1.);
+    pig = mix(pig, mix(vec3(1.), cool, 0.35), dk * 0.55);
+    gl_FragColor = vec4(pig, 1.);
+    return;
+  }
   alb = s2l(alb);
 
   float metal = uPat2.y;
@@ -295,6 +319,17 @@ void main() {
   vec3 root = koiColour(vec3(0.3, 0., 0.1), 1., white);
   vec3 alb = mix(root, uFinCol, smoothstep(0.0, 0.55, u));
   alb = mix(alb, vec3(0.04), uPat3.w * ray * smoothstep(0.55, 0.0, u));
+  if (uPaint > 0.5) {
+    // pale, streaky strokes of a dry brush, cool towards the tips
+    float streak = vnoise(vec2(v * 22. + vKind * 7., u * 2.2)) * 0.7 + vnoise(vec2(v * 60. + vKind, u * 5.)) * 0.3;
+    float aa = a * (0.45 + 0.9 * streak) * (1. - 0.45 * u);
+    vec3 pig = mix(pow(alb, vec3(0.8)), mix(uFinCol, vec3(0.52, 0.68, 0.82), 0.65), smoothstep(0.0, 0.6, u));
+    pig = mix(pig, pig * vec3(0.8, 0.88, 0.95), ray * 0.6);
+    float dk = clamp((-vW.z - 0.1) / 0.8, 0., 1.);
+    float al = clamp(aa * 2.4, 0., 0.9) * (1. - dk * 0.4);
+    gl_FragColor = vec4(pig * al, al);   // premultiplied, glazed by multiply
+    return;
+  }
   alb = s2l(alb * (0.9 + 0.2 * ray));
   vec3 E = underLight(vW, 0., caustic(vW.xy, vec2(0.)) * exp(vW.z * 2.2), 0.85);
   vec3 col = alb * E * 0.5 + uAmb * alb * 0.12;

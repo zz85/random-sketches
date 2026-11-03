@@ -30,6 +30,8 @@
   #hint { position: fixed; left: 50%; bottom: calc(max(14px, env(safe-area-inset-bottom)) + 46px); transform: translateX(-50%); color: #f4efe4; font: italic 13px Georgia, serif;
     text-align: center; max-width: 82vw; text-shadow: 0 1px 8px rgba(0, 0, 0, 0.7); opacity: 0; transition: opacity 0.8s; pointer-events: none; }
   #hint.show { opacity: 0.92; }
+  body.paper #title, body.paper #hint { color: #4a4640; text-shadow: none; }
+  body.paper #bar button { background: rgba(250, 247, 240, 0.6); color: #4a4640; border-color: rgba(70, 64, 56, 0.25); }
 </style>
 <script type="importmap">
 { "imports": { "three": "https://unpkg.com/three@0.160.1/build/three.module.js" } }
@@ -46,5 +48,11 @@
   <button data-pwa-install type="button" style="display:none"><b>⇩</b> Install</button>
 </div>
 <script type="module" src="main.js"></script>
+<script>
+  // keep the hint above the button bar, which wraps to two rows when Install shows
+  (() => { const bar = document.getElementById('bar'), hint = document.getElementById('hint');
+    const fit = () => { hint.style.bottom = (innerHeight - bar.getBoundingClientRect().top + 10) + 'px'; };
+    new ResizeObserver(fit).observe(bar); addEventListener('resize', fit); fit(); })();
+</script>
 </body>
 </html>

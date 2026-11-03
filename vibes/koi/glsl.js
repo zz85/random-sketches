@@ -19,13 +19,14 @@ export function makeShared() {
     uCaustic: { value: null },
     uDappleK: { value: 1 },            // how much the canopy shades the pond
     uShadowDir: { value: new THREE.Vector2() }, // where shadows fall per unit of height
+    uPaint: { value: 0 },              // 1: shaders output watercolour pigment (sRGB on white) instead of light
   };
 }
 
 export const COMMON = /* glsl */ `
 uniform float uTime;
 uniform vec3 uSunDir, uSunCol, uAmb, uSigma, uScatter;
-uniform float uD, uDappleK;
+uniform float uD, uDappleK, uPaint;
 uniform sampler2D uCaustic;
 vec3 enc(vec3 c) { return sqrt(max(c, 0.)); }
 vec3 dec(vec3 c) { return c * c; }

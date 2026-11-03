@@ -53,6 +53,7 @@ void main() {
   c = mix(c, c * 1.25 + 0.03, max(vein * 0.55, rib * 0.7));
   // a red-bronze lip on the upturned edge
   c = mix(c, vec3(0.42, 0.14, 0.08), smoothstep(0.88, 0.98, r) * 0.75);
+  if (uPaint > 0.5) { vec3 w = mix(vec3(0.38, 0.55, 0.30), vec3(0.55, 0.66, 0.36), n); w = mix(w, vec3(0.62, 0.40, 0.28), smoothstep(0.88, 0.98, r) * 0.6); w = mix(w, w * 1.15, max(vein, rib) * 0.6); gl_FragColor = vec4(mix(vec3(1.), w, 0.5), 1.); return; }
   vec3 alb = s2l(c);
   vec3 N = normalize(vec3(-vP * 0.05 * smoothstep(0.85, 1., r) * 6. + (vec2(vnoise(vP * 9.), vnoise(vP * 9. + 4.)) - 0.5) * 0.12, 1.));
   vec3 V = normalize(cameraPosition - vW), H = normalize(uSunDir + V);
@@ -65,7 +66,7 @@ void main() {
   col = mix(col, col * 0.7, drop) + uSunCol * drop * smoothstep(0.05, 0.0, length(f - (hash22(cell) - 0.5) * 0.5 - vec2(0.03))) * 0.8 * sun;
   gl_FragColor = vec4(enc(col), 1.);
 }`;
-const HALO_FS = /* glsl */ `varying vec2 vRA; void main() { float r = vRA.x; gl_FragColor = vec4(0.0, 0.03, 0.02, 0.32 * smoothstep(1.0, 0.82, r)); }`;
+const HALO_FS = /* glsl */ `uniform float uPaint; varying vec2 vRA; void main() { if (uPaint > 0.5) discard; float r = vRA.x; gl_FragColor = vec4(0.0, 0.03, 0.02, 0.32 * smoothstep(1.0, 0.82, r)); }`;
 const PAD_SHADOW_FS = /* glsl */ `void main() { gl_FragColor = vec4(vec3(0.9), 1.); }`;
 
 // ---------- water lily: three rings of cupped petals round a yellow centre
@@ -112,6 +113,7 @@ void main() {
     c *= 0.9 + 0.1 * pow(abs(cos(vP.y * 9.)), 4.);           // fine veins
     c *= 0.82 + 0.18 * vP.x + 0.12 * vP.z;                    // inner petals in the cup's shade
   }
+  if (uPaint > 0.5) { gl_FragColor = vec4(mix(vec3(1.), c, 0.85), 1.); return; }
   float sun = dapple(vW.xy);
   vec3 alb = s2l(c);
   vec3 col = alb * (uSunCol * 0.62 * sun + uAmb * 0.9) * 0.5 + alb * uSunCol * 0.05 * sun; // petals glow through
@@ -168,6 +170,7 @@ void main() {
   else if (k < 2.5) c = mix(vec3(0.95, 0.78, 0.18), vec3(0.82, 0.62, 0.12), vD.y);
   else c = vec3(0.42, 0.25, 0.12) * (0.75 + 0.5 * smoothstep(0.3, 0.0, length(vQ - vec2(-0.12, 0.12))));
   if (k > 0.5 && k < 2.5) c *= 0.85 + 0.25 * vnoise(vQ * 14. + vD.y * 20.) - 0.25 * smoothstep(0.03, 0.0, abs(vQ.x)) * step(-0.2, vQ.y);
+  if (uPaint > 0.5) { gl_FragColor = vec4(mix(vec3(1.), c, 0.55), 1.); return; }
   vec3 alb = s2l(c);
   float sun = dapple(vW.xy);
   vec3 col = alb * (uSunCol * uSunDir.z * sun + uAmb * 0.85) * 0.5;
@@ -204,12 +207,12 @@ export class Surface {
   }
 
   // pads in two or three clusters near the edges of the view (hx, hy: half extents)
-  layout(hx, hy) {
+  layout(hx, hy, k = 1) {
     for (const p of this.pads) { this.scene.remove(p.mesh, p.halo, p.lily); this.shadow.remove(p.shadow); }
     this.pads = [];
     const rng = mulberry32(911), clusters = [[-0.78, 0.7, 4], [0.82, -0.55, 3], [0.55, 0.92, 2]];
     for (const [cx, cy, n] of clusters) for (let i = 0; i < n; i++) {
-      const r = 0.15 + rng() * 0.15, ang = rng() * Math.PI * 2, dist = i === 0 ? 0 : 0.25 + rng() * 0.25;
+      const r = (0.15 + rng() * 0.15) * (0.4 + 0.6 * k), ang = rng() * Math.PI * 2, dist = i === 0 ? 0 : (0.25 + rng() * 0.25) * (0.4 + 0.6 * k);
       const ax = cx * hx + Math.cos(ang) * dist, ay = cy * hy + Math.sin(ang) * dist;
       const seed = rng() * 100;
       const mat = new THREE.ShaderMaterial({ uniforms: { ...this.shared, uSeed: { value: seed } }, vertexShader: PAD_VS, fragmentShader: PAD_FS });

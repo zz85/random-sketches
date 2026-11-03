@@ -10,7 +10,7 @@ import { makeShared, MAXR } from './glsl.js';
 import { makeCaustics, makeBottom, makeComposite, makeGrade, mulberry32 } from './pond.js';
 import { Koi, RESIDENTS } from './koi.js';
 import { Surface, seasonNow } from './surface.js';
-import { makePaint } from './paint.js';
+import { makePaint, glaze } from './paint.js';
 import { makeAudio } from './audio.js';
 
 const Q = new URLSearchParams(location.search);
@@ -38,19 +38,21 @@ const shared = makeShared();
 shared.uCaustic.value = makeCaustics(256);
 const sd = shared.uSunDir.value; shared.uShadowDir.value.set(-sd.x / sd.z, -sd.y / sd.z);
 
-const FOV = 30, HALF_SHORT = num('view', 1.5), D = shared.uD.value;
+const FOV = 30, D = shared.uD.value;
+// the watercolour is a closer view, so the koi fill the paper as in a painting
+const halfShort = () => num('view', S.style === 'paint' ? 0.8 : 1.5);
 const cam = new THREE.PerspectiveCamera(FOV, 1, 0.1, 60);
 const ORTHO = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 const shadowCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 30);
 const view = { w: 1, h: 1, hx: 1, hy: 1, H: 5, rect: new THREE.Vector4(), q: num('q', 1), pr: 1 };
 
-const comp = makeComposite(shared), grade = makeGrade(), paint = makePaint();
+const comp = makeComposite(shared), grade = makeGrade(), paint = makePaint(comp);
 const compScene = new THREE.Scene(); compScene.add(comp.mesh);
 const gradeScene = new THREE.Scene(); gradeScene.add(grade.mesh);
 const paintScene = new THREE.Scene(); paintScene.add(paint.mesh);
 const fishScene = new THREE.Scene(), shadowScene = new THREE.Scene(), surfScene = new THREE.Scene();
 
-let bottomRT = null, fishRT = null, sceneRT = null, shadowRT = null;
+let bottomRT = null, fishRT = null, sceneRT = null, shadowRT = null, pigRT = null;
 const rt = (w, h, samples) => new THREE.WebGLRenderTarget(w, h, { samples: GL2 ? samples : 0, depthBuffer: true });
 
 // ---------- the pond's residents
@@ -83,7 +85,8 @@ function uploadRipples() {
 function resize() {
   const w = innerWidth, h = innerHeight, aspect = w / h;
   view.w = w; view.h = h;
-  if (aspect < 1) { view.hx = HALF_SHORT; view.hy = HALF_SHORT / aspect; } else { view.hy = HALF_SHORT; view.hx = HALF_SHORT * aspect; }
+  const HS = halfShort();
+  if (aspect < 1) { view.hx = HS; view.hy = HS / aspect; } else { view.hy = HS; view.hx = HS * aspect; }
   view.H = view.hy / Math.tan(THREE.MathUtils.degToRad(FOV / 2));
   cam.aspect = aspect; cam.updateProjectionMatrix();
   // the bottom must cover what the view sees at the bottom's depth, with room for the tilt
@@ -100,7 +103,7 @@ function resize() {
     const sl = 512, sw = r.z >= r.w ? sl : Math.round(sl * r.z / r.w), sh = r.z >= r.w ? Math.round(sl * r.w / r.z) : sl;
     shadowRT?.dispose(); shadowRT = rt(sw, sh, 0); shadowRT.depthBuffer = false;
     comp.u.uShadow.value = shadowRT.texture; comp.u.uShadowTexel.value.set(1 / sw, 1 / sh);
-    surface.layout(view.hx, view.hy);
+    surface.layout(view.hx, view.hy, halfShort() / 1.5);
   }
   const kx = Math.PI / (2 * view.hx * 1.15), ky = Math.PI / (2 * view.hy * 1.15);
   comp.u.uSlosh.value.z = kx; comp.u.uSlosh.value.w = ky;
@@ -111,12 +114,24 @@ function sizeTargets() {
   view.pr = Math.min(devicePixelRatio || 1, 2) * view.q * (S.style === 'paint' ? 0.72 : 1);
   renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2) * Math.min(1, view.q + 0.15));
   const W = Math.max(2, Math.round(view.w * view.pr)), H = Math.max(2, Math.round(view.h * view.pr));
+  shared.uPaint.value = S.style === 'paint' ? 1 : 0;
+  for (const k of fish) glaze(k.fins.material, S.style === 'paint');
+  paint.u.uGrain.value = view.h / 3.5; paint.u.uPx.value = H / 700; paint.u.uRes.value.set(W, H);
+  if (S.style === 'paint') {
+    // only the pigment layer is needed; free the realistic targets
+    fishRT?.dispose(); sceneRT?.dispose(); fishRT = sceneRT = null;
+    if (pigRT && pigRT.width === W && pigRT.height === H) return;
+    pigRT?.dispose();
+    pigRT = rt(W, H, 4); pigRT.texture.minFilter = THREE.LinearMipmapLinearFilter; pigRT.texture.generateMipmaps = true;
+    paint.u.uPig.value = pigRT.texture;
+    return;
+  }
+  pigRT?.dispose(); pigRT = null;
   if (sceneRT && sceneRT.width === W && sceneRT.height === H) return;
   fishRT?.dispose(); sceneRT?.dispose();
   fishRT = rt(W, H, 4); sceneRT = rt(W, H, 4);
-  comp.u.uFish.value = fishRT.texture; grade.u.uScene.value = sceneRT.texture; paint.u.uScene.value = sceneRT.texture;
-  grade.u.uRes.value.set(W, H); paint.u.uRes.value.set(W, H);
-  paint.u.uGrain.value = view.h / 1.8;
+  comp.u.uFish.value = fishRT.texture; grade.u.uScene.value = sceneRT.texture;
+  grade.u.uRes.value.set(W, H);
 }
 addEventListener('resize', resize);
 
@@ -191,6 +206,7 @@ const audio = makeAudio();
 const $ = (id) => document.getElementById(id);
 const MODES = { ripple: ['波', 'Ripple', 'Touch the water. The koi keep clear of your finger.'], feed: ['餌', 'Feed', 'Tap to scatter food. Drag to sprinkle.'], call: ['招', 'Call', 'Hold a finger on the water and the koi gather beneath it.'] };
 function refreshUI() {
+  document.body.classList.toggle('paper', S.style === 'paint');
   $('style').innerHTML = S.style === 'paint' ? '<b>絵</b> Paint' : '<b>写</b> Real';
   const m = MODES[S.mode]; $('mode').innerHTML = `<b>${m[0]}</b> ${m[1]}`;
   $('motion').innerHTML = '<b>傾</b> Tilt'; $('motion').classList.toggle('on', S.motion);
@@ -200,7 +216,7 @@ let hintTimer = 0;
 function hint(text) { const h = $('hint'); h.textContent = text; h.classList.add('show'); clearTimeout(hintTimer); hintTimer = setTimeout(() => h.classList.remove('show'), 3600); }
 let idle = 0;
 function poke() { idle = 0; document.body.classList.remove('calm'); }
-$('style').onclick = () => { S.style = S.style === 'paint' ? 'real' : 'paint'; save(); sizeTargets(); refreshUI(); poke(); };
+$('style').onclick = () => { S.style = S.style === 'paint' ? 'real' : 'paint'; save(); resize(); refreshUI(); poke(); };
 $('mode').onclick = () => { const k = Object.keys(MODES); S.mode = k[(k.indexOf(S.mode) + 1) % k.length]; save(); refreshUI(); hint(MODES[S.mode][2]); poke(); };
 $('motion').onclick = () => { if (S.motion) { S.motion = false; save(); refreshUI(); } else enableMotion(); poke(); };
 $('sound').onclick = async () => { await audio.toggle(); refreshUI(); poke(); };
@@ -264,10 +280,17 @@ function render() {
   comp.u.uGlint.value.set(-tx * 0.45, -ty * 0.45);
 
   renderer.setRenderTarget(shadowRT); renderer.setClearColor(0x000000, 0); renderer.clear(); renderer.render(shadowScene, shadowCam);
+  if (S.style === 'paint') {
+    // pigment on white: deeper fish first so the shallow ones paint over them, then the surface
+    renderer.setRenderTarget(pigRT); renderer.setClearColor(0xffffff, 1); renderer.clear(); renderer.setClearColor(0x000000, 0);
+    renderer.render(fishScene, cam); renderer.render(surfScene, cam);
+    renderer.setRenderTarget(null); renderer.clear(); renderer.render(paintScene, ORTHO);
+    return;
+  }
   renderer.setRenderTarget(fishRT); renderer.clear(); renderer.render(fishScene, cam);
   renderer.setRenderTarget(sceneRT); renderer.clear(); renderer.render(compScene, ORTHO); renderer.render(surfScene, cam);
   renderer.setRenderTarget(null); renderer.clear();
-  if (S.style === 'paint') { paint.u.uTime.value = time; renderer.render(paintScene, ORTHO); } else renderer.render(gradeScene, ORTHO);
+  renderer.render(gradeScene, ORTHO);
 }
 
 function adapt(ms, now) {
@@ -309,7 +332,7 @@ if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.se
 window.__koi = {
   fish, surface, ripples, S, view, perf, motion,
   step(n = 30, dt = 1 / 30) { for (let i = 0; i < n; i++) simulate(dt); render(); },
-  render, ripple, setStyle(s) { S.style = s; sizeTargets(); refreshUI(); }, setMode(m) { S.mode = m; refreshUI(); },
+  render, ripple, setStyle(s) { S.style = s; resize(); refreshUI(); }, setMode(m) { S.mode = m; refreshUI(); },
   touch(x, y, type = 'down') { const ev = { pointerId: 99, clientX: x, clientY: y }; if (type === 'down') canvas.dispatchEvent(new PointerEvent('pointerdown', ev)); else if (type === 'move') canvas.dispatchEvent(new PointerEvent('pointermove', ev)); else canvas.dispatchEvent(new PointerEvent('pointerup', ev)); },
   tilt(x, y) { motion.tiltT = [x, y]; S.motion = true; },
   get time() { return time; },

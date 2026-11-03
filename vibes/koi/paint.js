@@ -1,64 +1,103 @@
-// Watercolour finish: the frame becomes transparent washes on cold-pressed paper. Pigment
-// pools at the edges of each wash, granulates in the paper's tooth and blooms unevenly; the
-// outlines "boil" at 8 frames a second like a hand-painted animation while the paper stays put.
+// Watercolour: not a filter over the realistic frame but its own picture, after the
+// references (loose koi on white cold-pressed paper). The fish, pads and floaters are drawn as
+// pigment, multiplied onto white like glazes (pigRT); this pass then paints that on paper.
+// Washes bleed softly in places and stay crisp in others, pigment pools at the inner edge of
+// each wash, granulates in the paper's tooth and blooms; the water itself is left as paper, with
+// faint cool shadows under the fish and pale ripple strokes that bend what is beneath them.
+// Outlines "boil" at 8 frames a second while the paper and its splatters stay put.
 import * as THREE from 'three';
 import { QUAD_VS, quad } from './pond.js';
+import { COMMON, RIPPLES } from './glsl.js';
 
 const PAINT_FS = /* glsl */ `
-uniform sampler2D uScene;
+${COMMON}
+${RIPPLES}
+uniform sampler2D uPig, uShadow;
 uniform vec2 uRes;
-uniform float uTime, uExposure, uGrain;
+uniform mat4 uInvVP;
+uniform vec3 uCam;
+uniform vec4 uRect;
+uniform float uGrain, uPx;
 varying vec2 vUv;
-float h12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * .1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
-float vn(vec2 p) { vec2 i = floor(p), f = fract(p), u = f * f * (3. - 2. * f);
-  return mix(mix(h12(i), h12(i + vec2(1, 0)), u.x), mix(h12(i + vec2(0, 1)), h12(i + vec2(1, 1)), u.x), u.y); }
-float fb(vec2 p) { float s = 0., a = .5; for (int i = 0; i < 4; i++) { s += a * vn(p); p = mat2(1.6, 1.2, -1.2, 1.6) * p; a *= .5; } return s / .9375; }
-vec3 aces(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0., 1.); }
-vec3 tone(vec2 uv) { vec3 c = texture(uScene, uv).rgb; c *= c; return pow(aces(c * uExposure), vec3(1. / 2.2)); }
-float lum(vec3 c) { return dot(c, vec3(0.3, 0.55, 0.15)); }
+float lumd(vec3 d) { return dot(d, vec3(0.3, 0.45, 0.25)); }
+vec3 dens(vec3 c) { return -log(clamp(c, 0.03, 1.)); }
+vec3 pigAt(vec2 uv, float lod) { return textureLod(uPig, uv, lod).rgb; }
 void main() {
-  vec2 asp = vec2(uRes.x / uRes.y, 1.), q = vUv * asp, px = 1. / uRes;
+  vec2 asp = vec2(uRes.x / uRes.y, 1.), q = vUv * asp;
   float fr = floor(uTime * 8.);
-  vec2 wob = (vec2(vn(q * 5. + fr * 1.7), vn(q * 5. + fr * 1.7 + 9.)) - 0.5) * 0.0026
-           + (vec2(vn(q * 26. + fr * 3.1), vn(q * 26. + fr * 3.1 + 5.)) - 0.5) * 0.001;
-  vec2 uv = vUv + wob;
-  // washes: blur away the photographic texture
-  vec2 r = px * 2.6 * uRes.y / 900.;
-  vec3 c0 = tone(uv);
-  vec3 b = (tone(uv + vec2(r.x, 0.)) + tone(uv - vec2(r.x, 0.)) + tone(uv + vec2(0., r.y)) + tone(uv - vec2(0., r.y))) * 0.25;
-  vec3 b2 = (tone(uv + r * vec2(2.1, 1.4)) + tone(uv + r * vec2(-1.4, 2.1)) + tone(uv + r * vec2(-2.1, -1.4)) + tone(uv + r * vec2(1.4, -2.1))) * 0.25;
-  vec3 c = c0 * 0.15 + b * 0.35 + b2 * 0.5;
-  // pigment pools where neighbouring washes differ
-  float e = length(vec2(lum(tone(uv + vec2(r.x * 1.6, 0.))) - lum(tone(uv - vec2(r.x * 1.6, 0.))), lum(tone(uv + vec2(0., r.y * 1.6))) - lum(tone(uv - vec2(0., r.y * 1.6)))));
-  float edge = smoothstep(0.06, 0.3, e);
-  // a little more colour in the colour, then to pigment density
-  // lift the deep water into a mid wash, keep the colour in it
-  c = pow(c, vec3(0.62));
-  float l = lum(c);
-  c = clamp(l + (c - l) * 1.7, 0.0, 1.0);
-  vec3 dens = -log(clamp(c, 0.035, 1.));
-  dens *= 0.7;
-  float wash = fb(q * 2.3 + uTime * 0.003);
-  dens *= 0.55 + 0.9 * wash * wash + 0.1;
-  // paper: cold-pressed tooth; pigment settles in the hollows
+  // the surface under this pixel, and its slope from the ripples
+  vec4 far = uInvVP * vec4(vUv * 2. - 1., 1., 1.);
+  vec3 rd = normalize(far.xyz / far.w - uCam);
+  vec3 S = uCam + rd * (-uCam.z / rd.z);
+  vec2 g = rippleGrad(S.xy);
+  // boil + the ripples bending what lies under them
+  vec2 wob = (vec2(vnoise(q * 5. + fr * 1.7), vnoise(q * 5. + fr * 1.7 + 9.)) - 0.5) * 0.0028
+           + (vec2(vnoise(q * 30. + fr * 3.1), vnoise(q * 30. + fr * 3.1 + 5.)) - 0.5) * 0.0011;
+  vec2 uv = vUv + wob - g * 0.06 / asp;
+
+  // pigment: crisp, small blur and wide blur, as densities
+  float L1 = log2(max(uPx * 2.5, 1.)), L2 = L1 + 2.2, L3 = L1 + 3.9;
+  vec3 d0 = dens(pigAt(uv, 0.));
+  vec3 d1 = dens(pigAt(uv, L1));
+  vec3 d2 = dens(pigAt(uv, L2));
+  vec3 d3 = dens(pigAt(uv + (vec2(vnoise(q * 9.), vnoise(q * 9. + 3.)) - 0.5) * 0.012, L3));
+  // where the paper was wet the wash feathers out; elsewhere it keeps a hard edge
+  float wet = smoothstep(0.30, 0.66, fbm(q * 3.2 + 1.7));
+  vec3 bl = d3 * 1.25;
+  bl -= min(bl.r, min(bl.g, bl.b)) * 0.7; // colour bleeds, ink grey stays put
+  vec3 d = mix(d0 * 0.15 + d1 * 0.85, max(d1 * 0.9, bl), wet * 0.9);
+  // pigment pools at the inside of a wash's edge (and less where it feathered)
+  vec3 pool = max(d1 - d2, 0.);
+  d += pool * (1.4 - wet * 0.9);
+  // the paper: cold-pressed tooth catches pigment in its hollows, granulating the darker washes
   vec2 pq = q * uGrain;
-  float tooth = fb(pq) * 0.6 + vn(pq * 3.1) * 0.4;
-  dens *= 1. + (0.5 - tooth) * 0.45;
-  dens += edge * 0.22 * (0.4 + dens);
-  // flocculation: specks of pigment in the darker washes
-  dens *= 1. + (vn(pq * 1.7 + 3.) - 0.5) * 0.2 * smoothstep(0.2, 1.2, dens.g);
-  vec3 paper = vec3(0.972, 0.958, 0.925) * (0.955 + 0.06 * tooth);
-  vec3 col = paper * exp(-dens);
-  // the paper left bare at a ragged border
-  float bd = min(min(vUv.x, 1. - vUv.x) * asp.x, min(vUv.y, 1. - vUv.y));
-  float border = smoothstep(0.012, 0.05, bd + (fb(q * 7.) - 0.5) * 0.035);
-  col = mix(paper, col, border);
-  col += (h12(gl_FragCoord.xy) - 0.5) / 255.;
+  float tooth = fbm(pq) * 0.55 + vnoise(pq * 3.1) * 0.45;
+  float gran = (0.5 - tooth) * (0.3 + 0.45 * smoothstep(0.1, 1.2, lumd(d)));
+  d *= 1. + gran;
+  // blooms and uneven washes across the shapes
+  d *= 0.82 + 0.36 * fbm(q * 6. + 4.);
+
+  // the water left as paper: a faint cool shadow on the bottom under each fish and pad
+  vec3 B = S + rd * ((-uD - S.z) / rd.z);
+  vec2 buv = (B.xy - uRect.xy) / uRect.zw;
+  float sh = 0.;
+  for (int i = 0; i < 8; i++) { float a = float(i) * 0.785 + fr * 0.3; sh += texture(uShadow, buv + wob * 2. + vec2(cos(a), sin(a)) * 0.012 * (1. + float(i % 2))).r; }
+  sh /= 8.;
+  d += vec3(0.20, 0.11, 0.05) * clamp(sh, 0., 1.) * 0.4 * (0.6 + 0.8 * vnoise(q * 9.));
+  // ripples as pale dry strokes where the rings are steepest
+  float rg = length(g);
+  d += vec3(0.16, 0.08, 0.04) * smoothstep(0.006, 0.03, rg) * (0.5 + 0.8 * vnoise(q * 40. + fr));
+
+  // splatters on the paper, placed once: a few drops of the palette
+  for (int i = 0; i < 2; i++) {
+    vec2 cell = floor(q * (i == 0 ? 7. : 19.)), f = fract(q * (i == 0 ? 7. : 19.));
+    float h = hash12(cell + float(i) * 17.);
+    if (h > (i == 0 ? 0.95 : 0.975)) {
+      vec2 c = hash22(cell + 3.) * 0.6 + 0.2;
+      float r = (i == 0 ? 0.05 : 0.08) * (0.3 + hash12(cell + 9.));
+      float m = smoothstep(r, r * 0.7, length(f - c) + (vnoise((f - c) * 30.) - 0.5) * r * 0.5);
+      float k = fract(h * 37.);
+      vec3 pc = k < 0.4 ? vec3(0.04, 0.6, 1.3) : k < 0.7 ? vec3(0.9, 0.55, 0.35) : k < 0.85 ? vec3(0.9, 0.85, 0.8) : vec3(0.08, 1.0, 1.6);
+      d += pc * m * (i == 0 ? 0.9 : 0.6);
+    }
+  }
+  vec3 paper = vec3(0.975, 0.965, 0.94) * (0.965 + 0.05 * tooth);
+  vec3 col = paper * exp(-d);
+  col += (hash12(gl_FragCoord.xy) - 0.5) / 255.;
   gl_FragColor = vec4(col, 1.);
 }`;
 
-export function makePaint() {
-  const u = { uScene: { value: null }, uRes: { value: new THREE.Vector2(1, 1) }, uTime: { value: 0 }, uExposure: { value: 1.25 }, uGrain: { value: 260 } };
+export function makePaint(comp) {
+  const u = { ...comp.u, uPig: { value: null }, uRes: { value: new THREE.Vector2(1, 1) }, uGrain: { value: 260 }, uPx: { value: 1 } };
   const material = new THREE.ShaderMaterial({ uniforms: u, vertexShader: QUAD_VS, fragmentShader: PAINT_FS, depthTest: false, depthWrite: false });
   return { mesh: quad(material), u };
+}
+
+// multiply onto what is there: each layer of pigment is a glaze
+export function glaze(m, on) {
+  if (!m.userData.orig) m.userData.orig = { blending: m.blending, transparent: m.transparent, depthWrite: m.depthWrite };
+  if (on) {
+    Object.assign(m, { blending: THREE.CustomBlending, blendEquation: THREE.AddEquation, blendSrc: THREE.DstColorFactor, blendDst: THREE.OneMinusSrcAlphaFactor, transparent: true });
+  } else Object.assign(m, m.userData.orig);
+  m.needsUpdate = true;
 }
