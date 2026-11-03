@@ -44,6 +44,7 @@ const W = +(process.env.W || 390), H = +(process.env.H || 844);
     if (process.env.ONLY === 'shots') {
       await open(base + '&style=paint'); await b.evaluate('__koi.step(1)'); await sleep(300); await shot('paint');
       await b.evaluate(`__koi.step(240)`); await sleep(200); await shot('paint2');
+      await open(base + '&style=ink'); await b.evaluate('__koi.step(60)'); await sleep(300); await shot('ink');
       er = errors(); check('paint: no errors', er.length === 0, er.slice(0, 3).join(' | ').slice(0, 600));
       return;
     }

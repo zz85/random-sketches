@@ -40,7 +40,8 @@ const sd = shared.uSunDir.value; shared.uShadowDir.value.set(-sd.x / sd.z, -sd.y
 
 const FOV = 30, D = shared.uD.value;
 // the watercolour is a closer view, so the koi fill the paper as in a painting
-const halfShort = () => num('view', S.style === 'paint' ? 0.8 : 1.5);
+const painted = () => S.style === 'paint' || S.style === 'ink';
+const halfShort = () => num('view', painted() ? 0.8 : 1.5);
 const cam = new THREE.PerspectiveCamera(FOV, 1, 0.1, 60);
 const ORTHO = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 const shadowCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 30);
@@ -111,13 +112,13 @@ function resize() {
   sizeTargets();
 }
 function sizeTargets() {
-  view.pr = Math.min(devicePixelRatio || 1, 2) * view.q * (S.style === 'paint' ? 0.72 : 1);
+  view.pr = Math.min(devicePixelRatio || 1, 2) * view.q * (painted() ? 0.72 : 1);
   renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2) * Math.min(1, view.q + 0.15));
   const W = Math.max(2, Math.round(view.w * view.pr)), H = Math.max(2, Math.round(view.h * view.pr));
-  shared.uPaint.value = S.style === 'paint' ? 1 : 0;
-  for (const k of fish) glaze(k.fins.material, S.style === 'paint');
+  shared.uPaint.value = painted() ? 1 : 0; paint.u.uInk.value = S.style === 'ink' ? 1 : 0;
+  for (const k of fish) glaze(k.fins.material, painted());
   paint.u.uGrain.value = view.h / 3.5; paint.u.uPx.value = H / 700; paint.u.uRes.value.set(W, H);
-  if (S.style === 'paint') {
+  if (painted()) {
     // only the pigment layer is needed; free the realistic targets
     fishRT?.dispose(); sceneRT?.dispose(); fishRT = sceneRT = null;
     if (pigRT && pigRT.width === W && pigRT.height === H) return;
@@ -206,8 +207,8 @@ const audio = makeAudio();
 const $ = (id) => document.getElementById(id);
 const MODES = { ripple: ['波', 'Ripple', 'Touch the water. The koi keep clear of your finger.'], feed: ['餌', 'Feed', 'Tap to scatter food. Drag to sprinkle.'], call: ['招', 'Call', 'Hold a finger on the water and the koi gather beneath it.'] };
 function refreshUI() {
-  document.body.classList.toggle('paper', S.style === 'paint');
-  $('style').innerHTML = S.style === 'paint' ? '<b>絵</b> Paint' : '<b>写</b> Real';
+  document.body.classList.toggle('paper', painted());
+  $('style').innerHTML = { real: '<b>写</b> Real', paint: '<b>絵</b> Paint', ink: '<b>墨</b> Ink' }[S.style] || '<b>写</b> Real';
   const m = MODES[S.mode]; $('mode').innerHTML = `<b>${m[0]}</b> ${m[1]}`;
   $('motion').innerHTML = '<b>傾</b> Tilt'; $('motion').classList.toggle('on', S.motion);
   $('sound').innerHTML = '<b>音</b> Sound'; $('sound').classList.toggle('on', audio.on);
@@ -216,7 +217,7 @@ let hintTimer = 0;
 function hint(text) { const h = $('hint'); h.textContent = text; h.classList.add('show'); clearTimeout(hintTimer); hintTimer = setTimeout(() => h.classList.remove('show'), 3600); }
 let idle = 0;
 function poke() { idle = 0; document.body.classList.remove('calm'); }
-$('style').onclick = () => { S.style = S.style === 'paint' ? 'real' : 'paint'; save(); resize(); refreshUI(); poke(); };
+$('style').onclick = () => { S.style = { real: 'paint', paint: 'ink', ink: 'real' }[S.style] || 'paint'; save(); resize(); refreshUI(); poke(); };
 $('mode').onclick = () => { const k = Object.keys(MODES); S.mode = k[(k.indexOf(S.mode) + 1) % k.length]; save(); refreshUI(); hint(MODES[S.mode][2]); poke(); };
 $('motion').onclick = () => { if (S.motion) { S.motion = false; save(); refreshUI(); } else enableMotion(); poke(); };
 $('sound').onclick = async () => { await audio.toggle(); refreshUI(); poke(); };
@@ -280,7 +281,7 @@ function render() {
   comp.u.uGlint.value.set(-tx * 0.45, -ty * 0.45);
 
   renderer.setRenderTarget(shadowRT); renderer.setClearColor(0x000000, 0); renderer.clear(); renderer.render(shadowScene, shadowCam);
-  if (S.style === 'paint') {
+  if (painted()) {
     // pigment on white: deeper fish first so the shallow ones paint over them, then the surface
     renderer.setRenderTarget(pigRT); renderer.setClearColor(0xffffff, 1); renderer.clear(); renderer.setClearColor(0x000000, 0);
     renderer.render(fishScene, cam); renderer.render(surfScene, cam);

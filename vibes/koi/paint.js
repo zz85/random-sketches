@@ -17,10 +17,16 @@ uniform vec2 uRes;
 uniform mat4 uInvVP;
 uniform vec3 uCam;
 uniform vec4 uRect;
-uniform float uGrain, uPx;
+uniform float uGrain, uPx, uInk;
 varying vec2 vUv;
 float lumd(vec3 d) { return dot(d, vec3(0.3, 0.45, 0.25)); }
 vec3 dens(vec3 c) { return -log(clamp(c, 0.03, 1.)); }
+// cold-pressed paper: rounded bumps from a few octaves, plus long fibres
+float paperH(vec2 p) {
+  float h = vnoise(p) * 0.5 + vnoise(p * 2.3 + 7.) * 0.3 + vnoise(p * 5.3 + 3.) * 0.2;
+  float fib = vnoise(vec2(p.x * 0.35 + p.y * 0.9, p.y * 0.12 - p.x * 0.4) * 3.);
+  return h * 0.85 + smoothstep(0.55, 0.75, fib) * 0.15;
+}
 vec3 pigAt(vec2 uv, float lod) { return textureLod(uPig, uv, lod).rgb; }
 void main() {
   vec2 asp = vec2(uRes.x / uRes.y, 1.), q = vUv * asp;
@@ -33,25 +39,32 @@ void main() {
   // boil + the ripples bending what lies under them
   vec2 wob = (vec2(vnoise(q * 5. + fr * 1.7), vnoise(q * 5. + fr * 1.7 + 9.)) - 0.5) * 0.0028
            + (vec2(vnoise(q * 30. + fr * 3.1), vnoise(q * 30. + fr * 3.1 + 5.)) - 0.5) * 0.0011;
-  vec2 uv = vUv + wob - g * 0.06 / asp;
+  vec2 uv = vUv + wob - g * 0.02 / asp;
 
   // pigment: crisp, small blur and wide blur, as densities
-  float L1 = log2(max(uPx * 2.5, 1.)), L2 = L1 + 2.2, L3 = L1 + 3.9;
+  float L1 = log2(max(uPx * 2.5, 1.)), L2 = L1 + 2.2, L3 = L1 + 4.6;
   vec3 d0 = dens(pigAt(uv, 0.));
   vec3 d1 = dens(pigAt(uv, L1));
   vec3 d2 = dens(pigAt(uv, L2));
-  vec3 d3 = dens(pigAt(uv + (vec2(vnoise(q * 9.), vnoise(q * 9. + 3.)) - 0.5) * 0.012, L3));
+  vec3 d3 = dens(pigAt(uv + (vec2(vnoise(q * 9.), vnoise(q * 9. + 3.)) - 0.5) * 0.03, L3));
   // where the paper was wet the wash feathers out; elsewhere it keeps a hard edge
-  float wet = smoothstep(0.30, 0.66, fbm(q * 3.2 + 1.7));
-  vec3 bl = d3 * 1.25;
-  bl -= min(bl.r, min(bl.g, bl.b)) * 0.7; // colour bleeds, ink grey stays put
-  vec3 d = mix(d0 * 0.15 + d1 * 0.85, max(d1 * 0.9, bl), wet * 0.9);
+  float wet = smoothstep(0.18, 0.55, fbm(q * 3.2 + 1.7));
+  vec3 bl = d3 * 1.6;
+  bl -= min(bl.r, min(bl.g, bl.b)) * mix(0.7, 0.5, uInk); // colour bleeds, grey mostly stays put
+  // the bleed stops at a ragged, cauliflower edge where the water ran out, a little darker there
+  float bn = lumd(bl) + (fbm(q * 26. + 5.) - 0.5) * 0.09;
+  float bm = smoothstep(0.035, 0.07, bn);
+  bl *= bm * (1. + 0.9 * (1. - smoothstep(0.07, 0.16, bn)));
+  vec3 d = mix(d0 * 0.15 + d1 * 0.85, max(d1 * 0.9, bl), wet * 0.95);
+  d = max(d, bl * mix(0.35, 0.12, uInk)); // a faint halo of colour round every wash
   // pigment pools at the inside of a wash's edge (and less where it feathered)
   vec3 pool = max(d1 - d2, 0.);
   d += pool * (1.4 - wet * 0.9);
   // the paper: cold-pressed tooth catches pigment in its hollows, granulating the darker washes
-  vec2 pq = q * uGrain;
-  float tooth = fbm(pq) * 0.55 + vnoise(pq * 3.1) * 0.45;
+  vec2 pq = q * uGrain * 0.45;
+  float e = 0.35, h0 = paperH(pq);
+  vec2 slope = vec2(paperH(pq + vec2(e, 0.)) - h0, paperH(pq + vec2(0., e)) - h0) / e;
+  float tooth = h0 * 0.8 + vnoise(q * uGrain * 1.6) * 0.2;
   float gran = (0.5 - tooth) * (0.3 + 0.45 * smoothstep(0.1, 1.2, lumd(d)));
   d *= 1. + gran;
   // blooms and uneven washes across the shapes
@@ -66,7 +79,7 @@ void main() {
   d += vec3(0.20, 0.11, 0.05) * clamp(sh, 0., 1.) * 0.4 * (0.6 + 0.8 * vnoise(q * 9.));
   // ripples as pale dry strokes where the rings are steepest
   float rg = length(g);
-  d += vec3(0.16, 0.08, 0.04) * smoothstep(0.006, 0.03, rg) * (0.5 + 0.8 * vnoise(q * 40. + fr));
+  d += vec3(0.05, 0.025, 0.012) * smoothstep(0.012, 0.045, rg) * vnoise(q * 18. + fr * 0.5);
 
   // splatters on the paper, placed once: a few drops of the palette
   for (int i = 0; i < 2; i++) {
@@ -81,14 +94,18 @@ void main() {
       d += pc * m * (i == 0 ? 0.9 : 0.6);
     }
   }
-  vec3 paper = vec3(0.975, 0.965, 0.94) * (0.965 + 0.05 * tooth);
+  // ink: the same washes as one warm black, a little stronger
+  if (uInk > 0.5) { float k = pow(lumd(d) * 1.3, 1.15); d = vec3(k * 0.92, k, k * 1.08); }
+  // the paper lit from the top left, so its bumps show and pigment sits in the hollows
+  vec3 paper = (uInk > 0.5 ? vec3(0.965, 0.955, 0.93) : vec3(0.975, 0.962, 0.935))
+             * (0.985 + 0.03 * (tooth - 0.5)) * (1. + clamp(dot(slope, vec2(-0.7, 0.7)), -1., 1.) * 0.045);
   vec3 col = paper * exp(-d);
   col += (hash12(gl_FragCoord.xy) - 0.5) / 255.;
   gl_FragColor = vec4(col, 1.);
 }`;
 
 export function makePaint(comp) {
-  const u = { ...comp.u, uPig: { value: null }, uRes: { value: new THREE.Vector2(1, 1) }, uGrain: { value: 260 }, uPx: { value: 1 } };
+  const u = { ...comp.u, uPig: { value: null }, uRes: { value: new THREE.Vector2(1, 1) }, uGrain: { value: 260 }, uPx: { value: 1 }, uInk: { value: 0 } };
   const material = new THREE.ShaderMaterial({ uniforms: u, vertexShader: QUAD_VS, fragmentShader: PAINT_FS, depthTest: false, depthWrite: false });
   return { mesh: quad(material), u };
 }
