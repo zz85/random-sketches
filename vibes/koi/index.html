@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0d1a17">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Koi · 鯉</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg">
+<link rel="apple-touch-icon" href="icon-192.png">
+<script src="../pwa/install.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0d1a17; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  canvas { display: block; position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; }
+  .serif { font-family: "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", Georgia, serif; }
+  #title { position: fixed; left: max(20px, env(safe-area-inset-left)); top: max(18px, env(safe-area-inset-top)); color: #f4efe4; letter-spacing: 0.25em;
+    font-size: 18px; font-weight: 300; text-shadow: 0 1px 10px rgba(0, 0, 0, 0.5); pointer-events: none; transition: opacity 2s; }
+  #title small { display: block; font-size: 11px; letter-spacing: 0.1em; opacity: 0.75; margin-top: 6px; }
+  #title.gone { opacity: 0; }
+  #bar { position: fixed; left: 50%; bottom: max(14px, env(safe-area-inset-bottom)); transform: translateX(-50%); display: flex; gap: 6px; flex-wrap: wrap; justify-content: center;
+    width: max-content; max-width: calc(100vw - 24px); transition: opacity 1.2s; }
+  #bar button { appearance: none; border: 1px solid rgba(255, 255, 255, 0.22); background: rgba(10, 24, 20, 0.42); color: #f2eee4; border-radius: 18px;
+    padding: 7px 12px; font: 12px/1 Georgia, serif; letter-spacing: 0.06em; cursor: pointer; -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+  #bar button b { font-weight: 400; margin-right: 3px; font-family: "Hiragino Mincho ProN", "Yu Mincho", serif; }
+  #bar button.on { background: rgba(214, 120, 70, 0.32); border-color: rgba(255, 210, 170, 0.4); }
+  #bar button:focus-visible { outline: 2px solid rgba(255, 255, 255, 0.7); }
+  body.calm #bar { opacity: 0; pointer-events: none; }
+  #hint { position: fixed; left: 50%; bottom: calc(max(14px, env(safe-area-inset-bottom)) + 46px); transform: translateX(-50%); color: #f4efe4; font: italic 13px Georgia, serif;
+    text-align: center; max-width: 82vw; text-shadow: 0 1px 8px rgba(0, 0, 0, 0.7); opacity: 0; transition: opacity 0.8s; pointer-events: none; }
+  #hint.show { opacity: 0.92; }
+</style>
+<script type="importmap">
+{ "imports": { "three": "https://unpkg.com/three@0.160.1/build/three.module.js" } }
+</script>
+</head>
+<body>
+<div id="title" class="serif">鯉 koi<small>a quiet pond · touch the water</small></div>
+<div id="hint"></div>
+<div id="bar">
+  <button id="style" type="button" aria-label="Rendering style"></button>
+  <button id="mode" type="button" aria-label="What a touch does"></button>
+  <button id="motion" type="button" aria-label="Use motion sensors"></button>
+  <button id="sound" type="button" aria-label="Sound"></button>
+  <button data-pwa-install type="button" style="display:none"><b>⇩</b> Install</button>
+</div>
+<script type="module" src="main.js"></script>
+</body>
+</html>

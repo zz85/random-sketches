@@ -1,0 +1,16 @@
+{
+  "name": "Koi - a quiet pond",
+  "short_name": "Koi",
+  "description": "A calm koi pond to watch for hours: realistic water or an animated watercolour, touch, feed and call the fish, tilt the phone.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#0d1a17",
+  "theme_color": "#0d1a17",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
