@@ -1,4 +1,4 @@
-// The pond: the pebble bottom and the caustic texture (both made once), and the composite
+// The pond: the pebble bottom (made once), the caustics (simulated each frame), and the composite
 // pass that looks through the moving surface: refraction onto the bottom, caustics, fish and
 // canopy shadows, the water's colour along the path, the canopy's reflection and sun glints.
 import * as THREE from 'three';
@@ -14,39 +14,40 @@ export function renderTo(renderer, rt, material) {
   m.geometry.dispose();
 }
 
-// ---------- caustics: photons through a periodic wavy surface, gathered on a periodic floor,
-// so the texture tiles. Done once on the CPU (about 1M photons, ~60 ms).
-export function makeCaustics(size = 256) {
-  const N = size, rnd = mulberry32(7);
-  const waves = [];
-  for (let i = 0; i < 14; i++) {
-    let kx, ky, k;
-    do { kx = Math.round((rnd() - 0.5) * 12); ky = Math.round((rnd() - 0.5) * 12); k = Math.hypot(kx, ky); } while (k < 2.5 || k > 6.5);
-    waves.push([kx, ky, 1 / (k * k), rnd() * Math.PI * 2]);
-  }
-  const dens = new Float32Array(N * N), OS = 3, M = N * OS, depth = 0.072;
-  for (let j = 0; j < M; j++) for (let i = 0; i < M; i++) {
-    const x = (i + 0.5) / M, y = (j + 0.5) / M;
-    let gx = 0, gy = 0;
-    for (const [kx, ky, a, ph] of waves) { const c = a * Math.cos(2 * Math.PI * (kx * x + ky * y) + ph) * 2 * Math.PI; gx += c * kx; gy += c * ky; }
-    let u = (x - gx * depth) * N, v = (y - gy * depth) * N;
-    u = ((u % N) + N) % N; v = ((v % N) + N) % N;
-    const i0 = Math.floor(u), j0 = Math.floor(v), fu = u - i0, fv = v - j0, i1 = (i0 + 1) % N, j1 = (j0 + 1) % N;
-    dens[j0 * N + i0] += (1 - fu) * (1 - fv); dens[j0 * N + i1] += fu * (1 - fv);
-    dens[j1 * N + i0] += (1 - fu) * fv; dens[j1 * N + i1] += fu * fv;
-  }
-  const mean = (OS * OS), data = new Uint8Array(N * N * 4);
-  for (let p = 0; p < N * N; p++) {
-    // light blur via the 4 neighbours, then a soft knee so focused lines stay below white
-    const x = p % N, y = (p - x) / N;
-    const d = (dens[p] * 2 + dens[y * N + (x + 1) % N] + dens[y * N + (x + N - 1) % N] + dens[((y + 1) % N) * N + x] + dens[((y + N - 1) % N) * N + x]) / 6 / mean;
-    const c = 1 - Math.exp(-d * 0.55);
-    data[p * 4] = data[p * 4 + 1] = data[p * 4 + 2] = Math.round(c * 255); data[p * 4 + 3] = 255;
-  }
-  const t = new THREE.DataTexture(data, N, N, THREE.RGBAFormat);
-  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter;
-  t.generateMipmaps = true; t.needsUpdate = true;
-  return t;
+// ---------- caustics, simulated each frame: sunlight refracted by the actual surface (the
+// wind waves and every ripple) lands on the bottom bunched or spread. For each texel of the
+// bottom, find where its light crossed the surface, and take the light's density there as
+// 1 / det of the Jacobian of the surface-to-bottom map (I + kD * slope Hessian). The sun's
+// disc blurs it by about a centimetre at this depth, which is about one texel.
+const CAUSTIC_FS = /* glsl */ `
+${COMMON}
+${RIPPLES}
+uniform float uBreeze;
+varying vec2 vUv;
+void field(vec2 p, out vec2 g, out vec3 H) {
+  capillary(p, g, H); g *= uBreeze; H *= uBreeze;
+  const float e = 0.006;
+  vec2 r0 = rippleGrad(p), rx = rippleGrad(p + vec2(e, 0.)), ry = rippleGrad(p + vec2(0., e));
+  g += r0;
+  H += vec3(rx.x - r0.x, ry.y - r0.y, 0.5 * (rx.y - r0.y + ry.x - r0.x)) / e;
+}
+void main() {
+  vec2 B = uCauRect.xy + vUv * uCauRect.zw;
+  // light that reaches B crossed the surface about here: along the sun, less the bend
+  const float KR = 0.25; // 1 - 1/1.333: how far a slope turns the ray, per unit depth
+  vec2 P = B + uSunDir.xy / uSunDir.z * uD, g; vec3 H;
+  field(P, g, H); P -= KR * uD * g;
+  field(P, g, H);
+  mat2 J = mat2(1. + KR * uD * H.x, KR * uD * H.z, KR * uD * H.z, 1. + KR * uD * H.y);
+  float I = 1. / max(abs(determinant(J)), 0.12);
+  float c = 1. - exp(-0.55 * min(I, 8.));
+  gl_FragColor = vec4(c, c, c, 1.);
+}`;
+export function makeCausticPass(shared, comp) {
+  const u = { ...shared, uRip: comp.u.uRip, uRipN: comp.u.uRipN, uBreeze: comp.u.uBreeze };
+  const material = new THREE.ShaderMaterial({ uniforms: u, vertexShader: QUAD_VS, fragmentShader: CAUSTIC_FS, depthTest: false, depthWrite: false });
+  const scene = new THREE.Scene(); scene.add(quad(material));
+  return { u, scene };
 }
 
 export function mulberry32(a) { return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
@@ -140,7 +141,8 @@ uniform sampler2D uBottom, uShadow, uFish;
 uniform vec4 uRect;
 uniform mat4 uInvVP;
 uniform vec3 uCam;
-uniform vec2 uFishUV, uShadowTexel, uGlint;
+uniform mat4 uVP;
+uniform vec2 uShadowTexel, uGlint;
 uniform vec4 uSlosh;
 uniform float uBreeze;
 varying vec2 vUv;
@@ -152,7 +154,8 @@ vec2 ambientGrad(vec2 p) {
   vec2 g = wave(p, vec2(0.80, 0.60), 6.0, 1.9, 0.0011) + wave(p, vec2(-0.45, 0.89), 8.5, 2.6, 0.0007);
   vec2 c = wave(p, vec2(0.94, 0.34), 38., 9.0, 0.00022) + wave(p, vec2(0.70, -0.71), 47., 10.5, 0.00016)
          + wave(p, vec2(0.17, 0.98), 61., 12.0, 0.00011);
-  g = g * uBreeze + c * (0.15 + 0.85 * paw) * uBreeze;
+  vec2 cg; vec3 cH; capillary(p, cg, cH);
+  g = g * uBreeze + (c * (0.15 + 0.85 * paw) + cg * 0.3) * uBreeze;
   // slosh: standing waves across the pond from tilting or shaking the phone
   g += vec2(uSlosh.x * uSlosh.z * cos(p.x * uSlosh.z), uSlosh.y * uSlosh.w * cos(p.y * uSlosh.w));
   return g;
@@ -176,13 +179,15 @@ void main() {
   vec2 buv = (B.xy - uRect.xy) / uRect.zw;
   vec3 alb = dec(texture(uBottom, buv).rgb);
   float sh = shadowAt(buv);
-  float cau = caustic(B.xy, g * 0.6);
-  vec3 col = alb * underLight(B, sh * 0.8, cau, 1.) * 0.5;
+  float cau = caustic(B.xy);
+  vec3 col = alb * underLight(B, sh * 0.8, cau, 1.) * 0.75;
   col = waterPath(col, tb);
 
   // the fish, rendered straight, are looked at through the same bent ray
-  vec2 off = (R.xy / -R.z - rd.xy / -rd.z) * 0.33;
-  vec4 f = texture(uFish, vUv + off * uFishUV);
+  // (where the bent ray reaches the fishes' depth, back on screen, against where the straight one does)
+  vec3 Fr = S + R * ((-0.33 - S.z) / R.z), Fs = S + rd * ((-0.33 - S.z) / rd.z);
+  vec4 pa = uVP * vec4(Fr, 1.), pb = uVP * vec4(Fs, 1.);
+  vec4 f = texture(uFish, vUv + (pa.xy / pa.w - pb.xy / pb.w) * 0.5);
   vec3 fl = f.a > 0.001 ? dec(f.rgb / f.a) * f.a : vec3(0.);
   col = fl + col * (1. - f.a);
 
@@ -210,7 +215,7 @@ export function makeComposite(shared) {
     uRip: { value: rip }, uRipN: { value: 0 },
     uBottom: { value: null }, uShadow: { value: null }, uFish: { value: null },
     uRect: { value: new THREE.Vector4() }, uInvVP: { value: new THREE.Matrix4() }, uCam: { value: new THREE.Vector3() },
-    uFishUV: { value: new THREE.Vector2(1, 1) }, uShadowTexel: { value: new THREE.Vector2(1 / 512, 1 / 512) },
+    uVP: { value: new THREE.Matrix4() }, uShadowTexel: { value: new THREE.Vector2(1 / 512, 1 / 512) },
     uGlint: { value: new THREE.Vector2() }, uSlosh: { value: new THREE.Vector4(0, 0, 1, 1) }, uBreeze: { value: 1 },
   };
   const material = new THREE.ShaderMaterial({ uniforms: u, vertexShader: QUAD_VS, fragmentShader: COMPOSITE_FS, depthTest: false, depthWrite: false });

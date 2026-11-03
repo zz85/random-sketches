@@ -14,13 +14,26 @@ export function makeShared() {
     uAmb: { value: new THREE.Vector3(0.42, 0.52, 0.58) },
     // extinction per unit of water (red goes first) and the colour it scatters back
     uSigma: { value: new THREE.Vector3(1.25, 0.52, 0.58) },
-    uScatter: { value: new THREE.Vector3(0.006, 0.020, 0.018) },
+    uScatter: { value: new THREE.Vector3(0.004, 0.013, 0.012) },
     uD: { value: 1.1 },               // pond depth
-    uCaustic: { value: null },
+    uCaustic: { value: null },        // the caustic map on the bottom, simulated each frame (pond.js)
+    uCauRect: { value: new THREE.Vector4(-1, -1, 2, 2) },
+    uWave: { value: capillaryWaves() }, // short wind waves that focus the sunlight
     uDappleK: { value: 1 },            // how much the canopy shades the pond
     uShadowDir: { value: new THREE.Vector2() }, // where shadows fall per unit of height
     uPaint: { value: 0 },              // 1: shaders output watercolour pigment (sRGB on white) instead of light
   };
+}
+
+// a light breeze: wavelengths of 16 to 35 cm from every side, each tilting the water 3 to 4.5 degrees
+// (the surface shading takes them at a third of that; the caustics need the full slope)
+function capillaryWaves() {
+  const out = [];
+  for (let i = 0; i < 8; i++) {
+    const a = 0.6 + i * 2.39996 + Math.sin(i * 5.1) * 0.3, k = 18 + ((i * 0.618034) % 1) * 22;
+    out.push(new THREE.Vector4(Math.cos(a), Math.sin(a), k, (0.05 + 0.03 * ((i * 0.381966) % 1)) / k));
+  }
+  return out;
 }
 
 export const COMMON = /* glsl */ `
@@ -28,6 +41,9 @@ uniform float uTime;
 uniform vec3 uSunDir, uSunCol, uAmb, uSigma, uScatter;
 uniform float uD, uDappleK, uPaint;
 uniform sampler2D uCaustic;
+uniform vec4 uCauRect;
+#define NW 8
+uniform vec4 uWave[NW]; // direction, wavenumber, amplitude
 vec3 enc(vec3 c) { return sqrt(max(c, 0.)); }
 vec3 dec(vec3 c) { return c * c; }
 vec3 s2l(vec3 c) { return pow(c, vec3(2.2)); }
@@ -54,16 +70,30 @@ float dapple(vec2 xy) {
   vec2 q = xy * 0.38 + vec2(uTime * 0.004, -uTime * 0.003);
   q += 0.05 * vec2(sin(uTime * 0.23 + q.y * 3.), cos(uTime * 0.19 + q.x * 3.));
   float n = fbm3o(q);
-  return mix(1., mix(0.34, 1.0, smoothstep(0.40, 0.60, n)), uDappleK);
+  return mix(1., mix(0.45, 1.0, smoothstep(0.40, 0.60, n)), uDappleK);
 }
 // where a sun ray to a point at height z (< 0) crossed the surface
 vec2 toSurface(vec3 p) { return p.xy + uSunDir.xy / uSunDir.z * (-p.z); }
 
-// two scrolling layers of a tileable caustic web; their minimum is the bright net
-float caustic(vec2 p, vec2 distort) {
-  vec2 a = p * 0.82 + distort + vec2(uTime * 0.018, uTime * 0.011);
-  vec2 b = p * 1.07 - distort * 0.8 + vec2(-uTime * 0.014, uTime * 0.016) + 0.37;
-  return min(texture(uCaustic, a).r, texture(uCaustic, b).r);
+// the caustic net on the bottom at p (the map pond.js simulates each frame)
+float caustic(vec2 p) { return texture(uCaustic, (p - uCauRect.xy) / uCauRect.zw).r; }
+// at a point above the bottom (a fish's back) the same light has focused less
+float causticAt(vec3 p) {
+  float c = caustic(toSurface(p) - uSunDir.xy / uSunDir.z * uD);
+  return mix(0.42, c, clamp(-p.z / uD * 2.2, 0., 1.));
+}
+// the short wind waves: slope g and its derivatives H (xx, yy, xy) at p.
+// Deep-water capillary-gravity dispersion, slowed to half speed for calm.
+void capillary(vec2 p, out vec2 g, out vec3 H) {
+  g = vec2(0.); H = vec3(0.);
+  for (int i = 0; i < NW; i++) {
+    vec4 w = uWave[i];
+    float k = w.z, om = sqrt(9.81 * k + 7.3e-5 * k * k * k) * 0.5;
+    float ph = k * dot(w.xy, p) - om * uTime + float(i) * 2.399;
+    float c = cos(ph), s = sin(ph);
+    g += w.xy * (w.w * k * c);
+    H -= vec3(w.x * w.x, w.y * w.y, w.x * w.y) * (w.w * k * k * s);
+  }
 }
 
 // light reaching a point under water, before the view path: sun through the water column
@@ -71,7 +101,7 @@ float caustic(vec2 p, vec2 distort) {
 vec3 underLight(vec3 p, float shade, float cau, float facing) {
   float depth = max(-p.z, 0.);
   vec3 down = exp(-uSigma * depth / uSunDir.z);
-  float sun = dapple(toSurface(p)) * (1. - shade) * (0.32 + 1.55 * cau) * facing;
+  float sun = dapple(toSurface(p)) * (1. - shade) * (0.15 + 3.4 * cau * cau) * facing;
   return uSunCol * uSunDir.z * sun * down + uAmb * exp(-uSigma * depth * 1.2) * (0.55 + 0.45 * facing);
 }
 // the view path back up through depth d (path length lw)

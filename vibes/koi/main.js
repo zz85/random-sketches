@@ -7,7 +7,7 @@
 // floating leaves are drawn on top; (4) a finish pass grades it, or paints it in watercolour.
 import * as THREE from 'three';
 import { makeShared, MAXR } from './glsl.js';
-import { makeCaustics, makeBottom, makeComposite, makeGrade, mulberry32 } from './pond.js';
+import { makeCausticPass, makeBottom, makeComposite, makeGrade, mulberry32 } from './pond.js';
 import { Koi, RESIDENTS } from './koi.js';
 import { Surface, seasonNow } from './surface.js';
 import { makePaint, glaze } from './paint.js';
@@ -24,7 +24,13 @@ const S = {
   style: Q.get('style') || store.style || 'real',      // real | paint
   mode: Q.get('mode') || store.mode || 'ripple',       // ripple | feed | call
   motion: Q.has('motion') ? Q.get('motion') !== '0' : store.motion ?? false,
+  cam: Q.get('cam') || store.cam || 'top',              // top | angle | orbit (the realistic view)
+  fps: Q.has('fps') ? num('fps', 60) : store.fps || 60, // frames a second the painting is shown at
+  still: Q.has('still'),                                // painting held on one frame
 };
+// camera angles of the realistic view: elevation from straight down, symbol, name
+const CAMS = { top: [0, '視', 'Top'], angle: [0.62, '斜', '2.5D'], orbit: [0.62, '巡', 'Orbit'] };
+if (!CAMS[S.cam]) S.cam = 'top';
 const SEED = Q.has('seed') ? num('seed', 1) : Math.floor(Math.random() * 1e6);
 const rng = mulberry32(SEED);
 
@@ -35,7 +41,6 @@ renderer.autoClear = false;
 document.body.prepend(renderer.domElement);
 const GL2 = renderer.capabilities.isWebGL2;
 const shared = makeShared();
-shared.uCaustic.value = makeCaustics(256);
 const sd = shared.uSunDir.value; shared.uShadowDir.value.set(-sd.x / sd.z, -sd.y / sd.z);
 
 const FOV = 30, D = shared.uD.value;
@@ -47,13 +52,13 @@ const ORTHO = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 const shadowCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 30);
 const view = { w: 1, h: 1, hx: 1, hy: 1, H: 5, rect: new THREE.Vector4(), q: num('q', 1), pr: 1 };
 
-const comp = makeComposite(shared), grade = makeGrade(), paint = makePaint(comp);
+const comp = makeComposite(shared), grade = makeGrade(), paint = makePaint(comp), cpass = makeCausticPass(shared, comp);
 const compScene = new THREE.Scene(); compScene.add(comp.mesh);
 const gradeScene = new THREE.Scene(); gradeScene.add(grade.mesh);
 const paintScene = new THREE.Scene(); paintScene.add(paint.mesh);
 const fishScene = new THREE.Scene(), shadowScene = new THREE.Scene(), surfScene = new THREE.Scene();
 
-let bottomRT = null, fishRT = null, sceneRT = null, shadowRT = null, pigRT = null;
+let bottomRT = null, fishRT = null, sceneRT = null, shadowRT = null, pigRT = null, causticRT = null;
 const rt = (w, h, samples) => new THREE.WebGLRenderTarget(w, h, { samples: GL2 ? samples : 0, depthBuffer: true });
 
 // ---------- the pond's residents
@@ -85,14 +90,16 @@ function uploadRipples() {
 // ---------- layout
 function resize() {
   const w = innerWidth, h = innerHeight, aspect = w / h;
-  view.w = w; view.h = h;
+  view.w = w; view.h = h; dirty = true;
   const HS = halfShort();
   if (aspect < 1) { view.hx = HS; view.hy = HS / aspect; } else { view.hy = HS; view.hx = HS * aspect; }
   view.H = view.hy / Math.tan(THREE.MathUtils.degToRad(FOV / 2));
   cam.aspect = aspect; cam.updateProjectionMatrix();
-  // the bottom must cover what the view sees at the bottom's depth, with room for the tilt
+  // the bottom must cover what the view sees at the bottom's depth, with room for the tilt;
+  // an angled camera sees much further, so it covers every way it can turn
   const k = ((view.H + D) / view.H) * 1.18;
-  const r = new THREE.Vector4(-view.hx * k, -view.hy * k, 2 * view.hx * k, 2 * view.hy * k);
+  let r = new THREE.Vector4(-view.hx * k, -view.hy * k, 2 * view.hx * k, 2 * view.hy * k);
+  if (angled()) { const rho = reach(); r = new THREE.Vector4(-rho, -rho, 2 * rho, 2 * rho); }
   if (!bottomRT || Math.abs(r.z - view.rect.z) > 1e-3 || Math.abs(r.w - view.rect.w) > 1e-3) {
     view.rect.copy(r);
     bottomRT?.dispose();
@@ -101,7 +108,14 @@ function resize() {
     comp.u.uBottom.value = bottomRT.texture; comp.u.uRect.value.copy(view.rect);
     Object.assign(shadowCam, { left: r.x, right: r.x + r.z, bottom: r.y, top: r.y + r.w });
     shadowCam.position.set(0, 0, 10); shadowCam.lookAt(0, 0, 0); shadowCam.updateProjectionMatrix();
-    const sl = 512, sw = r.z >= r.w ? sl : Math.round(sl * r.z / r.w), sh = r.z >= r.w ? Math.round(sl * r.w / r.z) : sl;
+    // caustic texels about a centimetre, the blur of the sun's disc at this depth
+    const cl = Math.min(MOBILE ? 1024 : 1536, Math.round(Math.max(r.z, r.w) / 0.009));
+    const cw = r.z >= r.w ? cl : Math.round(cl * r.z / r.w), ch = r.z >= r.w ? Math.round(cl * r.w / r.z) : cl;
+    causticRT?.dispose();
+    causticRT = new THREE.WebGLRenderTarget(cw, ch, { minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: true, depthBuffer: false });
+    causticRT.texture.wrapS = causticRT.texture.wrapT = THREE.ClampToEdgeWrapping;
+    shared.uCaustic.value = causticRT.texture; shared.uCauRect.value.copy(r);
+    const sl = angled() ? 1024 : 512, sw = r.z >= r.w ? sl : Math.round(sl * r.z / r.w), sh = r.z >= r.w ? Math.round(sl * r.w / r.z) : sl;
     shadowRT?.dispose(); shadowRT = rt(sw, sh, 0); shadowRT.depthBuffer = false;
     comp.u.uShadow.value = shadowRT.texture; comp.u.uShadowTexel.value.set(1 / sw, 1 / sh);
     surface.layout(view.hx, view.hy, halfShort() / 1.5);
@@ -173,19 +187,24 @@ async function enableMotion() {
 }
 
 // ---------- touch
-const fingers = new Map(); // pointerId -> { x, y, lx, ly, lt, kind }
+const fingers = new Map(); // pointerId -> { x, y, lx, ly, lt, sx, sy }
+let gest = null; // screen centroid while turning the camera
+function centroid() { let x = 0, y = 0; for (const f of fingers.values()) { x += f.sx; y += f.sy; } return [x / fingers.size, y / fingers.size]; }
 function toWorld(cx, cy) {
   const v = new THREE.Vector3((cx / view.w) * 2 - 1, -(cy / view.h) * 2 + 1, 0.5).unproject(cam).sub(cam.position).normalize();
   const t = -cam.position.z / v.z;
   return [cam.position.x + v.x * t, cam.position.y + v.y * t];
 }
 const canvas = renderer.domElement;
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 canvas.addEventListener('pointerdown', (e) => {
   try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic event */ }
   wake(); poke();
   const [x, y] = toWorld(e.clientX, e.clientY);
-  const f = { x, y, lx: x, ly: y, lt: time };
+  const f = { x, y, lx: x, ly: y, lt: time, sx: e.clientX, sy: e.clientY };
   fingers.set(e.pointerId, f);
+  // two fingers (or the right mouse button, or shift-drag) turn the camera in the realistic view
+  if (!painted() && (fingers.size >= 2 || e.button === 2 || e.shiftKey)) { gest = centroid(); return; }
   // a pad you touch rocks on the water
   for (const p of surface.pads) if (Math.hypot(p.x - x, p.y - y) < p.r) { p.vx += (p.x - x) * 0.6; p.vy += (p.y - y) * 0.6; p.vr += (Math.random() - 0.5) * 0.4; }
   if (S.mode === 'ripple') { ripple(x, y, 1); audio.plip(0.16); }
@@ -194,12 +213,21 @@ canvas.addEventListener('pointerdown', (e) => {
 });
 canvas.addEventListener('pointermove', (e) => {
   const f = fingers.get(e.pointerId); if (!f) return;
+  f.sx = e.clientX; f.sy = e.clientY;
+  if (gest) {
+    const c = centroid();
+    orbit.azT -= (c[0] - gest[0]) / view.w * 3.2;
+    orbit.elT = clamp(orbit.elT + (c[1] - gest[1]) / view.h * 1.6, 0, EL_MAX);
+    gest = c;
+    if (S.cam === 'top' && orbit.elT > 0.03) { S.cam = 'angle'; save(); resize(); refreshUI(); }
+    return;
+  }
   const [x, y] = toWorld(e.clientX, e.clientY); f.x = x; f.y = y;
   const moved = Math.hypot(x - f.lx, y - f.ly);
   if (S.mode === 'ripple' && moved > 0.07) { ripple(x, y, 0.4 + Math.min(0.6, moved * 2)); f.lx = x; f.ly = y; }
   else if (S.mode === 'feed' && (moved > 0.12 || time - f.lt > 0.25) && moved > 0.02) { surface.dropPellets(x, y, 1 + Math.floor(Math.random() * 2), ripple); f.lx = x; f.ly = y; f.lt = time; }
 });
-const lift = (e) => fingers.delete(e.pointerId);
+const lift = (e) => { fingers.delete(e.pointerId); if (fingers.size === 0) gest = null; };
 canvas.addEventListener('pointerup', lift); canvas.addEventListener('pointercancel', lift);
 
 // ---------- UI
@@ -212,19 +240,30 @@ function refreshUI() {
   const m = MODES[S.mode]; $('mode').innerHTML = `<b>${m[0]}</b> ${m[1]}`;
   $('motion').innerHTML = '<b>傾</b> Tilt'; $('motion').classList.toggle('on', S.motion);
   $('sound').innerHTML = '<b>音</b> Sound'; $('sound').classList.toggle('on', audio.on);
+  const c = CAMS[S.cam]; $('cam').innerHTML = `<b>${c[1]}</b> ${c[2]}`; $('cam').style.display = painted() ? 'none' : '';
+  $('still').innerHTML = S.still ? '<b>動</b> Play' : '<b>止</b> Still'; $('still').classList.toggle('on', S.still);
+  $('fps').innerHTML = S.fps >= 60 ? '<b>齣</b> Smooth' : `<b>齣</b> ${S.fps} fps`;
+  for (const id of ['still', 'fps']) $(id).style.display = painted() ? '' : 'none';
 }
 let hintTimer = 0;
 function hint(text) { const h = $('hint'); h.textContent = text; h.classList.add('show'); clearTimeout(hintTimer); hintTimer = setTimeout(() => h.classList.remove('show'), 3600); }
 let idle = 0;
 function poke() { idle = 0; document.body.classList.remove('calm'); }
-$('style').onclick = () => { S.style = { real: 'paint', paint: 'ink', ink: 'real' }[S.style] || 'paint'; save(); resize(); refreshUI(); poke(); };
+$('style').onclick = () => { S.style = { real: 'paint', paint: 'ink', ink: 'real' }[S.style] || 'paint'; if (!painted()) S.still = false; save(); resize(); refreshUI(); poke(); };
 $('mode').onclick = () => { const k = Object.keys(MODES); S.mode = k[(k.indexOf(S.mode) + 1) % k.length]; save(); refreshUI(); hint(MODES[S.mode][2]); poke(); };
 $('motion').onclick = () => { if (S.motion) { S.motion = false; save(); refreshUI(); } else enableMotion(); poke(); };
+$('cam').onclick = () => { const k = Object.keys(CAMS); setCam(k[(k.indexOf(S.cam) + 1) % k.length]); hint(S.cam === 'top' ? 'Straight down.' : 'Two fingers (or right-drag) turn and tilt the view.'); poke(); };
+$('still').onclick = () => { S.still = !S.still; dirty = true; refreshUI(); poke(); };
+const FPS = [60, 24, 16, 12, 8, 4];
+$('fps').onclick = () => { S.fps = FPS[(FPS.indexOf(S.fps) + 1) % FPS.length]; save(); refreshUI(); hint(S.fps >= 60 ? 'Painted every frame.' : `Painted ${S.fps} times a second.`); poke(); };
 $('sound').onclick = async () => { await audio.toggle(); refreshUI(); poke(); };
 if (!('DeviceOrientationEvent' in window) || !MOBILE) $('motion').style.display = Q.has('motion') ? '' : 'none';
 addEventListener('keydown', (e) => {
   if (e.key === 'p' || e.key === 'w') $('style').click();
   else if (e.key === 'm') $('mode').click();
+  else if (e.key === 'c') $('cam').click();
+  else if (e.key === ' ' && painted()) { e.preventDefault(); $('still').click(); }
+  else if (e.key === 'f' && painted()) $('fps').click();
   else if (e.key === 's') $('sound').click();
   else if (e.key === 'h') document.body.classList.toggle('calm');
 });
@@ -238,10 +277,43 @@ async function wake() { try { if (!lock && navigator.wakeLock && document.visibi
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') wake(); });
 
 // ---------- the loop
-let time = 0, last = performance.now(), startle = null, frames = 0;
+let time = 0, last = performance.now(), startle = null, frames = 0, paintAcc = 0, dirty = true;
 const perf = { ema: 16.7, acc: 0, n: 0, lastCheck: 0, ms: 0 };
 const camTarget = new THREE.Vector3(0, 0, -D * 0.55);
 const VP = new THREE.Matrix4();
+
+// the camera's angle: elevation from straight down and azimuth, eased toward targets that the
+// view button and a two-finger drag set; Orbit turns slowly round the pond on its own
+const orbit = { el: CAMS[S.cam][0], az: 0, elT: CAMS[S.cam][0], azT: 0 };
+function angled() { return !painted() && S.cam !== 'top'; }
+function camDist(el) { return (view.H - camTarget.z) * (1 - 0.22 * Math.sin(el)); }
+function placeCamera(el, az, tx = 0, ty = 0) {
+  const R = camDist(el), s = Math.sin(el);
+  cam.position.set(camTarget.x - R * s * Math.sin(az) + tx * view.H * 0.09, camTarget.y - R * s * Math.cos(az) + ty * view.H * 0.09, camTarget.z + R * Math.cos(el));
+  cam.up.set(Math.sin(az), Math.cos(az), 0); cam.lookAt(camTarget); cam.updateMatrixWorld();
+}
+// how far from the middle the view can reach on the bottom at the steepest angle, any way round
+const EL_MAX = 0.8;
+function reach() {
+  placeCamera(EL_MAX, 0); cam.updateProjectionMatrix();
+  let rho = Math.max(view.hx, view.hy);
+  for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+    const v = new THREE.Vector3(sx, sy, 0.5).unproject(cam).sub(cam.position).normalize();
+    const t = (-D - cam.position.z) / v.z;
+    rho = Math.max(rho, Math.hypot(cam.position.x + v.x * t - camTarget.x, cam.position.y + v.y * t - camTarget.y));
+  }
+  return Math.min(rho * 1.05, 14);
+}
+function orbitStep(dt) {
+  if (!angled()) { orbit.elT = 0; orbit.azT = Math.round(orbit.azT / 6.2832) * 6.2832; }
+  else if (S.cam === 'orbit' && !fingers.size) orbit.azT += dt * 0.025;
+  const e = Math.min(1, dt * 2.5);
+  orbit.el += (orbit.elT - orbit.el) * e; orbit.az += (orbit.azT - orbit.az) * e;
+}
+function setCam(c) {
+  S.cam = c; if (CAMS[c]) orbit.elT = CAMS[c][0];
+  save(); resize(); refreshUI(); dirty = true;
+}
 
 function simulate(dt) {
   time += dt;
@@ -270,24 +342,24 @@ function simulate(dt) {
 
 function render() {
   uploadRipples();
-  // camera: straight down, leaning with the tilt so the surface slides over the deep bottom
+  // camera: on a sphere round the middle of the pond, straight down unless angled, leaning
+  // with the tilt so the surface slides over the deep bottom
   const [tx, ty] = motion.tilt;
-  cam.position.set(tx * view.H * 0.09, ty * view.H * 0.09, view.H);
-  cam.up.set(0, 1, 0); cam.lookAt(camTarget); cam.updateMatrixWorld();
+  placeCamera(orbit.el, orbit.az, tx, ty);
   VP.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
-  comp.u.uInvVP.value.copy(VP).invert(); comp.u.uCam.value.copy(cam.position);
-  const fd = (view.H + 0.33) / view.H;
-  comp.u.uFishUV.value.set(1 / (2 * view.hx * fd), 1 / (2 * view.hy * fd));
+  comp.u.uInvVP.value.copy(VP).invert(); comp.u.uCam.value.copy(cam.position); comp.u.uVP.value.copy(VP);
   comp.u.uGlint.value.set(-tx * 0.45, -ty * 0.45);
 
   renderer.setRenderTarget(shadowRT); renderer.setClearColor(0x000000, 0); renderer.clear(); renderer.render(shadowScene, shadowCam);
   if (painted()) {
+    paint.u.uBoil.value = Math.floor(time * Math.min(S.fps, 12));
     // pigment on white: deeper fish first so the shallow ones paint over them, then the surface
     renderer.setRenderTarget(pigRT); renderer.setClearColor(0xffffff, 1); renderer.clear(); renderer.setClearColor(0x000000, 0);
     renderer.render(fishScene, cam); renderer.render(surfScene, cam);
     renderer.setRenderTarget(null); renderer.clear(); renderer.render(paintScene, ORTHO);
     return;
   }
+  renderer.setRenderTarget(causticRT); renderer.render(cpass.scene, ORTHO);
   renderer.setRenderTarget(fishRT); renderer.clear(); renderer.render(fishScene, cam);
   renderer.setRenderTarget(sceneRT); renderer.clear(); renderer.render(compScene, ORTHO); renderer.render(surfScene, cam);
   renderer.setRenderTarget(null); renderer.clear();
@@ -309,8 +381,13 @@ function adapt(ms, now) {
 function loop(now) {
   const ms = now - last; last = now;
   const dt = Math.min(0.05, ms / 1000);
-  if (!Q.has('pause')) simulate(dt);
-  render();
+  const held = painted() && S.still;
+  if (!Q.has('pause') && !held) simulate(dt);
+  orbitStep(dt);
+  // the painting can be shown at a few frames a second, like hand-painted animation, or held
+  paintAcc += dt;
+  const due = !painted() || (!held && (S.fps >= 60 || paintAcc >= 1 / S.fps - 0.004));
+  if (due || dirty) { render(); dirty = false; if (painted()) paintAcc = S.fps >= 60 ? 0 : paintAcc % (1 / S.fps); }
   frames++;
   if (frames > 30) adapt(ms, now);
   idle += dt;
@@ -333,8 +410,14 @@ if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.se
 window.__koi = {
   fish, surface, ripples, S, view, perf, motion,
   step(n = 30, dt = 1 / 30) { for (let i = 0; i < n; i++) simulate(dt); render(); },
-  render, ripple, setStyle(s) { S.style = s; resize(); refreshUI(); }, setMode(m) { S.mode = m; refreshUI(); },
+  render, ripple, setStyle(s) { S.style = s; resize(); refreshUI(); }, setCam, orbit, setMode(m) { S.mode = m; refreshUI(); },
   touch(x, y, type = 'down') { const ev = { pointerId: 99, clientX: x, clientY: y }; if (type === 'down') canvas.dispatchEvent(new PointerEvent('pointerdown', ev)); else if (type === 'move') canvas.dispatchEvent(new PointerEvent('pointermove', ev)); else canvas.dispatchEvent(new PointerEvent('pointerup', ev)); },
   tilt(x, y) { motion.tiltT = [x, y]; S.motion = true; },
   get time() { return time; },
+  caustics() { // mean, sd and brightest of the caustic map's middle, for the smoke test
+    const w = 64, h = 64, px = new Uint8Array(w * h * 4);
+    renderer.readRenderTargetPixels(causticRT, (causticRT.width - w) >> 1, (causticRT.height - h) >> 1, w, h, px);
+    let s = 0, s2 = 0, mx = 0; for (let i = 0; i < px.length; i += 4) { s += px[i]; s2 += px[i] * px[i]; mx = Math.max(mx, px[i]); }
+    const n = w * h; return { mean: s / n, sd: Math.sqrt(s2 / n - (s / n) ** 2), max: mx };
+  },
 };

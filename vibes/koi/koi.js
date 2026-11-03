@@ -284,7 +284,7 @@ void main() {
 
   float metal = uPat2.y;
   float wrap = clamp((dot(N, uSunDir) + 0.4) / 1.4, 0., 1.);
-  float cau = caustic(vW.xy, vec2(0.)) * smoothstep(-0.2, 0.7, N.z) * exp(vW.z * 2.2);
+  float cau = causticAt(vW) * smoothstep(-0.2, 0.7, N.z);
   vec3 E = underLight(vW, 0., cau, wrap);
   vec3 col = alb * E * 0.5 * (1. - metal * 0.55);
   // wet sheen (and a metallic koi's mirror scales)
@@ -331,7 +331,7 @@ void main() {
     return;
   }
   alb = s2l(alb * (0.9 + 0.2 * ray));
-  vec3 E = underLight(vW, 0., caustic(vW.xy, vec2(0.)) * exp(vW.z * 2.2), 0.85);
+  vec3 E = underLight(vW, 0., causticAt(vW), 0.85);
   vec3 col = alb * E * 0.5 + uAmb * alb * 0.12;
   col = waterPath(col, -vW.z);
   gl_FragColor = vec4(enc(col), a);

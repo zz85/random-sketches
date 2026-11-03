@@ -17,7 +17,7 @@ uniform vec2 uRes;
 uniform mat4 uInvVP;
 uniform vec3 uCam;
 uniform vec4 uRect;
-uniform float uGrain, uPx, uInk;
+uniform float uGrain, uPx, uInk, uBoil;
 varying vec2 vUv;
 float lumd(vec3 d) { return dot(d, vec3(0.3, 0.45, 0.25)); }
 vec3 dens(vec3 c) { return -log(clamp(c, 0.03, 1.)); }
@@ -30,7 +30,7 @@ float paperH(vec2 p) {
 vec3 pigAt(vec2 uv, float lod) { return textureLod(uPig, uv, lod).rgb; }
 void main() {
   vec2 asp = vec2(uRes.x / uRes.y, 1.), q = vUv * asp;
-  float fr = floor(uTime * 8.);
+  float fr = uBoil;
   // the surface under this pixel, and its slope from the ripples
   vec4 far = uInvVP * vec4(vUv * 2. - 1., 1., 1.);
   vec3 rd = normalize(far.xyz / far.w - uCam);
@@ -105,7 +105,7 @@ void main() {
 }`;
 
 export function makePaint(comp) {
-  const u = { ...comp.u, uPig: { value: null }, uRes: { value: new THREE.Vector2(1, 1) }, uGrain: { value: 260 }, uPx: { value: 1 }, uInk: { value: 0 } };
+  const u = { ...comp.u, uPig: { value: null }, uRes: { value: new THREE.Vector2(1, 1) }, uGrain: { value: 260 }, uPx: { value: 1 }, uInk: { value: 0 }, uBoil: { value: 0 } };
   const material = new THREE.ShaderMaterial({ uniforms: u, vertexShader: QUAD_VS, fragmentShader: PAINT_FS, depthTest: false, depthWrite: false });
   return { mesh: quad(material), u };
 }

@@ -45,6 +45,8 @@ const W = +(process.env.W || 390), H = +(process.env.H || 844);
       await open(base + '&style=paint'); await b.evaluate('__koi.step(1)'); await sleep(300); await shot('paint');
       await b.evaluate(`__koi.step(240)`); await sleep(200); await shot('paint2');
       await open(base + '&style=ink'); await b.evaluate('__koi.step(60)'); await sleep(300); await shot('ink');
+      await open(base + '&style=real&cam=angle'); await b.evaluate('__koi.orbit.el = __koi.orbit.elT; __koi.step(1)'); await sleep(300); await shot('angle');
+      await b.evaluate(`__koi.setCam('orbit'); __koi.orbit.el = __koi.orbit.elT; __koi.orbit.az = __koi.orbit.azT = 2.2; __koi.ripple(0, 0, 1); __koi.ripple(0.5, 1, 1); __koi.step(20)`); await sleep(300); await shot('orbit');
       er = errors(); check('paint: no errors', er.length === 0, er.slice(0, 3).join(' | ').slice(0, 600));
       return;
     }
