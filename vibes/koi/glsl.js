@@ -22,6 +22,7 @@ export function makeShared() {
     uDappleK: { value: 1 },            // how much the canopy shades the pond
     uShadowDir: { value: new THREE.Vector2() }, // where shadows fall per unit of height
     uPaint: { value: 0 },              // 1: shaders output watercolour pigment (sRGB on white) instead of light
+    uRain: { value: 0 },               // 0 dry, up to 1 steady rain
   };
 }
 
@@ -117,8 +118,29 @@ export const RIPPLES = /* glsl */ `
 uniform vec4 uRip[MAXR];   // x, y, start time, amplitude
 uniform int uRipN;
 const float RC = 0.32, RK = 62.;
-vec2 rippleGrad(vec2 p) {
+// rain: drops on a hashed grid, each cell's slots firing now and then, each a small ring.
+// How many fire is uRain; none of it is stored, so it costs nothing in the ripple list.
+uniform float uRain;
+const float RCELL = 0.45;
+vec2 rainGrad(vec2 p) {
   vec2 g = vec2(0.);
+  if (uRain < 0.01) return g;
+  vec2 c0 = floor(p / RCELL);
+  for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) for (int k = 0; k < 2; k++) {
+    vec2 c = c0 + vec2(i, j) + float(k) * 71.3;
+    float P = 1.1 + 0.6 * hash12(c * 1.7 + 3.1);
+    float ph = uTime / P + hash12(c + 9.2), n = floor(ph), age = fract(ph) * P;
+    if (hash12(c + n * 13.17) > uRain * 0.8) continue;
+    vec2 d = p - (c0 + vec2(i, j) + hash22(c + n * 7.31)) * RCELL;
+    float dist = length(d) + 1e-4, w = 0.012 + age * 0.03, x = dist - age * 0.2, kk = 120. / (1. + age);
+    if (abs(x) > 3. * w) continue;
+    float env = (0.6 + 0.4 * hash12(c + n)) * 0.0011 * exp(-age * 2.6) * exp(-x * x / (w * w));
+    g += d / dist * env * (kk * cos(kk * x) - 2. * x / (w * w) * sin(kk * x));
+  }
+  return g;
+}
+vec2 rippleGrad(vec2 p) {
+  vec2 g = rainGrad(p);
   for (int i = 0; i < MAXR; i++) {
     if (i >= uRipN) break;
     vec4 r = uRip[i];

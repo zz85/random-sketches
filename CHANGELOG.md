@@ -1,5 +1,8 @@
 # Logs
 
+5 Nov 2026
+- Koi: rain (雨: Dry / Drizzle / Rain, key r, `?rain=`): drops computed in the shader on a hashed grid, each a small ring, with faint high plips when sound is on. In ink mode, ripples and raindrops bend the ink and paper a little and are shaded like a pale wash. Technical write-up in [BLOG.md](vibes/koi/BLOG.md).
+
 3 Nov 2026
 - Koi: Ink mode after CCTV's "Ink": fish painted as keyframes (8 fps by default) on textured paper with feathered brush edges, and an ink-in-water simulation between them, so each fish sheds a light smoke trail shaped by its wake (tail jet flicked with each beat, shed vortices) that fades faster where the water moves
 - Koi: Ink is now the default style (Ink, Paint, Real), painted styles go down to 2, 1, ½ and ¼ fps, and the realistic pond has a choice of bottom (底: 石 Pebble in clear water, 空 a sky-blue pool, 黒 a dark liner) in place of the green algae.

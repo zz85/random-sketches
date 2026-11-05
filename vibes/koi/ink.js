@@ -91,7 +91,10 @@ void main() {
 
 const SHOW_FS = /* glsl */ `
 ${COMMON}
+${RIPPLES}
 uniform sampler2D uInkF, uPig;
+uniform mat4 uInvVP;
+uniform vec3 uCam;
 uniform vec2 uRes;
 uniform float uEnc, uGrain, uLod;
 float paperH(vec2 p) {
@@ -102,10 +105,16 @@ float paperH(vec2 p) {
 varying vec2 vUv;
 void main() {
   vec2 asp = vec2(uRes.x / uRes.y, 1.), q = vUv * asp, px = 1. / uRes;
-  float d = texture(uInkF, vUv).r / uEnc;
+  // the surface over this pixel: rings from touches and rain bend the view a little and catch the light
+  vec4 far = uInvVP * vec4(vUv * 2. - 1., 1., 1.);
+  vec3 rd = normalize(far.xyz / far.w - uCam);
+  vec3 S = uCam + rd * (-uCam.z / rd.z);
+  vec2 rg = rippleGrad(S.xy) / 0.15;
+  vec2 uv = vUv - rg * 0.006;
+  float d = texture(uInkF, uv).r / uEnc;
   // the edges of a wisp are where the ink is thickest against the water: darker filaments
-  float gx = texture(uInkF, vUv + vec2(px.x * 1.5, 0.)).r - texture(uInkF, vUv - vec2(px.x * 1.5, 0.)).r;
-  float gy = texture(uInkF, vUv + vec2(0., px.y * 1.5)).r - texture(uInkF, vUv - vec2(0., px.y * 1.5)).r;
+  float gx = texture(uInkF, uv + vec2(px.x * 1.5, 0.)).r - texture(uInkF, uv - vec2(px.x * 1.5, 0.)).r;
+  float gy = texture(uInkF, uv + vec2(0., px.y * 1.5)).r - texture(uInkF, uv - vec2(0., px.y * 1.5)).r;
   float edge = length(vec2(gx, gy)) / uEnc;
   // keep the smoke thin under the title so it stays readable
   float tm = smoothstep(0.88, 0.95, vUv.y) * (1. - smoothstep(0.55, 0.75, vUv.x));
@@ -115,8 +124,8 @@ void main() {
   // read soft and a little wobbly, so its edges feather like a loaded brush and not a drawn line
   vec2 wob = (vec2(vnoise(q * 140.), vnoise(q * 140. + 9.)) - 0.5) * 3.5 * px;
   vec3 W = vec3(0.3, 0.45, 0.25);
-  float p = dot(-log(clamp(textureLod(uPig, vUv + wob, uLod * 0.75).rgb, 0.02, 1.)), W);
-  float halo = dot(-log(clamp(textureLod(uPig, vUv, uLod + 1.2).rgb, 0.02, 1.)), W);
+  float p = dot(-log(clamp(textureLod(uPig, uv + wob, uLod * 0.75).rgb, 0.02, 1.)), W);
+  float halo = dot(-log(clamp(textureLod(uPig, uv, uLod + 1.2).rgb, 0.02, 1.)), W);
   p = pow(max(p, halo * 0.85) * 1.9, 1.3);
   d = max(d, p) + 0.2 * min(d, p);
   // xuan paper's soft fibre, catching a little more ink
@@ -133,6 +142,10 @@ void main() {
   vec3 ground = vec3(0.955, 0.955, 0.965) * (1.02 - dot(c, c) * 0.22) * (0.985 + 0.03 * (tooth - 0.5)) * (1. + clamp(dot(slope, vec2(-0.7, 0.7)), -1., 1.) * 0.045);
   ground = mix(ground, vec3(0.80, 0.82, 0.86), smoothstep(0.35, 1.1, length(c * vec2(1.25, 0.95))) * 0.35);
   vec3 col = ground * exp(-d * k * (1. + 0.35 * smoothstep(1.2, 3., d)));
+  // each ring drawn as a pale wash: grey on the side turned from the light, paper-bright on the other
+  float rl = length(rg), sh = dot(rg, vec2(0.7, -0.7));
+  col *= 1. - 0.13 * smoothstep(0.05, 0.7, rl) - 0.24 * clamp(-sh, 0., 1.2);
+  col = mix(col, ground * 1.04, 0.45 * clamp(sh, 0., 1.));
   col += (hash12(gl_FragCoord.xy) - 0.5) / 255.;
   gl_FragColor = vec4(col, 1.);
 }`;

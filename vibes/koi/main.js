@@ -28,6 +28,7 @@ const S = {
   cam: Q.get('cam') || store.cam || 'top',              // top | angle | orbit (the realistic view)
   fps: Q.has('fps') ? num('fps', 60) : store.fps || 8,  // frames a second the painting is shown at
   floor: Q.get('floor') || store.floor || 'pebble',     // pebble | sky | dark (the realistic pond's bottom)
+  rain: Q.has('rain') ? Q.get('rain') || 'rain' : store.rain || 'dry', // dry | drizzle | rain
   still: Q.has('still'),                                // painting held on one frame
 };
 // camera angles of the realistic view: elevation from straight down, symbol, name
@@ -257,6 +258,7 @@ function refreshUI() {
   const c = CAMS[S.cam]; $('cam').innerHTML = `<b>${c[1]}</b> ${c[2]}`; $('cam').style.display = painted() ? 'none' : '';
   $('still').innerHTML = S.still ? '<b>動</b> Play' : '<b>止</b> Still'; $('still').classList.toggle('on', S.still);
   $('fps').innerHTML = S.fps >= 60 ? '<b>齣</b> Smooth' : `<b>齣</b> ${{ 0.5: '½', 0.25: '¼' }[S.fps] || S.fps} fps`;
+  const rn = RAIN[S.rain] || RAIN.dry; $('rain').innerHTML = `<b>${rn[1]}</b> ${rn[2]}`; $('rain').classList.toggle('on', S.rain !== 'dry');
   const f = FLOORS[S.floor]; $('floor').innerHTML = `<b>${f[0]}</b> ${f[1]}`; $('floor').style.display = painted() ? 'none' : '';
   for (const id of ['still', 'fps']) $(id).style.display = painted() ? '' : 'none';
 }
@@ -269,6 +271,9 @@ $('mode').onclick = () => { const k = Object.keys(MODES); S.mode = k[(k.indexOf(
 $('motion').onclick = () => { if (S.motion) { S.motion = false; save(); refreshUI(); } else enableMotion(); poke(); };
 $('cam').onclick = () => { const k = Object.keys(CAMS); setCam(k[(k.indexOf(S.cam) + 1) % k.length]); hint(S.cam === 'top' ? 'Straight down.' : 'Two fingers (or right-drag) turn and tilt the view.'); poke(); };
 $('still').onclick = () => { S.still = !S.still; dirty = true; refreshUI(); poke(); };
+const RAIN = { dry: [0, '晴', 'Dry'], drizzle: [0.3, '霧', 'Drizzle'], rain: [0.9, '雨', 'Rain'] };
+function setRain() { shared.uRain.value = (RAIN[S.rain] || RAIN.dry)[0]; }
+$('rain').onclick = () => { const k = Object.keys(RAIN); S.rain = k[(k.indexOf(S.rain) + 1) % k.length]; setRain(); save(); refreshUI(); hint({ dry: 'The rain stops.', drizzle: 'A light drizzle.', rain: 'Steady rain on the pond.' }[S.rain]); poke(); };
 const FPS = [60, 24, 16, 12, 8, 4, 2, 1, 0.5, 0.25];
 $('fps').onclick = () => { S.fps = FPS[(FPS.indexOf(S.fps) + 1) % FPS.length]; save(); refreshUI(); hint(S.fps >= 60 ? 'Painted every frame.' : S.fps >= 2 ? `Painted ${S.fps} times a second.` : S.fps === 1 ? 'A new painting every second.' : `A new painting every ${1 / S.fps} seconds.`); poke(); };
 $('floor').onclick = () => { const k = Object.keys(FLOORS); S.floor = k[(k.indexOf(S.floor) + 1) % k.length]; setFloor(); save(); refreshUI(); hint({ pebble: 'River pebbles, clear water.', sky: 'A pale blue pool.', dark: 'A dark-lined pond.' }[S.floor]); poke(); };
@@ -282,6 +287,7 @@ addEventListener('keydown', (e) => {
   else if (e.key === ' ' && painted()) { e.preventDefault(); $('still').click(); }
   else if (e.key === 'f' && painted()) $('fps').click();
   else if (e.key === 's') $('sound').click();
+  else if (e.key === 'r') $('rain').click();
   else if (e.key === 'h') document.body.classList.toggle('calm');
 });
 document.body.addEventListener('pointerdown', poke, { passive: true });
@@ -341,6 +347,9 @@ function setCam(c) {
 function simulate(dt) {
   time += dt;
   shared.uTime.value = time;
+  // rain patters: light high plips, more of them the harder it rains
+  const rr = shared.uRain.value;
+  if (rr > 0 && audio.on && Math.random() < dt * rr * 14) audio.plip(0.012 + Math.random() * 0.025 * rr, 900 + Math.random() * 1400);
   // tilt eases in; the slosh is a damped standing wave driven by tilt changes and shakes
   const [tx, ty] = motion.tiltT;
   const ptx = motion.tilt[0], pty = motion.tilt[1];
@@ -437,7 +446,7 @@ function loop(now) {
   requestAnimationFrame(loop);
 }
 
-setFloor(); resize();
+setFloor(); setRain(); resize();
 // let the pond settle before the first frame: fish spread out, spines relax
 for (let i = 0; i < num('warm', 600); i++) simulate(1 / 30);
 for (let i = 0; i < num('t', 0) * 30; i++) simulate(1 / 30);
