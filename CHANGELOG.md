@@ -1,6 +1,7 @@
 # Logs
 
 5 Nov 2026
+- Koi: music (楽, key n: 静 Stillness, sparse koto phrases over a drone; 流 Flow, a slow samurai-ambience piece with shakuhachi, koto figures, low strings and far-off taiko), all synthesised in the in scale on D. Rain now sounds like rain: a soft dark hiss and dull pats in place of the tinny sine drops.
 - Koi: rain (雨: Dry / Drizzle / Rain, key r, `?rain=`): drops computed in the shader on a hashed grid, each a small ring, with faint high plips when sound is on. In ink mode, ripples and raindrops bend the ink and paper a little and are shaded like a pale wash. Technical write-up in [BLOG.md](vibes/koi/BLOG.md).
 
 3 Nov 2026
