@@ -3,7 +3,7 @@
  * from unpkg are cached the first time they are fetched. Stale-while-revalidate, so it opens
  * instantly and offline. Bump VERSION when the file list changes.
  */
-const VERSION = 'mossglen-v1';
+const VERSION = 'mossglen-v2';
 const SHELL = ['./', './index.html', './main.js', './glsl.js', './world.js', './props.js', './growth.js', './moss.js', './flora.js', './post.js', './manifest.webmanifest', '../pwa/install.js', './icon.svg', './icon-192.png', './icon-512.png'];
 const BASE = 'https://unpkg.com/three@0.160.1/';
 const CDN = [BASE + 'build/three.module.js', BASE + 'examples/jsm/controls/OrbitControls.js', BASE + 'examples/jsm/libs/lil-gui.module.min.js', BASE + 'examples/jsm/postprocessing/Pass.js', BASE + 'examples/jsm/utils/BufferGeometryUtils.js'];

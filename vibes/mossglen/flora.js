@@ -69,7 +69,7 @@ void main() {
   alb *= 0.85 + 0.3 * vP;
   float sh = sunShadow(vW, 0.003);
   vec3 col = shade(alb, N, vW, 0.75, sh, 0.3, 0.9, 0.2);
-  gl_FragColor = vec4(applyFog(col, vW), 1.0);
+  gl_FragColor = vec4(applyFog(col, vW), depthCode(vW));
 }`;
 
 export function makeFerns(G, shared, defines, count, rnd) {
@@ -139,7 +139,7 @@ export function makeRushes(G, shared, defines, count, rnd) {
         vec3 alb = mix(vec3(0.03, 0.06, 0.015), vec3(0.09, 0.16, 0.03), vH);
         alb = mix(alb, vec3(0.2, 0.15, 0.06), smoothstep(0.85, 1.0, vH) * 0.7);
         vec3 col = shade(alb, N, vW, 0.7 + 0.3 * vH, sunShadow(vW, 0.003), 0.4, 0.5, 0.4);
-        gl_FragColor = vec4(applyFog(col, vW), 1.0);
+        gl_FragColor = vec4(applyFog(col, vW), depthCode(vW));
       }`,
   });
   const mesh = new THREE.Mesh(g, m); mesh.frustumCulled = false;
@@ -214,11 +214,7 @@ export function makeCanopy(trees, shared, defines, perSpot, rnd) {
     varying vec2 vUv; varying vec3 vW, vN; varying float vTone;
     void main() {
       vec4 t = texture2D(uLeaf, vUv);
-#ifdef A2C
-      if (t.a < 0.2) discard;
-#else
       if (t.a < 0.5) discard;
-#endif
 #ifdef DEPTH_ONLY
       gl_FragColor = vec4(1.0); return;
 #endif
@@ -227,15 +223,10 @@ export function makeCanopy(trees, shared, defines, perSpot, rnd) {
       alb = mix(alb, alb * vec3(1.35, 1.05, 0.55), smoothstep(0.75, 1.0, vTone)); // a few yellowing leaves
       float sh = sunShadow(vW + N * 0.2, 0.004);
       vec3 col = shade(alb, N, vW, 0.55 + 0.45 * t.r, sh, 0.5, 0.8, 0.0);
-#ifdef A2C
-      gl_FragColor = vec4(applyFog(col, vW), smoothstep(0.3, 0.65, t.a));
-#else
-      gl_FragColor = vec4(applyFog(col, vW), 1.0);
-#endif
+      gl_FragColor = vec4(applyFog(col, vW), depthCode(vW));
     }`;
   const u = { ...shared, uLeaf: { value: tex } };
-  // with MSAA, alpha to coverage gives the leaf cut-outs soft edges instead of stair-steps
-  const m = new THREE.ShaderMaterial({ defines, uniforms: u, vertexShader: LEAF_VS, fragmentShader: FS, side: THREE.DoubleSide, alphaToCoverage: !!defines.A2C });
+  const m = new THREE.ShaderMaterial({ defines, uniforms: u, vertexShader: LEAF_VS, fragmentShader: FS, side: THREE.DoubleSide });
   const mesh = new THREE.Mesh(g, m); mesh.frustumCulled = false;
   mesh.userData.castShadow = true;
   mesh.userData.shadowMat = new THREE.ShaderMaterial({ defines: { SHADOW_TAPS: defines.SHADOW_TAPS, WISP_LIGHTS: defines.WISP_LIGHTS, DEPTH_ONLY: 1 }, uniforms: u, vertexShader: LEAF_VS, fragmentShader: FS, side: THREE.DoubleSide });

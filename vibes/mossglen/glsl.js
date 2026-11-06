@@ -71,6 +71,9 @@ ${NOISE}
 
 // Height fog along the view ray (exponential density falling off with height), in-scattering
 // turns sun-coloured looking towards the sun: the glen's morning mist.
+// Opaque surfaces write 1 + their distance in metres to alpha (the sky writes 0): the light
+// shafts read the sky from it and the painterly filter how far away a pixel is.
+float depthCode(vec3 wp) { return 1.0 + distance(wp, cameraPosition); }
 vec3 applyFog(vec3 col, vec3 wp) {
   vec3 ro = cameraPosition; vec3 d = wp - ro; float t = length(d); vec3 rd = d / max(t, 1e-4);
   float b = uFogFall;

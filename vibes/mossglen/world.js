@@ -20,14 +20,21 @@ export const smooth = (e0, e1, x) => { const t = Math.min(1, Math.max(0, (x - e0
 // ---- the shape of this glen. Seed 5 is the hand-tuned one; any other seed rolls a new glen:
 // noise offsets, how high the hills and the knoll stand, how lumpy the ground is (from a
 // lawn of moss to an Icelandic lava field of hummocks), and where the burn winds.
-export const T = { ox: 0, oz: 0, knoll: 0.85, ring: 7, hill: 4.5, hum: 0.45, humF: 0.32, lumps: 0, sz: 7.5, sa: 3.2, sf: 0.075, sp: 0.6, sb: 1.4, sq: 2.1, drop: 0.028 };
+export const T = { kind: 'circle', ox: 0, oz: 0, knoll: 0.85, ring: 7, hill: 4.5, hum: 0.45, humF: 0.32, lumps: 0, sz: 7.5, sa: 3.2, sf: 0.075, sp: 0.6, sb: 1.4, sq: 2.1, drop: 0.028 };
 const T0 = { ...T };
+// Kinds of place a seed rolls, after the references: an old stone circle on a knoll, a lava
+// field of moss pillows, a boulder-choked oakwood (Wistman's Wood), a moss garden lawn.
+export const KINDS = ['circle', 'lava', 'oakwood', 'garden'];
 export function setTerrainSeed(seed) {
-  Object.assign(T, T0);
+  Object.assign(T, T0, { kind: 'circle' });
   if (seed === 5) return T;
   const r = mulberry32(seed * 7919 + 13), L = (a, b) => a + (b - a) * r();
-  Object.assign(T, { ox: L(-400, 400), oz: L(-400, 400), knoll: L(0.4, 1.5), ring: L(4, 12), hill: L(2.5, 8), hum: L(0.25, 0.75), humF: L(0.22, 0.5),
-    lumps: r() < 0.4 ? L(0.25, 0.6) : 0, sz: L(6.2, 10), sa: L(1.2, 4.5), sf: L(0.05, 0.11), sp: L(0, 6.3), sb: L(0.4, 2), sq: L(0, 6.3), drop: L(0.012, 0.04) });
+  const kind = KINDS[Math.floor(r() * KINDS.length)];
+  Object.assign(T, { kind, ox: L(-400, 400), oz: L(-400, 400), sz: L(6.2, 10), sa: L(1.2, 4.5), sf: L(0.05, 0.11), sp: L(0, 6.3), sb: L(0.4, 2), sq: L(0, 6.3), drop: L(0.012, 0.04) });
+  if (kind === 'circle') Object.assign(T, { knoll: L(0.6, 1.6), ring: L(5, 12), hill: L(3, 8), hum: L(0.3, 0.6), humF: L(0.25, 0.4), lumps: 0 });
+  if (kind === 'lava') Object.assign(T, { knoll: L(0, 0.5), ring: L(8, 16), hill: L(5, 10), hum: L(0.5, 0.9), humF: L(0.3, 0.55), lumps: L(0.6, 1.1) });
+  if (kind === 'oakwood') Object.assign(T, { knoll: L(0.3, 1), ring: L(10, 18), hill: L(4, 9), hum: L(0.6, 1.0), humF: L(0.2, 0.35), lumps: L(0, 0.3) });
+  if (kind === 'garden') Object.assign(T, { knoll: L(0.2, 0.6), ring: L(3, 6), hill: L(1.5, 3.5), hum: L(0.12, 0.25), humF: L(0.2, 0.3), lumps: L(0.15, 0.3), sa: L(0.8, 2.5) });
   return T;
 }
 
@@ -128,7 +135,7 @@ export function makeWater(shared, defines) {
         // a little foam where the water is thin
         float foam = smoothstep(0.1, 0.0, dep) * smoothstep(0.55, 0.8, vnoise(vec3(vW.x * 3.0 - t * 1.2, 0.0, vW.z * 6.0)));
         col = mix(col, (uSkyAmb + uSunColor * 0.2 * sh) * 0.9, foam * 0.5);
-        gl_FragColor = vec4(applyFog(col, vW), 1.0);
+        gl_FragColor = vec4(applyFog(col, vW), depthCode(vW));
       }`,
   });
   const mesh = new THREE.Mesh(g, m); mesh.frustumCulled = false;
@@ -164,7 +171,7 @@ export function makeHills(shared, defines) {
         alb = mix(alb, vec3(0.13, 0.1, 0.05), smoothstep(0.6, 0.8, fbm(vW * 0.1 + 3.0)) * 0.6);   // bracken
         vec3 nn = normalize(vN); if (nn.y < 0.0) nn = -nn;
         vec3 col = shade(alb, nn, vW, 1.0, 1.0, 0.3, 0.0, 0.0);
-        gl_FragColor = vec4(applyFog(col, vW), 1.0);
+        gl_FragColor = vec4(applyFog(col, vW), depthCode(vW));
       }`,
   });
   const mesh = new THREE.Mesh(g, m); mesh.frustumCulled = false;

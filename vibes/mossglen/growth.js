@@ -35,7 +35,7 @@ export function makeGrowth() {
       let h, a = 1;
       if (kind[i] === 0) {
         const slope = 1 - ny;
-        h = 0.3 + 0.45 * moist + 0.3 * shade + (patch - 0.5) * 0.9 + (fine - 0.5) * 0.15 - slope * 0.6;
+        h = 0.48 + 0.4 * moist + 0.3 * shade + (patch - 0.5) * 0.8 + (fine - 0.5) * 0.15 - slope * 0.6;
         if (y < waterY(x) + 0.03 && sd < w + 0.3) h = 0;                       // nothing under the water
         // hollows hold water and shade: darker, and a better home
         const lap = (heightAt(x + 0.6, z) + heightAt(x - 0.6, z) + heightAt(x, z + 0.6) + heightAt(x, z - 0.6)) / 4 - y;
@@ -46,7 +46,7 @@ export function makeGrowth() {
       } else if (kind[i] === 1) {
         // caps on the tops, patches down the sides, bare where it is steep and dry
         const p2 = fbm3(x * 1.4 + 9, y * 1.4, z * 1.4, 3);
-        h = 0.18 + 0.45 * up * up + 0.12 * facing + 0.15 * moist + 0.12 * shade + (p2 - 0.5) * 1.3 + (patch - 0.5) * 0.3 - Math.max(0, -ny) * 0.6;
+        h = 0.26 + 0.45 * up * up + 0.12 * facing + 0.15 * moist + 0.12 * shade + (p2 - 0.5) * 1.3 + (patch - 0.5) * 0.3 - Math.max(0, -ny) * 0.6;
         a = (0.45 + 0.55 * smooth(-0.05, 0.6, y - ground)) * (0.75 + 0.25 * (ny * 0.5 + 0.5));
       } else {
         const low = smooth(2.5, 0.2, y - ground);

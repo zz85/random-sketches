@@ -28,15 +28,29 @@
   .pill button { appearance: none; border: 0; background: transparent; color: inherit; font: inherit; padding: 6px 10px; border-radius: 16px; cursor: pointer; letter-spacing: 0.05em; }
   .pill button.on { background: rgba(150, 200, 90, 0.35); }
   .pill button:focus-visible { outline: 2px solid rgba(255, 255, 255, 0.7); }
+  .pill button.icon { padding: 7px; display: grid; place-items: center; }
+  .pill button.wide { display: flex; align-items: center; gap: 6px; padding: 6px 12px 6px 9px; }
+  .pill svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  #newglen svg { stroke-width: 1.3; }
+  #newglen.on { background: rgba(170, 230, 110, 0.45); }
+  .tools { position: relative; }
+  #sizepop { position: absolute; bottom: calc(100% + 8px); right: 0; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 10px 8px;
+    border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(14, 24, 16, 0.55); border-radius: 18px; -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+    opacity: 0; transform: translateY(6px); pointer-events: none; transition: opacity 0.25s, transform 0.25s; }
+  body.painting #sizepop { opacity: 1; transform: none; pointer-events: auto; }
+  #sizepop input { writing-mode: vertical-lr; direction: rtl; width: 22px; height: 110px; margin: 0; }
+  #sizepop .dot { width: 6px; height: 6px; border-radius: 50%; background: #efeddf; opacity: 0.8; }
+  #sizepop .dot.big { width: 16px; height: 16px; }
+  body.nogui .lil-gui.root { display: none; }
   .pill label { display: flex; align-items: center; gap: 6px; padding: 0 6px; }
   input[type=range] { accent-color: #a8cf62; width: 110px; }
-  #grow { width: min(220px, 42vw); }
+  #grow { width: min(240px, 40vw); margin-right: 8px; }
   #play { min-width: 34px; }
   #hint { position: fixed; left: 50%; bottom: calc(max(12px, env(safe-area-inset-bottom)) + 96px); transform: translateX(-50%); color: #f4f1e4; font: italic 13px Georgia, serif;
     text-align: center; width: max-content; max-width: 84vw; text-shadow: 0 1px 8px rgba(0, 0, 0, 0.8); opacity: 0; transition: opacity 0.8s; pointer-events: none; }
   #hint.show { opacity: 0.95; }
   .lil-gui { --background-color: rgba(14, 24, 16, 0.72); --title-background-color: rgba(34, 52, 30, 0.85); --widget-color: rgba(255,255,255,0.12); --number-color: #d9f0a8; -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
-  @media (max-width: 520px) { #title { font-size: 16px; } #title small { display: none; } input[type=range] { width: 80px; } }
+  @media (max-width: 560px) { #title { font-size: 16px; } #title small { display: none; } #grow { width: 52vw; } #newglen span { display: none; } #bar { gap: 5px; } }
 </style>
 <script type="importmap">
 { "imports": {
@@ -45,23 +59,30 @@
 } }
 </script>
 </head>
-<body>
+<body class="nogui">
 <div id="status">growing moss…</div>
 <div id="title">MOSSGLEN<small>moss over stone, root and burn</small></div>
 <div id="hint"></div>
 <div id="bar">
-  <div class="pill"><button id="newglen" type="button" aria-label="Conjure a new glen (n)">✦ new glen</button></div>
+  <div class="pill"><button id="newglen" class="wide" type="button" title="New forest (n)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6z"/><path d="M18.5 14l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/><path d="M5 15.5l.6 1.4 1.4.6-1.4.6L5 19.5l-.6-1.4L3 17.5l1.4-.6z"/></svg><span>New forest</span></button></div>
   <div class="pill" role="group" aria-label="Growth">
-    <button id="play" type="button" aria-label="Play or pause the growth">▶</button>
-    <label>growth <input id="grow" type="range" min="0" max="1" step="0.001" value="0" aria-label="Growth"></label>
+    <button id="play" class="icon" type="button" title="Play (space)" aria-label="Play the growth"></button>
+    <input id="grow" type="range" min="0" max="1" step="0.001" value="0" aria-label="Growth">
   </div>
-  <div class="pill" role="toolbar" aria-label="Brush">
-    <button type="button" data-mode="look" aria-label="Look around (1)">look</button>
-    <button type="button" data-mode="grow" aria-label="Paint moss (2)">grow</button>
-    <button type="button" data-mode="scrape" aria-label="Scrape moss away (3)">scrape</button>
-    <label><input id="size" type="range" min="0.15" max="2" step="0.01" aria-label="Brush size"></label>
-    <button type="button" data-pwa-install style="display:none">install</button>
+  <div class="pill tools" role="toolbar" aria-label="Brush">
+    <button type="button" class="icon" data-mode="look" title="Look around (1)" aria-label="Look"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+    <button type="button" class="icon" data-mode="grow" title="Grow moss (2)" aria-label="Grow moss"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21v-8"/><path d="M12 13c0-4 3-6.5 7.5-6.5 0 4.5-3 6.5-7.5 6.5z"/><path d="M12 15.5C12 12.5 9.5 10.5 5 10.5c0 3.5 2.5 5 7 5z"/><path d="M6 21h12"/></svg></button>
+    <button type="button" class="icon" data-mode="scrape" title="Scrape it off (3)" aria-label="Scrape moss"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 4.5l5 5-7.5 7.5-5-5z"/><path d="M7 12l-3.5 3.5a2 2 0 0 0 0 2.8l2.2 2.2a2 2 0 0 0 2.8 0L12 17"/><path d="M17 7l3-3"/></svg></button>
+    <div id="sizepop" aria-label="Brush size"><span class="dot big"></span><input id="size" type="range" min="0.15" max="2" step="0.01" aria-label="Brush size"><span class="dot"></span></div>
   </div>
+  <div class="pill lights" role="toolbar" aria-label="Light">
+    <button type="button" class="icon" data-light="0" title="Morning mist" aria-label="Morning mist"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9h11M6 13h14M3 17h12"/><path d="M15 9a4 4 0 0 1 7 0"/></svg></button>
+    <button type="button" class="icon" data-light="1" title="Soft day" aria-label="Soft day"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.5M12 19v2.5M2.5 12H5M19 12h2.5M5.3 5.3l1.8 1.8M16.9 16.9l1.8 1.8M5.3 18.7l1.8-1.8M16.9 7.1l1.8-1.8"/></svg></button>
+    <button type="button" class="icon" data-light="2" title="Golden evening" aria-label="Golden evening"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 17h19"/><path d="M7 17a5 5 0 0 1 10 0"/><path d="M12 6.5V9M5.5 9.5l1.6 1.6M18.5 9.5l-1.6 1.6M5 20.5h14"/></svg></button>
+    <button type="button" class="icon" data-light="3" title="Gloaming" aria-label="Gloaming"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 14.5A7.5 7.5 0 0 1 9.5 5a7.5 7.5 0 1 0 9.5 9.5z"/><path d="M17 4l.5 1.3L19 6l-1.5.5L17 8l-.5-1.5L15 6l1.5-.7z"/></svg></button>
+  </div>
+  <div class="pill"><button id="more" class="icon" type="button" title="More settings" aria-label="More settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg></button>
+    <button type="button" class="icon" data-pwa-install style="display:none" title="Install"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 20h14"/></svg></button></div>
 </div>
 <script type="module" src="main.js"></script>
 <script>if ('serviceWorker' in navigator && location.protocol !== 'file:' && !location.search.includes('shot')) navigator.serviceWorker.register('sw.js').catch(() => {});</script>

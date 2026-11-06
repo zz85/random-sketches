@@ -73,6 +73,16 @@ void main() {
   float tufts = vnoise(wp * 55.0) * 0.6 + vnoise(wp * 140.0) * 0.4;
   vec2 cu = cushionAt(wp, n);
   vec3 mc = mossColor(wp, vD, mix(0.25, 0.8, cu.x) * (0.7 + 0.3 * tufts), cu.y);
+  // far off, the moss is painted in dabs: big patches of chartreuse, olive, ochre and deep
+  // green with broken edges, which the painterly filter in post then flattens
+  float far = smoothstep(5.0, 20.0, distance(wp, cameraPosition));
+  if (far > 0.001) {
+    vec3 q = wp * 0.75 + vec3(vnoise(wp * 0.6), vnoise(wp * 0.6 + 5.0), vnoise(wp * 0.6 + 9.0)) * 1.4;
+    float id = fract(sin(dot(floor(q), vec3(12.9898, 78.233, 37.719))) * 43758.5453);
+    vec3 pal = id < 0.3 ? vec3(0.17, 0.3, 0.025) : id < 0.6 ? vec3(0.07, 0.15, 0.02) : id < 0.82 ? vec3(0.2, 0.21, 0.035) : vec3(0.035, 0.085, 0.018);
+    pal *= 0.8 + 0.4 * mossColor(wp, vD, 0.5, 0.5).g / 0.15;
+    mc = mix(mc, mix(mc, pal, 0.6), far);
+  }
   float mh = (sqrt(cu.x) * 0.7 + tufts * 0.3) * 0.008 * (0.4 + vD);
   vec3 N = bump(n, mix(relief, mh, cov));
   float wet = uWet * (1.0 - cov);
@@ -83,7 +93,7 @@ void main() {
   // wet stone and soil catch a little sun
   vec3 V = normalize(cameraPosition - wp);
   col += uSunColor * sh * pow(max(dot(reflect(-uSunDir, N), V), 0.0), 40.0) * wet * 0.25;
-  gl_FragColor = vec4(applyFog(col, wp), 1.0);
+  gl_FragColor = vec4(applyFog(col, wp), depthCode(wp));
 }`;
 
 export function makeSurfaceMaterial(shared, defines) {
@@ -142,7 +152,7 @@ void main() {
   vec3 col = mossColor(vW, vD, 0.3 + 0.7 * vT / dome + (id - 0.5) * 0.25, cu.y);
   float sh = sunShadow(vW + n * 0.03, 0.0015);
   col = shade(col, n, vW, vAo * (0.3 + 0.7 * vT), sh, 0.45, 0.45, 0.3 + vT * 0.6);
-  gl_FragColor = vec4(applyFog(col, vW), 1.0);
+  gl_FragColor = vec4(applyFog(col, vW), depthCode(vW));
 }`;
 
 export function makeShells(geometry, shared, defines, layers) {
@@ -229,7 +239,7 @@ void main() {
   vec3 alb = vPart < 0.5 ? seta : caps;
   float sh = sunShadow(vW, 0.002);
   vec3 col = shade(alb, normalize(vN), vW, 0.9, sh, 0.5, 1.6, 0.3);
-  gl_FragColor = vec4(applyFog(col, vW), 1.0);
+  gl_FragColor = vec4(applyFog(col, vW), depthCode(vW));
 }`;
 
 export function makeSporophytes(G, shared, defines, count, rnd) {
@@ -245,5 +255,124 @@ export function makeSporophytes(G, shared, defines, count, rnd) {
   g.instanceCount = n;
   const m = new THREE.ShaderMaterial({ defines, uniforms: { ...shared }, vertexShader: SPORO_VS, fragmentShader: SPORO_FS });
   const mesh = new THREE.Mesh(g, m); mesh.frustumCulled = false;
+  return mesh;
+}
+
+// ---- near detail: the moss as shoots. Within a few metres of the camera each mossy vertex
+// carries a handful of tufts, each a little rosette of upright shoots with keeled leaves (after
+// mrdoob's floor moss), so close up the pile becomes plants. They are placed on the CPU around
+// the camera, refilled only when the camera has moved, and fade in with distance; far away the
+// shells and the painterly filter take over.
+function tuftGeometry() {
+  const pos = [], tip = [], idx = [], rnd = (() => { let s = 7; return () => ((s = (s * 16807) % 2147483647) / 2147483647); })();
+  for (let sh = 0; sh < 5; sh++) {
+    const a0 = sh * 2.39996, r0 = 0.011 * Math.sqrt(sh / 4 + 0.05), x0 = Math.cos(a0) * r0, z0 = Math.sin(a0) * r0;
+    const H = 0.6 + rnd() * 0.4;
+    for (let lf = 0; lf < 4; lf++) {
+      const t = lf / 3, a = a0 + lf * 2.39996, L = (0.011 + rnd() * 0.006) * (1 - t * 0.3), W = L * 0.24, rise = 0.45 + t * 0.5;
+      const dx = Math.cos(a) * L, dz = Math.sin(a) * L, sx = -Math.sin(a) * W, sz = Math.cos(a) * W, y = 0.022 * H * t;
+      const o = pos.length / 3;
+      pos.push(x0, y, z0, x0 + dx * 0.5 + sx, y + L * rise * 0.45, z0 + dz * 0.5 + sz, x0 + dx * 0.5, y + L * rise * 0.45 + W * 0.5, z0 + dz * 0.5,
+        x0 + dx * 0.5 - sx, y + L * rise * 0.45, z0 + dz * 0.5 - sz, x0 + dx, y + L * rise, z0 + dz);
+      tip.push(t * 0.4, t * 0.5 + 0.3, t * 0.5 + 0.45, t * 0.5 + 0.3, t * 0.6 + 0.4);
+      idx.push(o, o + 1, o + 2, o, o + 2, o + 3, o + 1, o + 4, o + 2, o + 2, o + 4, o + 3);
+    }
+  }
+  const g = new THREE.InstancedBufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('aTip', new THREE.Float32BufferAttribute(tip, 1));
+  g.setIndex(idx);
+  return g;
+}
+
+const TUFT_VS = /* glsl */ `
+${COMMON}
+${MOSS}
+uniform float uTuftR;
+attribute float aTip;
+attribute vec3 iPos, iNor; attribute vec4 iA, iSeed;
+varying vec3 vW, vN; varying float vT, vD, vId;
+void main() {
+  vec2 md = mossState(iA.x, iA.y, iA.z);
+  float dist = distance(iPos, cameraPosition);
+  float s = smoothstep(0.4, 0.8, md.x) * smoothstep(uTuftR, uTuftR * 0.6, dist);
+  if (s < 0.03) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
+  vec3 n = normalize(mix(iNor, vec3(0, 1, 0), 0.35));
+  vec3 t = normalize(cross(n, abs(n.y) < 0.9 ? vec3(0, 1, 0) : vec3(1, 0, 0))), b = cross(n, t);
+  float a = iSeed.x * 6.2832, ca = cos(a), sa = sin(a);
+  vec3 lp = vec3(position.x * ca - position.z * sa, position.y, position.x * sa + position.z * ca);
+  float k = (0.85 + 0.6 * iSeed.y) * (0.6 + 0.6 * md.y) * uLush * s;
+  float sway = sin(uTime * (1.4 + iSeed.z) + iSeed.w * 6.28) * uWind * position.y * 6.0;
+  vec3 base = iPos + iNor * (mossLift(iPos, md, iA.w) - 0.004);
+  vec3 p = base + (t * (lp.x + sway * 0.01) + n * lp.y * (0.8 + 0.6 * md.y) + b * lp.z) * k;
+  p = rise(p, 1.0);
+  vW = p; vN = normalize(n + (t * lp.x + b * lp.z) * 40.0); vT = aTip; vD = md.y; vId = iSeed.w;
+  gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
+}`;
+const TUFT_FS = /* glsl */ `
+${COMMON}
+${SHADOW}
+${MOSS}
+varying vec3 vW, vN; varying float vT, vD, vId;
+void main() {
+  vec3 n = normalize(vN); if (!gl_FrontFacing) n = -n;
+  vec3 col = mossColor(vW, vD, 0.2 + 0.85 * vT + (vId - 0.5) * 0.3, vId);
+  col *= 0.85 + 0.35 * vT;
+  float sh = sunShadow(vW + vN * 0.02, 0.0015);
+  col = shade(col, n, vW, 0.3 + 0.7 * vT, sh, 0.5, 0.6, 0.3 + 0.6 * vT);
+  gl_FragColor = vec4(applyFog(col, vW), depthCode(vW));
+}`;
+
+export function makeTufts(G, shared, defines, radius) {
+  const cap = Math.round(1300 * radius * radius);
+  const g = tuftGeometry();
+  const P = new Float32Array(cap * 3), Nn = new Float32Array(cap * 3), A = new Float32Array(cap * 4), Sd = new Float32Array(cap * 4);
+  const aP = new THREE.InstancedBufferAttribute(P, 3), aN = new THREE.InstancedBufferAttribute(Nn, 3), aA = new THREE.InstancedBufferAttribute(A, 4), aS = new THREE.InstancedBufferAttribute(Sd, 4);
+  for (const a of [aP, aN, aA, aS]) a.setUsage(THREE.DynamicDrawUsage);
+  g.setAttribute('iPos', aP); g.setAttribute('iNor', aN); g.setAttribute('iA', aA); g.setAttribute('iSeed', aS);
+  g.instanceCount = 0;
+  const m = new THREE.ShaderMaterial({ defines: { ...defines, SHADOW_TAPS: 4 }, uniforms: { ...shared, uTuftR: { value: radius } }, vertexShader: TUFT_VS, fragmentShader: TUFT_FS, side: THREE.DoubleSide });
+  const mesh = new THREE.Mesh(g, m); mesh.frustumCulled = false;
+  const last = new THREE.Vector3(1e9, 0, 0);
+  const h = (i, k) => { const x = Math.sin(i * 12.9898 + k * 78.233) * 43758.5453; return x - Math.floor(x); };
+  const { pos, nor, hab, arr, kind, adj, adjStart } = G;
+  // fill the tufts around the camera; cheap, and only when it has moved a quarter radius
+  const lastDir = new THREE.Vector3(), cand = [];
+  mesh.userData.update = (cam, dir, force) => {
+    if (!force && cam.distanceTo(last) < radius * 0.2 && dir.dot(lastDir) > 0.92) return;
+    last.copy(cam); lastDir.copy(dir);
+    let n = 0; cand.length = 0;
+    // vertices in front of the camera, nearest first
+    G.near(cam.x, cam.y, cam.z, radius, (i, d2) => {
+      if (kind[i] === 0 && hab[i] <= 0) return;
+      const dx = pos[i * 3] - cam.x, dy = pos[i * 3 + 1] - cam.y, dz = pos[i * 3 + 2] - cam.z;
+      if (dx * dir.x + dy * dir.y + dz * dir.z < -0.6 * Math.sqrt(d2) && d2 > 0.25) return;
+      cand.push(d2, i);
+    });
+    const order = Array.from({ length: cand.length / 2 }, (_, k) => k).sort((a, b) => cand[a * 2] - cand[b * 2]);
+    for (const o of order) {
+      const i = cand[o * 2 + 1];
+      if (n >= cap) break;
+      // edge length round the vertex sets how many tufts it needs to close up
+      let e = 0, c = 0;
+      for (let q = adjStart[i]; q < adjStart[i + 1] && c < 4; q++, c++) { const j = adj[q]; e += Math.hypot(pos[j * 3] - pos[i * 3], pos[j * 3 + 1] - pos[i * 3 + 1], pos[j * 3 + 2] - pos[i * 3 + 2]); }
+      e = c ? e / c : 0.05;
+      const want = Math.min(20, Math.max(1, Math.round((e * e) / (0.032 * 0.032))));
+      const nx = nor[i * 3], ny = nor[i * 3 + 1], nz = nor[i * 3 + 2];
+      const tx = Math.abs(ny) < 0.9 ? nz : 0, ty = Math.abs(ny) < 0.9 ? 0 : -nz, tz = Math.abs(ny) < 0.9 ? -nx : ny;
+      const tl = Math.hypot(tx, ty, tz) || 1, bx = ny * tz - nz * ty, by = nz * tx - nx * tz, bz = nx * ty - ny * tx;
+      for (let k = 0; k < want && n < cap; k++) {
+        const u = (h(i, k) - 0.5) * e, v = (h(i, k + 31) - 0.5) * e;
+        P[n * 3] = pos[i * 3] + (tx * u) / tl + (bx * v) / tl; P[n * 3 + 1] = pos[i * 3 + 1] + (ty * u) / tl + (by * v) / tl; P[n * 3 + 2] = pos[i * 3 + 2] + (tz * u) / tl + (bz * v) / tl;
+        Nn[n * 3] = nx; Nn[n * 3 + 1] = ny; Nn[n * 3 + 2] = nz;
+        A[n * 4] = i; A[n * 4 + 1] = hab[i]; A[n * 4 + 2] = arr[i]; A[n * 4 + 3] = kind[i];
+        Sd[n * 4] = h(i, k + 7); Sd[n * 4 + 1] = h(i, k + 13); Sd[n * 4 + 2] = h(i, k + 17); Sd[n * 4 + 3] = h(i, k + 23);
+        n++;
+      }
+    }
+    g.instanceCount = n;
+    for (const a of [aP, aN, aA, aS]) { a.updateRange.count = n * a.itemSize; a.needsUpdate = true; }
+  };
+  mesh.userData.hide = () => { g.instanceCount = 0; last.set(1e9, 0, 0); };
   return mesh;
 }

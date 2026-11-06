@@ -8,7 +8,7 @@ import { makeShared } from './glsl.js';
 import { heightAt, terrainGeometry, makeWater, makeHills, makeSky, mulberry32, setTerrainSeed } from './world.js';
 import { buildProps } from './props.js';
 import { makeGrowth } from './growth.js';
-import { makeSurfaceMaterial, makeShells, makeSporophytes } from './moss.js';
+import { makeSurfaceMaterial, makeShells, makeSporophytes, makeTufts } from './moss.js';
 import { makeFerns, makeRushes, makeCanopy, makeMotes, makeWisps } from './flora.js';
 import { makePost } from './post.js';
 
@@ -19,9 +19,9 @@ const SHOT = URLQ.has('shot');
 
 // ---------- quality tiers: 0 phones, 1 laptops, 2 desktops
 const TIERS = [
-  { terrainN: 150, rockDetail: 3, trunkM: 7, branchM: 4, depth: 3, trees: 7, burnStones: 10, shells: 4, shellDist: 8, sporo: 6000, ferns: 70, rushes: 45, perSpot: 5, shadow: 1024, taps: 4, msaa: 0, wispLights: 2, motes: 160, maxDpr: 1.5, shaftTaps: 20 },
-  { terrainN: 190, rockDetail: 3, trunkM: 8, branchM: 5, depth: 3, trees: 9, burnStones: 14, shells: 7, shellDist: 12, sporo: 14000, ferns: 130, rushes: 70, perSpot: 7, shadow: 2048, taps: 9, msaa: 4, wispLights: 4, motes: 300, maxDpr: 1.5, shaftTaps: 28 },
-  { terrainN: 230, rockDetail: 4, trunkM: 9, branchM: 5, depth: 3, trees: 10, burnStones: 18, shells: 10, shellDist: 16, sporo: 26000, ferns: 200, rushes: 90, perSpot: 8, shadow: 2048, taps: 9, msaa: 4, wispLights: 4, motes: 400, maxDpr: 1.75, shaftTaps: 36 },
+  { terrainN: 150, rockDetail: 3, trunkM: 7, branchM: 4, depth: 3, trees: 7, burnStones: 10, shells: 4, shellDist: 8, sporo: 6000, ferns: 70, rushes: 45, perSpot: 5, shadow: 1024, taps: 4, msaa: 0, wispLights: 2, motes: 160, maxDpr: 1.5, shaftTaps: 20, paint: 1, tufts: 1.6 },
+  { terrainN: 190, rockDetail: 3, trunkM: 8, branchM: 5, depth: 3, trees: 9, burnStones: 14, shells: 7, shellDist: 12, sporo: 14000, ferns: 130, rushes: 70, perSpot: 7, shadow: 2048, taps: 9, msaa: 4, wispLights: 4, motes: 300, maxDpr: 1.5, shaftTaps: 28, paint: 2, tufts: 2.4 },
+  { terrainN: 230, rockDetail: 4, trunkM: 9, branchM: 5, depth: 3, trees: 10, burnStones: 18, shells: 10, shellDist: 16, sporo: 26000, ferns: 200, rushes: 90, perSpot: 8, shadow: 2048, taps: 9, msaa: 4, wispLights: 4, motes: 400, maxDpr: 1.75, shaftTaps: 36, paint: 2, tufts: 3.2 },
 ];
 const tier = Math.round(num('q', MOBILE ? 0 : 2));
 const Q = TIERS[Math.max(0, Math.min(2, tier))];
@@ -49,8 +49,8 @@ const sunDirOf = (el, az) => { const e = el * Math.PI / 180, a = az * Math.PI / 
 
 // ---------- state the UI drives
 const S = {
-  mode: 'look', brush: MOBILE ? 0.6 : 0.5, grow: num('grow', SHOT ? 0.85 : 0), cover: num('cover', 0.68), lush: num('lush', 1), wet: num('wet', 0.35),
-  light: num('light', 0), wind: num('wind', 0.5), creep: 1.2, wisps: !URLQ.has('nowisps'), playing: !SHOT && !URLQ.has('grow'), playTo: 0.82, playSpeed: 1 / 22,
+  mode: 'look', brush: MOBILE ? 0.6 : 0.5, grow: num('grow', SHOT ? 0.85 : 0), cover: num('cover', 0.85), lush: num('lush', 1), wet: num('wet', 0.35),
+  light: num('light', 0), wind: num('wind', 0.5), creep: 1.2, wisps: !URLQ.has('nowisps'), playing: !SHOT && !URLQ.has('grow'), playTo: 0.95, playSpeed: 1 / 11,
 };
 
 let seed = Math.round(num('seed', 5));
@@ -78,9 +78,10 @@ async function build() {
     scene.add(makeShells(ground.geometry, shared, sd, Q.shells), makeShells(stones.geometry, shared, sd, Q.shells)); }
   const rnd = mulberry32(77 + seed * 31);
   scene.add(makeSporophytes(G, shared, defines, Q.sporo, rnd));
+  const tufts = makeTufts(G, shared, defines, Q.tufts); scene.add(tufts);
   scene.add(makeFerns(G, shared, defines, Q.ferns, rnd));
   scene.add(makeRushes(G, shared, defines, Q.rushes, rnd));
-  scene.add(makeCanopy(props.trees, shared, Q.msaa ? { ...defines, A2C: 1 } : defines, Q.perSpot, rnd));
+  scene.add(makeCanopy(props.trees, shared, defines, Q.perSpot, rnd));
   scene.add(makeWater(shared, defines), makeHills(shared, defines), makeSky(shared, defines));
   scene.add(makeMotes(shared, defines, Q.motes, rnd));
   const wisps = makeWisps(shared, defines, 9, rnd, heightAt); scene.add(wisps);
@@ -91,7 +92,7 @@ async function build() {
     for (let i = 0; i < p.count; i++) r = Math.max(r, Math.hypot(p.pos[i * 3] - p.c.x, p.pos[i * 3 + 1] - p.c.y, p.pos[i * 3 + 2] - p.c.z));
     p.r = r;
   }
-  return { G, props, wisps, objs: scene.children.slice(first), ms: performance.now() - t0 };
+  return { G, props, wisps, tufts, objs: scene.children.slice(first), ms: performance.now() - t0 };
 }
 
 // ---------- a new glen: the old one sinks into the mere, a new one is rolled and rises from the
@@ -112,11 +113,13 @@ async function conjure(newSeed = (Math.random() * 1e6) | 0) {
   S.playing = false; hint('');
   $('newglen')?.classList.add('on');
   await new Promise((r) => { conj.done = r; });             // frame() runs the sink
-  conj.phase = 'build'; hint('the glen is dreaming…');
+  conj.phase = 'build'; hint('a new forest is dreaming…');
   for (const o of W.objs) { scene.remove(o); dispose(o); }
   W.G.tex.dispose();
   seed = newSeed; setTerrainSeed(seed);
   W = await build();
+  // each new forest under its own light, mostly daylight
+  if (newSeed !== 5) { const r = mulberry32(newSeed * 3 + 1)(); S.light = r < 0.3 ? 0 : r < 0.55 ? 1 : r < 0.85 ? 2 : 3; syncLightUI(); }
   applyLight(S.light); shadowDirty = false;
   S.grow = 0; W.G.creep = S.creep; syncGrowUI(); hint('');
   conj = { phase: 'rise', t: 0 };
@@ -135,7 +138,7 @@ function stepConjure(dt) {
     if (x >= 1) {
       u.value = 1e5; gl.value = 0; conj = null; shadowDirty = true; $('newglen')?.classList.remove('on');
       // and the moss comes in fast
-      S.playTo = 0.85; S.playSpeed = 1 / 6; S.playing = true; syncGrowUI();
+      S.playTo = 0.95; S.playSpeed = 1 / 3; S.playing = true; syncGrowUI();
     }
   }
 }
@@ -165,7 +168,7 @@ function renderShadow() {
 
 // ---------- light: interpolate the presets
 let shadowDirty = true, lastLight = -1;
-const post = makePost(renderer, { samples: Q.msaa, shaftTaps: Q.shaftTaps });
+const post = makePost(renderer, { samples: Q.msaa, shaftTaps: Q.shaftTaps, paint: Q.paint });
 function applyLight(t) {
   const i = Math.min(LIGHTS.length - 2, Math.floor(t)), f = t - i, A = LIGHTS[i], B = LIGHTS[i + 1];
   const L = (a, b) => a + (b - a) * f;
@@ -179,6 +182,9 @@ function applyLight(t) {
   scene.traverse((o) => { if (o.material?.uniforms?.uCloud) o.material.uniforms.uCloud.value = L(A.cloud, B.cloud); });
   shadowDirty = true; lastLight = t;
 }
+
+let lightAnim = null;
+function fadeLight(to) { lightAnim = { from: S.light, to, t: 0 }; S.light = to; syncLightUI(); S.light = lightAnim.from; }
 
 // ---------- camera
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -252,6 +258,7 @@ function setMode(m) {
   S.mode = m;
   for (const b of document.querySelectorAll('[data-mode]')) b.classList.toggle('on', b.dataset.mode === m);
   const paint = m !== 'look';
+  document.body.classList.toggle('painting', paint);
   controls.touches = paint ? { ONE: null, TWO: THREE.TOUCH.DOLLY_ROTATE } : { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
   controls.mouseButtons = paint ? { LEFT: null, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE } : { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
   if (!paint) ring.visible = false;
@@ -259,7 +266,8 @@ function setMode(m) {
 }
 let hintTimer = 0;
 function hint(s) { const h = $('hint'); if (!h) return; h.textContent = s; h.classList.toggle('show', !!s); clearTimeout(hintTimer); if (s) hintTimer = setTimeout(() => h.classList.remove('show'), 3500); }
-function syncGrowUI() { const g = $('grow'); if (g && document.activeElement !== g) g.value = S.grow; const p = $('play'); if (p) p.textContent = S.playing ? '❚❚' : '▶'; }
+let gui = null;
+function syncGrowUI() { const g = $('grow'); if (g && document.activeElement !== g) g.value = S.grow; const p = $('play'); if (p) { const w = S.playing ? PAUSE : PLAY; if (p.dataset.s !== w) { p.innerHTML = w; p.dataset.s = w; } } }
 
 let W = null, time = 0, fpsAvg = 16.7, scale = 1, lastSize = '';
 function resize() {
@@ -295,36 +303,41 @@ function paintAt(x, y) {
   return hit;
 }
 
+const PLAY = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/></svg>', PAUSE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13M16 5.5v13" stroke-width="3"/></svg>';
+function syncLightUI() { for (const b of document.querySelectorAll('[data-light]')) b.classList.toggle('on', Math.abs(+b.dataset.light - S.light) < 0.5); }
 function buildUI() {
   for (const b of document.querySelectorAll('[data-mode]')) b.addEventListener('click', () => setMode(b.dataset.mode));
+  for (const b of document.querySelectorAll('[data-light]')) b.addEventListener('click', () => fadeLight(+b.dataset.light));
   $('grow').addEventListener('input', (e) => { S.grow = +e.target.value; S.playing = false; syncGrowUI(); });
-  $('play').addEventListener('click', () => { if (S.grow >= S.playTo - 0.005) { S.grow = 0; S.playTo = 1; } S.playing = !S.playing; syncGrowUI(); });
+  $('play').addEventListener('click', () => { if (S.grow >= S.playTo - 0.005) { S.grow = 0; S.playTo = 0.95; } S.playing = !S.playing; syncGrowUI(); });
   $('size').addEventListener('input', (e) => { S.brush = +e.target.value; });
   $('newglen').addEventListener('click', () => conjure());
+  $('more').addEventListener('click', () => { const on = document.body.classList.toggle('nogui'); $('more').classList.toggle('on', !on); if (!on) gui.open(); });
   $('size').value = S.brush;
-  const gui = new GUI({ title: 'Glen' });
+  syncLightUI();
+  gui = new GUI({ title: 'Forest' });
   gui.add(S, 'cover', 0, 1, 0.01).name('Cover (how far it reaches)');
   gui.add(S, 'lush', 0, 1.6, 0.01).name('Lushness');
   gui.add(S, 'wet', 0, 1, 0.01).name('Wet');
-  gui.add(S, 'light', 0, LIGHTS.length - 1, 0.01).name('Light').onChange(() => applyLight(S.light));
+  gui.add(S, 'light', 0, LIGHTS.length - 1, 0.01).name('Light').onChange(() => { applyLight(S.light); syncLightUI(); });
   gui.add(S, 'wind', 0, 1.5, 0.01).name('Breeze');
   gui.add(S, 'creep', 0.2, 2.5, 0.01).name('Painted moss creeps (m)').onChange((v) => { W.G.creep = v; });
   gui.add(S, 'wisps').name('Wisps');
-  const light = gui.addFolder('Light presets');
-  LIGHTS.forEach((l, i) => light.add({ go: () => { S.light = i; applyLight(i); gui.controllersRecursive().forEach((c) => c.updateDisplay()); } }, 'go').name(l.name));
   gui.add({ clear: () => W.G.clear() }, 'clear').name('Clear painting');
-  gui.add({ bare: () => { S.grow = 0; S.playing = false; W.G.clear(); syncGrowUI(); } }, 'bare').name('Bare glen');
+  gui.add({ bare: () => { S.grow = 0; S.playing = false; W.G.clear(); syncGrowUI(); } }, 'bare').name('Bare ground');
+  gui.add(post.comp.uniforms.uPaint, 'value', 0, 1, 0.01).name('Painterly far off');
   gui.add({ reset: resetView }, 'reset').name('Reset view');
   const info = { quality: ['phone', 'laptop', 'desktop'][tier], scale: '1.00', fps: '' };
   const f = gui.addFolder('Info'); f.add(info, 'quality').disable(); f.add(info, 'scale').listen().disable(); f.add(info, 'fps').listen().disable(); f.close();
   S.info = info;
-  if (MOBILE || SHOT) gui.close();
+
   addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT') return;
     if (e.key === '1') setMode('look'); if (e.key === '2') setMode('grow'); if (e.key === '3') setMode('scrape');
     if (e.key === ' ') { e.preventDefault(); $('play').click(); }
     if (e.key === '[') S.brush = Math.max(0.15, S.brush * 0.85); if (e.key === ']') S.brush = Math.min(2, S.brush * 1.18);
     if (e.key === 'h') document.body.classList.toggle('calm');
+    if (e.key === 'l') fadeLight((Math.round(S.light) + 1) % LIGHTS.length);
     if (e.key === 'n') conjure();
   });
 }
@@ -333,9 +346,10 @@ function buildUI() {
 function frame(dt) {
   time += dt;
   stepConjure(dt);
+  if (lightAnim) { lightAnim.t = Math.min(1, lightAnim.t + dt / 1.6); const k = lightAnim.t * lightAnim.t * (3 - 2 * lightAnim.t); S.light = lightAnim.from + (lightAnim.to - lightAnim.from) * k; applyLight(S.light); if (lightAnim.t >= 1) lightAnim = null; gui?.controllersRecursive().forEach((c) => c.updateDisplay()); }
   if (conj && (conj.phase === 'wait' || conj.phase === 'build')) return;
   shared.uTime.value = time;
-  if (S.playing) { S.grow = Math.min(S.playTo, S.grow + dt * S.playSpeed); if (S.grow >= S.playTo) { S.playing = false; S.playSpeed = 1 / 22; } syncGrowUI(); }
+  if (S.playing) { S.grow = Math.min(S.playTo, S.grow + dt * S.playSpeed); if (S.grow >= S.playTo) { S.playing = false; S.playSpeed = 1 / 11; } syncGrowUI(); }
   shared.uGrow.value = S.grow; shared.uCover.value = S.cover; shared.uLush.value = S.lush; shared.uWet.value = S.wet; shared.uWind.value = S.wind;
   if (stroke && W) paintAt(stroke.x, stroke.y);
   W.G.update(Math.min(dt, 0.05));
@@ -343,6 +357,7 @@ function frame(dt) {
   W.wisps.material.uniforms.uBright.value = S.wispK;
   for (const v of shared.uWisp.value) v.w *= S.wispK;
   controls.update(); keepAboveGround();
+  if (conj) W.tufts.userData.hide(); else W.tufts.userData.update(camera.position, camera.getWorldDirection(tv));
   if (shadowDirty) { renderShadow(); shadowDirty = false; }
   // light shafts: the sun's position on screen, faded as it leaves the view
   const sp = camera.position.clone().addScaledVector(shared.uSunDir.value, 500).project(camera);
@@ -389,7 +404,7 @@ function loop(now) {
       coverage: (from, to) => W.G.coverage({ grow: S.grow, cover: S.cover }, from, to),
       buildMs: W.ms, verts: W.G.N,
     };
-    if (!SHOT && !URLQ.has('grow')) hint(MOBILE ? 'Watch it grow · then pick Grow and paint moss with a finger' : 'Watch it grow · then press Grow (2) and paint moss on stones, bark and ground');
+    if (!SHOT && !URLQ.has('grow')) hint(MOBILE ? 'Watch it grow, then paint moss with the sprout' : 'Watch it grow, then paint moss with the sprout (2) on stones, bark and ground · zoom right in');
     requestAnimationFrame(loop);
   } catch (e) { say('Could not start: ' + e.message); console.error(e); }
 })();

@@ -3,7 +3,7 @@
 // Each part is plain world-space arrays (pos, nor, idx) with a `kind`: 1 stone, 2 bark.
 import * as THREE from 'three';
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
-import { heightAt, streamDist, streamHalfWidth, streamZ, fbm3, noise3, mulberry32 } from './world.js';
+import { heightAt, streamDist, streamHalfWidth, streamZ, fbm3, noise3, mulberry32, T } from './world.js';
 
 const v3 = () => new THREE.Vector3();
 
@@ -129,6 +129,7 @@ function log(rnd, a, b, r0, M) {
 export function buildProps(Q, seed = 5) {
   const rnd = mulberry32(seed), parts = [], rocks = [];
   const add = (p, name, info) => { parts.push({ ...p, name }); if (info) rocks.push(info); return p; };
+  if (seed !== 5) return varied(Q, rnd, parts, rocks, add);
   // ---- the recumbent stone circle: a long recumbent stone at the back between its two tall
   // flankers, the ring falling in height towards the front, one stone fallen
   const R = 6.2, N = 10;
@@ -168,6 +169,63 @@ export function buildProps(Q, seed = 5) {
     if (streamDist(x, z) < 3.5) continue;
     const t = oak(rnd, x, z, Q); trees.push(t);
     add(t.bark, 'oak', null);
+  }
+  return { parts, rocks, trees };
+}
+
+// Any other seed: a place of one of the kinds T.kind rolled, laid out at random.
+function varied(Q, rnd, parts, rocks, add) {
+  const L = (a, b) => a + (b - a) * rnd(), trees = [], taken = [];
+  let free = (x, z, r) => streamDist(x, z) > r + streamHalfWidth(x) + 0.3 && taken.every((t) => Math.hypot(t[0] - x, t[1] - z) > t[2] + r);
+  const boulder = (x, z, s, name = 'boulder', flat = 0) => {
+    taken.push([x, z, s]);
+    add(stone(rnd, { detail: Q.rockDetail, size: [s * L(0.9, 1.3), s * L(0.45, 0.8) * (1 - flat * 0.5), s * L(0.8, 1.1)], rot: [rnd() * 0.4, rnd() * 6.3, rnd() * 0.4], at: [x, z], sink: 0.25, rough: L(0.04, 0.09) }), name, { x, z, r: s * 1.1 });
+  };
+  const scatter = (n, r0, r1, s0, s1, name, flat) => {
+    for (let i = 0, tries = 0; i < n && tries < n * 30; tries++) {
+      const a = rnd() * 6.283, r = Math.sqrt(L(r0 * r0, r1 * r1)), x = Math.cos(a) * r, z = Math.sin(a) * r + 2, s = L(s0, s1);
+      if (!free(x, z, s)) continue; boulder(x, z, s, name, flat); i++;
+    }
+  };
+  // keep the view from the camera (5.5, 15.5) to the middle clear of trees and big stones
+  const segD = (x, z) => { const ax = 5.5, az = 15.5, bx = 0, bz = 2, t = Math.max(0, Math.min(1, ((x - ax) * (bx - ax) + (z - az) * (bz - az)) / ((bx - ax) ** 2 + (bz - az) ** 2))); return Math.hypot(x - ax - t * (bx - ax), z - az - t * (bz - az)); };
+  const free0 = free;
+  free = (x, z, r) => free0(x, z, r) && Math.hypot(x - 5.5, z - 15.5) > r + 2 && (r < 1 || segD(x, z) > r + 1.2);
+  const k = T.kind;
+  if (k === 'circle') {
+    const R = L(4, 7.5), N = Math.round(L(6, 13)), H = L(0.8, 1.9);
+    for (let i = 0; i < N; i++) {
+      const a = (i / N) * Math.PI * 2 + (rnd() - 0.5) * 0.15, x = Math.cos(a) * R, z = Math.sin(a) * R;
+      const h = H * L(0.6, 1.1), w = L(0.35, 0.65), d = L(0.22, 0.4), fallen = rnd() < 0.15;
+      taken.push([x, z, w]);
+      add(stone(rnd, { detail: Q.rockDetail, size: fallen ? [h, d, w] : [w, h, d], rot: [(rnd() - 0.5) * 0.15, -a + Math.PI / 2 + (rnd() - 0.5) * 0.3, (rnd() - 0.5) * 0.2], at: [x, z], sink: fallen ? 0.35 : 0.1, box: 1, bevel: 0.2, planes: 7 }), 'standing stone', { x, z, r: Math.max(w, d) + 0.2 });
+    }
+    scatter(Math.round(L(6, 14)), R + 3, 22, 0.6, 1.6);
+  } else if (k === 'lava') {
+    scatter(Math.round(L(25, 45)), 1.5, 22, 0.35, 1.3, 'lava block');
+    scatter(Math.round(L(3, 6)), 4, 18, 1.4, 2.4, 'lava block');
+  } else if (k === 'oakwood') {
+    scatter(Math.round(L(40, 70)), 0, 21, 0.4, 1.5, 'granite boulder');
+  } else {
+    // garden: flat stepping stones in a winding line, a few set stones, a lantern-like upright
+    const a0 = rnd() * 6.283;
+    for (let i = 0; i < 14; i++) { const t = i / 13, x = Math.cos(a0) * (t * 16 - 8) + Math.sin(t * 5) * 1.5, z = Math.sin(a0) * (t * 16 - 8) + 2 + Math.cos(t * 4) * 1.2; if (free(x, z, 0.45)) boulder(x, z, L(0.4, 0.55), 'stepping stone', 1.6); }
+    scatter(Math.round(L(5, 10)), 2, 16, 0.5, 1.2, 'set stone');
+    for (let i = 0; i < 2; i++) { const x = L(-6, 6), z = L(-3, 8); if (!free(x, z, 0.4)) continue; taken.push([x, z, 0.4]);
+      add(stone(rnd, { detail: Q.rockDetail, size: [0.3, L(0.9, 1.4), 0.3], rot: [0, rnd() * 6.3, 0], at: [x, z], sink: 0.1, box: 1, bevel: 0.15, planes: 6 }), 'standing stone', { x, z, r: 0.4 }); }
+  }
+  if (rnd() < 0.6) { const x = L(-8, 8), z = streamZ(x) + (rnd() < 0.5 ? -1 : 1) * (streamHalfWidth(x) + 1.5);
+    add(log(rnd, [x - 2.5, z + L(-0.5, 0.5)], [x + 2.2, z + L(-0.5, 0.5)], L(0.25, 0.42), Q.trunkM + 2), 'fallen bough', { x, z, r: 0.5 }); }
+  for (let i = 0; i < Q.burnStones; i++) {
+    const x = -14 + rnd() * 30, w = streamHalfWidth(x), z = streamZ(x) + (rnd() * 2 - 1) * w * 0.9, s = 0.2 + rnd() * 0.32;
+    add(stone(rnd, { detail: Math.max(1, Q.rockDetail - 1), size: [s * 1.2, s * 0.6, s], rot: [0, rnd() * 6.3, 0], at: [x, z], sink: 0.3, rough: 0.04 }), 'stone in the burn', { x, z, r: s });
+  }
+  // oaks: few on a lava field, a crowd in the oakwood, a ring round the others
+  const nT = Math.min(Q.trees + (k === 'oakwood' ? 6 : 0), Math.round({ circle: L(4, 10), lava: L(0, 3), oakwood: L(10, 16), garden: L(3, 7) }[k]));
+  for (let i = 0, tries = 0; i < nT && tries < 400; tries++) {
+    const a = rnd() * 6.283, r = k === 'oakwood' ? L(3, 20) : L(9, 22), x = Math.cos(a) * r, z = Math.sin(a) * r + 2;
+    if (!free(x, z, 2) || streamDist(x, z) < 3.5 || segD(x, z) < 4.5) continue; taken.push([x, z, 2]);
+    const t = oak(rnd, x, z, Q); trees.push(t); add(t.bark, 'oak', null); i++;
   }
   return { parts, rocks, trees };
 }
