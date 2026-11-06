@@ -61,6 +61,14 @@ void main() {
     float lichen = smoothstep(0.62, 0.7, fbm2(wp * 3.3 + 11.0)) * smoothstep(0.25, 0.4, g3);
     alb = mix(alb, vec3(0.33, 0.36, 0.28), lichen * 0.8);
     relief = g1 * 0.02 + g2 * 0.008 + g3 * 0.002;
+  } else if (vKind > 2.5) {
+    // the piano: cracked black lacquer gone grey with weather, tarnished brass, yellowed ivory
+    float craze = smoothstep(0.42, 0.5, abs(vnoise(wp * 40.0) - 0.5) * 2.0);
+    if (vKind < 3.5) { alb = mix(vec3(0.012, 0.009, 0.007), vec3(0.055, 0.045, 0.035), g1 * 0.5 + craze * 0.5); relief = craze * 0.003 + g2 * 0.002; }
+    else if (vKind < 4.5) { alb = mix(vec3(0.3, 0.2, 0.07), vec3(0.06, 0.12, 0.09), smoothstep(0.45, 0.75, g2)); relief = g3 * 0.002; }
+    else if (vKind < 5.5) { alb = mix(vec3(0.5, 0.42, 0.28), vec3(0.32, 0.25, 0.14), g2 * 0.7); relief = g3 * 0.001; }
+    else if (vKind < 6.5) { alb = vec3(0.015, 0.013, 0.012) * (0.8 + g2 * 0.4); relief = 0.0; }
+    else { alb = vec3(0.12, 0.03, 0.03) * (0.7 + g2 * 0.6); relief = g3 * 0.003; }
   } else {
     // oak bark: furrows running along the stems
     float furrow = vnoise(wp * vec3(9.0, 1.3, 9.0));
@@ -90,6 +98,9 @@ void main() {
   float sh = sunShadow(wp + n * 0.03, 0.0015);
   float ao = vAo * mix(1.0, 0.45 + 0.55 * sqrt(cu.x), cov);
   vec3 col = shade(alb, N, wp, ao, sh, mix(0.1, 0.4, cov), cov * 0.3, cov * (0.45 + vD * 0.35));
+  // lacquer, brass and ivory still keep a little shine where the moss hasn't reached
+  if (vKind > 2.5 && vKind < 6.5) { vec3 Vv = normalize(cameraPosition - wp); float gl = vKind < 3.5 ? 0.5 : vKind < 4.5 ? 0.8 : 0.25;
+    col += uSunColor * sh * pow(max(dot(reflect(-uSunDir, N), Vv), 0.0), vKind < 4.5 ? 60.0 : 25.0) * gl * (1.0 - cov) + uSkyAmb * 0.08 * gl * (1.0 - cov) * pow(1.0 - max(dot(N, Vv), 0.0), 4.0); }
   // wet stone and soil catch a little sun
   vec3 V = normalize(cameraPosition - wp);
   col += uSunColor * sh * pow(max(dot(reflect(-uSunDir, N), V), 0.0), 40.0) * wet * 0.25;
@@ -258,29 +269,36 @@ export function makeSporophytes(G, shared, defines, count, rnd) {
   return mesh;
 }
 
-// ---- near detail: the moss as shoots. Within a few metres of the camera each mossy vertex
-// carries a handful of tufts, each a little rosette of upright shoots with keeled leaves (after
-// mrdoob's floor moss), so close up the pile becomes plants. They are placed on the CPU around
-// the camera, refilled only when the camera has moved, and fade in with distance; far away the
-// shells and the painterly filter take over.
+// ---- near detail: pincushion moss (Leucobryum). Within a few metres of the camera each mossy
+// vertex carries a few cushions: a squashed dome bristling with short, stiff, pale leaves that
+// all point outward, packed so the domes touch. They are placed on the CPU around the camera,
+// refilled only when it has moved, and fade in with distance; far away the shells and the
+// painterly filter take over.
 function tuftGeometry() {
-  const pos = [], tip = [], idx = [], rnd = (() => { let s = 7; return () => ((s = (s * 16807) % 2147483647) / 2147483647); })();
-  for (let sh = 0; sh < 5; sh++) {
-    const a0 = sh * 2.39996, r0 = 0.011 * Math.sqrt(sh / 4 + 0.05), x0 = Math.cos(a0) * r0, z0 = Math.sin(a0) * r0;
-    const H = 0.6 + rnd() * 0.4;
-    for (let lf = 0; lf < 4; lf++) {
-      const t = lf / 3, a = a0 + lf * 2.39996, L = (0.011 + rnd() * 0.006) * (1 - t * 0.3), W = L * 0.24, rise = 0.45 + t * 0.5;
-      const dx = Math.cos(a) * L, dz = Math.sin(a) * L, sx = -Math.sin(a) * W, sz = Math.cos(a) * W, y = 0.022 * H * t;
-      const o = pos.length / 3;
-      pos.push(x0, y, z0, x0 + dx * 0.5 + sx, y + L * rise * 0.45, z0 + dz * 0.5 + sz, x0 + dx * 0.5, y + L * rise * 0.45 + W * 0.5, z0 + dz * 0.5,
-        x0 + dx * 0.5 - sx, y + L * rise * 0.45, z0 + dz * 0.5 - sz, x0 + dx, y + L * rise, z0 + dz);
-      tip.push(t * 0.4, t * 0.5 + 0.3, t * 0.5 + 0.45, t * 0.5 + 0.3, t * 0.6 + 0.4);
-      idx.push(o, o + 1, o + 2, o, o + 2, o + 3, o + 1, o + 4, o + 2, o + 2, o + 4, o + 3);
-    }
+  const pos = [], tip = [], nrm = [], idx = [];
+  const v = (x, y, z, t, nx, ny, nz) => { pos.push(x, y, z); tip.push(t); nrm.push(nx, ny, nz); return pos.length / 3 - 1; };
+  // the dome, open underneath
+  const RINGS = 3, SEG = 9, base = pos.length / 3;
+  for (let r = 0; r <= RINGS; r++) {
+    const th = (r / RINGS) * Math.PI * 0.5, cy = Math.cos(th), sy = Math.sin(th);
+    for (let s = 0; s < SEG; s++) { const a = (s / SEG) * Math.PI * 2; v(Math.cos(a) * sy, cy, Math.sin(a) * sy, 0.15 + 0.35 * cy, Math.cos(a) * sy, cy, Math.sin(a) * sy); }
+  }
+  for (let r = 0; r < RINGS; r++) for (let s = 0; s < SEG; s++) { const a = base + r * SEG + s, b = base + r * SEG + (s + 1) % SEG; idx.push(a, a + SEG, b, b, a + SEG, b + SEG); }
+  // the leaves: short stiff points all over it, a little curved up
+  const LEAVES = 96;
+  for (let i = 0; i < LEAVES; i++) {
+    const y = 1 - (i + 0.5) / LEAVES * 0.7, r = Math.sqrt(1 - y * y), a = i * 2.39996;
+    const px = Math.cos(a) * r, pz = Math.sin(a) * r;
+    let dx = px, dy = y + 0.25, dz = pz; const dl = Math.hypot(dx, dy, dz); dx /= dl; dy /= dl; dz /= dl;
+    const sx = -Math.sin(a), sz = Math.cos(a), L = 0.06 + 0.04 * ((i * 7) % 5) / 4, w = 0.035;
+    const i0 = v(px - sx * w, y, pz - sz * w, 0.45, px, y, pz), i1 = v(px + sx * w, y, pz + sz * w, 0.45, px, y, pz);
+    const i2 = v(px + dx * L, y + dy * L, pz + dz * L, 1.0, dx, dy, dz);
+    idx.push(i0, i1, i2);
   }
   const g = new THREE.InstancedBufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('aTip', new THREE.Float32BufferAttribute(tip, 1));
+  g.setAttribute('aNrm', new THREE.Float32BufferAttribute(nrm, 3));
   g.setIndex(idx);
   return g;
 }
@@ -289,24 +307,25 @@ const TUFT_VS = /* glsl */ `
 ${COMMON}
 ${MOSS}
 uniform float uTuftR;
-attribute float aTip;
+attribute float aTip; attribute vec3 aNrm;
 attribute vec3 iPos, iNor; attribute vec4 iA, iSeed;
 varying vec3 vW, vN; varying float vT, vD, vId;
 void main() {
   vec2 md = mossState(iA.x, iA.y, iA.z);
   float dist = distance(iPos, cameraPosition);
-  float s = smoothstep(0.4, 0.8, md.x) * smoothstep(uTuftR, uTuftR * 0.6, dist);
+  float s = smoothstep(0.45, 0.85, md.x) * smoothstep(uTuftR, uTuftR * 0.6, dist);
   if (s < 0.03) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
-  vec3 n = normalize(mix(iNor, vec3(0, 1, 0), 0.35));
+  vec3 n = normalize(mix(iNor, vec3(0, 1, 0), 0.25));
   vec3 t = normalize(cross(n, abs(n.y) < 0.9 ? vec3(0, 1, 0) : vec3(1, 0, 0))), b = cross(n, t);
   float a = iSeed.x * 6.2832, ca = cos(a), sa = sin(a);
-  vec3 lp = vec3(position.x * ca - position.z * sa, position.y, position.x * sa + position.z * ca);
-  float k = (0.85 + 0.6 * iSeed.y) * (0.6 + 0.6 * md.y) * uLush * s;
-  float sway = sin(uTime * (1.4 + iSeed.z) + iSeed.w * 6.28) * uWind * position.y * 6.0;
-  vec3 base = iPos + iNor * (mossLift(iPos, md, iA.w) - 0.004);
-  vec3 p = base + (t * (lp.x + sway * 0.01) + n * lp.y * (0.8 + 0.6 * md.y) + b * lp.z) * k;
+  mat2 rot = mat2(ca, sa, -sa, ca);
+  vec2 xz = rot * position.xz, nxz = rot * aNrm.xz;
+  float R = (0.028 + 0.03 * iSeed.y) * (0.55 + 0.55 * md.y) * uLush * s;
+  float squash = 0.75 + 0.3 * iSeed.z;
+  vec3 base = iPos + iNor * (mossLift(iPos, md, iA.w) - R * 0.45);
+  vec3 p = base + (t * xz.x + n * position.y * squash + b * xz.y) * R;
   p = rise(p, 1.0);
-  vW = p; vN = normalize(n + (t * lp.x + b * lp.z) * 40.0); vT = aTip; vD = md.y; vId = iSeed.w;
+  vW = p; vN = normalize(t * nxz.x + n * aNrm.y / squash + b * nxz.y); vT = aTip; vD = md.y; vId = iSeed.w;
   gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
 }`;
 const TUFT_FS = /* glsl */ `
@@ -315,16 +334,24 @@ ${SHADOW}
 ${MOSS}
 varying vec3 vW, vN; varying float vT, vD, vId;
 void main() {
-  vec3 n = normalize(vN); if (!gl_FrontFacing) n = -n;
-  vec3 col = mossColor(vW, vD, 0.2 + 0.85 * vT + (vId - 0.5) * 0.3, vId);
-  col *= 0.85 + 0.35 * vT;
-  float sh = sunShadow(vW + vN * 0.02, 0.0015);
-  col = shade(col, n, vW, 0.3 + 0.7 * vT, sh, 0.5, 0.6, 0.3 + 0.6 * vT);
+  vec3 n = normalize(vN);
+  // Leucobryum is pale, grey-green and nearly white at the leaf tips when it is dry
+  vec3 pale = mix(vec3(0.05, 0.085, 0.035), vec3(0.15, 0.22, 0.095), smoothstep(0.1, 0.6, vT));
+  pale = mix(pale, vec3(0.28, 0.33, 0.21), smoothstep(0.75, 1.0, vT) * (0.6 - uWet * 0.4));
+  vec3 col = mix(pale, mossColor(vW, vD, vT, vId) * 1.1, 0.25 + 0.2 * uWet) * (0.85 + 0.3 * vId);
+  // a velvet of leaf tips too small to model: fine stipple, filtered as it shrinks below a pixel
+  float st = vnoise(vW * 260.0) * 0.6 + vnoise(vW * 610.0) * 0.4;
+  float fw = clamp(length(fwidth(vW * 260.0)) * 0.7, 0.0, 1.0);
+  col *= 1.0 + (st - 0.5) * 0.9 * (1.0 - fw);
+  col = mix(col, vec3(0.3, 0.36, 0.25), smoothstep(0.62, 0.8, st) * 0.35 * (1.0 - fw) * vT);   // silvery points
+  n = normalize(n + (vec3(vnoise(vW * 330.0), vnoise(vW * 330.0 + 3.0), vnoise(vW * 330.0 + 7.0)) - 0.5) * 0.9 * (1.0 - fw));
+  float sh = sunShadow(vW + n * 0.02, 0.0015);
+  col = shade(col, n, vW, 0.2 + 0.8 * smoothstep(0.1, 0.55, vT), sh, 0.55, 0.5, 0.5 + 0.5 * vT);
   gl_FragColor = vec4(applyFog(col, vW), depthCode(vW));
 }`;
 
 export function makeTufts(G, shared, defines, radius) {
-  const cap = Math.round(1300 * radius * radius);
+  const cap = Math.round(700 * radius * radius);
   const g = tuftGeometry();
   const P = new Float32Array(cap * 3), Nn = new Float32Array(cap * 3), A = new Float32Array(cap * 4), Sd = new Float32Array(cap * 4);
   const aP = new THREE.InstancedBufferAttribute(P, 3), aN = new THREE.InstancedBufferAttribute(Nn, 3), aA = new THREE.InstancedBufferAttribute(A, 4), aS = new THREE.InstancedBufferAttribute(Sd, 4);
@@ -356,8 +383,8 @@ export function makeTufts(G, shared, defines, radius) {
       // edge length round the vertex sets how many tufts it needs to close up
       let e = 0, c = 0;
       for (let q = adjStart[i]; q < adjStart[i + 1] && c < 4; q++, c++) { const j = adj[q]; e += Math.hypot(pos[j * 3] - pos[i * 3], pos[j * 3 + 1] - pos[i * 3 + 1], pos[j * 3 + 2] - pos[i * 3 + 2]); }
-      e = c ? e / c : 0.05;
-      const want = Math.min(20, Math.max(1, Math.round((e * e) / (0.032 * 0.032))));
+      e = Math.min(c ? e / c : 0.05, kind[i] ? 0.06 : 0.3); // never past a prop's edge
+      const want = Math.min(20, Math.max(1, Math.round((e * e) / (0.065 * 0.065))));
       const nx = nor[i * 3], ny = nor[i * 3 + 1], nz = nor[i * 3 + 2];
       const tx = Math.abs(ny) < 0.9 ? nz : 0, ty = Math.abs(ny) < 0.9 ? 0 : -nz, tz = Math.abs(ny) < 0.9 ? -nx : ny;
       const tl = Math.hypot(tx, ty, tz) || 1, bx = ny * tz - nz * ty, by = nz * tx - nx * tz, bz = nx * ty - ny * tx;

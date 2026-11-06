@@ -43,11 +43,12 @@ export function makeGrowth() {
         a *= 1 - Math.min(0.35, Math.max(0, lap * 3));
         for (const r of rocks) { const d = Math.hypot(x - r.x, z - r.z) - r.r; if (d < 1.5) { a *= 1 - 0.45 * Math.exp(-Math.max(0, d) / 0.35); h += 0.15 * Math.exp(-Math.max(0, d) / 0.5); } }
         for (const t of trees) { const d = Math.hypot(x - t.at[0], z - t.at[1]); if (d < 2.5) a *= 1 - 0.35 * Math.exp(-d / 0.8); }
-      } else if (kind[i] === 1) {
+      } else if (kind[i] === 1 || kind[i] >= 3) {
         // caps on the tops, patches down the sides, bare where it is steep and dry
         const p2 = fbm3(x * 1.4 + 9, y * 1.4, z * 1.4, 3);
         h = 0.26 + 0.45 * up * up + 0.12 * facing + 0.15 * moist + 0.12 * shade + (p2 - 0.5) * 1.3 + (patch - 0.5) * 0.3 - Math.max(0, -ny) * 0.6;
         a = (0.45 + 0.55 * smooth(-0.05, 0.6, y - ground)) * (0.75 + 0.25 * (ny * 0.5 + 0.5));
+        if (kind[i] >= 3) h = 0.05 + 0.75 * up * up + (p2 - 0.5) * 1.1 - Math.max(0, -ny) * 0.8 - (kind[i] === 5 || kind[i] === 6 ? 0.3 : 0); // on the piano: tops and ledges, the lacquer sides mostly bare
       } else {
         const low = smooth(2.5, 0.2, y - ground);
         h = 0.25 + 0.35 * up + 0.35 * low + 0.15 * facing + 0.15 * moist + (patch - 0.5) * 0.6 - Math.max(0, -ny) * 0.35;

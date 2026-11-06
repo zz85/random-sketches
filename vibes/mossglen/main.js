@@ -3,14 +3,16 @@
 // paint or scrape by hand. Scene assembly, light presets, shadow pass, input, UI, quality.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import GUI from 'three/addons/libs/lil-gui.module.min.js';
 import { makeShared } from './glsl.js';
-import { heightAt, terrainGeometry, makeWater, makeHills, makeSky, mulberry32, setTerrainSeed } from './world.js';
+import { heightAt, terrainGeometry, makeWater, makeHills, makeSky, mulberry32, setTerrainSeed, streamDist, streamHalfWidth } from './world.js';
 import { buildProps } from './props.js';
 import { makeGrowth } from './growth.js';
 import { makeSurfaceMaterial, makeShells, makeSporophytes, makeTufts } from './moss.js';
 import { makeFerns, makeRushes, makeCanopy, makeMotes, makeWisps } from './flora.js';
 import { makePost } from './post.js';
+import { makeAudio } from './audio.js';
 
 const URLQ = new URLSearchParams(location.search);
 const num = (k, d) => (URLQ.has(k) ? parseFloat(URLQ.get(k)) : d);
@@ -55,6 +57,9 @@ const S = {
 
 let seed = Math.round(num('seed', 5));
 setTerrainSeed(seed);
+const audio = makeAudio();
+let pianoCase = null;
+const loadPiano = () => (pianoCase ||= new GLTFLoader().loadAsync('piano_case.glb').then((g) => g.scene).catch((e) => { console.warn('piano', e.message); return null; }));
 async function build() {
   const t0 = performance.now(), first = scene.children.length;
   const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -62,7 +67,7 @@ async function build() {
   const G = makeGrowth();
   const T = terrainGeometry(Q.terrainN);
   const terrainPart = G.add({ ...T, kind: 0, name: 'ground' });
-  const props = buildProps(Q, seed);
+  const props = buildProps(Q, seed, { piano: await loadPiano() });
   for (const p of props.parts) G.add(p);
   say('working out where the moss will grow…'); await tick();
   G.finalize({ rocks: props.rocks, trees: props.trees, sunDir: sunDirOf(LIGHTS[0].el, LIGHTS[0].az) });
@@ -130,11 +135,11 @@ function stepConjure(dt) {
   const u = shared.uReveal, gl = shared.uRevealGlow;
   if (conj.phase === 'sink') {
     shared.uShadowOn.value = 0; gl.value = 0.6;
-    u.value = 140 * Math.pow(Math.max(0, 1 - conj.t / 0.9), 2);
-    if (conj.t > 0.95) { u.value = 0; conj.phase = 'wait'; conj.done(); }
+    u.value = 140 * Math.pow(Math.max(0, 1 - conj.t / 0.3), 2);
+    if (conj.t > 0.32) { u.value = 0; conj.phase = 'wait'; conj.done(); }
   } else if (conj.phase === 'rise') {
     shared.uShadowOn.value = 0; gl.value = 1;
-    const x = conj.t / 3.2; u.value = 2 + 150 * x * x;
+    const x = conj.t / 1.1; u.value = 2 + 150 * x * x;
     if (x >= 1) {
       u.value = 1e5; gl.value = 0; conj = null; shadowDirty = true; $('newglen')?.classList.remove('on');
       // and the moss comes in fast
@@ -303,6 +308,7 @@ function paintAt(x, y) {
   return hit;
 }
 
+const SOUND_OFF = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg>', SOUND_ON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></svg>';
 const PLAY = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/></svg>', PAUSE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13M16 5.5v13" stroke-width="3"/></svg>';
 function syncLightUI() { for (const b of document.querySelectorAll('[data-light]')) b.classList.toggle('on', Math.abs(+b.dataset.light - S.light) < 0.5); }
 function buildUI() {
@@ -312,6 +318,9 @@ function buildUI() {
   $('play').addEventListener('click', () => { if (S.grow >= S.playTo - 0.005) { S.grow = 0; S.playTo = 0.95; } S.playing = !S.playing; syncGrowUI(); });
   $('size').addEventListener('input', (e) => { S.brush = +e.target.value; });
   $('newglen').addEventListener('click', () => conjure());
+  const syncSound = () => { $('sound').classList.toggle('on', audio.on); $('sound').innerHTML = audio.on ? SOUND_ON : SOUND_OFF; };
+  $('sound').addEventListener('click', async () => { await audio.toggle(); syncSound(); hint(audio.on ? 'the burn, the wind and the birds' : ''); });
+  syncSound();
   $('more').addEventListener('click', () => { const on = document.body.classList.toggle('nogui'); $('more').classList.toggle('on', !on); if (!on) gui.open(); });
   $('size').value = S.brush;
   syncLightUI();
@@ -339,6 +348,7 @@ function buildUI() {
     if (e.key === 'h') document.body.classList.toggle('calm');
     if (e.key === 'l') fadeLight((Math.round(S.light) + 1) % LIGHTS.length);
     if (e.key === 'n') conjure();
+    if (e.key === 's') $('sound').click();
   });
 }
 
@@ -346,6 +356,7 @@ function buildUI() {
 function frame(dt) {
   time += dt;
   stepConjure(dt);
+  { const c = camera.position, near = Math.max(0, streamDist(c.x, c.z) - streamHalfWidth(c.x)); audio.update(dt, { burn: Math.max(0, 1 - near / 14), wind: S.wind, light: S.light, hidden: document.hidden }); }
   if (lightAnim) { lightAnim.t = Math.min(1, lightAnim.t + dt / 1.6); const k = lightAnim.t * lightAnim.t * (3 - 2 * lightAnim.t); S.light = lightAnim.from + (lightAnim.to - lightAnim.from) * k; applyLight(S.light); if (lightAnim.t >= 1) lightAnim = null; gui?.controllersRecursive().forEach((c) => c.updateDisplay()); }
   if (conj && (conj.phase === 'wait' || conj.phase === 'build')) return;
   shared.uTime.value = time;

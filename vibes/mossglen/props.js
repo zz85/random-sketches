@@ -1,8 +1,9 @@
 // Everything moss grows on besides the ground: a recumbent stone circle on the knoll, glacial
 // boulders, stones in the burn, a fallen log and old Atlantic oaks with roots over the ground.
-// Each part is plain world-space arrays (pos, nor, idx) with a `kind`: 1 stone, 2 bark.
+// Each part is plain world-space arrays (pos, nor, idx) with a `kind`: 1 stone, 2 bark, and
+// for the old upright piano in the middle 3 lacquer, 4 brass, 5 ivory, 6 ebony, 7 felt.
 import * as THREE from 'three';
-import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+import { mergeVertices, mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { heightAt, streamDist, streamHalfWidth, streamZ, fbm3, noise3, mulberry32, T } from './world.js';
 
 const v3 = () => new THREE.Vector3();
@@ -126,10 +127,49 @@ function log(rnd, a, b, r0, M) {
   return part(T, 2);
 }
 
-export function buildProps(Q, seed = 5) {
+// ---- an old upright piano left in the wood: the case from The Mechanical Pianist
+// (piano_case.glb, by csimpkins22), with keys built here at its measurements, set down a
+// little askew and sunk into the moss
+const MAT_KIND = { lacquer: 3, brass: 4, gold_leaf: 4, cloth: 7, felt: 7 };
+function pianoParts(caseScene, x, z, yaw, rnd) {
+  const y = heightAt(x, z) + 0.72 - 0.06;
+  const m = new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler((rnd() - 0.5) * 0.05, yaw, (rnd() - 0.5) * 0.06)), new THREE.Vector3(1, 1, 1));
+  const byKind = {};
+  const put = (g, kind) => { g = g.index ? g : mergeVertices(g); for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal') g.deleteAttribute(k); g.applyMatrix4(m); (byKind[kind] ||= []).push(g); };
+  caseScene.updateMatrixWorld(true);
+  caseScene.traverse((o) => { if (!o.isMesh) return; const g = o.geometry.clone(); g.applyMatrix4(o.matrixWorld); put(g, MAT_KIND[o.material.name] || 3); });
+  // 88 keys, A0 to C8: 52 white at 23.5 mm, the black ones over the gaps
+  const W = 0.0235, x0 = -0.611;
+  for (let wi = 0, midi = 21; midi <= 108; midi++) {
+    const pc = midi % 12, black = [1, 3, 6, 8, 10].includes(pc);
+    if (!black) {
+      const g = new THREE.BoxGeometry(W - 0.0011, 0.0215, 0.15); g.translate(x0 + (wi + 0.5) * W, -0.0108, -0.075);
+      // a few keys sunk, as an old piano's keys stick
+      if (rnd() < 0.12) g.translate(0, -0.006, 0);
+      put(g, 5); wi++;
+    } else {
+      const g = new THREE.BoxGeometry(0.0118, 0.012, 0.095); g.translate(x0 + wi * W, 0.006, -0.055 - 0.0475); put(g, 6);
+    }
+  }
+  return Object.entries(byKind).map(([kind, gs]) => {
+    const g = mergeGeometries(gs, false);
+    return { pos: Float32Array.from(g.attributes.position.array), nor: Float32Array.from(g.attributes.normal.array), idx: Uint32Array.from(g.index.array), kind: +kind };
+  });
+}
+function addPiano(extra, rnd, add, x, z, yaw) {
+  if (!extra?.piano) return;
+  for (const part of pianoParts(extra.piano, x, z, yaw, rnd)) add(part, 'old piano', null);
+  add.rock?.({ x, z, r: 0.75 });
+}
+
+export function buildProps(Q, seed = 5, extra = null) {
   const rnd = mulberry32(seed), parts = [], rocks = [];
   const add = (p, name, info) => { parts.push({ ...p, name }); if (info) rocks.push(info); return p; };
-  if (seed !== 5) return varied(Q, rnd, parts, rocks, add);
+  add.rock = (info) => rocks.push(info);
+  // facing the camera at (5.5, 15.5), a touch off square
+  const yaw = Math.atan2(5.5, 15.5) + (rnd() - 0.5) * 0.4;
+  if (seed !== 5) { addPiano(extra, rnd, add, 0, 1.2, yaw); return varied(Q, rnd, parts, rocks, add); }
+  addPiano(extra, rnd, add, 0.2, 0.6, yaw);
   // ---- the recumbent stone circle: a long recumbent stone at the back between its two tall
   // flankers, the ring falling in height towards the front, one stone fallen
   const R = 6.2, N = 10;
@@ -175,7 +215,7 @@ export function buildProps(Q, seed = 5) {
 
 // Any other seed: a place of one of the kinds T.kind rolled, laid out at random.
 function varied(Q, rnd, parts, rocks, add) {
-  const L = (a, b) => a + (b - a) * rnd(), trees = [], taken = [];
+  const L = (a, b) => a + (b - a) * rnd(), trees = [], taken = [[0, 1.2, 1.3]];
   let free = (x, z, r) => streamDist(x, z) > r + streamHalfWidth(x) + 0.3 && taken.every((t) => Math.hypot(t[0] - x, t[1] - z) > t[2] + r);
   const boulder = (x, z, s, name = 'boulder', flat = 0) => {
     taken.push([x, z, s]);

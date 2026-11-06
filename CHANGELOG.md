@@ -1,6 +1,7 @@
 # Logs
 
 6 Nov 2026
+- Mossglen: an old upright piano in the middle of each forest (case from The Mechanical Pianist, keys built here), mossed on its tops and ledges. Near moss is now pincushion moss: pale bristling domes. Ambient sound: the burn, wind and leaves, birds, a tawny owl at dusk. New forest rises 3x faster
 - Mossglen: New forest rolls one of four kinds of place (stone circle, lava field, oakwood, moss garden) with its own layout and light. Near the camera the moss becomes instanced shoots; far off it is painted in dabs and flattened by a distance-scaled Kuwahara filter. Growth plays twice as fast and covers about 85% by default. New bar: icon tools with a vertical brush-size slider, light buttons, settings panel hidden until asked for
 - Add [Mossglen](vibes/mossglen/): a moss-covered Scottish glen. Moss grows on a front that follows water and shade (shortest-path arrival over the mesh), over a stone circle, oaks, boulders and banks; paint it on or scrape it off, and painted moss creeps outward. Shell-rendered cushion moss with sporophytes, unrolling ferns, four lights from morning mist to the gloaming with wisps, light shafts and bloom. Quality tiers and adaptive scale for phones, offline PWA. A new-glen button rolls a fresh seed and raises the land on a glowing front, then floods it with moss
 
