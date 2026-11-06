@@ -156,7 +156,37 @@ function pianoParts(caseScene, x, z, yaw, rnd) {
     return { pos: Float32Array.from(g.attributes.position.array), nor: Float32Array.from(g.attributes.normal.array), idx: Uint32Array.from(g.index.array), kind: +kind };
   });
 }
+// ---- or the concert grand from midiviz (#028, built in code), its lid propped open a little,
+// in centimetres, keys facing +z: merged per finish into the mossable kinds
+function grandParts(api, x, z, yaw, rnd) {
+  const M = api.materials, kindOf = new Map();
+  for (const [k, kind] of Object.entries({ case: 3, blackKey: 6, leather: 6, brass: 4, whiteKey: 5, whiteKeySide: 5, paper: 5, felt: 7, wood: 2, raw: 2 })) if (M[k]) kindOf.set(M[k], kind);
+  // the lid on its short stick (13 degrees): the gold plate and the soundboard show under it,
+  // and moss creeps in onto them; the strings, pins and action are left out
+  M.plate && kindOf.set(M.plate, 4);
+  const inside = new Set(['steel', 'copper', 'pins', 'hammerFelt', 'damperFelt'].map((k) => M[k]));
+  api.setLid('half'); for (let i = 0; i < 300; i++) api.update(1 / 30);
+  // the body runs back about 2.1 m behind the keys: centre it on (x, z)
+  const front = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
+  const kx = x + front.x * 0.9, kz = z + front.z * 0.9;
+  const m = new THREE.Matrix4().compose(new THREE.Vector3(kx, heightAt(kx, kz) - 0.04, kz), new THREE.Quaternion().setFromEuler(new THREE.Euler((rnd() - 0.5) * 0.04, yaw, (rnd() - 0.5) * 0.05)), new THREE.Vector3(0.01, 0.01, 0.01));
+  const root = new THREE.Group(); root.add(api.root); root.applyMatrix4(m); root.updateMatrixWorld(true);
+  const byKind = {};
+  root.traverse((o) => {
+    if (!o.isMesh || o.material.transparent || !o.visible || inside.has(o.material)) return;
+    const kind = kindOf.get(o.material) ?? 3;
+    let gg = o.geometry.clone(); for (const k of Object.keys(gg.attributes)) if (k !== 'position' && k !== 'normal') gg.deleteAttribute(k);
+    if (!gg.index) gg = mergeVertices(gg);
+    if (!gg.attributes.normal) gg.computeVertexNormals();
+    gg.applyMatrix4(o.matrixWorld); (byKind[kind] ||= []).push(gg);
+  });
+  return Object.entries(byKind).map(([kind, gs]) => {
+    const g = mergeGeometries(gs, false);
+    return { pos: Float32Array.from(g.attributes.position.array), nor: Float32Array.from(g.attributes.normal.array), idx: Uint32Array.from(g.index.array), kind: +kind };
+  });
+}
 function addPiano(extra, rnd, add, x, z, yaw) {
+  if (extra?.grand) { for (const part of grandParts(extra.grand, x, z, yaw, rnd)) add(part, 'old piano', null); add.rock?.({ x, z, r: 1.3 }); return; }
   if (!extra?.piano) return;
   for (const part of pianoParts(extra.piano, x, z, yaw, rnd)) add(part, 'old piano', null);
   add.rock?.({ x, z, r: 0.75 });
@@ -167,7 +197,7 @@ export function buildProps(Q, seed = 5, extra = null) {
   const add = (p, name, info) => { parts.push({ ...p, name }); if (info) rocks.push(info); return p; };
   add.rock = (info) => rocks.push(info);
   // facing the camera at (5.5, 15.5), a touch off square
-  const yaw = Math.atan2(5.5, 15.5) + (rnd() - 0.5) * 0.4;
+  const yaw = Math.atan2(5.5, 15.5) + (rnd() - 0.5) * 0.4 - Math.PI / 4; // turned an eighth clockwise: three-quarter view, the keyboard to the left
   if (seed !== 5) { addPiano(extra, rnd, add, 0, 1.2, yaw); return varied(Q, rnd, parts, rocks, add); }
   addPiano(extra, rnd, add, 0.2, 0.6, yaw);
   // ---- the recumbent stone circle: a long recumbent stone at the back between its two tall
@@ -215,7 +245,7 @@ export function buildProps(Q, seed = 5, extra = null) {
 
 // Any other seed: a place of one of the kinds T.kind rolled, laid out at random.
 function varied(Q, rnd, parts, rocks, add) {
-  const L = (a, b) => a + (b - a) * rnd(), trees = [], taken = [[0, 1.2, 1.3]];
+  const L = (a, b) => a + (b - a) * rnd(), trees = [], taken = [[0, 1.2, 1.9]];
   let free = (x, z, r) => streamDist(x, z) > r + streamHalfWidth(x) + 0.3 && taken.every((t) => Math.hypot(t[0] - x, t[1] - z) > t[2] + r);
   const boulder = (x, z, s, name = 'boulder', flat = 0) => {
     taken.push([x, z, s]);

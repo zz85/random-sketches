@@ -21,9 +21,9 @@ const SHOT = URLQ.has('shot');
 
 // ---------- quality tiers: 0 phones, 1 laptops, 2 desktops
 const TIERS = [
-  { terrainN: 150, rockDetail: 3, trunkM: 7, branchM: 4, depth: 3, trees: 7, burnStones: 10, shells: 4, shellDist: 8, sporo: 6000, ferns: 70, rushes: 45, perSpot: 5, shadow: 1024, taps: 4, msaa: 0, wispLights: 2, motes: 160, maxDpr: 1.5, shaftTaps: 20, paint: 1, tufts: 1.6 },
-  { terrainN: 190, rockDetail: 3, trunkM: 8, branchM: 5, depth: 3, trees: 9, burnStones: 14, shells: 7, shellDist: 12, sporo: 14000, ferns: 130, rushes: 70, perSpot: 7, shadow: 2048, taps: 9, msaa: 4, wispLights: 4, motes: 300, maxDpr: 1.5, shaftTaps: 28, paint: 2, tufts: 2.4 },
-  { terrainN: 230, rockDetail: 4, trunkM: 9, branchM: 5, depth: 3, trees: 10, burnStones: 18, shells: 10, shellDist: 16, sporo: 26000, ferns: 200, rushes: 90, perSpot: 8, shadow: 2048, taps: 9, msaa: 4, wispLights: 4, motes: 400, maxDpr: 1.75, shaftTaps: 36, paint: 2, tufts: 3.2 },
+  { terrainN: 150, rockDetail: 3, trunkM: 7, branchM: 4, depth: 3, trees: 7, burnStones: 10, shells: 4, shellDist: 8, sporo: 6000, ferns: 70, rushes: 45, perSpot: 5, shadow: 1024, taps: 4, msaa: 0, wispLights: 2, motes: 160, maxDpr: 1.5, shaftTaps: 20, paint: 1, tufts: 1.2 },
+  { terrainN: 190, rockDetail: 3, trunkM: 8, branchM: 5, depth: 3, trees: 9, burnStones: 14, shells: 7, shellDist: 12, sporo: 14000, ferns: 130, rushes: 70, perSpot: 7, shadow: 2048, taps: 9, msaa: 4, wispLights: 4, motes: 300, maxDpr: 1.5, shaftTaps: 28, paint: 2, tufts: 1.6 },
+  { terrainN: 230, rockDetail: 4, trunkM: 9, branchM: 5, depth: 3, trees: 10, burnStones: 18, shells: 10, shellDist: 16, sporo: 26000, ferns: 200, rushes: 90, perSpot: 8, shadow: 2048, taps: 9, msaa: 4, wispLights: 4, motes: 400, maxDpr: 1.75, shaftTaps: 36, paint: 2, tufts: 2.0 },
 ];
 const tier = Math.round(num('q', MOBILE ? 0 : 2));
 const Q = TIERS[Math.max(0, Math.min(2, tier))];
@@ -52,12 +52,14 @@ const sunDirOf = (el, az) => { const e = el * Math.PI / 180, a = az * Math.PI / 
 // ---------- state the UI drives
 const S = {
   mode: 'look', brush: MOBILE ? 0.6 : 0.5, grow: num('grow', SHOT ? 0.85 : 0), cover: num('cover', 0.85), lush: num('lush', 1), wet: num('wet', 0.35),
-  light: num('light', 0), wind: num('wind', 0.5), creep: 1.2, wisps: !URLQ.has('nowisps'), playing: !SHOT && !URLQ.has('grow'), playTo: 0.95, playSpeed: 1 / 11,
+  light: num('light', 0), wind: num('wind', 0.5), creep: 1.2, piano: URLQ.get('piano') || 'grand', wisps: !URLQ.has('nowisps'), playing: !SHOT && !URLQ.has('grow'), playTo: 0.95, playSpeed: 1 / 11,
 };
 
 let seed = Math.round(num('seed', 5));
 setTerrainSeed(seed);
 const audio = makeAudio();
+// the concert grand of midiviz #028, built in code, straight from its GitHub repository
+const GRAND_URL = 'https://cdn.jsdelivr.net/gh/zz85/midiviz@cc64da3f3753bca8ba8e8c21c9cd61b8f9e3b7d1/grandpiano/grand-piano.js';
 let pianoCase = null;
 const loadPiano = () => (pianoCase ||= new GLTFLoader().loadAsync('piano_case.glb').then((g) => g.scene).catch((e) => { console.warn('piano', e.message); return null; }));
 async function build() {
@@ -67,7 +69,7 @@ async function build() {
   const G = makeGrowth();
   const T = terrainGeometry(Q.terrainN);
   const terrainPart = G.add({ ...T, kind: 0, name: 'ground' });
-  const props = buildProps(Q, seed, { piano: await loadPiano() });
+  const props = buildProps(Q, seed, S.piano === 'grand' ? { grand: (await import(GRAND_URL)).buildGrandPiano({ bench: false }) } : S.piano === 'upright' ? { piano: await loadPiano() } : null);
   for (const p of props.parts) G.add(p);
   say('working out where the moss will grow…'); await tick();
   G.finalize({ rocks: props.rocks, trees: props.trees, sunDir: sunDirOf(LIGHTS[0].el, LIGHTS[0].az) });
@@ -332,6 +334,7 @@ function buildUI() {
   gui.add(S, 'wind', 0, 1.5, 0.01).name('Breeze');
   gui.add(S, 'creep', 0.2, 2.5, 0.01).name('Painted moss creeps (m)').onChange((v) => { W.G.creep = v; });
   gui.add(S, 'wisps').name('Wisps');
+  gui.add(S, 'piano', { 'concert grand': 'grand', 'old upright': 'upright', none: 'none' }).name('Piano').onChange(() => conjure(seed));
   gui.add({ clear: () => W.G.clear() }, 'clear').name('Clear painting');
   gui.add({ bare: () => { S.grow = 0; S.playing = false; W.G.clear(); syncGrowUI(); } }, 'bare').name('Bare ground');
   gui.add(post.comp.uniforms.uPaint, 'value', 0, 1, 0.01).name('Painterly far off');

@@ -269,36 +269,28 @@ export function makeSporophytes(G, shared, defines, count, rnd) {
   return mesh;
 }
 
-// ---- near detail: pincushion moss (Leucobryum). Within a few metres of the camera each mossy
-// vertex carries a few cushions: a squashed dome bristling with short, stiff, pale leaves that
-// all point outward, packed so the domes touch. They are placed on the CPU around the camera,
-// refilled only when it has moved, and fade in with distance; far away the shells and the
-// painterly filter take over.
+// ---- near detail: here and there, in clumps, little rosettes of upright shoots with keeled
+// leaves (after mrdoob's floor moss) stand out of the fine pile of the shells. They are placed
+// on a jittered world grid on the ground within a couple of metres of the camera, only where a
+// slow clump field says so, refilled only when the camera has moved, and fade in with distance.
 function tuftGeometry() {
-  const pos = [], tip = [], nrm = [], idx = [];
-  const v = (x, y, z, t, nx, ny, nz) => { pos.push(x, y, z); tip.push(t); nrm.push(nx, ny, nz); return pos.length / 3 - 1; };
-  // the dome, open underneath
-  const RINGS = 3, SEG = 9, base = pos.length / 3;
-  for (let r = 0; r <= RINGS; r++) {
-    const th = (r / RINGS) * Math.PI * 0.5, cy = Math.cos(th), sy = Math.sin(th);
-    for (let s = 0; s < SEG; s++) { const a = (s / SEG) * Math.PI * 2; v(Math.cos(a) * sy, cy, Math.sin(a) * sy, 0.15 + 0.35 * cy, Math.cos(a) * sy, cy, Math.sin(a) * sy); }
-  }
-  for (let r = 0; r < RINGS; r++) for (let s = 0; s < SEG; s++) { const a = base + r * SEG + s, b = base + r * SEG + (s + 1) % SEG; idx.push(a, a + SEG, b, b, a + SEG, b + SEG); }
-  // the leaves: short stiff points all over it, a little curved up
-  const LEAVES = 96;
-  for (let i = 0; i < LEAVES; i++) {
-    const y = 1 - (i + 0.5) / LEAVES * 0.7, r = Math.sqrt(1 - y * y), a = i * 2.39996;
-    const px = Math.cos(a) * r, pz = Math.sin(a) * r;
-    let dx = px, dy = y + 0.25, dz = pz; const dl = Math.hypot(dx, dy, dz); dx /= dl; dy /= dl; dz /= dl;
-    const sx = -Math.sin(a), sz = Math.cos(a), L = 0.06 + 0.04 * ((i * 7) % 5) / 4, w = 0.035;
-    const i0 = v(px - sx * w, y, pz - sz * w, 0.45, px, y, pz), i1 = v(px + sx * w, y, pz + sz * w, 0.45, px, y, pz);
-    const i2 = v(px + dx * L, y + dy * L, pz + dz * L, 1.0, dx, dy, dz);
-    idx.push(i0, i1, i2);
+  const pos = [], tip = [], idx = [], rnd = (() => { let s = 7; return () => ((s = (s * 16807) % 2147483647) / 2147483647); })();
+  for (let sh = 0; sh < 5; sh++) {
+    const a0 = sh * 2.39996, r0 = 0.011 * Math.sqrt(sh / 4 + 0.05), x0 = Math.cos(a0) * r0, z0 = Math.sin(a0) * r0;
+    const H = 0.6 + rnd() * 0.4;
+    for (let lf = 0; lf < 4; lf++) {
+      const t = lf / 3, a = a0 + lf * 2.39996, L = (0.011 + rnd() * 0.006) * (1 - t * 0.3), W = L * 0.24, rise = 0.45 + t * 0.5;
+      const dx = Math.cos(a) * L, dz = Math.sin(a) * L, sx = -Math.sin(a) * W, sz = Math.cos(a) * W, y = 0.022 * H * t;
+      const o = pos.length / 3;
+      pos.push(x0, y, z0, x0 + dx * 0.5 + sx, y + L * rise * 0.45, z0 + dz * 0.5 + sz, x0 + dx * 0.5, y + L * rise * 0.45 + W * 0.5, z0 + dz * 0.5,
+        x0 + dx * 0.5 - sx, y + L * rise * 0.45, z0 + dz * 0.5 - sz, x0 + dx, y + L * rise, z0 + dz);
+      tip.push(t * 0.4, t * 0.5 + 0.3, t * 0.5 + 0.45, t * 0.5 + 0.3, t * 0.6 + 0.4);
+      idx.push(o, o + 1, o + 2, o, o + 2, o + 3, o + 1, o + 4, o + 2, o + 2, o + 4, o + 3);
+    }
   }
   const g = new THREE.InstancedBufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('aTip', new THREE.Float32BufferAttribute(tip, 1));
-  g.setAttribute('aNrm', new THREE.Float32BufferAttribute(nrm, 3));
   g.setIndex(idx);
   return g;
 }
@@ -307,25 +299,24 @@ const TUFT_VS = /* glsl */ `
 ${COMMON}
 ${MOSS}
 uniform float uTuftR;
-attribute float aTip; attribute vec3 aNrm;
+attribute float aTip;
 attribute vec3 iPos, iNor; attribute vec4 iA, iSeed;
 varying vec3 vW, vN; varying float vT, vD, vId;
 void main() {
   vec2 md = mossState(iA.x, iA.y, iA.z);
   float dist = distance(iPos, cameraPosition);
-  float s = smoothstep(0.45, 0.85, md.x) * smoothstep(uTuftR, uTuftR * 0.6, dist);
+  float s = smoothstep(0.4, 0.8, md.x) * smoothstep(uTuftR, uTuftR * 0.6, dist);
   if (s < 0.03) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
-  vec3 n = normalize(mix(iNor, vec3(0, 1, 0), 0.25));
+  vec3 n = normalize(mix(iNor, vec3(0, 1, 0), 0.35));
   vec3 t = normalize(cross(n, abs(n.y) < 0.9 ? vec3(0, 1, 0) : vec3(1, 0, 0))), b = cross(n, t);
   float a = iSeed.x * 6.2832, ca = cos(a), sa = sin(a);
-  mat2 rot = mat2(ca, sa, -sa, ca);
-  vec2 xz = rot * position.xz, nxz = rot * aNrm.xz;
-  float R = (0.028 + 0.03 * iSeed.y) * (0.55 + 0.55 * md.y) * uLush * s;
-  float squash = 0.75 + 0.3 * iSeed.z;
-  vec3 base = iPos + iNor * (mossLift(iPos, md, iA.w) - R * 0.45);
-  vec3 p = base + (t * xz.x + n * position.y * squash + b * xz.y) * R;
+  vec3 lp = vec3(position.x * ca - position.z * sa, position.y, position.x * sa + position.z * ca);
+  float k = (0.85 + 0.6 * iSeed.y) * (0.6 + 0.6 * md.y) * uLush * s;
+  float sway = sin(uTime * (1.4 + iSeed.z) + iSeed.w * 6.28) * uWind * position.y * 6.0;
+  vec3 base = iPos + iNor * (mossLift(iPos, md, iA.w) - 0.004);
+  vec3 p = base + (t * (lp.x + sway * 0.01) + n * lp.y * (0.8 + 0.6 * md.y) + b * lp.z) * k;
   p = rise(p, 1.0);
-  vW = p; vN = normalize(t * nxz.x + n * aNrm.y / squash + b * nxz.y); vT = aTip; vD = md.y; vId = iSeed.w;
+  vW = p; vN = normalize(n + (t * lp.x + b * lp.z) * 40.0); vT = aTip; vD = md.y; vId = iSeed.w;
   gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
 }`;
 const TUFT_FS = /* glsl */ `
@@ -334,24 +325,16 @@ ${SHADOW}
 ${MOSS}
 varying vec3 vW, vN; varying float vT, vD, vId;
 void main() {
-  vec3 n = normalize(vN);
-  // Leucobryum is pale, grey-green and nearly white at the leaf tips when it is dry
-  vec3 pale = mix(vec3(0.05, 0.085, 0.035), vec3(0.15, 0.22, 0.095), smoothstep(0.1, 0.6, vT));
-  pale = mix(pale, vec3(0.28, 0.33, 0.21), smoothstep(0.75, 1.0, vT) * (0.6 - uWet * 0.4));
-  vec3 col = mix(pale, mossColor(vW, vD, vT, vId) * 1.1, 0.25 + 0.2 * uWet) * (0.85 + 0.3 * vId);
-  // a velvet of leaf tips too small to model: fine stipple, filtered as it shrinks below a pixel
-  float st = vnoise(vW * 260.0) * 0.6 + vnoise(vW * 610.0) * 0.4;
-  float fw = clamp(length(fwidth(vW * 260.0)) * 0.7, 0.0, 1.0);
-  col *= 1.0 + (st - 0.5) * 0.9 * (1.0 - fw);
-  col = mix(col, vec3(0.3, 0.36, 0.25), smoothstep(0.62, 0.8, st) * 0.35 * (1.0 - fw) * vT);   // silvery points
-  n = normalize(n + (vec3(vnoise(vW * 330.0), vnoise(vW * 330.0 + 3.0), vnoise(vW * 330.0 + 7.0)) - 0.5) * 0.9 * (1.0 - fw));
-  float sh = sunShadow(vW + n * 0.02, 0.0015);
-  col = shade(col, n, vW, 0.2 + 0.8 * smoothstep(0.1, 0.55, vT), sh, 0.55, 0.5, 0.5 + 0.5 * vT);
+  vec3 n = normalize(vN); if (!gl_FrontFacing) n = -n;
+  vec3 col = mossColor(vW, vD, 0.2 + 0.85 * vT + (vId - 0.5) * 0.3, vId);
+  col *= 0.85 + 0.35 * vT;
+  float sh = sunShadow(vW + vN * 0.02, 0.0015);
+  col = shade(col, n, vW, 0.3 + 0.7 * vT, sh, 0.5, 0.6, 0.3 + 0.6 * vT);
   gl_FragColor = vec4(applyFog(col, vW), depthCode(vW));
 }`;
 
 export function makeTufts(G, shared, defines, radius) {
-  const cap = Math.round(700 * radius * radius);
+  const cap = Math.round(3200 * radius * radius);
   const g = tuftGeometry();
   const P = new Float32Array(cap * 3), Nn = new Float32Array(cap * 3), A = new Float32Array(cap * 4), Sd = new Float32Array(cap * 4);
   const aP = new THREE.InstancedBufferAttribute(P, 3), aN = new THREE.InstancedBufferAttribute(Nn, 3), aA = new THREE.InstancedBufferAttribute(A, 4), aS = new THREE.InstancedBufferAttribute(Sd, 4);
@@ -362,40 +345,49 @@ export function makeTufts(G, shared, defines, radius) {
   const mesh = new THREE.Mesh(g, m); mesh.frustumCulled = false;
   const last = new THREE.Vector3(1e9, 0, 0);
   const h = (i, k) => { const x = Math.sin(i * 12.9898 + k * 78.233) * 43758.5453; return x - Math.floor(x); };
-  const { pos, nor, hab, arr, kind, adj, adjStart } = G;
+  const { pos, nor, hab, arr, kind } = G;
   // fill the tufts around the camera; cheap, and only when it has moved a quarter radius
-  const lastDir = new THREE.Vector3(), cand = [];
+  const lastDir = new THREE.Vector3();
+  // the ground vertices in a 2D hash, for the nearest one under a point
+  const GC = 0.25, gmap = new Map(), gk = (a, b) => (a + 4096) * 8192 + (b + 4096);
+  for (let i = 0; i < G.parts[0].count; i++) { const k = gk(Math.floor(pos[i * 3] / GC), Math.floor(pos[i * 3 + 2] / GC)); let c = gmap.get(k); if (!c) gmap.set(k, (c = [])); c.push(i); }
+  const groundNear = (x, z) => {
+    const a = Math.floor(x / GC), b = Math.floor(z / GC); let best = -1, bd = 1e9;
+    for (let p = a - 1; p <= a + 1; p++) for (let q = b - 1; q <= b + 1; q++) { const c = gmap.get(gk(p, q)); if (c) for (const i of c) { const d = (pos[i * 3] - x) ** 2 + (pos[i * 3 + 2] - z) ** 2; if (d < bd) { bd = d; best = i; } } }
+    return best;
+  };
   mesh.userData.update = (cam, dir, force) => {
     if (!force && cam.distanceTo(last) < radius * 0.2 && dir.dot(lastDir) > 0.92) return;
     last.copy(cam); lastDir.copy(dir);
-    let n = 0; cand.length = 0;
-    // vertices in front of the camera, nearest first
-    G.near(cam.x, cam.y, cam.z, radius, (i, d2) => {
-      if (kind[i] === 0 && hab[i] <= 0) return;
-      const dx = pos[i * 3] - cam.x, dy = pos[i * 3 + 1] - cam.y, dz = pos[i * 3 + 2] - cam.z;
-      if (dx * dir.x + dy * dir.y + dz * dir.z < -0.6 * Math.sqrt(d2) && d2 > 0.25) return;
-      cand.push(d2, i);
-    });
-    const order = Array.from({ length: cand.length / 2 }, (_, k) => k).sort((a, b) => cand[a * 2] - cand[b * 2]);
+    let n = 0;
+    const put = (i, x, y, z, nx, ny, nz, s) => {
+      P[n * 3] = x; P[n * 3 + 1] = y; P[n * 3 + 2] = z; Nn[n * 3] = nx; Nn[n * 3 + 1] = ny; Nn[n * 3 + 2] = nz;
+      A[n * 4] = i; A[n * 4 + 1] = hab[i]; A[n * 4 + 2] = arr[i]; A[n * 4 + 3] = kind[i];
+      Sd[n * 4] = h(s, 7); Sd[n * 4 + 1] = h(s, 13); Sd[n * 4 + 2] = h(s, 17); Sd[n * 4 + 3] = h(s, 23); n++;
+    };
+    // on the ground: a jittered world grid, so the cushions pack evenly whatever the mesh's
+    // spacing; each takes its height, normal and moss from the nearest ground vertex
+    const S = 0.045, r2 = radius * radius, i0 = Math.floor((cam.x - radius) / S), i1 = Math.floor((cam.x + radius) / S), j0 = Math.floor((cam.z - radius) / S), j1 = Math.floor((cam.z + radius) / S);
+    const cells = [];
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+      const x = (i + 0.2 + 0.6 * h(i * 7919 + j, 1)) * S, z = (j + 0.2 + 0.6 * h(i * 7919 + j, 2)) * S, dx = x - cam.x, dz = z - cam.z, d2 = dx * dx + dz * dz;
+      if (d2 > r2 || (dx * dir.x + dz * dir.z < -0.5 * Math.sqrt(d2) && d2 > 0.3)) continue;
+      cells.push(d2, x, z, i * 7919 + j);
+    }
+    const order = Array.from({ length: cells.length / 4 }, (_, k) => k).sort((p, q) => cells[p * 4] - cells[q * 4]);
+    const clump = (x, z) => { // smooth value noise, about a 0.6 m grain
+      const X = x / 0.6, Z = z / 0.6, ix = Math.floor(X), iz = Math.floor(Z), fx = X - ix, fz = Z - iz, ux = fx * fx * (3 - 2 * fx), uz = fz * fz * (3 - 2 * fz);
+      const c = (a, b) => h(a * 131 + b * 977, 5), l = (p, q, t) => p + (q - p) * t;
+      return l(l(c(ix, iz), c(ix + 1, iz), ux), l(c(ix, iz + 1), c(ix + 1, iz + 1), ux), uz);
+    };
     for (const o of order) {
-      const i = cand[o * 2 + 1];
       if (n >= cap) break;
-      // edge length round the vertex sets how many tufts it needs to close up
-      let e = 0, c = 0;
-      for (let q = adjStart[i]; q < adjStart[i + 1] && c < 4; q++, c++) { const j = adj[q]; e += Math.hypot(pos[j * 3] - pos[i * 3], pos[j * 3 + 1] - pos[i * 3 + 1], pos[j * 3 + 2] - pos[i * 3 + 2]); }
-      e = Math.min(c ? e / c : 0.05, kind[i] ? 0.06 : 0.3); // never past a prop's edge
-      const want = Math.min(20, Math.max(1, Math.round((e * e) / (0.065 * 0.065))));
-      const nx = nor[i * 3], ny = nor[i * 3 + 1], nz = nor[i * 3 + 2];
-      const tx = Math.abs(ny) < 0.9 ? nz : 0, ty = Math.abs(ny) < 0.9 ? 0 : -nz, tz = Math.abs(ny) < 0.9 ? -nx : ny;
-      const tl = Math.hypot(tx, ty, tz) || 1, bx = ny * tz - nz * ty, by = nz * tx - nx * tz, bz = nx * ty - ny * tx;
-      for (let k = 0; k < want && n < cap; k++) {
-        const u = (h(i, k) - 0.5) * e, v = (h(i, k + 31) - 0.5) * e;
-        P[n * 3] = pos[i * 3] + (tx * u) / tl + (bx * v) / tl; P[n * 3 + 1] = pos[i * 3 + 1] + (ty * u) / tl + (by * v) / tl; P[n * 3 + 2] = pos[i * 3 + 2] + (tz * u) / tl + (bz * v) / tl;
-        Nn[n * 3] = nx; Nn[n * 3 + 1] = ny; Nn[n * 3 + 2] = nz;
-        A[n * 4] = i; A[n * 4 + 1] = hab[i]; A[n * 4 + 2] = arr[i]; A[n * 4 + 3] = kind[i];
-        Sd[n * 4] = h(i, k + 7); Sd[n * 4 + 1] = h(i, k + 13); Sd[n * 4 + 2] = h(i, k + 17); Sd[n * 4 + 3] = h(i, k + 23);
-        n++;
-      }
+      const x = cells[o * 4 + 1], z = cells[o * 4 + 2], seed = cells[o * 4 + 3];
+      const cl = clump(x, z); if (cl < 0.62 || h(seed, 9) > (cl - 0.62) * 3.2) continue;   // a few clumps, thinning at their edges
+      const i = groundNear(x, z); if (i < 0 || hab[i] <= 0) continue;
+      const nx = nor[i * 3], ny = nor[i * 3 + 1], nz = nor[i * 3 + 2]; if (ny < 0.5) continue;
+      const y = pos[i * 3 + 1] - (nx * (x - pos[i * 3]) + nz * (z - pos[i * 3 + 2])) / ny;
+      put(i, x, y, z, nx, ny, nz, seed);
     }
     g.instanceCount = n;
     for (const a of [aP, aN, aA, aS]) { a.updateRange.count = n * a.itemSize; a.needsUpdate = true; }
