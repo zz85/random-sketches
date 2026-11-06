@@ -1,5 +1,8 @@
 # Logs
 
+6 Nov 2026
+- Add [Mossglen](vibes/mossglen/): a moss-covered Scottish glen. Moss grows on a front that follows water and shade (shortest-path arrival over the mesh), over a stone circle, oaks, boulders and banks; paint it on or scrape it off, and painted moss creeps outward. Shell-rendered cushion moss with sporophytes, unrolling ferns, four lights from morning mist to the gloaming with wisps, light shafts and bloom. Quality tiers and adaptive scale for phones, offline PWA. A new-glen button rolls a fresh seed and raises the land on a glowing front, then floods it with moss
+
 5 Nov 2026
 - Koi: music (楽, key n: 静 Stillness, sparse koto phrases over a drone; 流 Flow, a slow samurai-ambience piece with shakuhachi, koto figures, low strings and far-off taiko), all synthesised in the in scale on D. Rain now sounds like rain: a soft dark hiss and dull pats in place of the tinny sine drops.
 - Koi: rain (雨: Dry / Drizzle / Rain, key r, `?rain=`): drops computed in the shader on a hashed grid, each a small ring, with faint high plips when sound is on. In ink mode, ripples and raindrops bend the ink and paper a little and are shaded like a pale wash. Technical write-up in [BLOG.md](vibes/koi/BLOG.md).

@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#16201a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="description" content="A mossy Scottish glen: stone circle, burn and old oaks. Grow, paint and scrape the moss.">
+<title>Mossglen</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg">
+<link rel="apple-touch-icon" href="icon-192.png">
+<script src="../pwa/install.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #16201a; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  canvas { display: block; position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; }
+  #status { position: fixed; inset: 0; display: grid; place-items: center; color: #d8e6c8; font: italic 15px Georgia, serif; letter-spacing: 0.08em; }
+  #title { position: fixed; left: max(18px, env(safe-area-inset-left)); top: max(14px, env(safe-area-inset-top)); color: #f3f0e2; font: 300 19px/1.2 Georgia, serif;
+    letter-spacing: 0.22em; text-shadow: 0 1px 10px rgba(0, 0, 0, 0.55); pointer-events: none; }
+  #title small { display: block; font-size: 11px; letter-spacing: 0.08em; opacity: 0.75; margin-top: 5px; font-style: italic; }
+  #bar { position: fixed; left: 50%; bottom: max(12px, env(safe-area-inset-bottom)); transform: translateX(-50%); display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+    justify-content: center; width: max-content; max-width: calc(100vw - 20px); opacity: 0; transition: opacity 1s; }
+  body.ready #bar { opacity: 1; }
+  body.calm #bar, body.calm #title, body.calm .lil-gui { opacity: 0; pointer-events: none; }
+  .pill { display: flex; align-items: center; gap: 6px; border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(14, 24, 16, 0.45); border-radius: 20px; padding: 4px 6px;
+    -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); color: #efeddf; font: 12px Georgia, serif; }
+  .pill button { appearance: none; border: 0; background: transparent; color: inherit; font: inherit; padding: 6px 10px; border-radius: 16px; cursor: pointer; letter-spacing: 0.05em; }
+  .pill button.on { background: rgba(150, 200, 90, 0.35); }
+  .pill button:focus-visible { outline: 2px solid rgba(255, 255, 255, 0.7); }
+  .pill label { display: flex; align-items: center; gap: 6px; padding: 0 6px; }
+  input[type=range] { accent-color: #a8cf62; width: 110px; }
+  #grow { width: min(220px, 42vw); }
+  #play { min-width: 34px; }
+  #hint { position: fixed; left: 50%; bottom: calc(max(12px, env(safe-area-inset-bottom)) + 96px); transform: translateX(-50%); color: #f4f1e4; font: italic 13px Georgia, serif;
+    text-align: center; width: max-content; max-width: 84vw; text-shadow: 0 1px 8px rgba(0, 0, 0, 0.8); opacity: 0; transition: opacity 0.8s; pointer-events: none; }
+  #hint.show { opacity: 0.95; }
+  .lil-gui { --background-color: rgba(14, 24, 16, 0.72); --title-background-color: rgba(34, 52, 30, 0.85); --widget-color: rgba(255,255,255,0.12); --number-color: #d9f0a8; -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+  @media (max-width: 520px) { #title { font-size: 16px; } #title small { display: none; } input[type=range] { width: 80px; } }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.160.1/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.160.1/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="status">growing moss…</div>
+<div id="title">MOSSGLEN<small>moss over stone, root and burn</small></div>
+<div id="hint"></div>
+<div id="bar">
+  <div class="pill"><button id="newglen" type="button" aria-label="Conjure a new glen (n)">✦ new glen</button></div>
+  <div class="pill" role="group" aria-label="Growth">
+    <button id="play" type="button" aria-label="Play or pause the growth">▶</button>
+    <label>growth <input id="grow" type="range" min="0" max="1" step="0.001" value="0" aria-label="Growth"></label>
+  </div>
+  <div class="pill" role="toolbar" aria-label="Brush">
+    <button type="button" data-mode="look" aria-label="Look around (1)">look</button>
+    <button type="button" data-mode="grow" aria-label="Paint moss (2)">grow</button>
+    <button type="button" data-mode="scrape" aria-label="Scrape moss away (3)">scrape</button>
+    <label><input id="size" type="range" min="0.15" max="2" step="0.01" aria-label="Brush size"></label>
+    <button type="button" data-pwa-install style="display:none">install</button>
+  </div>
+</div>
+<script type="module" src="main.js"></script>
+<script>if ('serviceWorker' in navigator && location.protocol !== 'file:' && !location.search.includes('shot')) navigator.serviceWorker.register('sw.js').catch(() => {});</script>
+</body>
+</html>
