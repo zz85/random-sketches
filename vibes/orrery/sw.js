@@ -1,0 +1,28 @@
+/*
+ * sw.js - Orrery service worker: the app's own files are precached; three.js (WebGPU build and TSL) from
+ * unpkg is cached the first time it is fetched. Stale-while-revalidate, so it opens instantly and offline.
+ * Bump VERSION when the file list changes.
+ */
+const VERSION = 'orrery-v4';
+const SHELL = ['./', './index.html', './main.js', './astro.js', './sky.js', './planets.js', './watch.js', './orrery.js', './materials.js', './stardata.js', './astronomy.browser.min.js', './geomag.js',
+  './manifest.webmanifest', '../pwa/install.js', './icon.svg', './icon-192.png', './icon-512.png'];
+const BASE = 'https://unpkg.com/three@0.187.0/';
+const CDN = [BASE + 'build/three.webgpu.js', BASE + 'build/three.tsl.js', BASE + 'examples/jsm/tsl/display/BloomNode.js', BASE + 'examples/jsm/geometries/RoundedBoxGeometry.js'];
+// planet maps: Planet Pixel Emporium via threex.planets, and three.js's Moon, pinned
+const TEX = ['https://cdn.jsdelivr.net/gh/jeromeetienne/threex.planets@', 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@'];
+
+self.addEventListener('install', (e) => { e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL).then(() => Promise.all(CDN.map((u) => c.add(u).catch(() => {}))))).then(() => self.skipWaiting())); });
+self.addEventListener('activate', (e) => {
+  e.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((k) => k.startsWith('orrery-') && k !== VERSION).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
+});
+self.addEventListener('fetch', (e) => {
+  const url = new URL(e.request.url);
+  if (e.request.method !== 'GET' || (url.origin !== self.location.origin && !url.href.startsWith(BASE) && !TEX.some((t) => url.href.startsWith(t)))) return;
+  e.respondWith(caches.open(VERSION).then(async (c) => {
+    const key = url.origin === self.location.origin ? url.pathname : url.href;
+    const hit = await c.match(key, { ignoreSearch: true });
+    const refresh = fetch(e.request).then((res) => { if (res.ok) c.put(key, res.clone()); return res; }).catch(() => null);
+    if (hit) { e.waitUntil(refresh); return hit; }
+    return (await refresh) || (e.request.mode === 'navigate' && (await c.match('./index.html'))) || new Response('offline', { status: 503 });
+  }));
+});
