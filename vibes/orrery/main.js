@@ -2,7 +2,7 @@
 //   Miniature: a celestial wristwatch on your phone (watch.js). With motion on, its chart flips to a ground
 //   map and turns with the compass, and the flange shows which way to face for each body.
 //   Immersive: a planetarium around you (sky.js, planets.js). Hold the phone up and the sky is where it is,
-//   with the planets brought 1000x closer so you see them as globes.
+//   with the planets brought 2000x closer so you see them as globes.
 import * as THREE from 'three/webgpu';
 import { pass, vec2, vec4, float, mix, smoothstep, length, screenUV, screenSize, hash, time, Fn } from 'three/tsl';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
@@ -154,12 +154,105 @@ function flipChart(m) { if (watch.chart.m === m && !flip) return; flip = { t: 0,
 
 // ------------------------------------------------------------------ input on the canvas
 const cv = renderer.domElement, pointers = new Map();
+// orbit controls for the miniature: the camera moves round the watch (yaw, pitch), kept in front of the face that
+// shows so it never goes behind; a flick coasts. The watch itself stays put
+const view = { yaw: 0, pitch: 0, vy: 0, vp: 0, spin: false, home: false };
+const YAW_MAX = 1.05, PITCH_MAX = 0.95;
+// what the camera looks at, as an offset from the watch's centre, and the point a sideways drag on the orrery turns
+// round: the place you put your finger, so that point stays put under it while the rest swings round
+view.tg = new THREE.Vector3(); view.pivot = null; view.roll = 0; view.vr = 0;
+const Y_AXIS = new THREE.Vector3(0, 1, 0), pvT = new THREE.Vector3();
+let lookY = -0.06; // the height the camera looked at last frame (the watch lifts above an open card)
+function setYaw(ny) {
+  ny = clamp(ny, -YAW_MAX, YAW_MAX);
+  if (view.pivot) { // turn the target round the vertical through the pivot by as much as the camera turns
+    pvT.set(view.tg.x, view.tg.y + lookY, view.tg.z).sub(view.pivot).applyAxisAngle(Y_AXIS, ny - view.yaw).add(view.pivot);
+    view.tg.set(pvT.x, pvT.y - lookY, pvT.z);
+    if (view.tg.length() > 0.8) view.tg.setLength(0.8);
+  }
+  view.yaw = ny;
+}
+// a sideways drag on the face turns the view round the face's own axis (z), through the point under your finger,
+// like turning the watch on the table with a fingertip held on it
+const Z_AXIS = new THREE.Vector3(0, 0, 1), qRoll = new THREE.Quaternion();
+function rollBy(dx) {
+  if (dive.t < 1) return;
+  const d = dx * 3.4 / Math.max(320, Math.min(innerWidth, innerHeight));
+  const now = performance.now(), ddt = Math.max(8, now - (drag && drag.tr || now - 16)) / 1000; if (drag) drag.tr = now;
+  view.vr = view.vr * 0.5 + (d / ddt) * 0.5; turnRoll(d); view.spin = false; view.home = false;
+}
+function turnRoll(d) {
+  if (view.pivot) {
+    pvT.set(view.tg.x, view.tg.y + lookY, view.tg.z).sub(view.pivot).applyAxisAngle(Z_AXIS, d).add(view.pivot);
+    view.tg.set(pvT.x, pvT.y - lookY, pvT.z); if (view.tg.length() > 0.8) view.tg.setLength(0.8);
+  }
+  view.roll = wrapA(view.roll + d);
+}
+// the point of the orrery under a screen point, else of the plane of the face
+const pvPlane = new THREE.Plane(), pvN = new THREE.Vector3();
+function pointOn(x, y) {
+  ndc.set(x / innerWidth * 2 - 1, -(y / innerHeight) * 2 + 1); ray.setFromCamera(ndc, wCam);
+  const hit = ray.intersectObject(watch.orrery.group, true)[0];
+  if (hit) return hit.point.clone();
+  watch.head.getWorldPosition(pv); pvN.set(0, 0, 1).applyQuaternion(watch.root.quaternion);
+  pvPlane.setFromNormalAndCoplanarPoint(pvN, pv);
+  return ray.ray.intersectPlane(pvPlane, new THREE.Vector3()) || pv.clone();
+}
+let lastTap = 0, pinchWas = false, wheelEnd = 0;
+const wrapA = (a) => ((a + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+function orbitBy(dx, dy) {
+  if (dive.t < 1) return;
+  const k = 3.4 / Math.max(320, Math.min(innerWidth, innerHeight)), ny = view.yaw - dx * k;
+  const now = performance.now(), ddt = Math.max(8, now - (drag && drag.tm || now - 16)) / 1000; if (drag) drag.tm = now;
+  view.vy = view.vy * 0.5 + (-dx * k / ddt) * 0.5; view.vp = view.vp * 0.5 + (dy * k / ddt) * 0.5;
+  setYaw(ny); view.pitch = clamp(view.pitch + dy * k, -PITCH_MAX, PITCH_MAX); view.spin = false; view.home = false;
+}
+// is a screen point on the body at the orrery's centre (Earth, or the Sun when Sun-centred), within a fingertip?
+function onCentreBody(x, y) {
+  if (watch.face !== 'orrery' || dive.v > 0) return false;
+  const m = state.centre === 'sun' ? watch.orrery.bodies.Sun.mesh : watch.orrery.earth.mesh;
+  ndc.set(x / innerWidth * 2 - 1, -(y / innerHeight) * 2 + 1); ray.setFromCamera(ndc, wCam);
+  if (ray.intersectObject(m, true).length) return true;
+  m.getWorldPosition(pv).project(wCam);
+  return Math.hypot((pv.x * 0.5 + 0.5) * innerWidth - x, (-pv.y * 0.5 + 0.5) * innerHeight - y) < 30;
+}
+// is a screen point on the crown? within a finger's width of its projected centre, or on its mesh
+function onCrown(x, y) {
+  if (state.mode !== 'mini' || dive.v > 0) return false;
+  ndc.set(x / innerWidth * 2 - 1, -(y / innerHeight) * 2 + 1); ray.setFromCamera(ndc, wCam);
+  if (ray.intersectObject(watch.crown, false).length) return true;
+  watch.crown.getWorldPosition(pv).project(wCam);
+  return Math.hypot((pv.x * 0.5 + 0.5) * innerWidth - x, (-pv.y * 0.5 + 0.5) * innerHeight - y) < 34;
+}
+// is a screen point on the dial? the dial's projected radius round the head's centre
+const dv0 = new THREE.Vector3(), dv1 = new THREE.Vector3();
+function onDial(x, y) {
+  if (state.mode !== 'mini') return false;
+  watch.head.getWorldPosition(dv0); dv1.set(1, 0, 0).applyQuaternion(wCam.quaternion).multiplyScalar(0.9).add(dv0);
+  dv0.project(wCam); dv1.project(wCam);
+  const cx = (dv0.x * 0.5 + 0.5) * innerWidth, cy = (-dv0.y * 0.5 + 0.5) * innerHeight, r = Math.hypot((dv1.x - dv0.x) * 0.5 * innerWidth, (dv1.y - dv0.y) * 0.5 * innerHeight);
+  return Math.hypot(x - cx, y - cy) < r;
+}
+// zoom: on the front it brings the watch closer; on the back it goes on past that, into the orrery onto Earth
+const ZMAX = 2.6, ZDIVE = 3.2;
+const canDive = () => watch.face === 'orrery' && turn.t >= 1 && state.mode === 'mini';
+const zoomNow = () => state.wzoom + (canDive() ? dive.v * ZDIVE : 0);
+function zoomTo(z) {
+  if (dive.t < 1) return;
+  state.wzoom = clamp(z, 1, ZMAX);
+  if (canDive()) { const v = clamp((z - ZMAX) / ZDIVE, 0, 1); dive = { v, from: v, to: v, t: 1, dur: 1, done: null }; if (v > 0) { turnTo = null; hideCard(); } }
+}
+// letting go: once Earth fills the view you are standing on it, so the dive finishes into the sky; before that it eases back out
+function zoomEnd() {
+  if (dive.t < 1 || dive.v <= 0 || !canDive()) return;
+  if (dive.v > 0.42) runDive(1, Math.max(0.6, (1 - dive.v) * 3.4), diveLanded); else runDive(0, Math.max(0.4, dive.v * 2.6));
+}
 let drag = null, pinch0 = null;
 const hover = { x: 0, y: 0 };
 cv.addEventListener('pointerdown', (e) => {
   cv.setPointerCapture(e.pointerId); pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-  if (pointers.size === 1) drag = { x: e.clientX, y: e.clientY, t: performance.now(), moved: 0 };
-  if (pointers.size === 2) { const [a, b] = [...pointers.values()]; pinch0 = { d: Math.hypot(a.x - b.x, a.y - b.y), fov: state.fov, wz: state.wzoom }; drag = null; }
+  if (pointers.size === 1) drag = { x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, t: performance.now(), moved: 0, kind: null, vy: 0 };
+  if (pointers.size === 2) { const [a, b] = [...pointers.values()]; pinch0 = { d: Math.hypot(a.x - b.x, a.y - b.y), fov: state.fov, zc: zoomNow(), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 }; drag = null; pinchWas = state.mode === 'mini'; }
 });
 cv.addEventListener('pointermove', (e) => {
   hover.x = e.clientX / innerWidth * 2 - 1; hover.y = e.clientY / innerHeight * 2 - 1;
@@ -167,7 +260,8 @@ cv.addEventListener('pointermove', (e) => {
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (pinch0 && pointers.size === 2) {
     const [a, b] = [...pointers.values()], k = pinch0.d / Math.max(10, Math.hypot(a.x - b.x, a.y - b.y));
-    if (state.mode === 'sky') state.fov = clamp(pinch0.fov * k, 8, 100); else state.wzoom = clamp(pinch0.wz / k, 1, 2.6);
+    if (state.mode === 'sky') state.fov = clamp(pinch0.fov * k, 8, 100);
+    else { zoomTo(pinch0.zc / k); const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2; orbitBy(mx - pinch0.mx, my - pinch0.my); pinch0.mx = mx; pinch0.my = my; }
     return;
   }
   if (!drag) return;
@@ -177,20 +271,31 @@ cv.addEventListener('pointermove', (e) => {
     if (state.motion && gyro.have) gyro.manual += dx * k / D2R;
     else { state.yaw += dx * k; state.pitch = clamp(state.pitch + dy * k, -1.5, 1.55); turnTo = null; }
   } else if (drag.moved > 8) {
-    // in the miniature, a drag turns the hands of time: round the dial, a full turn is twelve hours
-    const cx = innerWidth / 2, cy = innerHeight / 2;
-    const a0 = Math.atan2(e.clientY - dy - cy, e.clientX - dx - cx), a1 = Math.atan2(e.clientY - cy, e.clientX - cx);
-    let da = a1 - a0; da = ((da + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
-    state.offsetMs += da / (Math.PI * 2) * 12 * 3600e3;
+    // a drag that starts on the crown winds it and sets the time. On the face (the chart or the orrery) sideways
+    // orbits and up and down zooms, on into the orrery on the back; anywhere else the camera orbits both ways
+    if (!drag.kind) {
+      drag.kind = onCrown(drag.x0, drag.y0) ? 'crown' : onDial(drag.x0, drag.y0) ? 'face' : 'orbit';
+      view.pivot = drag.kind === 'face' && dive.v === 0 ? pointOn(drag.x0, drag.y0) : null;
+    }
+    if (drag.kind === 'orbit') { orbitBy(dx, dy); return; }
+    if (drag.kind === 'face') { rollBy(dx); zoomTo(zoomNow() * Math.exp(-dy * 3 / innerHeight)); return; }
+    // winding: a drag along the crown's turn, up or down the screen; a drag the height of the screen is twelve hours
+    const dh = -dy / innerHeight * 12 * 3600e3;
+    state.offsetMs += dh; watch.crown.rotation.x += -dy * 0.03;
   }
 });
 const up = (e) => {
   pointers.delete(e.pointerId); if (pointers.size < 2) pinch0 = null;
   if (drag && drag.moved < 8 && performance.now() - drag.t < 500) pick(e.clientX, e.clientY);
+  if (drag && drag.kind === 'orbit' && pointers.size === 0) { view.spin = true; view.vr = 0; if (performance.now() - (drag.tm || 0) > 80) view.vy = view.vp = 0; }
+  if (drag && drag.kind === 'face' && pointers.size === 0) { view.spin = true; view.vy = view.vp = 0; if (performance.now() - (drag.tr || 0) > 80) view.vr = 0; }
+  if (drag && drag.moved < 8 && state.mode === 'mini') { const t = performance.now(); if (t - lastTap < 320) { if (onCentreBody(e.clientX, e.clientY)) setCentre(state.centre === 'sun' ? 'earth' : 'sun'); else { view.home = true; view.vy = view.vp = view.vr = 0; } } lastTap = t; }
+  if (pinchWas && pointers.size < 2) { pinchWas = false; zoomEnd(); }
+  if (drag && drag.kind === 'face' && pointers.size === 0) zoomEnd();
   if (pointers.size === 0) drag = null;
 };
 cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
-cv.addEventListener('wheel', (e) => { e.preventDefault(); if (state.mode === 'sky') state.fov = clamp(state.fov * Math.exp(e.deltaY * 0.0012), 8, 100); else if (e.ctrlKey) state.wzoom = clamp(state.wzoom * Math.exp(-e.deltaY * 0.01), 1, 2.6); else state.offsetMs += e.deltaY * 60000 * 2; }, { passive: false });
+cv.addEventListener('wheel', (e) => { e.preventDefault(); if (state.mode === 'sky') state.fov = clamp(state.fov * Math.exp(e.deltaY * 0.0012), 8, 100); else { zoomTo(zoomNow() * Math.exp(-(e.deltaY || e.deltaX) * 0.006)); clearTimeout(wheelEnd); wheelEnd = setTimeout(zoomEnd, 260); } }, { passive: false });
 
 // ------------------------------------------------------------------ picking, the card, the arrow
 let turnTo = null;
@@ -199,6 +304,9 @@ function pick(x, y) {
   let best = null;
   if (state.mode === 'mini') {
     ndc.set(x / innerWidth * 2 - 1, -(y / innerHeight) * 2 + 1); ray.setFromCamera(ndc, wCam);
+    if (ray.intersectObject(watch.pusher, true).length) { pushButton(); return; }
+    watch.pusher.getWorldPosition(pv).project(wCam);
+    if (Math.hypot((pv.x * 0.5 + 0.5) * innerWidth - x, (-pv.y * 0.5 + 0.5) * innerHeight - y) < 30) { pushButton(); return; }
     const orr = watch.face === 'orrery', J = orr ? watch.orrery.bodies : watch.jewels;
     const objs = []; for (const b of BODIES) { objs.push(J[b.key].mesh); if (!orr) objs.push(watch.markers[b.key].mesh); }
     const hit = ray.intersectObjects(objs, true)[0];
@@ -277,10 +385,13 @@ $('when').onclick = () => {
   try { p.showPicker(); } catch (e) { p.focus(); p.click(); }
 };
 $('pick').onchange = () => { const t = new Date($('pick').value).getTime(); if (Number.isFinite(t)) { state.offsetMs = t - Date.now(); state.paused = true; refreshSpeed(); } };
+function applyMode(m) { state.mode = m; document.body.classList.toggle('mini', m === 'mini'); for (const b of document.querySelectorAll('#mode button')) b.classList.toggle('on', b.dataset.mode === m); $('arrow').classList.remove('show'); if (state.motion) flipChart(m === 'mini' ? -1 : watch.chart.m); }
+// the end of a dive: hand over to the sky view, which the last frames of the dive already show
+const diveLanded = () => { afterRender = () => { applyMode('sky'); skyCam.fov = state.fov; xfDive = false; crossfade(250); }; };
 function setMode(m, instant) {
   if (m === state.mode && !instant) return;
   if (!instant && dive.t < 1) return;
-  const go = () => { state.mode = m; document.body.classList.toggle('mini', m === 'mini'); for (const b of document.querySelectorAll('#mode button')) b.classList.toggle('on', b.dataset.mode === m); $('arrow').classList.remove('show'); if (state.motion) flipChart(m === 'mini' ? -1 : watch.chart.m); };
+  const go = () => applyMode(m);
   if (instant) { go(); return; }
   if (watch.face === 'orrery' && turn.t >= 1) {
     // the orrery on the wrist is the one you stand in: the machine gathers round Earth, you fall onto your own
@@ -288,23 +399,28 @@ function setMode(m, instant) {
     if (m === 'sky') {
       if (state.selected && !(state.motion && gyro.have)) { const s = sky.bodies[state.selected]; state.yaw = Math.atan2(-s.dir.x, -s.dir.z); state.pitch = clamp(Math.asin(s.dir.y), -0.6, 1.2); }
       turnTo = null;
-      runDive(1, 5.2, () => { afterRender = () => { go(); skyCam.fov = state.fov; xfDive = false; crossfade(250); }; });
+      runDive(1, 5.2, diveLanded);
     } else {
       afterRender = () => { go(); dive = { v: 1, from: 1, to: 1, t: 1, dur: 1, done: null }; runDive(0, 4.6); };
     }
     return;
   }
+  // from the front: turn the watch over to the orrery first, then dive in as from the back
+  if (m === 'sky' && state.mode === 'mini' && turn.t >= 1) { diveAfterTurn = true; view.home = true; setFace('orrery'); return; }
   $('fade').classList.add('on'); setTimeout(() => { go(); setTimeout(() => $('fade').classList.remove('on'), 60); }, 360);
 }
+let diveAfterTurn = false;
 for (const b of document.querySelectorAll('#mode button')) b.onclick = () => setMode(b.dataset.mode);
 function setFace(f, quiet) {
   if (dive.v > 0 || dive.t < 1) return;
-  state.face = f; localStorage.setItem('orrery-face', f); $('face').classList.toggle('on', f === 'orrery');
+  state.face = f; localStorage.setItem('orrery-face', f);
+  // the head turns in its cradle until that side faces you, however you hold the watch
   const to = f === 'orrery' ? Math.PI : 0;
   if (quiet) { turn = { v: to, from: to, to, t: 1 }; watch.turn = to; watch.setFace(f); } else turn = { v: turn.v, from: turn.v, to, t: 0 };
-  if (!quiet) hint(f === 'orrery' ? 'The back: an orrery under the caseback, each arm pointing where its body is. Go Immersive to stand inside it' : 'The front: the sky chart', 3200);
+  if (!quiet) hint(f === 'orrery' ? 'The back: an orrery under the caseback, each arm pointing where its body is. Pinch or scroll to fly in and stand on Earth inside it' : 'The front: the sky chart', 3200);
 }
-$('face').onclick = () => setFace(state.face === 'orrery' ? 'chart' : 'orrery');
+let pushAt = -1;
+function pushButton() { if (dive.v > 0 || dive.t < 1 || turn.t < 1) return; pushAt = performance.now(); setFace(watch.face === 'orrery' ? 'chart' : 'orrery'); }
 function setCentre(c, quiet) {
   if (!quiet && (dive.v > 0 || dive.t < 1)) return;
   state.centre = c; localStorage.setItem('orrery-centre', c);
@@ -325,7 +441,7 @@ addEventListener('keydown', (e) => {
   const k = e.key;
   if (k === 'm') setMode(state.mode === 'mini' ? 'sky' : 'mini'); else if (k === 'l') $('labels').click(); else if (k === 'n') $('now').click(); else if (k === 'g') $('motion').click();
   else if (k === 'z') $('magnify').click(); else if (k === ' ') { e.preventDefault(); $('play').click(); } else if (k === ']') stepSpeed(1); else if (k === '[') stepSpeed(-1);
-  else if (k === 'h') document.body.classList.toggle('calm'); else if (k === 'o') $('face').click(); else if (k === 'c') $('centre').click();
+  else if (k === 'h') document.body.classList.toggle('calm'); else if (k === 'o') pushButton(); else if (k === 'c') $('centre').click();
   else if (k === 'ArrowRight') state.offsetMs += (e.shiftKey ? 86400e3 : 3600e3); else if (k === 'ArrowLeft') state.offsetMs -= (e.shiftKey ? 86400e3 : 3600e3);
   else if (k === 'Escape') hideCard();
 });
@@ -432,7 +548,17 @@ function frame(now = performance.now()) {
   }
 
   if (turn.t < 1) { turn.t = Math.min(1, turn.t + dt / 1.3); turn.v = turn.from + (turn.to - turn.from) * easeIO(turn.t); }
-  watch.turn = turn.v; watch.setFace(Math.cos(turn.v) < 0 ? 'orrery' : 'chart');
+  else if (diveAfterTurn) { diveAfterTurn = false; if (state.mode === 'mini' && watch.face === 'orrery') setMode('sky'); }
+  // the view coasts after a flick, and a double tap brings it home
+  if (view.home) { const e = Math.min(1, dt * 5); view.pivot = null; view.yaw += -view.yaw * e; view.pitch += -view.pitch * e; view.roll += -view.roll * e; view.tg.multiplyScalar(1 - e); if (Math.abs(view.yaw) + Math.abs(view.pitch) + Math.abs(view.roll) + view.tg.length() < 0.002) { view.yaw = view.pitch = view.roll = 0; view.tg.set(0, 0, 0); view.home = false; } }
+  else if (view.spin && Math.abs(view.vr) > 0.01) { turnRoll(view.vr * dt); view.vr *= Math.pow(0.06, dt); }
+  else if (view.spin && (Math.abs(view.vy) > 0.01 || Math.abs(view.vp) > 0.01)) {
+    setYaw(view.yaw + view.vy * dt); if (Math.abs(view.yaw) === YAW_MAX) view.vy = 0;
+    view.pitch = clamp(view.pitch + view.vp * dt, -PITCH_MAX, PITCH_MAX); const f = Math.pow(0.06, dt); view.vy *= f; view.vp *= f;
+  }
+  watch.turn = turn.v; watch.setFace(Math.cos(watch.turn) < 0 ? 'orrery' : 'chart');
+  if (watch.face !== state.face && turn.t >= 1) { state.face = watch.face; localStorage.setItem('orrery-face', state.face); }
+  if (pushAt >= 0) { const k = (now - pushAt) / 220; watch.pusherPress.position.y = watch.pusherY - 0.022 * Math.sin(Math.PI * Math.min(1, k)); if (k >= 1) pushAt = -1; }
   helio += ((state.centre === 'sun' ? 1 : 0) - helio) * Math.min(1, dt * 1.6); if (Math.abs(helio - (state.centre === 'sun' ? 1 : 0)) < 0.002) helio = state.centre === 'sun' ? 1 : 0;
   if (state.mode === 'sky') frameSky(dt, date); else frameWatch(dt, date);
   if (afterRender) { const f = afterRender; afterRender = null; f(); }
@@ -489,7 +615,7 @@ function frameWatch(dt, date) {
   renderer.toneMappingExposure = 1.0;
   // fit the watch (case, lugs and crown) to the screen, a little above the time bar
   const asp = innerWidth / innerHeight, t = Math.tan(wCam.fov * D2R / 2);
-  let dist = Math.max(1.32 / t, 1.14 / (t * asp)) / state.wzoom;
+  let dist = Math.max(1.36 / t, 1.3 / (t * asp)) / state.wzoom;
   // on a tall screen an open card would cover the dial: shrink the watch into the space above it
   const card = $("card"), wantLift = card.classList.contains('show') && asp < 0.8 && dive.v === 0 ? 1 : 0;
   cardLift = Q.has('shot') ? wantLift : cardLift + (wantLift - cardLift) * Math.min(1, dt * 6);
@@ -502,14 +628,20 @@ function frameWatch(dt, date) {
     dist += (d2 - dist) * cardLift;
   }
   // turning over, the watch is held a little further off so its edge clears
-  dist *= 1 + 0.22 * Math.sin(Math.PI * Math.min(1, Math.abs(turn.v - turn.from) / Math.PI));
-  wCam.aspect = asp; wCam.fov = 26; wCam.near = 0.5; wCam.far = 40; wCam.position.set(0, -0.14 + lift, dist); wCam.lookAt(0, -0.06 + lift, 0);
+  dist *= 1 + 0.05 * Math.sin(Math.PI * Math.min(1, Math.abs(turn.v - turn.from) / Math.PI));
+  wCam.aspect = asp; wCam.fov = 26; wCam.near = 0.5; wCam.far = 40; lookY = -0.06 + lift; const T = view.tg;
+  // as you zoom in the camera sinks toward six o'clock, so the watch lies back like one on a table you lean over
+  const zt = sst(state.wzoom, 1, ZMAX), pe = clamp(view.pitch - 0.5 * zt, -1.25, PITCH_MAX);
+  { const cp = Math.cos(pe); qRoll.setFromAxisAngle(Z_AXIS, view.roll);
+    pv.set(dist * Math.sin(view.yaw) * cp, -0.08 * cp + dist * Math.sin(pe), dist * Math.cos(view.yaw) * cp).applyQuaternion(qRoll);
+    wCam.position.set(T.x + pv.x, T.y + lookY + pv.y, T.z + pv.z); wCam.up.set(0, 1, 0).applyQuaternion(qRoll); }
+  wCam.lookAt(T.x, T.y + lookY, T.z);
   // tilt with the phone (or the pointer), so the light runs over the gold
   let tx, ty;
   if (state.motion && gyro.have) { tx = clamp(gyro.gamma - restG, -0.5, 0.5) * 0.5; ty = clamp(gyro.beta - restB, -0.5, 0.5) * 0.5; }
   else if (!isTouch) { tx = hover.x * 0.12; ty = hover.y * 0.1; } else { tx = Math.sin(performance.now() / 4000) * 0.04; ty = Math.cos(performance.now() / 5300) * 0.03; }
   tilt.x += (tx - tilt.x) * Math.min(1, dt * 4); tilt.y += (ty - tilt.y) * Math.min(1, dt * 4);
-  watch.root.rotation.set(tilt.y * (1 - dive.v), turn.v + tilt.x * (1 - dive.v), 0);
+  watch.root.rotation.set(tilt.y * (1 - dive.v), tilt.x * (1 - dive.v), 0); watch.head.rotation.y = turn.v;
   // compass: in ground view the sky assembly turns so its directions are the real ones
   let want = 0;
   if (state.motion && gyro.have && watch.chart.m < 0) want = (180 + heading - (state.lat >= 0 ? 180 : 0)) * D2R;
@@ -537,7 +669,7 @@ function frameWatch(dt, date) {
     if (state.motion && gyro.have) dQs.copy(qIn); else dQs.setFromEuler(euler.set(state.pitch, state.yaw, 0, 'YXZ'));
     skyToWatch(watch.orrery, sky, dQ).multiply(dQs);
     // the start: the camera on the wrist, looking at the dial
-    dP0.copy(wCam.position); dL0.set(0, -0.06 + lift, 0);
+    dP0.copy(wCam.position); dL0.set(view.tg.x, view.tg.y + lookY, view.tg.z);
     const r0 = dP0.distanceTo(dC), k = Math.exp(lnk(Math.log(r0 / EARTH_R))), d = EARTH_R * eS * k;
     dB0.copy(dP0).sub(dC).normalize();
     dQv.setFromUnitVectors(dB0, dUp); dQi.identity().slerp(dQv, b); dDir.copy(dB0).applyQuaternion(dQi);
@@ -548,7 +680,7 @@ function frameWatch(dt, date) {
     if (dFt.lengthSq() < 0.03) { dFt.set(0, 1, 0).applyQuaternion(dQ); dFt.addScaledVector(dUp, -dFt.dot(dUp)); }
     dFt.normalize();
     const focus = dFo.copy(dL0).lerp(dC, sst(u, 0, 0.35));
-    const up = dUpv.set(0, 1, 0).lerp(dFt, b);
+    const up = dUpv.copy(wCam.up).lerp(dFt, b);
     if (up.lengthSq() < 1e-6) up.copy(dFt);
     dM.lookAt(eye, focus, up.normalize());
     dQ0.setFromRotationMatrix(dM);
@@ -599,7 +731,7 @@ function studio() {
   frame();
   if (!Q.has('shot')) renderer.setAnimationLoop(frame);
   document.body.classList.add('ready');
-  window.__orr = { renderer, sky, watch, planets, state, U, skyCam, wCam, select, setMode, setFace, setCentre, runDive, get turn() { return turn; }, get dive() { return dive; }, flipChart, step: (n = 1) => { for (let i = 0; i < n; i++) frame(performance.now()); }, backend: renderer.backend.isWebGPUBackend ? 'webgpu' : 'webgl2' };
+  window.__orr = { renderer, sky, watch, planets, state, U, skyCam, wCam, select, setMode, setFace, setCentre, runDive, get turn() { return turn; }, get dive() { return dive; }, flipChart, view, zoomTo, zoomEnd, pushButton, onDial, step: (n = 1) => { for (let i = 0; i < n; i++) frame(performance.now()); }, backend: renderer.backend.isWebGPUBackend ? 'webgpu' : 'webgl2' };
   if (Q.has('select')) select(Q.get('select'), state.mode === 'sky');
   if (!Q.has('lat') && saved.lat == null && !Q.has('shot')) locate(false);
   if (!Q.has('shot')) setTimeout(() => hint(state.mode === 'mini' ? 'Tap a jewel for its card. Drag round the dial to turn time. Turn on the compass to line the chart up with the sky' : 'Drag to look around, or turn on motion and hold the phone up'), 1400);

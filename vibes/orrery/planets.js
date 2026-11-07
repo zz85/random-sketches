@@ -1,11 +1,11 @@
 // planets.js - the Sun, Moon and planets for the immersive sky, drawn as globes "brought closer":
-// planets 1000x nearer than they are (so Jupiter spans about 12 degrees), the Sun and Moon a few times larger.
+// planets 2000x nearer than they are (so Jupiter spans about 26 degrees), the Sun and Moon twelve to seventeen times larger.
 // Each sits in its true direction, lit from its true direction to the Sun (so phases are real), turned to its
 // IAU pole and prime meridian, and in true order of distance, so a nearer body passes in front of a farther one.
 import * as THREE from 'three/webgpu';
 import { Fn, uniform, uv, vec2, vec3, vec4, float, mix, smoothstep, clamp, abs, exp, pow, max, min, dot, normalize, length, sin, cos, atan,
   texture, positionWorld, positionLocal, normalWorld, normalLocal, cameraPosition, mx_fractal_noise_float, mx_noise_float, time, modelWorldMatrix, If, Discard } from 'three/tsl';
-import { BODIES } from './astro.js';
+import { BODIES, MAX_DEG } from './astro.js';
 import { labelSprite } from './materials.js';
 import { skyColor } from './sky.js';
 
@@ -147,12 +147,12 @@ export function buildPlanets() {
 
 const tA = new THREE.Vector3(), tB = new THREE.Vector3(), tC = new THREE.Vector3(), tM = new THREE.Matrix4();
 
-// magnify: 0 true size, 1 brought closer (planets 1000x, Sun and Moon a few times)
+// magnify: 0 true size, 1 brought closer (planets 2000x, Sun and Moon 12 and 17 times)
 export function updatePlanets(P, sky, camera, magnify, pxPerRad, labels) {
   for (const b of BODIES) {
     const s = sky.bodies[b.key], o = P.bodies[b.key];
     const k = 1 + (b.near - 1) * magnify;
-    const ang = Math.min(s.diam * k, b.key === 'Moon' || b.key === 'Sun' ? 8 : 22) * Math.PI / 180; // angular diameter drawn, radians
+    const ang = Math.min(s.diam * k, b.key === 'Moon' || b.key === 'Sun' ? MAX_DEG.lights : MAX_DEG.planets) * Math.PI / 180; // angular diameter drawn, radians
     const D = placeDist(s.dist), R = D * Math.tan(ang / 2);
     o.R = R; o.D = D; o.ang = ang;
     const p = tA.copy(s.dir).multiplyScalar(D);

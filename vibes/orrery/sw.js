@@ -3,7 +3,7 @@
  * unpkg is cached the first time it is fetched. Stale-while-revalidate, so it opens instantly and offline.
  * Bump VERSION when the file list changes.
  */
-const VERSION = 'orrery-v4';
+const VERSION = 'orrery-v6';
 const SHELL = ['./', './index.html', './main.js', './astro.js', './sky.js', './planets.js', './watch.js', './orrery.js', './materials.js', './stardata.js', './astronomy.browser.min.js', './geomag.js',
   './manifest.webmanifest', '../pwa/install.js', './icon.svg', './icon-192.png', './icon-512.png'];
 const BASE = 'https://unpkg.com/three@0.187.0/';

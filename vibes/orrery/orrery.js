@@ -7,7 +7,7 @@
 // so the Moon's phase and the night side of Earth are the real ones.
 import * as THREE from 'three/webgpu';
 import { uniform, uv, vec3, float, mix, smoothstep, normalize, dot, pow, texture, normalWorld, positionWorld, cameraPosition } from 'three/tsl';
-import { BODIES } from './astro.js';
+import { BODIES, MAX_DEG } from './astro.js';
 import { globeMaterial, ringMaterial, RING_IN, RING_OUT, tex, MAPS, THREE_TEX } from './planets.js';
 import { labelSprite } from './materials.js';
 
@@ -17,8 +17,8 @@ const RD = 0.86; // the dial's radius, as the chart's
 export const ORBIT = { Moon: 0.16, Mercury: 0.235, Venus: 0.3, Sun: 0.375, Mars: 0.45, Jupiter: 0.525, Saturn: 0.595, Uranus: 0.655, Neptune: 0.71 };
 // Sun-centred, the planets in their true order out from the Sun, the Moon on a short arm round Earth
 export const HELIO = { Moon: 0.055, Mercury: 0.13, Venus: 0.205, Earth: 0.29, Mars: 0.37, Jupiter: 0.47, Saturn: 0.56, Uranus: 0.64, Neptune: 0.71 };
-const SIZE = { Sun: 0.044, Moon: 0.023, Mercury: 0.015, Venus: 0.02, Mars: 0.018, Jupiter: 0.036, Saturn: 0.028, Uranus: 0.019, Neptune: 0.018 };
-export const EARTH_R = 0.064, PLANE_Z = 0.06; // Earth's centre and every arm's body sit in one plane, so directions are true
+const SIZE = { Sun: 0.055, Moon: 0.029, Mercury: 0.019, Venus: 0.025, Mars: 0.0225, Jupiter: 0.045, Saturn: 0.035, Uranus: 0.024, Neptune: 0.0225 };
+export const EARTH_R = 0.08, PLANE_Z = 0.06; // Earth's centre and every arm's body sit in one plane, so directions are true
 const GOLD = new THREE.Color(0xe7c47c);
 const SIGNS = ['ARIES', 'TAURUS', 'GEMINI', 'CANCER', 'LEO', 'VIRGO', 'LIBRA', 'SCORPIO', 'SAGITTARIUS', 'CAPRICORN', 'AQUARIUS', 'PISCES'];
 const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
@@ -230,8 +230,8 @@ export function updateOrrery(O, sky, date, { labels = 1, selected = null, earthS
     const s = sky.bodies[b.key], o = O.bodies[b.key], c = cur[b.key];
     o.node.position.set(c.ax + Math.cos(c.a) * c.r, c.ay + Math.sin(c.a) * c.r, PLANE_Z + c.z);
     // the size it has on the wrist, and in the dive the size the sky view draws it, seen from the centre
-    const ang = Math.min(s.diam * (1 + (b.near - 1) * magnify), b.key === 'Moon' || b.key === 'Sun' ? 8 : 22) * Math.PI / 180;
-    const sz = b.key === 'Sun' ? lerp(o.size, 0.07, hs) : o.size;
+    const ang = Math.min(s.diam * (1 + (b.near - 1) * magnify), b.key === 'Moon' || b.key === 'Sun' ? MAX_DEG.lights : MAX_DEG.planets) * Math.PI / 180;
+    const sz = b.key === 'Sun' ? lerp(o.size, 0.085, hs) : o.size;
     o.curSize = lerp(sz, Math.hypot(c.r, c.z) * Math.tan(ang / 2), gs);
     o.node.scale.setScalar(o.curSize);
     if (b.key !== 'Sun') {
@@ -244,7 +244,7 @@ export function updateOrrery(O, sky, date, { labels = 1, selected = null, earthS
   // Earth: its pole tilted toward ecliptic longitude 90, turned by Greenwich sidereal time
   const gst = (sky.lst * 15 - sky.lon) * Math.PI / 180, cg = Math.cos(gst), sg = Math.sin(gst);
   const bx = toEcl(vA.set(cg, sg, 0)), by = toEcl(vB.set(0, 0, 1)), bz = toEcl(vC.set(sg, -cg, 0));
-  const E = O.earth, ce = cur.Earth, rs = lerp(EARTH_R, 0.032, hs) * earthScale;
+  const E = O.earth, ce = cur.Earth, rs = lerp(EARTH_R, 0.04, hs) * earthScale;
   const la = sky.lat * Math.PI / 180, lo = sky.lon * Math.PI / 180;
   E.pin.position.set(Math.cos(la) * Math.cos(lo), Math.sin(la), -Math.cos(la) * Math.sin(lo));
   E.pin.quaternion.setFromUnitVectors(wB.set(0, 1, 0), E.pin.position);

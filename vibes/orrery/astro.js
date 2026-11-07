@@ -7,16 +7,18 @@ export const AU_KM = 149597870.7;
 
 // mean radii in km, and how each is drawn when "magnified": planets come 1000x closer;
 // the Sun and Moon would swallow the sky at that, so they only grow a few times
+// the most a brought-closer body is drawn across, in degrees: the Sun and Moon, and the planets
+export const MAX_DEG = { lights: 14, planets: 36 };
 export const BODIES = [
-  { key: 'Sun', name: 'Sun', km: 695700, near: 5, color: '#ffd27a' },
-  { key: 'Moon', name: 'Moon', km: 1737.4, near: 7, color: '#e6e4dc' },
-  { key: 'Mercury', name: 'Mercury', km: 2439.7, near: 1000, color: '#b7aea4' },
-  { key: 'Venus', name: 'Venus', km: 6051.8, near: 1000, color: '#f3e3b4' },
-  { key: 'Mars', name: 'Mars', km: 3389.5, near: 1000, color: '#e0784a' },
-  { key: 'Jupiter', name: 'Jupiter', km: 69911, near: 1000, color: '#e7c9a0' },
-  { key: 'Saturn', name: 'Saturn', km: 58232, near: 1000, color: '#ecd59a' },
-  { key: 'Uranus', name: 'Uranus', km: 25362, near: 1000, color: '#a6e2ea' },
-  { key: 'Neptune', name: 'Neptune', km: 24622, near: 1000, color: '#6f8fef' },
+  { key: 'Sun', name: 'Sun', km: 695700, near: 12, color: '#ffd27a' },
+  { key: 'Moon', name: 'Moon', km: 1737.4, near: 17, color: '#e6e4dc' },
+  { key: 'Mercury', name: 'Mercury', km: 2439.7, near: 2000, color: '#b7aea4' },
+  { key: 'Venus', name: 'Venus', km: 6051.8, near: 2000, color: '#f3e3b4' },
+  { key: 'Mars', name: 'Mars', km: 3389.5, near: 2000, color: '#e0784a' },
+  { key: 'Jupiter', name: 'Jupiter', km: 69911, near: 2000, color: '#e7c9a0' },
+  { key: 'Saturn', name: 'Saturn', km: 58232, near: 2000, color: '#ecd59a' },
+  { key: 'Uranus', name: 'Uranus', km: 25362, near: 2000, color: '#a6e2ea' },
+  { key: 'Neptune', name: 'Neptune', km: 24622, near: 2000, color: '#6f8fef' },
 ];
 
 export const eqjVec = (raDeg, decDeg, out = new THREE.Vector3()) => {

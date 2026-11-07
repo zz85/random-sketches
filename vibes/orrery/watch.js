@@ -277,7 +277,10 @@ function strapMaterial() {
 // ------------------------------------------------------------------ the watch
 export function buildWatch(lat, place) {
   const root = new THREE.Group(); // tilted by the phone; faces +z
-  const W = { root, chart: new Chart(lat, 1), jewels: {}, markers: {}, place };
+  // the head (case, dials, crystals, the orrery) turns over about its 12-6 axis inside a cradle that the lugs hold,
+  // as a reversible case does; the cradle, lugs, strap and crown stay put
+  const head = new THREE.Group(); root.add(head);
+  const W = { root, head, chart: new Chart(lat, 1), jewels: {}, markers: {}, place };
   const plat = new THREE.MeshPhysicalNodeMaterial({ color: PLAT, metalness: 1, roughness: 0.14 });
   const platBrushed = new THREE.MeshPhysicalNodeMaterial({ color: PLAT, metalness: 1, roughness: 0.3 });
   const uLight = uniform(new THREE.Vector3(-0.35, 0.5, 0.8).normalize());
@@ -286,16 +289,25 @@ export function buildWatch(lat, place) {
   // case: a lathe profile round the axis, turned to face the viewer; open at the back too, a display caseback
   const prof = [[0.948, 0.104], [0.95, 0.128], [0.975, 0.148], [1.01, 0.152], [1.045, 0.138], [1.075, 0.105], [1.095, 0.05], [1.098, -0.01], [1.095, -0.06], [1.075, -0.105], [1.045, -0.135], [1.01, -0.149], [0.975, -0.146], [0.95, -0.127], [0.948, -0.104]].reverse().map(([r, z]) => new THREE.Vector2(r, z));
   const caseG = new THREE.LatheGeometry(prof, 256); caseG.rotateX(Math.PI / 2);
-  const caseM = new THREE.Mesh(caseG, plat); caseM.castShadow = true; root.add(caseM);
+  const caseM = new THREE.Mesh(caseG, plat); caseM.castShadow = true; head.add(caseM);
+  // the cradle: a flat platinum ring round the case, with a pivot at 12 and at 6
+  const crProf = [[1.112, 0.05], [1.118, 0.066], [1.15, 0.075], [1.2, 0.07], [1.228, 0.045], [1.236, 0], [1.228, -0.045], [1.2, -0.07], [1.15, -0.075], [1.118, -0.066], [1.112, -0.05]].reverse().map(([r, z]) => new THREE.Vector2(r, z));
+  const crG = new THREE.LatheGeometry(crProf, 256); crG.rotateX(Math.PI / 2);
+  const cradle = new THREE.Mesh(crG, platBrushed); cradle.castShadow = true; root.add(cradle);
+  for (const sy of [1, -1]) {
+    const pivot = new THREE.Mesh(new THREE.CylinderGeometry(0.034, 0.034, 0.16, 32), plat); pivot.position.set(0, sy * 1.15, 0); root.add(pivot);
+    const screw = new THREE.Mesh(new THREE.CylinderGeometry(0.058, 0.058, 0.03, 40), plat); screw.position.set(0, sy * 1.245, 0); root.add(screw);
+    const slot = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.034, 0.012), platBrushed); slot.position.set(0, sy * 1.255, 0); root.add(slot);
+  }
   // lugs and strap
   for (const sy of [1, -1]) for (const sx of [1, -1]) {
     const lug = new THREE.Mesh(new RoundedBoxGeometry(0.17, 0.56, 0.12, 4, 0.04), platBrushed);
-    lug.position.set(sx * 0.6, sy * 1.06, -0.03); lug.rotation.x = sy * 0.16; root.add(lug);
+    lug.position.set(sx * 0.62, sy * 1.25, -0.03); lug.rotation.x = sy * 0.16; root.add(lug);
   }
   const strapM = strapMaterial();
   for (const sy of [1, -1]) {
     const g = new THREE.PlaneGeometry(1.06, 3.2, 1, 48), p = g.attributes.position;
-    for (let i = 0; i < p.count; i++) { const y = p.getY(i) + 1.6; p.setXYZ(i, p.getX(i), sy * (1.18 + y), -0.06 - y * y * 0.05 - y * 0.05); }
+    for (let i = 0; i < p.count; i++) { const y = p.getY(i) + 1.6; p.setXYZ(i, p.getX(i), sy * (1.25 + y), -0.06 - y * y * 0.05 - y * 0.05); }
     g.computeVertexNormals();
     if (sy < 0) { const idx = g.index.array; for (let i = 0; i < idx.length; i += 3) { const t = idx[i]; idx[i] = idx[i + 2]; idx[i + 2] = t; } g.computeVertexNormals(); }
     const strap = new THREE.Mesh(g, strapM); root.add(strap);
@@ -305,11 +317,21 @@ export function buildWatch(lat, place) {
     const g = new THREE.CylinderGeometry(0.078, 0.078, 0.11, 96, 2), p = g.attributes.position;
     for (let i = 0; i < p.count; i++) { const x = p.getX(i), z = p.getZ(i), a = Math.atan2(z, x), r = Math.hypot(x, z); if (r > 0.05) { const k = 1 + 0.055 * Math.max(0, Math.cos(a * 22)) ** 0.5 - 0.03; p.setX(i, x * k); p.setZ(i, z * k); } }
     g.computeVertexNormals();
-    const crown = new THREE.Mesh(g, plat); crown.rotation.z = Math.PI / 2; crown.position.set(1.17, 0, -0.01); root.add(crown);
-    const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.08, 24), plat); neck.rotation.z = Math.PI / 2; neck.position.set(1.1, 0, -0.01); root.add(neck);
+    const crown = new THREE.Mesh(g, plat); crown.rotation.z = Math.PI / 2; crown.position.set(1.31, 0, -0.01); root.add(crown);
+    const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.08, 24), plat); neck.rotation.z = Math.PI / 2; neck.position.set(1.25, 0, -0.01); root.add(neck);
     const cab = new THREE.Mesh(new THREE.SphereGeometry(0.03, 24, 16), new THREE.MeshPhysicalNodeMaterial({ color: 0x1a3fb0, roughness: 0.05, clearcoat: 1, metalness: 0 }));
-    cab.scale.x = 0.45; cab.position.set(1.228, 0, -0.01); root.add(cab);
+    cab.scale.x = 0.45; cab.position.set(1.368, 0, -0.01); root.add(cab);
     W.crown = crown;
+    // the pusher above the crown, at two o'clock on the cradle: it turns the head over
+    // a flat disc pusher, as on the reference: a low collar on the cradle and a wide button with a chamfered edge
+    const a = Math.PI / 7.5, pusher = new THREE.Group();
+    const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.062, 0.07, 0.035, 48), platBrushed); collar.position.y = 0.0175;
+    const bProf = [[0, 0], [0.074, 0], [0.078, 0.006], [0.078, 0.024], [0.072, 0.032], [0, 0.032]].map(([r, y]) => new THREE.Vector2(r, y));
+    const btn = new THREE.Mesh(new THREE.LatheGeometry(bProf, 64), plat); btn.position.y = 0.04;
+    const face = new THREE.Mesh(new THREE.CircleGeometry(0.06, 48), platBrushed); face.rotation.x = -Math.PI / 2; face.position.y = 0.0725;
+    const press = new THREE.Group(); press.add(btn, face); pusher.add(collar, press);
+    pusher.position.set(Math.cos(a) * 1.225, Math.sin(a) * 1.225, -0.005); pusher.rotation.z = a - Math.PI / 2; root.add(pusher);
+    W.pusher = pusher; W.pusherPress = press; W.pusherY = press.position.y;
   }
 
   // the turning assembly (turned to the compass in ground view): chart disc, sapphire, flange, markers
@@ -405,8 +427,10 @@ export function buildWatch(lat, place) {
   W.orrery = buildOrrery(); W.orrery.group.rotation.y = Math.PI; W.orrery.group.position.z = -0.012; root.add(W.orrery.group);
   W.hands = [W.hHour, W.hMin, W.hSec, cap];
   // the case, strap and crystal, which the camera leaves behind as it dives into the orrery
-  W.shell = root.children.filter((c) => c !== W.orrery.group && c !== skyRot && !W.hands.includes(c));
-  // which side faces you: the watch turns over about its 12-6 axis
+  // move everything of the head into it: the case went in above; the dials, hands, crystals and orrery here
+  for (const c of [skyRot, ...W.hands, W.orrery.group, ...root.children.filter((c) => c.renderOrder === 10)]) head.add(c);
+  W.shell = [...root.children, ...head.children].filter((c) => c !== head && c !== W.orrery.group && c !== skyRot && !W.hands.includes(c));
+  // which side faces you: the head turns over about its 12-6 axis
   W.turn = 0; W.face = 'chart';
   W.setFace = (f) => { W.face = f; };
   W.setFace('chart');
