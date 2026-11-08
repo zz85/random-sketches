@@ -1,6 +1,7 @@
 # Logs
 
 8 Nov 2026
+- Hollow: sound (speaker icon or `m`): generated music on wooden bars whose tone follows the wood and finish, a melody on a motif from the piece's seed over a pad in each light's own key, and the room's hum, sanding while carving and a glass tink, all synthesised in Web Audio. The glass case is now on by default (`noglass` in the link turns it off)
 - Hollow: the turntable is now a slow camera orbit round the exhibit (`t` or space), so the piece, its case and the light stay put while the view walks round them
 - Hollow: an optional glass display case (case icon or `g`, `glass` in the link): Fresnel panes that mirror the room and the plinth, green edges, a sun glint in the beam, dust kept outside it; the piece shrinks to fit
 - Hollow: dust motes drift in the sunlight, lit only inside the beam (tested against the key light's shadow map) and glinting as they turn

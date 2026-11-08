@@ -15,6 +15,7 @@ import { makeWood, SPECIES, FINISHES } from './wood.js';
 import { buildStudio, LIGHTS, PLINTH_TOP } from './studio.js';
 import { buildDust } from './dust.js';
 import { buildGlass, CASE_HALF } from './glass.js';
+import { makeAudio } from './audio.js';
 
 const $ = (id) => document.getElementById(id);
 // parameters come from the query and the hash, the hash winning, so a shared #link reopens the same view
@@ -103,14 +104,15 @@ const state = {
   wood: Q.get('wood') in SPECIES ? Q.get('wood') : null, finish: Q.get('finish') in FINISHES ? Q.get('finish') : null,
   light: Math.max(0, LIGHTS.findIndex((l) => l.key === Q.get('light'))), spin: !SHOT && !Q.has('still'),
   play: !SHOT && Q.has('play'),
-  glass: Q.has('glass'),
+  glass: !Q.has('noglass'), // the case is on unless the link says otherwise
 };
 let woodNow = 'walnut', finishNow = 'oil';
+const audio = makeAudio();
 
 function applyLight(i) {
   state.light = (i + LIGHTS.length) % LIGHTS.length;
   const L = LIGHTS[state.light];
-  studio.apply(L);
+  studio.apply(L); audio.setLight(L.key);
   rays.density.value = L.haze; rays.maxDensity.value = L.hazeMax; rays.distanceAttenuation.value = L.atten;
   P.beam.value.set(L.color).multiplyScalar(0.9);
   syncDust(); syncGlass();
@@ -144,7 +146,7 @@ function fitPiece() {
   }
 }
 function setGlass(on) {
-  state.glass = on; $('glass').classList.toggle('on', on);
+  state.glass = on; $('glass').classList.toggle('on', on); audio.glass(on);
   fitPiece(); writeLink();
 }
 
@@ -157,10 +159,11 @@ function syncDust() {
   dust.U.color.value.set(L.color);
   dust.U.focus.value.copy(controls.target);
 }
-function applyWood(k) { woodNow = k; wood.setSpecies(k); syncLabels(); }
+function applyWood(k) { woodNow = k; wood.setSpecies(k); audio.setWood(woodNow, finishNow); syncLabels(); }
 function applyFinish(k) {
   const was = wood.mat.clearcoat > 0; finishNow = k; wood.setFinish(k);
   if (was !== wood.mat.clearcoat > 0) wood.mat.needsUpdate = true;
+  audio.setWood(woodNow, finishNow);
   syncLabels();
 }
 let title = '';
@@ -210,7 +213,7 @@ async function newPiece(seed = Math.floor(Math.random() * 100000)) {
   const fin = r(); applyFinish(state.finish || (fin < 0.5 ? 'oil' : fin < 0.72 ? 'wax' : fin < 0.9 ? 'lacquer' : 'bare'));
   wood.setGrain(spec, r);
   writeLink();
-  document.body.classList.add('carving');
+  document.body.classList.add('carving'); audio.carving(true);
   const t0 = performance.now();
   const quick = await mesh(spec, 64, false);
   if (gen !== generation) return;
@@ -220,7 +223,7 @@ async function newPiece(seed = Math.floor(Math.random() * 100000)) {
   if (gen !== generation) return;
   if (fine.error) throw new Error(fine.error);
   setGeometry(fine.mesh);
-  document.body.classList.remove('carving');
+  document.body.classList.remove('carving'); audio.carving(false); audio.piece(seed);
   info.meshMs = performance.now() - t0; info.tris = fine.mesh.index.length / 3; info.N = T.N;
   if (state.play) playTimer = setTimeout(playNext, PLAY_MS);
   return spec;
@@ -255,7 +258,7 @@ function linkParams() {
   p.set('cam', [c.x, c.y, c.z, t.x, t.y, t.z].map(f).join(','));
   if (!state.spin) p.set('still', '');
   if (state.play) p.set('play', '');
-  if (state.glass) p.set('glass', '');
+  if (!state.glass) p.set('noglass', '');
   return p.toString().replace(/%2C/g, ',').replace(/=(&|$)/g, '$1');
 }
 let linkTimer = 0;
@@ -264,14 +267,14 @@ function writeLink() {
   clearTimeout(linkTimer);
   linkTimer = setTimeout(() => {
     const keep = new URLSearchParams(location.search);
-    for (const k of ['seed', 'wood', 'finish', 'light', 'cam', 'still', 'play', 'glass']) keep.delete(k);
+    for (const k of ['seed', 'wood', 'finish', 'light', 'cam', 'still', 'play', 'glass', 'noglass']) keep.delete(k);
     const q = keep.toString();
     history.replaceState(null, '', location.pathname + (q ? '?' + q : '') + '#' + linkParams());
   }, 150);
 }
 async function copyLink() {
   clearTimeout(linkTimer);
-  history.replaceState(null, '', location.pathname + location.search.replace(/[?&](seed|wood|finish|light|cam|still|play|glass)=[^&]*/g, '') + '#' + linkParams());
+  history.replaceState(null, '', location.pathname + location.search.replace(/[?&](seed|wood|finish|light|cam|still|play|glass|noglass)=[^&]*/g, '') + '#' + linkParams());
   const url = location.href, el = $('link');
   try { await navigator.clipboard.writeText(url); el.classList.add('on'); el.title = 'Link copied'; } catch (e) { prompt('Link to this piece', url); }
   setTimeout(() => { el.classList.remove('on'); el.title = 'Copy link (c)'; }, 1500);
@@ -292,6 +295,20 @@ $('glass').onclick = () => setGlass(!state.glass);
 $('save').onclick = () => save();
 $('spin').classList.toggle('on', state.spin);
 $('glass').classList.toggle('on', state.glass);
+// sound: off until asked for, since browsers start audio only on a gesture; once turned on it is
+// remembered, and starts again at the first touch or key on the next visit
+const SOUND_OFF = '<svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg>', SOUND_ON = '<svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></svg>';
+async function setSound(want) {
+  await audio.toggle(want);
+  $('sound').classList.toggle('on', audio.on); $('sound').innerHTML = audio.on ? SOUND_ON : SOUND_OFF;
+  $('sound').title = audio.on ? 'Sound off (m)' : 'Sound (m)';
+  try { localStorage.setItem('hollow.sound', audio.on ? '1' : '0'); } catch (e) { /* private mode */ }
+}
+$('sound').onclick = () => setSound(!audio.on);
+if (!SHOT && (() => { try { return localStorage.getItem('hollow.sound') === '1'; } catch (e) { return false; } })()) {
+  const go = (e) => { if (e.target.closest?.('#sound')) return; removeEventListener('pointerdown', go, true); removeEventListener('keydown', go, true); setSound(true); };
+  addEventListener('pointerdown', go, true); addEventListener('keydown', go, true);
+}
 
 async function save() {
   await pipeline.render();
@@ -310,6 +327,7 @@ addEventListener('keydown', (e) => {
   else if (k === 't' || k === ' ') { state.spin = !state.spin; $('spin').classList.toggle('on', state.spin); e.preventDefault(); }
   else if (k === 'h') document.body.classList.toggle('calm');
   else if (k === 's') save();
+  else if (k === 'm') setSound(!audio.on);
 });
 // a drag stops the orbit for a moment so you can look
 let heldUntil = 0; const UP = new THREE.Vector3(0, 1, 0);
@@ -326,7 +344,7 @@ function frame(now) {
   const dt = Math.min(0.1, (now - last) / 1000); last = now;
   // the camera walks slowly round the exhibit; the piece, its case and the light stay put
   if (state.spin && now > heldUntil) camera.position.sub(controls.target).applyAxisAngle(UP, dt * 0.16).add(controls.target);
-  controls.update();
+  controls.update(); audio.update();
   pipeline.render();
   // adaptive resolution: drop the pixel ratio under load, raise it back when there is room
   if (!SHOT) {
@@ -352,7 +370,7 @@ function frame(now) {
   if (state.play) setPlay(true);
   if (SHOT) {
     window.__hollow = {
-      info, state, wood, studio, piece, dust, get glass() { return glass; }, setGlass, camera, controls, turntable, P, rays,
+      info, state, wood, studio, piece, audio, dust, get glass() { return glass; }, setGlass, camera, controls, turntable, P, rays,
       step: async (n = 1) => { for (let i = 0; i < n; i++) { controls.update(); await pipeline.render(); } },
       newPiece, light: applyLight, setWood: (k) => { state.wood = k; applyWood(k); }, setFinish: (k) => { state.finish = k; applyFinish(k); },
       cam: (p, t) => { camera.position.set(...p); if (t) controls.target.set(...t); controls.update(); },

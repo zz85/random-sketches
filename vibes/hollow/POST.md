@@ -28,7 +28,9 @@ The studio is a curved backdrop, a plaster plinth and one shadowed key light, wi
 
 Dust motes drift through the room, and each one checks the key light's shadow map, so it only shows inside the beam and blinks out as it falls into the shadow of a mullion or the piece. They turn as they fall and catch the light now and then, which does more to sell the sunbeam than the haze alone.
 
-A small case icon puts the piece under a glass vitrine. Glass that's nearly invisible face-on is mostly about what it reflects, so the panes mirror the room at grazing angles and trace the plinth top as a plane, lit and shadowed like the real one, which gives them the bright band low down that real cases have. The cut edges show green, the sun glints where a pane is in the beam, and the dust stays outside.
+The piece stands under a glass vitrine, which a small case icon takes off. Glass that's nearly invisible face-on is mostly about what it reflects, so the panes mirror the room at grazing angles and trace the plinth top as a plane, lit and shadowed like the real one, which gives them the bright band low down that real cases have. The cut edges show green, the sun glints where a pane is in the beam, and the dust stays outside.
+
+The sound is played on the wood too. Each note is a struck bar with marimba-like overtones, bright and ringing for padauk, dull for spalted beech, and the seed that shapes the piece also writes the little motif the melody wanders on. Each light has its own key and pace, a pad drifts through four chords under it, and the room adds a hum, a whisper of sanding while a piece is carved and a tink when the glass goes on.
 
 ## Watching it
 

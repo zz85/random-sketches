@@ -14,11 +14,12 @@ Codevember: Hollow. Each seed carves a wooden sculpture: a vessel, pebble, totem
 - **Finish** (`f`): Danish oil, beeswax, lacquer, bare.
 - **Light** (`l`): Skylight, Morning window, Golden hour, Studio.
 - **Autoplay** (play button, `p`) carves a new piece in a random wood and finish 2 s after the last one finishes.
-- **Glass** (case icon, `g`) puts the piece in a glass display case. The piece is scaled down to fit where it would touch the panes, and the dust stays outside.
-- **Link** (`c`) copies a link to what you see. The address bar always holds it too, as a hash: `#seed=12&wood=olive&finish=wax&light=window&cam=1.1,1.5,1.8,0,1.2,0`, plus `still` when the orbit is off, `play` when autoplay is on and `glass` when the case is on. Wood and finish are left out unless you chose them, since the seed picks them.
+- **Glass** (case icon, `g`): the piece stands in a glass display case, on by default. The piece is scaled down to fit where it would touch the panes, and the dust stays outside.
+- **Sound** (speaker icon, `m`) plays slow generated music on wooden bars, with the room around it. It starts only when you ask (browsers need a tap first) and is remembered for the next visit.
+- **Link** (`c`) copies a link to what you see. The address bar always holds it too, as a hash: `#seed=12&wood=olive&finish=wax&light=window&cam=1.1,1.5,1.8,0,1.2,0`, plus `still` when the orbit is off, `play` when autoplay is on and `noglass` when the case is off. Wood and finish are left out unless you chose them, since the seed picks them.
 - Drag to orbit, pinch or scroll to zoom. `t` or space starts or stops the slow camera orbit round the plinth, `s` saves a PNG, `h` hides the interface.
 
-URL options, in the query or the hash: `seed=`, `wood=`, `finish=`, `light=skylight|window|golden|studio`, `cam=`, `still`, `glass`, `q=0|1|2` (quality tier; phones start at 0), `webgl` (force the WebGL 2 backend), `nodust`.
+URL options, in the query or the hash: `seed=`, `wood=`, `finish=`, `light=skylight|window|golden|studio`, `cam=`, `still`, `noglass`, `q=0|1|2` (quality tier; phones start at 0), `webgl` (force the WebGL 2 backend), `nodust`.
 
 ## How it works
 
@@ -28,6 +29,7 @@ URL options, in the query or the hash: `seed=`, `wood=`, `finish=`, `light=skyli
 - **Studio** (`studio.js`): a cyclorama wall, plaster plinth, a shadowed key light, hemisphere fill and a rim light. The skylight or window frame is an invisible mask that only the shadow camera sees, so it shapes the pool of light and the mullion shadows.
 - **Dust** (`dust.js`): instanced sprite motes that fall and drift through a box around the plinth, placed by a formula of index and time on the GPU. Each one tests its place against the key light's shadow map, so it shows only inside the beam and goes dark in the shadows of the window frame and the piece, and it glints as it turns. The motes have their own pass, added before bloom, and hide behind the piece by comparing against the main pass's depth.
 - **Glass** (`glass.js`): five thin panes in their own pass, shaded in one node: Fresnel at both faces of a 6 mm slab, a reflection of the room from the environment map, with the plinth top traced as its own plane (lit and shadowed by the shadow map), a sun glint where the panes are in the beam, a sea-green tint along the cut edges where the path through the glass is long, and a little settled dust on the lid. The composite darkens and tints what is behind the panes by their coverage and adds their light, before bloom, so the glint blooms. The motes test a box around the case and go out inside it.
+- **Sound** (`audio.js`): all Web Audio, no samples. A marimba-like bar voice (partials near 1 : 4 : 10, the upper ones dying first, and a short knock) whose brightness and ring follow the wood and finish: padauk rings bright, as xylophone bars do, spalted beech is soft and dull. A melody walks a pentatonic scale on a motif drawn from the piece's seed, over a pad that glides through four chords; each light has its own key, chords and pace. A new piece is greeted with its chord rising, and the room adds a faint air-handling hum, sanding while a piece is carved, and a glass tink as the case goes on or off, all in a generated hall reverb.
 - **Post** (`main.js`): a render pipeline with MRT normals, GTAO, godrays from the key light's shadow map (bilateral-blurred), bloom, vignette and film grain, AgX tone mapping. Pixel ratio adapts to frame time.
 
 ## Test
