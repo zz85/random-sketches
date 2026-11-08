@@ -3,8 +3,8 @@
  * addons used) from unpkg is cached the first time it is fetched. Stale-while-revalidate, so it opens
  * instantly and offline. Bump VERSION when the file list changes.
  */
-const VERSION = 'hollow-v3';
-const SHELL = ['./', './index.html', './main.js', './sdf.js', './wood.js', './studio.js', './dust.js', './mesher.worker.js', './manifest.webmanifest', '../pwa/install.js', './icon.svg', './icon-192.png', './icon-512.png'];
+const VERSION = 'hollow-v4';
+const SHELL = ['./', './index.html', './main.js', './sdf.js', './wood.js', './studio.js', './dust.js', './glass.js', './mesher.worker.js', './manifest.webmanifest', '../pwa/install.js', './icon.svg', './icon-192.png', './icon-512.png'];
 const BASE = 'https://unpkg.com/three@0.187.0/';
 const CDN = [BASE + 'build/three.webgpu.js', BASE + 'build/three.tsl.js'].concat(['tsl/display/BloomNode.js', 'tsl/display/GodraysNode.js', 'tsl/display/BilateralBlurNode.js', 'tsl/display/GTAONode.js',
   'controls/OrbitControls.js', 'environments/RoomEnvironment.js', 'geometries/RoundedBoxGeometry.js'].map((f) => BASE + 'examples/jsm/' + f));

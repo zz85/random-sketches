@@ -3,7 +3,7 @@
 // normals -> GTAO, raymarched godrays from the key light's shadow map (bilateral blurred), bloom,
 // AgX tone mapping, vignette and grain.
 import * as THREE from 'three/webgpu';
-import { pass, mrt, output, normalView, packNormalToRGB, unpackRGBToNormal, uniform, vec2, vec4, float, mix, smoothstep, length, screenUV, screenSize, hash, time, Fn, sample } from 'three/tsl';
+import { pass, mrt, output, normalView, packNormalToRGB, unpackRGBToNormal, uniform, vec2, vec3, vec4, float, mix, smoothstep, length, screenUV, screenSize, hash, time, Fn, sample } from 'three/tsl';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import { godrays } from 'three/addons/tsl/display/GodraysNode.js';
 import { bilateralBlur } from 'three/addons/tsl/display/BilateralBlurNode.js';
@@ -14,6 +14,7 @@ import { makeSculpture, rng, FOOT } from './sdf.js';
 import { makeWood, SPECIES, FINISHES } from './wood.js';
 import { buildStudio, LIGHTS, PLINTH_TOP } from './studio.js';
 import { buildDust } from './dust.js';
+import { buildGlass, CASE_HALF } from './glass.js';
 
 const $ = (id) => document.getElementById(id);
 // parameters come from the query and the hash, the hash winning, so a shared #link reopens the same view
@@ -31,6 +32,7 @@ const SCALE = 0.3; // unit space to metres: pieces stand about 0.57 m tall
 
 const renderer = new THREE.WebGPURenderer({ canvas: $('gl'), antialias: true, forceWebGL: Q.has('webgl') });
 renderer.shadowMap.enabled = true;
+renderer.setClearColor(0x000000, 0); // the glass pass's alpha is what the glass takes away, so it clears to 0
 renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.toneMapping = THREE.AgXToneMapping;
 let prCap = Math.min(devicePixelRatio, T.pr), prScale = 1;
@@ -73,13 +75,22 @@ const raysBlur = bilateralBlur(rays.getTextureNode(), null, 4, 0.5).getTextureNo
 // dust motes: their own scene and pass, added before bloom so the brightest glint
 const dustScene = new THREE.Scene();
 const dustPass = pass(dustScene, camera), dustCol = dustPass.getTextureNode('output');
-const lit = col.add(vec4(dustCol.rgb, 0));
+// the glass case: its own pass too, composited over the room (see glass.js)
+const glassScene = new THREE.Scene();
+const glassPass = pass(glassScene, camera), glassCol = glassPass.getTextureNode('output');
+const P_tint = uniform(new THREE.Color(0.93, 0.975, 0.955));
+const throughGlass = (rgb) => {
+  const g = glassCol.sample(screenUV);
+  return rgb.mul(g.a.oneMinus()).mul(mix(vec3(1), P_tint, smoothstep(0, 0.02, g.a))).add(g.rgb);
+};
+const lit = vec4(throughGlass(col.rgb.add(dustCol.rgb)), 1);
 const glow = bloom(lit, 0.22, 0.55, 0.85);
 pipeline.outputNode = Fn(() => {
   const occl = aoTex ? mix(float(1), aoTex.sample(screenUV).r, P.ao) : float(1);
   const g = raysBlur.sample(screenUV).r;
   // the haze in the beam scatters light toward you; it adds, so dark things stay dark outside it
-  const c = col.rgb.mul(occl).add(dustCol.rgb).mul(g.mul(-0.35).add(1)).add(P.beam.mul(P.beamGain).mul(g)).add(glow.rgb.mul(P.bloomOn));
+  const room = col.rgb.mul(occl).add(dustCol.rgb).mul(g.mul(-0.35).add(1)).add(P.beam.mul(P.beamGain).mul(g));
+  const c = throughGlass(room).add(glow.rgb.mul(P.bloomOn));
   const v = smoothstep(1.15, 0.25, length(screenUV.sub(0.5).mul(vec2(screenSize.x.div(screenSize.y), 1))));
   const px = screenUV.mul(screenSize).floor();
   const n = hash(px.x.add(px.y.mul(4111.0)).add(time.mul(60).floor().mul(7919.0).mod(65536))).sub(0.5).mul(0.006);
@@ -92,6 +103,7 @@ const state = {
   wood: Q.get('wood') in SPECIES ? Q.get('wood') : null, finish: Q.get('finish') in FINISHES ? Q.get('finish') : null,
   light: Math.max(0, LIGHTS.findIndex((l) => l.key === Q.get('light'))), spin: !SHOT && !Q.has('still'),
   play: !SHOT && Q.has('play'),
+  glass: Q.has('glass'),
 };
 let woodNow = 'walnut', finishNow = 'oil';
 
@@ -101,12 +113,41 @@ function applyLight(i) {
   studio.apply(L);
   rays.density.value = L.haze; rays.maxDensity.value = L.hazeMax; rays.distanceAttenuation.value = L.atten;
   P.beam.value.set(L.color).multiplyScalar(0.9);
-  syncDust();
+  syncDust(); syncGlass();
   renderer.toneMappingExposure = L.exposure;
   scene.environmentIntensity = L.key === 'studio' ? 0.7 : 0.22;
   document.querySelectorAll('#lights button').forEach((b, j) => b.classList.toggle('on', j === state.light));
   writeLink();
 }
+// the glass case: its key light and room reflections follow the light; the piece is scaled down to fit
+// where it is wider than the case, and the case is as tall as the piece needs
+let glass = null, extent = { r: 0.8, top: 0.6 };
+const _d = new THREE.Vector3();
+function syncGlass() {
+  if (!glass) return;
+  glass.U.keyDir.value.copy(_d.copy(studio.key.position).sub(studio.key.target.position).normalize());
+  glass.U.keyColor.value.copy(studio.key.color).multiplyScalar(studio.key.intensity / 9);
+  glass.U.env.value = scene.environmentIntensity * 0.4; // a dim gallery: the room it mirrors is darker than the map
+  glass.U.fill.value.copy(studio.fill.color).multiplyScalar(studio.fill.intensity * 0.35);
+}
+function fitPiece() {
+  const k = state.glass ? Math.min(1, (CASE_HALF - 0.04) / (extent.r * SCALE)) : 1;
+  piece.scale.setScalar(SCALE * k);
+  turntable.position.y = PLINTH_TOP - FOOT * SCALE * k;
+  if (!glass) return;
+  const H = Math.max(0.42, (extent.top - FOOT) * SCALE * k + 0.09);
+  if (Math.abs(H - glass.height) > 0.004) glass.resize(H);
+  glass.group.visible = state.glass;
+  if (dust) {
+    dust.U.caseOn.value = state.glass ? 1 : 0;
+    dust.U.caseMin.value.set(-CASE_HALF, PLINTH_TOP, -CASE_HALF); dust.U.caseMax.value.set(CASE_HALF, PLINTH_TOP + H, CASE_HALF);
+  }
+}
+function setGlass(on) {
+  state.glass = on; $('glass').classList.toggle('on', on);
+  fitPiece(); writeLink();
+}
+
 // dust motes in the beam: made after the first frame, once the key light's shadow map exists
 let dust = null;
 function syncDust() {
@@ -150,6 +191,11 @@ function setGeometry(m) {
   g.setIndex(new THREE.BufferAttribute(m.index, 1));
   g.computeBoundingSphere(); g.computeBoundingBox();
   piece.geometry.dispose(); piece.geometry = g; piece.visible = true;
+  // how far the piece reaches from the turntable's axis, in its own units, and how high it stands
+  let r2 = 0; const p = m.position;
+  for (let i = 0; i < p.length; i += 3) r2 = Math.max(r2, p[i] * p[i] + p[i + 2] * p[i + 2]);
+  extent = { r: Math.sqrt(r2), top: g.boundingBox.max.y };
+  fitPiece();
 }
 
 let generation = 0;
@@ -209,6 +255,7 @@ function linkParams() {
   p.set('cam', [c.x, c.y, c.z, t.x, t.y, t.z].map(f).join(','));
   if (!state.spin) p.set('still', '');
   if (state.play) p.set('play', '');
+  if (state.glass) p.set('glass', '');
   return p.toString().replace(/%2C/g, ',').replace(/=(&|$)/g, '$1');
 }
 let linkTimer = 0;
@@ -217,14 +264,14 @@ function writeLink() {
   clearTimeout(linkTimer);
   linkTimer = setTimeout(() => {
     const keep = new URLSearchParams(location.search);
-    for (const k of ['seed', 'wood', 'finish', 'light', 'cam', 'still', 'play']) keep.delete(k);
+    for (const k of ['seed', 'wood', 'finish', 'light', 'cam', 'still', 'play', 'glass']) keep.delete(k);
     const q = keep.toString();
     history.replaceState(null, '', location.pathname + (q ? '?' + q : '') + '#' + linkParams());
   }, 150);
 }
 async function copyLink() {
   clearTimeout(linkTimer);
-  history.replaceState(null, '', location.pathname + location.search.replace(/[?&](seed|wood|finish|light|cam|still|play)=[^&]*/g, '') + '#' + linkParams());
+  history.replaceState(null, '', location.pathname + location.search.replace(/[?&](seed|wood|finish|light|cam|still|play|glass)=[^&]*/g, '') + '#' + linkParams());
   const url = location.href, el = $('link');
   try { await navigator.clipboard.writeText(url); el.classList.add('on'); el.title = 'Link copied'; } catch (e) { prompt('Link to this piece', url); }
   setTimeout(() => { el.classList.remove('on'); el.title = 'Copy link (c)'; }, 1500);
@@ -241,8 +288,10 @@ $('new').onclick = () => newPiece();
 $('spin').onclick = () => { state.spin = !state.spin; $('spin').classList.toggle('on', state.spin); writeLink(); };
 $('play').onclick = () => setPlay(!state.play);
 $('link').onclick = () => copyLink();
+$('glass').onclick = () => setGlass(!state.glass);
 $('save').onclick = () => save();
 $('spin').classList.toggle('on', state.spin);
+$('glass').classList.toggle('on', state.glass);
 
 async function save() {
   await pipeline.render();
@@ -257,6 +306,7 @@ addEventListener('keydown', (e) => {
   else if (k === 'l') applyLight(state.light + 1);
   else if (k === 'p') setPlay(!state.play);
   else if (k === 'c') copyLink();
+  else if (k === 'g') setGlass(!state.glass);
   else if (k === 't' || k === ' ') { state.spin = !state.spin; $('spin').classList.toggle('on', state.spin); e.preventDefault(); }
   else if (k === 'h') document.body.classList.toggle('calm');
   else if (k === 's') save();
@@ -294,12 +344,14 @@ function frame(now) {
   try { await newPiece(state.seed); } catch (e) { $('status').textContent = 'Could not carve: ' + e.message; console.error(e); return; }
   await pipeline.render();
   dust = buildDust(dustScene, studio.key, depth, { count: T.dust }); syncDust();
+  glass = buildGlass(glassScene, { light: studio.key, envTexture: scene.environment, sceneDepth: depth, base: new THREE.Vector3(0, PLINTH_TOP, 0) });
+  syncGlass(); fitPiece();
   controls.addEventListener('change', () => dust.U.focus.value.copy(controls.target));
   $('status').remove(); document.body.classList.add('ready');
   if (state.play) setPlay(true);
   if (SHOT) {
     window.__hollow = {
-      info, state, wood, studio, dust, camera, controls, turntable, P, rays,
+      info, state, wood, studio, piece, dust, get glass() { return glass; }, setGlass, camera, controls, turntable, P, rays,
       step: async (n = 1) => { for (let i = 0; i < n; i++) { controls.update(); await pipeline.render(); } },
       newPiece, light: applyLight, setWood: (k) => { state.wood = k; applyWood(k); }, setFinish: (k) => { state.finish = k; applyFinish(k); },
       cam: (p, t) => { camera.position.set(...p); if (t) controls.target.set(...t); controls.update(); },

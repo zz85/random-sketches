@@ -28,6 +28,8 @@ The studio is a curved backdrop, a plaster plinth and one shadowed key light, wi
 
 Dust motes drift through the room, and each one checks the key light's shadow map, so it only shows inside the beam and blinks out as it falls into the shadow of a mullion or the piece. They turn as they fall and catch the light now and then, which does more to sell the sunbeam than the haze alone.
 
+A small case icon puts the piece under a glass vitrine. Glass that's nearly invisible face-on is mostly about what it reflects, so the panes mirror the room at grazing angles and trace the plinth top as a plane, lit and shadowed like the real one, which gives them the bright band low down that real cases have. The cut edges show green, the sun glints where a pane is in the beam, and the dust stays outside.
+
 ## Watching it
 
 Press play and it carves a new piece every two seconds in a random wood and finish. This turned out to be the best way to use it: you see the range of the generator quickly and stop on the ones you like. The hash keeps the seed, wood, finish, light and camera, so any piece you stop on can be shared exactly.

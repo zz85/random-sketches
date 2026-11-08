@@ -1,6 +1,7 @@
 # Logs
 
 8 Nov 2026
+- Hollow: an optional glass display case (case icon or `g`, `glass` in the link): Fresnel panes that mirror the room and the plinth, green edges, a sun glint in the beam, dust kept outside it; the piece shrinks to fit
 - Hollow: dust motes drift in the sunlight, lit only inside the beam (tested against the key light's shadow map) and glinting as they turn
 - Hollow: autoplay (play button or `p`) carves a new piece every 2 s in a random wood and finish; the address bar keeps a share link in its hash (seed, wood, finish, light, camera, turntable, autoplay), and a link button (`c`) copies it
 - Add [Hollow](vibes/hollow/) (Codevember: Hollow): generated wooden sculptures, vessels, pebbles, totems, rings and lobed clusters, pierced and hollowed by smooth CSG cuts with filleted edges, meshed by surface nets in a worker with baked occlusion. Solid procedural grain in TSL (nine woods, four finishes) so the rings run through the carving, shown on a plinth under skylight, window, golden-hour or studio light with shadows, godrays, GTAO and bloom. three.js r187 WebGPU (WebGL 2 fallback), offline PWA. `node --test test_sdf.js`, `node smoke.js`

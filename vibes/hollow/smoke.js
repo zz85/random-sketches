@@ -78,6 +78,16 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
       check(`piece ${seed} renders`, s.sd > 6, `sd ${s.sd.toFixed(1)}, ${((Date.now() - t1) / 1000).toFixed(1)} s, ${await b.evaluate('__hollow.info.tris')} tris`);
     }
     er = errors(); check('no errors in later views', er.length === 0, er.slice(0, 3).join(' | ').slice(0, 900));
+    // the glass case: on and off render cleanly, the piece shrinks to fit inside it, and no motes float inside
+    await b.evaluate(`(() => { __hollow.light(1); document.getElementById('glass').click(); })()`); await b.evaluate('__hollow.step(3)'); await sleep(200);
+    const gl = await b.evaluate(`(() => { const g = __hollow.glass, d = __hollow.dust; return { on: __hollow.state.glass, vis: g.group.visible, k: __hollow.piece.scale.x / 0.3, h: g.height, caseOn: d?.U?.caseOn?.value }; })()`);
+    await shot('glass'); s = await stats();
+    check('the glass case renders around the piece', gl.on && gl.vis && gl.k <= 1 && gl.h >= 0.42 && s.sd > 6, JSON.stringify(gl) + ` sd ${s.sd.toFixed(1)}`);
+    check('no dust inside the case', gl.caseOn === undefined || gl.caseOn === 1, `caseOn ${gl.caseOn}`);
+    await b.evaluate(`document.getElementById('glass').click()`); await b.evaluate('__hollow.step(2)');
+    const off = await b.evaluate(`({ on: __hollow.state.glass, vis: __hollow.glass.group.visible, k: __hollow.piece.scale.x / 0.3 })`);
+    check('the case comes off again', !off.on && !off.vis && Math.abs(off.k - 1) < 1e-6, JSON.stringify(off));
+    er = errors(); check('no errors with the glass case', er.length === 0, er.slice(0, 3).join(' | ').slice(0, 900));
     // a share link reopens the same view, and autoplay rolls new pieces in random woods and finishes
     const link = 'seed=12&wood=olive&finish=wax&light=window&cam=1.1,1.5,1.8,0,1.2,0&still';
     await b.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/hollow/?webgl&q=0#${link}` });
@@ -91,7 +101,12 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
     check('autoplay varies the wood and finish', mats.size >= 2, [...mats].join(' / '));
     await b.evaluate(`document.getElementById('play').click()`); await sleep(300);
     er = errors(); check('no errors in autoplay', er.length === 0, er.slice(0, 3).join(' | ').slice(0, 900));
-    if (process.env.SHOTS) for (const n of ['skylight', 'window', 'golden', 'close_maple', 'piece_7']) fs.copyFileSync(path.join(OUT, n + '.png'), path.join(DIR, `shot_${n}.png`));
+    await b.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/hollow/?webgl&q=0#seed=5&light=skylight&glass&still` });
+    await waitFor(() => b.evaluate('document.body.classList.contains("ready") && !document.body.classList.contains("carving")'), 300000); await sleep(600);
+    const gq = await b.evaluate(`({ on: document.getElementById('glass').classList.contains('on'), hash: location.hash })`);
+    er = errors();
+    check('a link with glass reopens with the case on', gq.on && /(^|&|#)glass(&|$)/.test(gq.hash) && er.length === 0, JSON.stringify(gq) + ' ' + er.slice(0, 2).join(' | ').slice(0, 600));
+    if (process.env.SHOTS) for (const n of ['skylight', 'window', 'golden', 'close_maple', 'piece_7', 'glass']) fs.copyFileSync(path.join(OUT, n + '.png'), path.join(DIR, `shot_${n}.png`));
   } catch (e) { check('run', false, e.message); }
   b.kill(); server.close();
   console.log(failed ? `${failed} failed` : 'all passed', `(shots in ${OUT})`);

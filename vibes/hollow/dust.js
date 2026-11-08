@@ -17,7 +17,7 @@ import {
 } from 'three/tsl';
 
 export function buildDust(scene, light, sceneDepth, { count = 2400, box = [1.8, 1.5, 1.8], centre = [0, 1.45, 0] } = {}) {
-  const U = { amount: uniform(1), color: uniform(new THREE.Color(1, 0.9, 0.75)), focus: uniform(new THREE.Vector3(0, 1.2, 0)) };
+  const U = { caseOn: uniform(0), caseMin: uniform(new THREE.Vector3()), caseMax: uniform(new THREE.Vector3()), amount: uniform(1), color: uniform(new THREE.Color(1, 0.9, 0.75)), focus: uniform(new THREE.Vector3(0, 1.2, 0)) };
   const r = (k) => hash(instanceIndex.add(k * 7919));
   const B = vec3(...box), C = vec3(...centre);
 
@@ -51,7 +51,10 @@ export function buildDust(scene, light, sceneDepth, { count = 2400, box = [1.8, 
     const glint = pow(sin(time.mul(r(12).mul(2).add(0.6)).add(r(13).mul(6.28))).mul(0.5).add(0.5), 3).mul(0.85).add(0.15);
     const fade = smoothstep(0, 0.08, length(place.sub(cameraPosition)).sub(0.15)); // none against the lens
     const seen = step(depth, sceneDepth.sample(screenUV).r);
-    const b = lit.mul(seen).mul(glint).mul(fade).mul(U.amount).mul(mix(float(1), float(0.25), blur)).mul(mix(float(0.4), float(1.4), r(14)));
+    // none inside a closed glass case: its air is still and clean
+    const inCase = step(U.caseMin, place).mul(step(place, U.caseMax));
+    const free = float(1).sub(U.caseOn.mul(inCase.x).mul(inCase.y).mul(inCase.z));
+    const b = lit.mul(seen).mul(free).mul(glint).mul(fade).mul(U.amount).mul(mix(float(1), float(0.25), blur)).mul(mix(float(0.4), float(1.4), r(14)));
     return vec4(U.color.mul(b).mul(disc), disc.mul(b));
   })();
 
