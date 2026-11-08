@@ -1,0 +1,16 @@
+{
+  "name": "Hollow - carved wooden sculptures",
+  "short_name": "Hollow",
+  "description": "Generated wooden sculptures, hollowed by smooth carving, shown in a gallery with light through a window.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#0d0b0a",
+  "theme_color": "#0d0b0a",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

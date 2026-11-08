@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0d0b0a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="description" content="Generated wooden sculptures, hollowed by smooth carving, shown in a gallery with light through a window.">
+<title>Hollow</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg">
+<link rel="apple-touch-icon" href="icon-192.png">
+<script src="../pwa/install.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0d0b0a; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  canvas { display: block; position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; }
+  #status { position: fixed; inset: 0; display: grid; place-items: center; color: #e8dccb; font: italic 15px Georgia, serif; letter-spacing: 0.08em; }
+  #title { position: fixed; left: max(20px, env(safe-area-inset-left)); top: max(16px, env(safe-area-inset-top)); color: #f2e9dc; font: 300 20px/1.2 Georgia, serif;
+    letter-spacing: 0.3em; text-shadow: 0 1px 10px rgba(0, 0, 0, 0.6); pointer-events: none; transition: opacity 0.6s; }
+  #title small { display: block; letter-spacing: 0.06em; font-size: 13px; margin-top: 8px; font-style: italic; opacity: 0.85; }
+  #title small + small { margin-top: 3px; font-size: 12px; opacity: 0.6; }
+  #carving { opacity: 0; transition: opacity 0.4s; }
+  body.carving #carving { opacity: 0.7; }
+  #bar { position: fixed; left: 50%; bottom: max(12px, env(safe-area-inset-bottom)); transform: translateX(-50%); display: flex; gap: 6px; flex-wrap: wrap; justify-content: center;
+    width: max-content; max-width: calc(100vw - 20px); opacity: 0; transition: opacity 1s; }
+  body.ready #bar { opacity: 1; }
+  body.calm #bar, body.calm #title { opacity: 0; pointer-events: none; }
+  .pill { display: flex; align-items: center; gap: 4px; border: 1px solid rgba(255, 240, 220, 0.18); background: rgba(22, 16, 12, 0.5); border-radius: 20px; padding: 4px 6px;
+    -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); color: #f0e6d8; font: 12px Georgia, serif; }
+  .pill button, .pill select { appearance: none; -webkit-appearance: none; border: 0; background: transparent; color: inherit; font: inherit; padding: 6px 10px; border-radius: 16px; cursor: pointer; letter-spacing: 0.04em; }
+  .pill select { padding-right: 18px; background: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="8" height="5"><path d="M0 0l4 5 4-5z" fill="%23f0e6d8" opacity=".6"/></svg>') no-repeat right 6px center; }
+  .pill select option { color: #222; }
+  .pill button.on { background: rgba(230, 170, 100, 0.32); }
+  .pill button:focus-visible, .pill select:focus-visible { outline: 2px solid rgba(255, 255, 255, 0.7); }
+  .pill svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; display: block; }
+  .pill button.icon { padding: 6px 8px; }
+  #new { font-weight: bold; letter-spacing: 0.08em; }
+  @media (max-width: 560px) { #lights button { padding: 6px 7px; } #title { font-size: 17px; } }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.187.0/build/three.webgpu.js",
+  "three/webgpu": "https://unpkg.com/three@0.187.0/build/three.webgpu.js",
+  "three/tsl": "https://unpkg.com/three@0.187.0/build/three.tsl.js",
+  "three/addons/": "https://unpkg.com/three@0.187.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="status">carving&hellip;</div>
+<div id="title">HOLLOW<small id="name"></small><small><span id="mat"></span> <span id="carving">&middot; carving&hellip;</span></small></div>
+<div id="bar">
+  <div class="pill"><button id="new" title="New piece (n)">&#10022; New piece</button></div>
+  <div class="pill"><select id="wood" title="Wood (w)" aria-label="Wood"></select><select id="finish" title="Finish (f)" aria-label="Finish"></select></div>
+  <div class="pill" id="lights" title="Light (l)"></div>
+  <div class="pill">
+    <button id="play" class="icon" title="Autoplay (p)" aria-label="Autoplay"><svg viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z"/></svg></button>
+    <button id="spin" class="icon" title="Turntable (t)" aria-label="Turntable"><svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 4v4h-4"/></svg></button>
+    <button id="save" class="icon" title="Save picture (s)" aria-label="Save picture"><svg viewBox="0 0 24 24"><path d="M12 4v11"/><path d="M7 10l5 5 5-5"/><path d="M5 19h14"/></svg></button>
+    <button id="link" class="icon" title="Copy link (c)" aria-label="Copy link"><svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg></button>
+    <button data-pwa-install class="icon" title="Install app" aria-label="Install app" style="display:none"><svg viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M12 8v6"/><path d="M9.5 11.5L12 14l2.5-2.5"/></svg></button>
+  </div>
+</div>
+<script type="module" src="main.js"></script>
+</body>
+</html>
