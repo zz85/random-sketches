@@ -106,6 +106,14 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
     const gq = await b.evaluate(`({ on: document.getElementById('glass').classList.contains('on'), hash: location.hash })`);
     er = errors();
     check('a link with glass reopens with the case on', gq.on && /(^|&|#)glass(&|$)/.test(gq.hash) && er.length === 0, JSON.stringify(gq) + ' ' + er.slice(0, 2).join(' | ').slice(0, 600));
+    // the orbit moves the camera round the plinth at the same distance; the link records where it got to
+    const camOf = (h) => /cam=([^&]+)/.exec(h)[1].split(',').map(Number);
+    const c0 = camOf(gq.hash);
+    await b.evaluate(`document.getElementById('spin').click()`); await sleep(5000);
+    await b.evaluate(`document.getElementById('spin').click()`); await sleep(200);
+    const c1 = camOf(await b.evaluate('location.hash'));
+    const d = (c) => Math.hypot(c[0] - c[3], c[2] - c[5]), turned = Math.atan2(c1[0] - c1[3], c1[2] - c1[5]) - Math.atan2(c0[0] - c0[3], c0[2] - c0[5]);
+    check('the orbit swings the camera round the exhibit', Math.abs(turned) > 0.02 && Math.abs(d(c1) - d(c0)) < 0.03 && Math.abs(c1[1] - c0[1]) < 0.02, `turned ${turned.toFixed(2)} rad, r ${d(c0).toFixed(2)} -> ${d(c1).toFixed(2)}`);
     if (process.env.SHOTS) for (const n of ['skylight', 'window', 'golden', 'close_maple', 'piece_7', 'glass']) fs.copyFileSync(path.join(OUT, n + '.png'), path.join(DIR, `shot_${n}.png`));
   } catch (e) { check('run', false, e.message); }
   b.kill(); server.close();

@@ -15,8 +15,8 @@ Codevember: Hollow. Each seed carves a wooden sculpture: a vessel, pebble, totem
 - **Light** (`l`): Skylight, Morning window, Golden hour, Studio.
 - **Autoplay** (play button, `p`) carves a new piece in a random wood and finish 2 s after the last one finishes.
 - **Glass** (case icon, `g`) puts the piece in a glass display case. The piece is scaled down to fit where it would touch the panes, and the dust stays outside.
-- **Link** (`c`) copies a link to what you see. The address bar always holds it too, as a hash: `#seed=12&wood=olive&finish=wax&light=window&cam=1.1,1.5,1.8,0,1.2,0`, plus `still` when the turntable is off, `play` when autoplay is on and `glass` when the case is on. Wood and finish are left out unless you chose them, since the seed picks them.
-- Drag to orbit, pinch or scroll to zoom. `t` or space turns the turntable, `s` saves a PNG, `h` hides the interface.
+- **Link** (`c`) copies a link to what you see. The address bar always holds it too, as a hash: `#seed=12&wood=olive&finish=wax&light=window&cam=1.1,1.5,1.8,0,1.2,0`, plus `still` when the orbit is off, `play` when autoplay is on and `glass` when the case is on. Wood and finish are left out unless you chose them, since the seed picks them.
+- Drag to orbit, pinch or scroll to zoom. `t` or space starts or stops the slow camera orbit round the plinth, `s` saves a PNG, `h` hides the interface.
 
 URL options, in the query or the hash: `seed=`, `wood=`, `finish=`, `light=skylight|window|golden|studio`, `cam=`, `still`, `glass`, `q=0|1|2` (quality tier; phones start at 0), `webgl` (force the WebGL 2 backend), `nodust`.
 

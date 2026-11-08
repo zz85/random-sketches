@@ -1,6 +1,7 @@
 # Logs
 
 8 Nov 2026
+- Hollow: the turntable is now a slow camera orbit round the exhibit (`t` or space), so the piece, its case and the light stay put while the view walks round them
 - Hollow: an optional glass display case (case icon or `g`, `glass` in the link): Fresnel panes that mirror the room and the plinth, green edges, a sun glint in the beam, dust kept outside it; the piece shrinks to fit
 - Hollow: dust motes drift in the sunlight, lit only inside the beam (tested against the key light's shadow map) and glinting as they turn
 - Hollow: autoplay (play button or `p`) carves a new piece every 2 s in a random wood and finish; the address bar keeps a share link in its hash (seed, wood, finish, light, camera, turntable, autoplay), and a link button (`c`) copies it

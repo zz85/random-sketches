@@ -215,7 +215,7 @@ async function newPiece(seed = Math.floor(Math.random() * 100000)) {
   const quick = await mesh(spec, 64, false);
   if (gen !== generation) return;
   if (quick.error) throw new Error(quick.error);
-  setGeometry(quick.mesh); turntable.rotation.y = 0;
+  setGeometry(quick.mesh);
   const fine = await mesh(spec, T.N, true);
   if (gen !== generation) return;
   if (fine.error) throw new Error(fine.error);
@@ -311,8 +311,8 @@ addEventListener('keydown', (e) => {
   else if (k === 'h') document.body.classList.toggle('calm');
   else if (k === 's') save();
 });
-// a drag stops the turntable for a moment so you can look
-let heldUntil = 0;
+// a drag stops the orbit for a moment so you can look
+let heldUntil = 0; const UP = new THREE.Vector3(0, 1, 0);
 controls.addEventListener('start', () => { heldUntil = Infinity; });
 controls.addEventListener('end', () => { heldUntil = performance.now() + 2500; writeLink(); });
 
@@ -324,7 +324,8 @@ const info = { backend: '', meshMs: 0, tris: 0, N: 0 };
 let last = performance.now(), slow = 0, fast = 0;
 function frame(now) {
   const dt = Math.min(0.1, (now - last) / 1000); last = now;
-  if (state.spin && now > heldUntil) turntable.rotation.y += dt * 0.16;
+  // the camera walks slowly round the exhibit; the piece, its case and the light stay put
+  if (state.spin && now > heldUntil) camera.position.sub(controls.target).applyAxisAngle(UP, dt * 0.16).add(controls.target);
   controls.update();
   pipeline.render();
   // adaptive resolution: drop the pixel ratio under load, raise it back when there is room
@@ -355,7 +356,7 @@ function frame(now) {
       step: async (n = 1) => { for (let i = 0; i < n; i++) { controls.update(); await pipeline.render(); } },
       newPiece, light: applyLight, setWood: (k) => { state.wood = k; applyWood(k); }, setFinish: (k) => { state.finish = k; applyFinish(k); },
       cam: (p, t) => { camera.position.set(...p); if (t) controls.target.set(...t); controls.update(); },
-      spin: (a) => { turntable.rotation.y = a; },
+      spin: (a) => { camera.position.sub(controls.target).applyAxisAngle(UP, a).add(controls.target); controls.update(); },
     };
   } else {
     renderer.setAnimationLoop(frame);
