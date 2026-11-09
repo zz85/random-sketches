@@ -41,6 +41,7 @@ async function sessions() {
   const r = rec ? null : await make(bufs.rec);
   if (r) { rec = r.s; trace(`recogniser session ${r.ep}`); }
   if (d && r) ep = d.ep === r.ep ? d.ep : `${d.ep}+${r.ep}`;
+  if (det && rec) bufs = null;   // 21 MB of model bytes, not needed once the sessions hold them
   return performance.now() - t0;
 }
 
@@ -69,7 +70,7 @@ async function init(want) {
     fetch(MODELS.recYml).then((r) => r.text()),
   ]);
   recDict = parseRecDict(yml);
-  bufs = { det: detBuf, rec: recBuf };
+  bufs = { det: detBuf, rec: recBuf };   // until both sessions are made
   useGpu = !!gpu; split = want === 'split';
   trace(`models fetched, creating sessions (${gpu ? 'webgpu' : 'wasm'})`);
   await sessions();

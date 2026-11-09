@@ -1,7 +1,7 @@
 # Logs
 
 9 Nov 2026
-- Hanzi Lens on the GPU: ONNX Runtime's WebGPU buffer cache set to `lazyRelease`, so each run's buffers are freed once it is done instead of kept for every input size seen (releasing the sessions, tried first, didn't free that cache, which the GPU device holds); the crash trace records every line read on the GPU; `tools/gpu-smoke.mjs` reads the sample twice on WebGPU headless
+- Hanzi Lens on the GPU: the worker is closed after each full read, freeing its GPU device, buffers and WASM heap (iOS Safari killed the tab about 10 s after a read on WebGPU, idle, while CPU ran on), and made again for the next read; `?ep=split` puts the detector on the CPU and the recogniser on the GPU; ONNX Runtime's WebGPU buffer cache set to `lazyRelease`, so each run's buffers are freed once it is done instead of kept for every input size seen (releasing the sessions, tried first, didn't free that cache, which the GPU device holds); the crash trace records every line read on the GPU; `tools/gpu-smoke.mjs` reads the sample twice on WebGPU headless
 - Hanzi Lens: CPU (WASM) by default, since iOS Safari's WebGPU killed the tab after a read; a "Use the GPU (WebGPU)" box on the start screen, kept on the device (`?ep=webgpu` / `?ep=wasm` for one visit)
 - Hanzi Lens: dense menus read as rows, not columns (a second detector pass on the image stretched vertically when the first finds columns, run only on the rows around those columns and in passes no larger than the first, since a larger input crashed iOS Safari's WebGPU, and small photos scaled up to 1280 px); on a dense page only the tapped line gets pinyin; ONNX Runtime's load-time warnings silenced
 

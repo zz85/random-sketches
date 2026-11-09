@@ -65,15 +65,32 @@ function lastTrace() {
 
 // ---- worker ----
 
-const worker = new Worker('./worker.js', { type: 'module' });
-const waiting = [];   // the worker answers in order
-worker.onmessage = (e) => {
-  if (e.data.type === 'trace') { trace('worker: ' + e.data.step); return; }
-  const w = waiting.shift();
-  if (!w) return;
-  if (e.data.type === 'error') w.reject(new Error(e.data.message)); else w.resolve(e.data);
-};
-const call = (msg, transfer = []) => new Promise((resolve, reject) => { waiting.push({ resolve, reject }); worker.postMessage(msg, transfer); });
+// The worker is made on first use and, on the GPU, closed after each full read: iOS Safari
+// (iPhone, iOS 18.7) killed the tab about 10 s after a read on WebGPU had been drawn, with
+// nothing running, while the CPU backend ran on. Closing the worker frees its GPU device,
+// its buffers and ONNX Runtime's WASM heap; the next read makes it again from the cached
+// models (about 2.5 s on that iPhone). ?keep=1 keeps it, to compare.
+let worker = null, waiting = [];   // the worker answers in order
+function openWorker() {
+  worker = new Worker('./worker.js', { type: 'module' });
+  waiting = [];
+  worker.onmessage = (e) => {
+    if (e.data.type === 'trace') { trace('worker: ' + e.data.step); return; }
+    const w = waiting.shift();
+    if (!w) return;
+    if (e.data.type === 'error') w.reject(new Error(e.data.message)); else w.resolve(e.data);
+  };
+}
+function closeWorker(why) {
+  if (!worker) return;
+  worker.terminate(); worker = null;
+  for (const w of waiting) w.reject(new Error('reader closed'));
+  waiting = []; S.ready = null;
+  trace(`worker closed: ${why}`);
+}
+const send = (msg, transfer = []) => new Promise((resolve, reject) => { if (!worker) openWorker(); waiting.push({ resolve, reject }); worker.postMessage(msg, transfer); });
+// every call but init goes through boot, so a closed worker is made again first
+const call = async (msg, transfer = []) => { await boot(); return send(msg, transfer); };
 
 function status(text) { $('status').textContent = text || ''; }
 
@@ -113,7 +130,7 @@ function boot() {
   if (!S.ready) {
     status('Loading the reader…');
     trace('boot');
-    S.ready = Promise.all([call({ type: 'init', ep: engine() }), loadDict()]).then(([r]) => {
+    S.ready = Promise.all([send({ type: 'init', ep: engine() }), loadDict()]).then(([r]) => {
       S.ep = r.ep === 'webgpu' ? 'WebGPU' : r.ep === 'wasm' ? 'CPU' : r.ep === 'wasm+webgpu' ? 'CPU+WebGPU' : r.ep;
       status(S.ep);
       trace(`ready ${r.ep} in ${r.ms} ms; done`);
@@ -315,6 +332,7 @@ async function freeze(bitmap) {
     $('listBtn').disabled = !res.lines.length;
     draw();
     trace(`drawn (${document.querySelectorAll('#labels .py').length} labels)`);
+    if (/GPU/.test(S.ep) && params.get('keep') !== '1') closeWorker('free the GPU after a full read');
     heartbeat('after the read');
     status(`${S.ep} · ${res.lines.length} lines · ${res.ms} ms${S.dense && S.mode === 'pinyin' ? ' · tap a line for its pinyin' : ''}`);
   } catch (err) {
@@ -485,7 +503,7 @@ if (!navigator.mediaDevices?.getUserMedia) $('camBtn').hidden = true;
     el.querySelector('button').onclick = () => { navigator.clipboard?.writeText(el.querySelector('pre').textContent); status('Copied'); };
   }
 }
-const BUILD = 'v12';   // shown on the start screen; keep in step with sw.js VERSION
+const BUILD = 'v13';   // shown on the start screen; keep in step with sw.js VERSION
 $('build').textContent = `build ${BUILD}`;
 if ('serviceWorker' in navigator && !params.has('nosw')) {
   navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});
