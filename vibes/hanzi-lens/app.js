@@ -27,11 +27,48 @@ const S = {
 };
 window.__hl = { S };
 
+// ---- crash trace ----
+// iOS kills a tab that runs out of memory without a log. Each step of a read is written to
+// localStorage as it starts; a trace that doesn't end in 'done' was cut short, and the next
+// load shows its last steps on the start screen.
+const TRACE_KEY = 'hl-trace';
+const traceLog = [];
+function trace(step) {
+  traceLog.push(`${(performance.now() / 1000).toFixed(1)}s ${step}`);
+  if (traceLog.length > 40) traceLog.splice(0, traceLog.length - 40);
+  try { localStorage.setItem(TRACE_KEY, JSON.stringify({ at: Date.now(), ua: navigator.userAgent, ep: S.ep, steps: traceLog })); } catch { /* full or private */ }
+}
+// After a read, keep noting that the page is alive, so a crash after it shows too; leaving
+// the page normally closes the trace.
+let beat = null;
+function heartbeat(what) {
+  clearInterval(beat);
+  const t0 = performance.now();
+  let line = -1;
+  beat = setInterval(() => {
+    const step = `alive ${Math.round((performance.now() - t0) / 1000)}s ${what}`;
+    if (line >= 0 && traceLog[line] && traceLog[line].includes(' alive ')) traceLog[line] = `${(performance.now() / 1000).toFixed(1)}s ${step}`;
+    else { traceLog.push(''); line = traceLog.length - 1; traceLog[line] = `${(performance.now() / 1000).toFixed(1)}s ${step}`; }
+    try { const t = JSON.parse(localStorage.getItem(TRACE_KEY)); t.steps = traceLog; localStorage.setItem(TRACE_KEY, JSON.stringify(t)); } catch { /* */ }
+    if (performance.now() - t0 > 60000) { clearInterval(beat); trace('still alive after 60 s; done'); }
+  }, 2000);
+}
+addEventListener('pagehide', () => { clearInterval(beat); trace('page closed; done'); });
+
+function lastTrace() {
+  try {
+    const t = JSON.parse(localStorage.getItem(TRACE_KEY) || 'null');
+    if (!t || !t.steps.length || /done$/.test(t.steps[t.steps.length - 1])) return null;
+    return t;
+  } catch { return null; }
+}
+
 // ---- worker ----
 
 const worker = new Worker('./worker.js', { type: 'module' });
 const waiting = [];   // the worker answers in order
 worker.onmessage = (e) => {
+  if (e.data.type === 'trace') { trace('worker: ' + e.data.step); return; }
   const w = waiting.shift();
   if (!w) return;
   if (e.data.type === 'error') w.reject(new Error(e.data.message)); else w.resolve(e.data);
@@ -42,9 +79,13 @@ function status(text) { $('status').textContent = text || ''; }
 
 function loadDict() {
   if (!S.dictP) S.dictP = (async () => {
+    trace('dictionary: fetch');
     const res = await fetch('dict/cedict.txt.gz');
     const stream = res.body.pipeThrough(new DecompressionStream('gzip'));
-    S.dict = parseDict(await new Response(stream).text());
+    const text = await new Response(stream).text();
+    trace('dictionary: parse');
+    S.dict = parseDict(text);
+    trace(`dictionary: ${S.dict.count} entries`);
     return S.dict;
   })();
   return S.dictP;
@@ -53,9 +94,11 @@ function loadDict() {
 function boot() {
   if (!S.ready) {
     status('Loading the reader…');
+    trace('boot');
     S.ready = Promise.all([call({ type: 'init', ep: params.get('ep') }), loadDict()]).then(([r]) => {
       S.ep = r.ep === 'webgpu' ? 'WebGPU' : r.ep === 'wasm' ? 'CPU' : r.ep;
       status(S.ep);
+      trace(`ready ${r.ep} in ${r.ms} ms; done`);
       return r;
     }, (err) => { status('Could not load the reader: ' + err.message); S.ready = null; throw err; });
   }
@@ -240,19 +283,25 @@ async function freeze(bitmap) {
   S.frozen = { w: bitmap.width, h: bitmap.height, lines: [] };
   draw();
   status(`${S.ep} · reading…`);
+  trace(`freeze ${bitmap.width}x${bitmap.height}`);
   const id = ++S.frame;
   try {
     const res = await call({ type: 'frame', id, bitmap, detLong: FREEZE_DET, read: true }, [bitmap]);
     if (S.view !== 'frozen' || S.frame !== id) return;
+    trace(`${res.lines.length} lines back in ${res.ms} ms`);
     await loadDict();
     for (const l of res.lines) interpret(l, l);
+    trace('words and pinyin');
     S.frozen.lines = res.lines;
     S.frozen.ms = res.ms;
     $('listBtn').disabled = !res.lines.length;
     draw();
+    trace(`drawn (${document.querySelectorAll('#labels .py').length} labels)`);
+    heartbeat('after the read');
     status(`${S.ep} · ${res.lines.length} lines · ${res.ms} ms${S.dense && S.mode === 'pinyin' ? ' · tap a line for its pinyin' : ''}`);
   } catch (err) {
     status('Error: ' + err.message);
+    trace('error: ' + err.message + '; done');
   } finally {
     $('shutter').classList.remove('busy');
     draw();
@@ -409,4 +458,13 @@ addEventListener('dragover', (e) => e.preventDefault());
 addEventListener('drop', (e) => { e.preventDefault(); const f = [...(e.dataTransfer?.files || [])].find((x) => x.type.startsWith('image/')); if (f) openPhoto(f); });
 
 if (!navigator.mediaDevices?.getUserMedia) $('camBtn').hidden = true;
+{
+  const t = lastTrace();
+  if (t) {
+    const el = $('crash');
+    el.hidden = false;
+    el.querySelector('pre').textContent = `${new Date(t.at).toLocaleString()} · ${t.ep || 'not started'}\n${t.ua}\n\n` + t.steps.join('\n');
+    el.querySelector('button').onclick = () => { navigator.clipboard?.writeText(el.querySelector('pre').textContent); status('Copied'); };
+  }
+}
 if ('serviceWorker' in navigator && !params.has('nosw')) navigator.serviceWorker.register('sw.js').catch(() => {});

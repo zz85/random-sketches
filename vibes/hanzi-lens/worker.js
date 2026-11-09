@@ -17,6 +17,8 @@ const GRID_STRETCH = 1.5;   // vertical stretch of the second pass, for dense gr
 import { ORT_URL, ORT_DIST, MODELS } from './assets.js';
 
 let ort, det, rec, recDict, ep;
+// steps of the work, for the crash trace the page keeps (a tab the OS kills leaves no log)
+const trace = (step) => self.postMessage({ type: 'trace', step });
 let last = null;   // { id, img }
 
 async function init(want) {
@@ -32,6 +34,7 @@ async function init(want) {
     fetch(MODELS.recYml).then((r) => r.text()),
   ]);
   recDict = parseRecDict(yml);
+  trace(`models fetched, creating sessions (${gpu ? 'webgpu' : 'wasm'})`);
   // logSeverityLevel 3: errors only (the load-time warnings about unused initialisers and
   // shape ops kept on the CPU are expected)
   const opts = { graphOptimizationLevel: 'all', logSeverityLevel: 3 };
@@ -42,7 +45,10 @@ async function init(want) {
     }
     return { s: await ort.InferenceSession.create(buf, { ...opts, executionProviders: ['wasm'] }), ep: 'wasm' };
   };
-  const d = await make(detBuf), r = await make(recBuf);
+  const d = await make(detBuf);
+  trace(`detector session ${d.ep}`);
+  const r = await make(recBuf);
+  trace(`recogniser session ${r.ep}`);
   det = d.s; rec = r.s; ep = d.ep === r.ep ? d.ep : `${d.ep}+${r.ep}`;
   return { ep, ms: Math.round(performance.now() - t0), chars: recDict.length };
 }
@@ -61,6 +67,7 @@ function pixels(bitmap, w, h, use) {
 }
 
 async function detPass(img, { w, h }) {
+  trace(`detect ${w}x${h}`);
   const small = pixels(img.bitmap, w, h, `det${w}`);
   const out = await det.run({ [det.inputNames[0]]: new ort.Tensor('float32', detTensor(small), [1, 3, h, w]) });
   const map = out[det.outputNames[0]];
@@ -110,8 +117,10 @@ self.onmessage = (e) => {
         const boxes = await detect(img, m.detLong);
         const tDet = performance.now() - t0;
         const lines = [];
-        for (const b of boxes) {
+        if (m.read) trace(`${boxes.length} boxes, reading`);
+        for (const [k, b] of boxes.entries()) {
           const line = { quad: b.quad, vertical: b.vertical, score: b.score };
+          if (m.read && k % 10 === 0) trace(`read line ${k + 1}/${boxes.length}`);
           if (m.read) Object.assign(line, await read(img, b.quad));
           if (!m.read || line.text) lines.push(line);
         }

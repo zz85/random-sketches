@@ -84,3 +84,5 @@ button.primary { background: var(--red); border-color: var(--red); }
 .word .chars { color: var(--dim); font-size: 13px; margin-top: 6px; }
 .word.unknown .pz { color: var(--dim); }
 .credit { color: var(--dim); font-size: 11px; margin-top: 14px; }
+#crash { margin-top: 18px; text-align: left; }
+#crash pre { background: #0008; border-radius: 8px; padding: 8px; font-size: 11px; max-height: 30vh; overflow: auto; white-space: pre-wrap; color: var(--dim); }

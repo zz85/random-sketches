@@ -102,6 +102,19 @@ try {
     await shot('list');
     await tap('#closeBtn');
 
+    // ---- crash trace: a finished read ends in 'done'; a cut-off one shows on the next load ----
+    await sleep(2300);
+    const tr = await b.evaluate(`JSON.parse(localStorage.getItem('hl-trace')).steps`);
+    check('crash trace records the read and keeps beating after it', tr.some((x) => /worker: detect/.test(x)) && /alive \d+s after the read$/.test(tr[tr.length - 1]), tr.slice(-3).join(' | '));
+    // a crash fires no pagehide: fake one from another page of the same origin
+    await b.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/hanzi-lens/sample.json` });
+    await sleep(300);
+    await b.evaluate(`(()=>{const t=JSON.parse(localStorage.getItem('hl-trace'));t.steps.push('9.9s worker: read line 11/15');localStorage.setItem('hl-trace',JSON.stringify(t));return 1})()`);
+    await b.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/hanzi-lens/` });
+    await waitFor(() => b.evaluate('!!window.__hl'), 10000);
+    check('a cut-off trace shows on the next load', await b.evaluate(`!document.getElementById('crash').hidden && document.querySelector('#crash pre').textContent.includes('read line 11/15')`));
+    await shot('crash');
+
     // ---- live camera ----
     await b.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/hanzi-lens/` });
     await waitFor(() => b.evaluate('!!window.__hl'), 10000);
