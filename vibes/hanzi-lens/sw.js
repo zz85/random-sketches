@@ -4,7 +4,7 @@
  * to exact versions, so they are kept cache-first once fetched: after the first run the
  * app works offline. Bump VERSION when the shell's file list changes.
  */
-const VERSION = 'hanzi-lens-v9';
+const VERSION = 'hanzi-lens-v10';
 const ASSETS = 'hanzi-lens-assets-v1';   // pinned third-party files, kept across app updates
 const SHELL = ['./', './index.html', './style.css', './app.js', './text.js', './ocr.js', './worker.js', './assets.js',
   './dict/cedict.txt.gz', './sample.jpg', './manifest.webmanifest', '../pwa/install.js', './icon.svg', './icon-192.png', './icon-512.png'];

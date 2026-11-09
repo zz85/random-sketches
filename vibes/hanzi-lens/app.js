@@ -25,7 +25,7 @@ const S = {
   frozen: null,                                        // { w, h, lines }
   sel: null, listOpen: false,
 };
-window.__hl = { S };
+window.__hl = { S, freeze };   // for the smoke tests
 
 // ---- crash trace ----
 // iOS kills a tab that runs out of memory without a log. Each step of a read is written to
@@ -485,7 +485,7 @@ if (!navigator.mediaDevices?.getUserMedia) $('camBtn').hidden = true;
     el.querySelector('button').onclick = () => { navigator.clipboard?.writeText(el.querySelector('pre').textContent); status('Copied'); };
   }
 }
-const BUILD = 'v9';   // shown on the start screen; keep in step with sw.js VERSION
+const BUILD = 'v10';   // shown on the start screen; keep in step with sw.js VERSION
 $('build').textContent = `build ${BUILD}`;
 if ('serviceWorker' in navigator && !params.has('nosw')) {
   navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});

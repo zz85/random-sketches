@@ -16,10 +16,48 @@ import { detSize, detSizeStretched, detTensor, dbBoxes, readingOrder, recTensor,
 const GRID_STRETCH = 1.5;   // vertical stretch of the second pass, for dense grids (see mergeGrid)
 import { ORT_URL, ORT_DIST, MODELS } from './assets.js';
 
-let ort, det, rec, recDict, ep;
+let ort, det, rec, recDict, ep, bufs, useGpu;
 // steps of the work, for the crash trace the page keeps (a tab the OS kills leaves no log)
 const trace = (step) => self.postMessage({ type: 'trace', step });
 let last = null;   // { id, img }
+
+// logSeverityLevel 3: errors only (the load-time warnings about unused initialisers and
+// shape ops kept on the CPU are expected)
+const OPTS = { graphOptimizationLevel: 'all', logSeverityLevel: 3 };
+async function make(buf) {
+  if (useGpu) {
+    try { return { s: await ort.InferenceSession.create(buf, { ...OPTS, executionProviders: ['webgpu'] }), ep: 'webgpu' }; }
+    catch (e) { console.warn('WebGPU session failed, using WASM', e); }
+  }
+  return { s: await ort.InferenceSession.create(buf, { ...OPTS, executionProviders: ['wasm'] }), ep: 'wasm' };
+}
+
+/** The two sessions, made again where a read on the GPU released them. */
+async function sessions() {
+  if (det && rec) return;
+  const t0 = performance.now();
+  const d = det ? null : await make(bufs.det);
+  if (d) { det = d.s; trace(`detector session ${d.ep}`); }
+  const r = rec ? null : await make(bufs.rec);
+  if (r) { rec = r.s; trace(`recogniser session ${r.ep}`); }
+  if (d && r) ep = d.ep === r.ep ? d.ep : `${d.ep}+${r.ep}`;
+  return performance.now() - t0;
+}
+
+/**
+ * Free the sessions' GPU memory. ONNX Runtime's WebGPU backend keeps the buffers of every
+ * input shape it has run for the life of the session, and iOS Safari (iPhone, iOS 18.7)
+ * killed the tab just after a full read had been drawn, while the CPU backend ran the same
+ * read through. Releasing the sessions after a full read frees those buffers; they are made
+ * again from the model bytes, kept here, on the next read (about 0.9 s on that iPhone).
+ */
+async function releaseGpu() {
+  if (!ep || !ep.includes('webgpu')) return;
+  const all = [det, rec].filter(Boolean);
+  det = rec = null;
+  for (const s of all) await s.release();
+  trace('GPU sessions released');
+}
 
 async function init(want) {
   const t0 = performance.now();
@@ -34,22 +72,10 @@ async function init(want) {
     fetch(MODELS.recYml).then((r) => r.text()),
   ]);
   recDict = parseRecDict(yml);
+  bufs = { det: detBuf, rec: recBuf };
+  useGpu = !!gpu;
   trace(`models fetched, creating sessions (${gpu ? 'webgpu' : 'wasm'})`);
-  // logSeverityLevel 3: errors only (the load-time warnings about unused initialisers and
-  // shape ops kept on the CPU are expected)
-  const opts = { graphOptimizationLevel: 'all', logSeverityLevel: 3 };
-  const make = async (buf) => {
-    if (gpu) {
-      try { return { s: await ort.InferenceSession.create(buf, { ...opts, executionProviders: ['webgpu'] }), ep: 'webgpu' }; }
-      catch (e) { console.warn('WebGPU session failed, using WASM', e); }
-    }
-    return { s: await ort.InferenceSession.create(buf, { ...opts, executionProviders: ['wasm'] }), ep: 'wasm' };
-  };
-  const d = await make(detBuf);
-  trace(`detector session ${d.ep}`);
-  const r = await make(recBuf);
-  trace(`recogniser session ${r.ep}`);
-  det = d.s; rec = r.s; ep = d.ep === r.ep ? d.ep : `${d.ep}+${r.ep}`;
+  await sessions();
   return { ep, ms: Math.round(performance.now() - t0), chars: recDict.length };
 }
 
@@ -110,6 +136,7 @@ async function detStretched(img, base, cols, { w, h }) {
 }
 
 async function detect(img, detLong) {
+  await sessions();
   const base = detSize(img.width, img.height, detLong);
   let boxes = await detPass(img, base);
   // columns may be rows of a dense grid read the wrong way: check with a stretched pass
@@ -126,6 +153,7 @@ function fullPixels(img) {
 }
 
 async function read(img, quad) {
+  await sessions();
   const { tensor, width, used } = recTensor(fullPixels(img), quad);
   const out = await rec.run({ [rec.inputNames[0]]: new ort.Tensor('float32', tensor, [1, 3, 48, width]) });
   const t = out[rec.outputNames[0]];
@@ -160,6 +188,7 @@ self.onmessage = (e) => {
         }
         if (last && last.img.bitmap !== bitmap) { last.img.bitmap.close?.(); last.img.data = null; }
         last = { id: m.id, img };
+        if (m.read) await releaseGpu();   // a full read: the frozen view, done until the next one
         self.postMessage({ type: 'lines', id: m.id, w: img.width, h: img.height, lines, ms: Math.round(performance.now() - t0), detMs: Math.round(tDet) });
       } catch (err) {
         self.postMessage({ type: 'error', id: m.id, message: String(err && err.message || err) });
