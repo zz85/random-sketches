@@ -1,6 +1,6 @@
 // WebGPU check: reads the sample twice on ?ep=webgpu in headless Chromium (SwiftShader or lavapipe,
 // so the timings are meaningless) and prints the crash trace, to see that the GPU sessions are
-// released after each full read and made again for the next. node tools/gpu-smoke.mjs
+// reads it twice on the GPU (the second read reuses the sessions and the device). node tools/gpu-smoke.mjs
 import http from 'http'; import fs from 'fs'; import path from 'path';
 import { launch, waitFor, sleep } from '../../orrery/cdp.js';
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../..'), PORT = 8813;

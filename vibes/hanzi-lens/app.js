@@ -485,7 +485,7 @@ if (!navigator.mediaDevices?.getUserMedia) $('camBtn').hidden = true;
     el.querySelector('button').onclick = () => { navigator.clipboard?.writeText(el.querySelector('pre').textContent); status('Copied'); };
   }
 }
-const BUILD = 'v10';   // shown on the start screen; keep in step with sw.js VERSION
+const BUILD = 'v11';   // shown on the start screen; keep in step with sw.js VERSION
 $('build').textContent = `build ${BUILD}`;
 if ('serviceWorker' in navigator && !params.has('nosw')) {
   navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});

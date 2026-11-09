@@ -26,13 +26,13 @@ let last = null;   // { id, img }
 const OPTS = { graphOptimizationLevel: 'all', logSeverityLevel: 3 };
 async function make(buf) {
   if (useGpu) {
-    try { return { s: await ort.InferenceSession.create(buf, { ...OPTS, executionProviders: ['webgpu'] }), ep: 'webgpu' }; }
+    try { return { s: await ort.InferenceSession.create(buf, { ...OPTS, executionProviders: [GPU_EP] }), ep: 'webgpu' }; }
     catch (e) { console.warn('WebGPU session failed, using WASM', e); }
   }
   return { s: await ort.InferenceSession.create(buf, { ...OPTS, executionProviders: ['wasm'] }), ep: 'wasm' };
 }
 
-/** The two sessions, made again where a read on the GPU released them. */
+/** The two sessions, made on first use. */
 async function sessions() {
   if (det && rec) return;
   const t0 = performance.now();
@@ -45,19 +45,16 @@ async function sessions() {
 }
 
 /**
- * Free the sessions' GPU memory. ONNX Runtime's WebGPU backend keeps the buffers of every
- * input shape it has run for the life of the session, and iOS Safari (iPhone, iOS 18.7)
- * killed the tab just after a full read had been drawn, while the CPU backend ran the same
- * read through. Releasing the sessions after a full read frees those buffers; they are made
- * again from the model bytes, kept here, on the next read (about 0.9 s on that iPhone).
+ * GPU memory. ONNX Runtime's WebGPU backend keeps, by default ('bucket'), every storage
+ * buffer it has allocated for reuse by a later run, and that cache belongs to the GPU
+ * device the sessions share, so releasing a session doesn't free it. iOS Safari (iPhone,
+ * iOS 18.7) killed the tab on the GPU: after a full read had been drawn, and with sessions
+ * released after each read, at the first line read after the detector passes, while the
+ * CPU backend ran the same reads through. 'lazyRelease' frees a run's buffers once the run
+ * is done, so the peak is the largest single run rather than the sum of every input size
+ * seen. The cache is set up with the device, by the first session made, so both use it.
  */
-async function releaseGpu() {
-  if (!ep || !ep.includes('webgpu')) return;
-  const all = [det, rec].filter(Boolean);
-  det = rec = null;
-  for (const s of all) await s.release();
-  trace('GPU sessions released');
-}
+const GPU_EP = { name: 'webgpu', storageBufferCacheMode: 'lazyRelease' };
 
 async function init(want) {
   const t0 = performance.now();
@@ -182,13 +179,13 @@ self.onmessage = (e) => {
         if (m.read) trace(`${boxes.length} boxes, reading`);
         for (const [k, b] of boxes.entries()) {
           const line = { quad: b.quad, vertical: b.vertical, score: b.score };
-          if (m.read && k % 10 === 0) trace(`read line ${k + 1}/${boxes.length}`);
+          // every line on the GPU, every 10th on the CPU: a tab killed mid-read shows where
+          if (m.read && (k % 10 === 0 || ep.includes('webgpu'))) trace(`read line ${k + 1}/${boxes.length}`);
           if (m.read) Object.assign(line, await read(img, b.quad));
           if (!m.read || line.text) lines.push(line);
         }
         if (last && last.img.bitmap !== bitmap) { last.img.bitmap.close?.(); last.img.data = null; }
         last = { id: m.id, img };
-        if (m.read) await releaseGpu();   // a full read: the frozen view, done until the next one
         self.postMessage({ type: 'lines', id: m.id, w: img.width, h: img.height, lines, ms: Math.round(performance.now() - t0), detMs: Math.round(tDet) });
       } catch (err) {
         self.postMessage({ type: 'error', id: m.id, message: String(err && err.message || err) });
