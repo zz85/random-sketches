@@ -34,7 +34,7 @@ build by default). The smoke test needs the network on its first run to fetch th
 - On a dense page, such as a full menu where the lines touch, only the line you tap gets
   pinyin, so the labels don't cover the text. `?dense=1` or `?dense=0` forces it either way.
 - **拼** (or `p`) switches between pinyin and outlines only.
-- The reader runs on the CPU (WASM) by default; the "Use the GPU (WebGPU)" box on the start screen switches it, and the choice is kept on the device. `?ep=webgpu` or `?ep=wasm` overrides it for one visit; `?det=960` sets the detector size for a frozen picture (1280 by default; smaller uses less memory and misses more on dense pages).
+- The reader runs on the CPU (WASM) by default; the "Use the GPU (WebGPU)" box on the start screen switches it, and the choice is kept on the device. `?ep=webgpu` or `?ep=wasm` overrides it for one visit, and `?ep=split` runs the detector on the CPU and the recogniser on the GPU; `?det=960` sets the detector size for a frozen picture (1280 by default; smaller uses less memory and misses more on dense pages).
 
 ## How it works
 

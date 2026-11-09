@@ -16,7 +16,7 @@ import { detSize, detSizeStretched, detTensor, dbBoxes, readingOrder, recTensor,
 const GRID_STRETCH = 1.5;   // vertical stretch of the second pass, for dense grids (see mergeGrid)
 import { ORT_URL, ORT_DIST, MODELS } from './assets.js';
 
-let ort, det, rec, recDict, ep, bufs, useGpu;
+let ort, det, rec, recDict, ep, bufs, useGpu, split;   // split: detector on the CPU, recogniser on the GPU
 // steps of the work, for the crash trace the page keeps (a tab the OS kills leaves no log)
 const trace = (step) => self.postMessage({ type: 'trace', step });
 let last = null;   // { id, img }
@@ -24,8 +24,8 @@ let last = null;   // { id, img }
 // logSeverityLevel 3: errors only (the load-time warnings about unused initialisers and
 // shape ops kept on the CPU are expected)
 const OPTS = { graphOptimizationLevel: 'all', logSeverityLevel: 3 };
-async function make(buf) {
-  if (useGpu) {
+async function make(buf, gpu = useGpu) {
+  if (gpu) {
     try { return { s: await ort.InferenceSession.create(buf, { ...OPTS, executionProviders: [GPU_EP] }), ep: 'webgpu' }; }
     catch (e) { console.warn('WebGPU session failed, using WASM', e); }
   }
@@ -36,7 +36,7 @@ async function make(buf) {
 async function sessions() {
   if (det && rec) return;
   const t0 = performance.now();
-  const d = det ? null : await make(bufs.det);
+  const d = det ? null : await make(bufs.det, useGpu && !split);
   if (d) { det = d.s; trace(`detector session ${d.ep}`); }
   const r = rec ? null : await make(bufs.rec);
   if (r) { rec = r.s; trace(`recogniser session ${r.ep}`); }
@@ -70,7 +70,7 @@ async function init(want) {
   ]);
   recDict = parseRecDict(yml);
   bufs = { det: detBuf, rec: recBuf };
-  useGpu = !!gpu;
+  useGpu = !!gpu; split = want === 'split';
   trace(`models fetched, creating sessions (${gpu ? 'webgpu' : 'wasm'})`);
   await sessions();
   return { ep, ms: Math.round(performance.now() - t0), chars: recDict.length };

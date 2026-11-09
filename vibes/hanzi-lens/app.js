@@ -96,7 +96,7 @@ function loadDict() {
 // or ?ep=wasm overrides it for one visit.
 const EP_KEY = 'hanzi-lens-ep';
 function engine() {
-  if (params.has('ep')) return params.get('ep') === 'webgpu' ? 'webgpu' : 'wasm';
+  if (params.has('ep')) return ['webgpu', 'split'].includes(params.get('ep')) ? params.get('ep') : 'wasm';
   try { return localStorage.getItem(EP_KEY) === 'webgpu' ? 'webgpu' : 'wasm'; } catch { return 'wasm'; }
 }
 const gpuBox = $('gpuBox');
@@ -114,7 +114,7 @@ function boot() {
     status('Loading the reader…');
     trace('boot');
     S.ready = Promise.all([call({ type: 'init', ep: engine() }), loadDict()]).then(([r]) => {
-      S.ep = r.ep === 'webgpu' ? 'WebGPU' : r.ep === 'wasm' ? 'CPU' : r.ep;
+      S.ep = r.ep === 'webgpu' ? 'WebGPU' : r.ep === 'wasm' ? 'CPU' : r.ep === 'wasm+webgpu' ? 'CPU+WebGPU' : r.ep;
       status(S.ep);
       trace(`ready ${r.ep} in ${r.ms} ms; done`);
       return r;
@@ -485,7 +485,7 @@ if (!navigator.mediaDevices?.getUserMedia) $('camBtn').hidden = true;
     el.querySelector('button').onclick = () => { navigator.clipboard?.writeText(el.querySelector('pre').textContent); status('Copied'); };
   }
 }
-const BUILD = 'v11';   // shown on the start screen; keep in step with sw.js VERSION
+const BUILD = 'v12';   // shown on the start screen; keep in step with sw.js VERSION
 $('build').textContent = `build ${BUILD}`;
 if ('serviceWorker' in navigator && !params.has('nosw')) {
   navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});
