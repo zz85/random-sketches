@@ -24,6 +24,9 @@ const S = {
   tracks: [], nextKey: 1, steady: 0,
   frozen: null,                                        // { w, h, lines }
   sel: null, listOpen: false,
+  vm: [1, 0, 0, 1, 0, 0],                              // view of the frozen picture (see frame); ID when not moved
+  orig: null,                                          // the picture before a crop or turn, to go back to
+  crop: null,                                          // the crop box on screen while cropping
 };
 window.__hl = { S, freeze };   // for the smoke tests
 
@@ -144,15 +147,34 @@ function boot() {
 
 function fit(w, h, cover) {
   const W = innerWidth, H = innerHeight, s = cover ? Math.max(W / w, H / h) : Math.min(W / w, H / h);
-  return { s, ox: (W - w * s) / 2, oy: (H - h * s) / 2 };
+  return { s, ox: (W - w * s) / 2, oy: (H - h * s) / 2, m: [s, 0, 0, s, (W - w * s) / 2, (H - h * s) / 2] };
 }
-const toScreen = (f, [x, y]) => [f.ox + x * f.s, f.oy + y * f.s];
+// 2D affine matrices as [a, b, c, d, e, f], as DOMMatrix and canvas take them:
+// x' = a x + c y + e, y' = b x + d y + f
+const mul = (A, B) => [A[0] * B[0] + A[2] * B[1], A[1] * B[0] + A[3] * B[1], A[0] * B[2] + A[2] * B[3], A[1] * B[2] + A[3] * B[3], A[0] * B[4] + A[2] * B[5] + A[4], A[1] * B[4] + A[3] * B[5] + A[5]];
+const apply = (M, [x, y]) => [M[0] * x + M[2] * y + M[4], M[1] * x + M[3] * y + M[5]];
+const inv = (M) => { const d = M[0] * M[3] - M[1] * M[2]; return [M[3] / d, -M[1] / d, -M[2] / d, M[0] / d, (M[2] * M[5] - M[3] * M[4]) / d, (M[1] * M[4] - M[0] * M[5]) / d]; };
+const ID = S.vm;   // the view not moved, compared by identity
+const scaleOf = (M) => Math.hypot(M[0], M[1]), angleOf = (M) => Math.atan2(M[1], M[0]);
+/** About a screen point: rotate by `a`, scale by `k`, then move by (dx, dy). */
+const around = ([px, py], k, a, dx = 0, dy = 0) => { const c = Math.cos(a) * k, n = Math.sin(a) * k; return [c, n, -n, c, px + dx - c * px + n * py, py + dy - n * px - c * py]; };
+/** Image pixels -> screen: the fit, then the view (pinch zoom, pan and turn) of the frozen picture. */
+function frame() {
+  if (S.view === 'frozen' && S.frozen) { const f = fit(S.frozen.w, S.frozen.h, false); f.m = mul(S.vm, f.m); f.s *= scaleOf(S.vm); return f; }
+  return fit(video.videoWidth || 1, video.videoHeight || 1, true);
+}
+const toScreen = (f, p) => apply(f.m, p);
 
 // ---- drawing ----
 
 function draw() {
   const lines = S.view === 'frozen' ? (S.frozen ? S.frozen.lines : []) : S.view === 'live' ? S.tracks.filter((t) => t.seen) : [];
-  const f = S.view === 'frozen' && S.frozen ? fit(S.frozen.w, S.frozen.h, false) : fit(video.videoWidth || 1, video.videoHeight || 1, true);
+  const f = frame();
+  if (S.view === 'frozen' && S.frozen) {
+    still.style.width = S.frozen.w + 'px'; still.style.height = S.frozen.h + 'px';
+    still.style.transform = `matrix(${f.m.join(',')})`;
+  }
+  const W = innerWidth, H = innerHeight;
   let svg = '';
   const frag = document.createDocumentFragment();
   // on a dense page every line's pinyin would cover the line above it: label the tapped line alone
@@ -168,6 +190,10 @@ function draw() {
     const cx = b[0] - o[0], cy = b[1] - o[1], thick = Math.hypot(cx, cy) || 1;
     const nx = -cx / thick, ny = -cy / thick;          // away from the text
     const lenPx = Math.hypot(ex, ey), n = l.ann.chars.length || 1;
+    const bb = aabb(q);
+    if (bb[2] < -50 || bb[0] > W + 50 || bb[3] < -50 || bb[1] > H + 50) return;
+    // the label turns with its line: a tilted photo, or a turned view
+    const turn = Math.atan2(ey, ex) - (l.vertical ? Math.PI / 2 : 0);
     const base = Math.min(28, Math.max(dense ? 14 : 0, thick * 0.36)), gap = 2;
     for (const sp of l.ann.spans) {
       const p0 = l.charPos[sp.from], p1 = l.charPos[sp.to - 1];
@@ -182,6 +208,7 @@ function draw() {
       el.style.fontSize = size.toFixed(1) + 'px';
       el.style.left = o[0] + ex * c + nx * gap + 'px';
       el.style.top = o[1] + ey * c + ny * gap + 'px';
+      if (Math.abs(turn) > 0.02) el.style.transform = `rotate(${turn.toFixed(3)}rad) ${l.vertical ? 'translate(0, -50%)' : 'translate(-50%, -100%)'}`;
       frag.appendChild(el);
     }
   });
@@ -190,6 +217,13 @@ function draw() {
   boxesSvg.classList.toggle('quiet', S.view === 'live');
   labels.replaceChildren(frag);
   labels.classList.toggle('off', S.mode !== 'pinyin');
+  labels.classList.toggle('still', S.view === 'frozen');
+  // edit tools for the frozen picture
+  const busy = $('shutter').classList.contains('busy');
+  $('edit').hidden = S.view !== 'frozen' || !!S.crop;
+  for (const id of ['rotBtn', 'cropBtn']) $(id).disabled = busy;
+  $('fitBtn').hidden = S.vm === ID;
+  $('revertBtn').hidden = !S.orig;
 }
 
 /** Attach words and per-character positions to a recognised line. */
@@ -307,8 +341,10 @@ function enterLive() {
 
 // ---- frozen view ----
 
-async function freeze(bitmap) {
+async function freeze(bitmap, { edited = false, detLong = FREEZE_DET } = {}) {
   await boot();
+  if (!edited) S.orig = null;
+  S.vm = ID; endCrop();
   S.view = 'frozen'; closeSheet();
   $('start').hidden = true; $('controls').hidden = !S.stream;
   $('shutter').classList.add('frozen', 'busy');
@@ -321,7 +357,7 @@ async function freeze(bitmap) {
   trace(`freeze ${bitmap.width}x${bitmap.height}`);
   const id = ++S.frame;
   try {
-    const res = await call({ type: 'frame', id, bitmap, detLong: FREEZE_DET, read: true }, [bitmap]);
+    const res = await call({ type: 'frame', id, bitmap, detLong, read: true }, [bitmap]);
     if (S.view !== 'frozen' || S.frame !== id) return;
     trace(`${res.lines.length} lines back in ${res.ms} ms`);
     await loadDict();
@@ -487,7 +523,7 @@ async function speak(text) {
 
 function lineAt(x, y) {
   const lines = S.view === 'frozen' ? (S.frozen ? S.frozen.lines : []) : S.tracks.filter((t) => t.seen && t.text);
-  const f = S.view === 'frozen' ? fit(S.frozen.w, S.frozen.h, false) : fit(video.videoWidth, video.videoHeight, true);
+  const f = frame();
   const inside = (q, px, py) => { let c = false; for (let i = 0, j = 3; i < 4; j = i++) { const [xi, yi] = q[i], [xj, yj] = q[j]; if ((yi > py) !== (yj > py) && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) c = !c; } return c; };
   let best = null, bd = 24;   // a small margin, for fingers
   for (const l of lines) {
@@ -500,7 +536,8 @@ function lineAt(x, y) {
 }
 
 $('stage').addEventListener('click', async (e) => {
-  if (S.view === 'start') return;
+  if (S.view === 'start' || S.crop) return;
+  if (G.swallow) { G.swallow = false; return; }   // the end of a pan, a pinch or a double tap
   const l = lineAt(e.clientX, e.clientY);
   if (S.view === 'live') {
     if (!l) return;
@@ -537,10 +574,16 @@ $('sampleBtn').onclick = async () => { const blob = await (await fetch('sample.j
 addEventListener('resize', draw);
 addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') return;
-  if (e.key === 'Escape') closeSheet();
+  if (e.key === 'Escape') { if (S.crop) endCrop(); else closeSheet(); }
   else if (e.key === ' ' && S.view !== 'start') { e.preventDefault(); $('shutter').click(); }
   else if (e.key === 'p') $('modeBtn').click();
   else if (e.key === 'd') { e.preventDefault(); $('dictBtn').click(); }
+  else if (S.view === 'frozen' && !S.crop && (e.key === '+' || e.key === '=')) zoomBy(1.5, [innerWidth / 2, innerHeight / 2]);
+  else if (S.view === 'frozen' && !S.crop && e.key === '-') zoomBy(1 / 1.5, [innerWidth / 2, innerHeight / 2]);
+  else if (S.view === 'frozen' && e.key === '0') setView(ID, true);
+  else if (S.view === 'frozen' && e.key === 'r') $('rotBtn').click();
+  else if (S.view === 'frozen' && e.key === 'c') $('cropBtn').click();
+  else if (S.crop && e.key === 'Enter') $('cropOk').click();
   else if (e.key === 'l') openList();
   else if (e.key === 'o') $('file').click();
 });
@@ -558,7 +601,7 @@ if (!navigator.mediaDevices?.getUserMedia) $('camBtn').hidden = true;
     el.querySelector('button').onclick = () => { navigator.clipboard?.writeText(el.querySelector('pre').textContent); status('Copied'); };
   }
 }
-const BUILD = 'v14';   // shown on the start screen; keep in step with sw.js VERSION
+const BUILD = 'v15';   // shown on the start screen; keep in step with sw.js VERSION
 $('build').textContent = `build ${BUILD}`;
 if ('serviceWorker' in navigator && !params.has('nosw')) {
   navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});
@@ -571,3 +614,209 @@ if ('serviceWorker' in navigator && !params.has('nosw')) {
     location.reload();
   });
 }
+
+// ---- the frozen picture: pinch to zoom, pan, turn; double tap; wheel ----
+
+const MAX_ZOOM = 10;
+let redrawQueued = false;
+function redraw() { if (!redrawQueued) { redrawQueued = true; requestAnimationFrame(() => { redrawQueued = false; draw(); }); } }
+let tween = 0;
+function setView(m, animate = false) {
+  cancelAnimationFrame(tween);
+  if (!animate) { S.vm = m; redraw(); return; }
+  const from = S.vm, t0 = performance.now();
+  const step = (now) => {
+    const t = Math.min(1, (now - t0) / 180), e = 1 - (1 - t) ** 3;
+    S.vm = t === 1 ? m : from.map((v, i) => v + (m[i] - v) * e);
+    draw();
+    if (t < 1) tween = requestAnimationFrame(step);
+  };
+  tween = requestAnimationFrame(step);
+}
+function zoomBy(k, at) {
+  const z = scaleOf(S.vm);
+  k = Math.min(MAX_ZOOM / z, k);
+  setView(settle(mul(around(at, k, 0), S.vm)), true);
+}
+
+/**
+ * Where a gesture comes to rest: a turn within 8 deg of a quarter turn snaps to it, zoomed
+ * out past the fit goes back to it, nearly the fit is the fit, and the picture is kept on
+ * the screen (centred on an axis where it is smaller than the screen, edge to edge where
+ * it is larger).
+ */
+function settle(m) {
+  const W = innerWidth, H = innerHeight, mid = [W / 2, H / 2];
+  const a = angleOf(m), q = Math.round(a / (Math.PI / 2)) * (Math.PI / 2);
+  if (Math.abs(a - q) < (8 * Math.PI) / 180) m = mul(around(mid, 1, q - a), m);
+  if (scaleOf(m) < 1) m = mul(around(mid, 1 / scaleOf(m), 0), m);
+  if (scaleOf(m) < 1.04 && Math.abs(angleOf(m)) < 0.01) return ID;
+  const f = fit(S.frozen.w, S.frozen.h, false), full = mul(m, f.m);
+  const c = [[0, 0], [S.frozen.w, 0], [S.frozen.w, S.frozen.h], [0, S.frozen.h]].map((p) => apply(full, p));
+  const bb = aabb(c);
+  const shift = (lo, hi, size) => (hi - lo <= size ? size / 2 - (lo + hi) / 2 : lo > 0 ? -lo : hi < size ? size - hi : 0);
+  const dx = shift(bb[0], bb[2], W), dy = shift(bb[1], bb[3], H);
+  return dx || dy ? mul([1, 0, 0, 1, dx, dy], m) : m;
+}
+
+const G = { pts: new Map(), moved: false, swallow: false, rotOn: false, rotAcc: 0, lastTap: null, wheelEnd: 0 };
+const stage = $('stage');
+stage.addEventListener('pointerdown', (e) => {
+  if (S.view !== 'frozen' || S.crop || !S.frozen) return;
+  cancelAnimationFrame(tween);
+  stage.setPointerCapture(e.pointerId);
+  // a new gesture: a pinch by touch leaves no click to swallow, so the flag starts clear
+  if (!G.pts.size) { G.moved = false; G.swallow = false; G.rotOn = false; G.rotAcc = 0; G.down = [e.clientX, e.clientY]; }
+  if (G.pts.size === 1) G.moved = true;   // a second finger: a pinch, not a tap
+  G.pts.set(e.pointerId, [e.clientX, e.clientY]);
+});
+stage.addEventListener('pointermove', (e) => {
+  const p = G.pts.get(e.pointerId);
+  if (!p) return;
+  const now = [e.clientX, e.clientY];
+  if (G.pts.size === 1) {
+    if (!G.moved && Math.hypot(now[0] - G.down[0], now[1] - G.down[1]) < 8) return;
+    G.moved = true;
+    S.vm = mul([1, 0, 0, 1, now[0] - p[0], now[1] - p[1]], S.vm);
+  } else if (G.pts.size === 2) {
+    const other = [...G.pts.entries()].find(([id]) => id !== e.pointerId)[1];
+    const d0 = [p[0] - other[0], p[1] - other[1]], d1 = [now[0] - other[0], now[1] - other[1]];
+    let k = Math.hypot(...d1) / Math.max(1, Math.hypot(...d0));
+    let a = Math.atan2(d1[1], d1[0]) - Math.atan2(d0[1], d0[0]);
+    if (a > Math.PI) a -= 2 * Math.PI; else if (a < -Math.PI) a += 2 * Math.PI;
+    // a pinch turns the picture only once the fingers have turned 12 deg, so zooming doesn't tilt it
+    if (!G.rotOn) { G.rotAcc += a; if (Math.abs(G.rotAcc) > (12 * Math.PI) / 180) G.rotOn = true; a = 0; }
+    k = Math.min(MAX_ZOOM / scaleOf(S.vm), k);
+    const c0 = [(p[0] + other[0]) / 2, (p[1] + other[1]) / 2], c1 = [(now[0] + other[0]) / 2, (now[1] + other[1]) / 2];
+    S.vm = mul(around(c0, k, a, c1[0] - c0[0], c1[1] - c0[1]), S.vm);
+  }
+  G.pts.set(e.pointerId, now);
+  redraw();
+});
+const lift = (e) => {
+  if (!G.pts.delete(e.pointerId) || G.pts.size) return;
+  if (G.moved) { G.swallow = true; setView(settle(S.vm), true); return; }
+  // a double tap zooms in on that point, or back out to the fit
+  const now = performance.now(), at = [e.clientX, e.clientY];
+  if (G.lastTap && now - G.lastTap.t < 320 && Math.hypot(at[0] - G.lastTap.at[0], at[1] - G.lastTap.at[1]) < 32) {
+    G.lastTap = null; G.swallow = true;
+    if (scaleOf(S.vm) > 1.05) setView(ID, true); else zoomBy(2.5, at);
+  } else G.lastTap = { t: now, at };
+};
+stage.addEventListener('pointerup', lift);
+stage.addEventListener('pointercancel', lift);
+stage.addEventListener('wheel', (e) => {
+  if (S.view !== 'frozen' || S.crop || !S.frozen) return;
+  e.preventDefault();
+  const at = [e.clientX, e.clientY];
+  // a trackpad pinch comes as a wheel with ctrlKey; a wheel or two-finger scroll pans, unless ctrl or alt
+  if (e.ctrlKey || e.altKey || e.deltaMode) {
+    const k = Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.002) * (e.deltaMode ? 33 : 1));
+    S.vm = mul(around(at, Math.min(MAX_ZOOM / scaleOf(S.vm), k), 0), S.vm);
+  } else S.vm = mul([1, 0, 0, 1, -e.deltaX, -e.deltaY], S.vm);
+  redraw();
+  clearTimeout(G.wheelEnd);
+  G.wheelEnd = setTimeout(() => setView(settle(S.vm), true), 250);
+}, { passive: false });
+addEventListener('resize', () => { if (S.view === 'frozen' && S.frozen) S.vm = settle(S.vm); });
+
+// ---- edits: turn a quarter, crop; each is read again ----
+
+/**
+ * The frozen picture drawn through `m` (picture pixels -> the new picture's pixels) on a
+ * w x h canvas, as a new picture to read. A picture made from a crop of a turned view is
+ * straight. Outside the old picture is mid grey.
+ */
+async function remake(m, w, h) {
+  if (!S.orig) { const c = document.createElement('canvas'); c.width = still.width; c.height = still.height; c.getContext('2d').drawImage(still, 0, 0); S.orig = c; }
+  const c = document.createElement('canvas');
+  c.width = Math.max(16, Math.round(w)); c.height = Math.max(16, Math.round(h));
+  const g = c.getContext('2d');
+  g.fillStyle = '#808080'; g.fillRect(0, 0, c.width, c.height);
+  g.imageSmoothingQuality = 'high';
+  g.setTransform(...m);
+  g.drawImage(still, 0, 0);
+  const bitmap = await createImageBitmap(c);
+  c.width = c.height = 0;
+  // a small crop is scaled up for the detector no more than 2 times: blown up to 1280 px, a
+  // crop of a line or two gives the detector characters far larger than it was trained on
+  const long = Math.max(bitmap.width, bitmap.height);
+  await freeze(bitmap, { edited: true, detLong: Math.min(FREEZE_DET, Math.max(640, 2 * long)) });
+}
+
+$('rotBtn').onclick = () => {
+  if (S.view !== 'frozen' || !S.frozen) return;
+  const { w, h } = S.frozen;
+  remake([0, 1, -1, 0, h, 0], h, w);   // clockwise: (x, y) -> (h - y, x)
+};
+$('revertBtn').onclick = async () => {
+  if (!S.orig) return;
+  const o = S.orig;
+  const bitmap = await createImageBitmap(o);
+  S.orig = null;
+  await freeze(bitmap);
+};
+$('fitBtn').onclick = () => setView(ID, true);
+
+// The crop box, on screen: drag a corner or an edge to size it, the inside to move it.
+const cropEl = $('crop'), box = cropEl.querySelector('.box');
+function showCrop() {
+  const r = S.crop;
+  box.style.left = r.x + 'px'; box.style.top = r.y + 'px'; box.style.width = r.w + 'px'; box.style.height = r.h + 'px';
+}
+function endCrop() { if (!S.crop) return; S.crop = null; cropEl.hidden = true; $('cropBar').hidden = true; $('controls').hidden = !S.stream; redraw(); }
+$('cropBtn').onclick = () => {
+  if (S.view !== 'frozen' || !S.frozen) return;
+  closeSheet();
+  // start from the picture as it shows, inside the screen's edge
+  const f = frame(), W = innerWidth, H = innerHeight, pad = 24;
+  const c = [[0, 0], [S.frozen.w, 0], [S.frozen.w, S.frozen.h], [0, S.frozen.h]].map((p) => apply(f.m, p));
+  const bb = aabb(c);
+  const x0 = Math.max(pad, bb[0]), y0 = Math.max(pad + 56, bb[1]), x1 = Math.min(W - pad, bb[2]), y1 = Math.min(H - pad - 70, bb[3]);
+  S.crop = { x: x0, y: y0, w: Math.max(60, x1 - x0), h: Math.max(60, y1 - y0) };
+  cropEl.hidden = false; $('cropBar').hidden = false; $('controls').hidden = true;
+  showCrop(); redraw();
+};
+let cropDrag = null;
+cropEl.addEventListener('pointerdown', (e) => {
+  if (!S.crop) return;
+  const r = S.crop, x = e.clientX, y = e.clientY, near = 28;
+  const side = { l: Math.abs(x - r.x) < near, r: Math.abs(x - (r.x + r.w)) < near, t: Math.abs(y - r.y) < near, b: Math.abs(y - (r.y + r.h)) < near };
+  const inX = x > r.x - near && x < r.x + r.w + near, inY = y > r.y - near && y < r.y + r.h + near;
+  if (!(inX && inY)) return;
+  const edge = (side.l || side.r || side.t || side.b);
+  cropDrag = { id: e.pointerId, at: [x, y], start: { ...r }, side: edge ? side : null };
+  cropEl.setPointerCapture(e.pointerId);
+  e.preventDefault();
+});
+cropEl.addEventListener('pointermove', (e) => {
+  if (!cropDrag || cropDrag.id !== e.pointerId) return;
+  const dx = e.clientX - cropDrag.at[0], dy = e.clientY - cropDrag.at[1], s0 = cropDrag.start, min = 40;
+  const W = innerWidth, H = innerHeight;
+  let { x, y, w, h } = s0;
+  if (!cropDrag.side) { x = Math.min(W - w, Math.max(0, s0.x + dx)); y = Math.min(H - h, Math.max(0, s0.y + dy)); }
+  else {
+    const sd = cropDrag.side;
+    if (sd.l) { x = Math.min(s0.x + s0.w - min, Math.max(0, s0.x + dx)); w = s0.x + s0.w - x; }
+    if (sd.r) w = Math.min(W - s0.x, Math.max(min, s0.w + dx));
+    if (sd.t) { y = Math.min(s0.y + s0.h - min, Math.max(0, s0.y + dy)); h = s0.y + s0.h - y; }
+    if (sd.b) h = Math.min(H - s0.y, Math.max(min, s0.h + dy));
+  }
+  S.crop = { x, y, w, h };
+  showCrop();
+});
+const cropUp = (e) => { if (cropDrag && cropDrag.id === e.pointerId) cropDrag = null; };
+cropEl.addEventListener('pointerup', cropUp);
+cropEl.addEventListener('pointercancel', cropUp);
+$('cropCancel').onclick = endCrop;
+$('cropOk').onclick = () => {
+  if (!S.crop || !S.frozen) return;
+  const r = S.crop, f = frame();
+  // the new picture at the old one's resolution (screen pixels per picture pixel = f.s),
+  // no larger than a photo is read at
+  let k = 1 / f.s;
+  k = Math.min(k, MAX_PHOTO / Math.max(r.w, r.h));
+  const m = mul([k, 0, 0, k, -r.x * k, -r.y * k], f.m);
+  endCrop();
+  remake(m, r.w * k, r.h * k);
+};

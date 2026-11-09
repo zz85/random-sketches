@@ -10,9 +10,9 @@ button.primary { background: var(--red); border-color: var(--red); }
 .seal { font-family: "Songti SC", "Noto Serif CJK SC", serif; color: #fff; background: var(--red); border-radius: 6px; padding: 0 5px; }
 
 #stage { position: fixed; inset: 0; touch-action: none; }
-#video, #still { position: absolute; inset: 0; width: 100%; height: 100%; }
-#video { object-fit: cover; }
-#still { object-fit: contain; }
+#video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+/* sized to the picture and placed by draw()'s matrix: the fit, then the pinch zoom, pan and turn */
+#still { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
 #boxes { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 #boxes polygon { fill: #00000000; stroke: var(--line); stroke-width: 1.5; stroke-opacity: .8; vector-effect: non-scaling-stroke; pointer-events: all; cursor: pointer; }
 #boxes polygon.read { fill: #14121033; }
@@ -24,6 +24,8 @@ button.primary { background: var(--red); border-color: var(--red); }
 .py { position: absolute; white-space: nowrap; color: #fff; background: #000a; border-radius: 4px; padding: 0 .25em;
   line-height: 1.25; font-weight: 600; letter-spacing: .01em; transition: left .25s, top .25s; transform: translate(-50%, -100%); }
 .py.v { transform: translate(0, -50%); }
+.py { transform-origin: 0 0; }
+#labels.still .py { transition: none; }
 .py.weak { color: #ffd9a0; }
 #labels.off .py { display: none; }
 
@@ -96,3 +98,21 @@ button.primary { background: var(--red); border-color: var(--red); }
 #dictInput[hidden] { display: none; }
 #sheet.dict { max-height: 80vh; }
 @media (min-width: 800px) { #sheet.dict { top: 72px; max-height: none; } }
+
+/* edit tools for the frozen picture, a column on the left above the status */
+#edit { position: fixed; left: 12px; bottom: calc(52px + env(safe-area-inset-bottom)); z-index: 3; display: flex; flex-direction: column; gap: 8px; }
+#edit[hidden] { display: none; }
+#edit button { width: 44px; height: 44px; padding: 0; display: grid; place-items: center; background: #000a; border-radius: 12px; }
+#edit button[hidden] { display: none; }
+#edit button:disabled { opacity: .4; }
+#crop { position: fixed; inset: 0; z-index: 4; touch-action: none; }
+#crop[hidden] { display: none; }
+#crop .box { position: absolute; border: 2px solid #fff; box-shadow: 0 0 0 9999px #0009; cursor: move;
+  background-image: linear-gradient(#fff4, #fff4), linear-gradient(#fff4, #fff4), linear-gradient(#fff4, #fff4), linear-gradient(#fff4, #fff4);
+  background-size: 1px 100%, 1px 100%, 100% 1px, 100% 1px; background-position: 33.3% 0, 66.6% 0, 0 33.3%, 0 66.6%; background-repeat: no-repeat; }
+#crop i { position: absolute; width: 22px; height: 22px; border: 0 solid #fff; }
+#crop .tl { left: -4px; top: -4px; border-width: 5px 0 0 5px; } #crop .tr { right: -4px; top: -4px; border-width: 5px 5px 0 0; }
+#crop .bl { left: -4px; bottom: -4px; border-width: 0 0 5px 5px; } #crop .br { right: -4px; bottom: -4px; border-width: 0 5px 5px 0; }
+#cropBar { position: fixed; left: 0; right: 0; bottom: calc(18px + env(safe-area-inset-bottom)); z-index: 5; display: flex; gap: 10px; justify-content: center; }
+#cropBar[hidden] { display: none; }
+#cropBar button { padding: 10px 18px; font-size: 16px; }

@@ -38,6 +38,16 @@
 
 <div id="status" aria-live="polite"></div>
 
+<div id="edit" hidden>
+  <button id="rotBtn" title="Turn the picture a quarter and read it again (r)" aria-label="Turn"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4v5h-5"/></svg></button>
+  <button id="cropBtn" title="Crop, and read that part (c)" aria-label="Crop"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M2 6h14a2 2 0 0 1 2 2v14"/></svg></button>
+  <button id="fitBtn" title="Fit to the screen (0)" aria-label="Fit" hidden><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+  <button id="revertBtn" title="Back to the whole picture" aria-label="Back to the original" hidden><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></svg></button>
+</div>
+
+<div id="crop" hidden><div class="box"><i class="tl"></i><i class="tr"></i><i class="bl"></i><i class="br"></i></div></div>
+<div id="cropBar" hidden><button id="cropCancel">Cancel</button><button id="cropOk" class="primary">Read this part</button></div>
+
 <section id="start">
   <div class="card">
     <div class="big seal">读</div>

@@ -31,6 +31,8 @@ build by default). The smoke test needs the network on its first run to fetch th
   each of its characters on its own. The speaker button reads the line aloud (the browser's Chinese voice),
   the copy button copies it, ☰ (or `l`) lists all the text with pinyin. Shutter again goes back to live.
 - **Open a photo** (⇪ or `o`), paste or drop an image: the same frozen view.
+- **In the frozen view:** pinch to zoom, drag to pan, turn two fingers to rotate (past 12°, so a zoom doesn't tilt it; it snaps to a quarter turn within 8°), double tap to zoom in or back out. On a desktop: a trackpad pinch or ctrl/alt + wheel zooms, a wheel or two-finger scroll pans, `+` `-` `0`. The boxes and pinyin follow the picture, and pinyin turns with each line. Zooming into a dense page gives each line room, so its pinyin shows.
+- **Edit tools** on the left: turn the picture a quarter (`r`) and read it again, crop (`c`) and read just that part (drag the corners, edges or inside of the box; the crop is cut from what shows, so a crop of a turned view comes out turned), fit to the screen, and back to the whole picture.
 - On a dense page, such as a full menu where the lines touch, only the line you tap gets
   pinyin, so the labels don't cover the text. `?dense=1` or `?dense=0` forces it either way.
 - **拼** (or `p`) switches between pinyin and outlines only.

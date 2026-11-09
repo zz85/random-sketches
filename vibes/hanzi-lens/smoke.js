@@ -131,6 +131,65 @@ try {
     check('a cut-off trace shows on the next load', await b.evaluate(`!document.getElementById('crash').hidden && document.querySelector('#crash pre').textContent.includes('read line 11/15')`));
     await shot('crash');
 
+    // ---- the frozen picture: zoom, pan, turn, crop ----
+    const readDone = () => waitFor(() => b.evaluate(`__hl.S.view==='frozen' && __hl.S.frozen.lines.length>0 && !document.getElementById('shutter').classList.contains('busy')`), 180000);
+    await tap('#sampleBtn');
+    await readDone();
+    // a line's box on screen still lies over its line once zoomed: tap its centre
+    const lineCentre = `(()=>{const svg=document.querySelectorAll('#boxes polygon'); const l=__hl.S.frozen.lines.findIndex(x=>x.text==='宫保鸡丁'); const r=svg[l].getBoundingClientRect(); return [r.x+r.width/2, r.y+r.height/2, l]})()`;
+    const [cx, cy] = await b.evaluate(lineCentre);
+    // a trackpad pinch: a wheel with ctrl
+    for (let k = 0; k < 6; k++) await b.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: cx, y: cy, deltaX: 0, deltaY: -8, modifiers: 2 });
+    await sleep(600);
+    const zoom = await b.evaluate(`Math.hypot(__hl.S.vm[0], __hl.S.vm[1])`);
+    const [zx, zy] = await b.evaluate(lineCentre);
+    check('wheel pinch zooms in at the pointer', zoom > 1.5 && Math.hypot(zx - cx, zy - cy) < 30, `zoom ${zoom.toFixed(2)}, line moved ${Math.hypot(zx - cx, zy - cy).toFixed(0)} px`);
+    const bigger = await b.evaluate(`document.getElementById('still').getBoundingClientRect().width / innerWidth`);
+    check('the picture scales with its boxes', bigger > 1.2, bigger.toFixed(2));
+    // a two-finger pinch out and a turn on a touch screen
+    const touch = (type, pts) => b.send('Input.dispatchTouchEvent', { type, touchPoints: pts.map(([x, y], id) => ({ x, y, id })) });
+    const W = 1000, H = 760;
+    await touch('touchStart', [[W / 2 - 60, H / 2], [W / 2 + 60, H / 2]]);
+    for (let k = 1; k <= 8; k++) { const r = 60 + k * 3.5, a = (k * 4 * Math.PI) / 180; await touch('touchMove', [[W / 2 - r * Math.cos(a), H / 2 - r * Math.sin(a)], [W / 2 + r * Math.cos(a), H / 2 + r * Math.sin(a)]]); await sleep(16); }
+    await touch('touchEnd', []);
+    await sleep(500);
+    const v2 = await b.evaluate(`[Math.hypot(__hl.S.vm[0], __hl.S.vm[1]), Math.atan2(__hl.S.vm[1], __hl.S.vm[0]) * 180 / Math.PI]`);
+    check('a two-finger pinch zooms and turns', v2[0] > zoom * 1.3 && Math.abs(v2[1]) > 10, `zoom ${v2[0].toFixed(2)}, turned ${v2[1].toFixed(1)} deg`);
+    await shot('zoomed');
+    // the line under a tap is still the right one in the turned, zoomed view: the line nearest the middle
+    const onScreen = `(()=>{const svg=[...document.querySelectorAll('#boxes polygon')]; let best=null; svg.forEach((p,i)=>{const r=p.getBoundingClientRect(), x=r.x+r.width/2, y=r.y+r.height/2, d=Math.hypot(x-innerWidth/2,y-innerHeight/2); if(r.x>20&&r.right<innerWidth-10&&r.y>50&&r.bottom<innerHeight-10&&(!best||d<best[3])) best=[x,y,i,d]}); return best})()`;
+    const [tx, ty, ti] = await b.evaluate(onScreen);
+    const want = await b.evaluate(`__hl.S.frozen.lines[${ti}].text`);
+    await b.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: tx, y: ty, button: 'left', clickCount: 1 });
+    await b.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: tx, y: ty, button: 'left', clickCount: 1 });
+    await sleep(200);
+    check('tapping a line in a turned view opens it', await b.evaluate(`__hl.S.sel && __hl.S.sel.text === ${JSON.stringify(want)}`), want);
+    await tap('#closeBtn');
+    // a crop of what shows, zoomed in on a line: read again
+    await tap('#fitBtn');
+    await sleep(400);
+    const [gx, gy] = await b.evaluate(lineCentre);
+    for (let k = 0; k < 6; k++) await b.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: gx, y: gy, deltaX: 0, deltaY: -8, modifiers: 2 });
+    await sleep(600);
+    await tap('#cropBtn');
+    await tap('#cropOk');
+    await sleep(300);
+    await readDone();
+    const cropped = await b.evaluate(`({w:__hl.S.frozen.w, h:__hl.S.frozen.h, text:__hl.S.frozen.lines.map(l=>l.text), orig:!!__hl.S.orig})`);
+    check('a crop is read again', cropped.text.includes('宫保鸡丁') && cropped.orig && cropped.w < 1200, `${cropped.w}x${cropped.h}: ${cropped.text.join(' / ')}`);
+    await shot('cropped');
+    await tap('#revertBtn');
+    await sleep(300);
+    await readDone();
+    check('back to the whole picture', await b.evaluate(`__hl.S.frozen.w===1200 && __hl.S.frozen.lines.length>=14 && !__hl.S.orig`));
+    await tap('#rotBtn');
+    await sleep(300);
+    await readDone();
+    check('a quarter turn is read again', await b.evaluate(`__hl.S.frozen.w===760 && __hl.S.frozen.h===1200 && __hl.S.frozen.lines.length>0`));
+    await tap('#revertBtn');
+    await sleep(300);
+    await readDone();
+
     // ---- live camera ----
     await b.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/hanzi-lens/` });
     await waitFor(() => b.evaluate('!!window.__hl'), 10000);
