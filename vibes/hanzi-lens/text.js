@@ -265,3 +265,26 @@ export function meanings(token) {
   if (token.entry) { list.splice(list.indexOf(token.entry), 1); list.unshift(token.entry); }
   return list.map((e) => ({ trad: e.trad, simp: e.simp, pinyin: markPinyin(e.pinyin).join(' '), defs: e.defs }));
 }
+
+// ---- voice ----
+
+/**
+ * The speech voice to read Mandarin with, from speechSynthesis.getVoices(): a voice on the
+ * device before one a server speaks (the line's text would leave the device), then
+ * mainland Mandarin (zh-CN, zh-Hans: the readings shown are mainland ones) before other
+ * Mandarin (zh-TW). Cantonese voices (zh-HK, zh-MO, yue) are never chosen. Null when there
+ * is no such voice; the utterance's lang then lets the browser choose.
+ */
+export function pickVoice(voices) {
+  let best = null, bestRank = Infinity;
+  for (const v of voices || []) {
+    const t = (v.lang || '').replace(/_/g, '-').toLowerCase();
+    let r;
+    if (/^(zh|cmn)(-hans)?(-cn)?$/.test(t) || /^(zh|cmn)-(hans-)?cn\b/.test(t) || /^(zh|cmn)-hans\b/.test(t)) r = 0;
+    else if (/^(zh|cmn)-(hant-)?tw\b/.test(t) || /^cmn\b/.test(t)) r = 1;
+    else continue;                                         // zh-HK, zh-MO, yue and the rest
+    if (v.localService === false) r += 2;                  // spoken by a server
+    if (r < bestRank || (r === bestRank && v.default && !best.default)) { best = v; bestRank = r; }
+  }
+  return best;
+}

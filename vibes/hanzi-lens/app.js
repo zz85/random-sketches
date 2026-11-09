@@ -8,7 +8,7 @@
  * Freeze (shutter, or a photo): the whole frame is read at the larger detector size, and
  * tapping a line opens its words with pinyin and CC-CEDICT meanings.
  */
-import { parseDict, annotate, linePinyin, meanings, joinPinyin } from './text.js';
+import { parseDict, annotate, linePinyin, meanings, joinPinyin, pickVoice } from './text.js';
 import { crowded } from './ocr.js';
 
 const $ = (id) => document.getElementById(id);
@@ -418,14 +418,26 @@ function openList() {
   draw();
 }
 
-function speak(text) {
+// Chrome lists its voices a moment after the page loads: wait for them the first time
+function voices() {
+  const now = speechSynthesis.getVoices();
+  if (now.length) return Promise.resolve(now);
+  return new Promise((r) => {
+    const done = () => { speechSynthesis.removeEventListener('voiceschanged', done); r(speechSynthesis.getVoices()); };
+    speechSynthesis.addEventListener('voiceschanged', done);
+    setTimeout(done, 1000);
+  });
+}
+
+async function speak(text) {
   if (!('speechSynthesis' in window)) return;
   speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
   u.lang = 'zh-CN';
-  const v = speechSynthesis.getVoices().find((x) => /^zh(-|_)?(CN|Hans)?/i.test(x.lang));
+  const v = pickVoice(await voices());
   if (v) u.voice = v;
   u.rate = 0.85;
+  status(v ? `Speaking with ${v.name}${v.localService === false ? ' (online voice)' : ''}` : 'Speaking');
   speechSynthesis.speak(u);
 }
 

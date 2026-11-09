@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs';
 import zlib from 'zlib';
-import { parseDict, markSyllable, markPinyin, joinPinyin, readNumber, readTime, annotate, linePinyin, bestEntry } from './text.js';
+import { parseDict, markSyllable, markPinyin, joinPinyin, readNumber, readTime, annotate, linePinyin, bestEntry, pickVoice } from './text.js';
 import { detSize, detSizeStretched, minAreaRect, rectQuad, dbBoxes, ctcDecode, parseRecDict, recTensor, readingOrder, mergeGrid, crowded, bands, gridSpans } from './ocr.js';
 
 const dict = parseDict(zlib.gunzipSync(fs.readFileSync(new URL('./dict/cedict.txt.gz', import.meta.url))).toString('utf8'));
@@ -188,4 +188,18 @@ test('gridSpans: the rows around each column, joined, in steps of 256', () => {
   assert.ok(s[0][1] <= s[1][0]);
   // columns covering the page give one span of the whole map
   assert.deepEqual(gridSpans([col(100, 100, 180), col(200, 400, 400), col(300, 700, 200)], 1216, 1.5), [[0, 1216]]);
+});
+
+test('voice: on the device first, mainland Mandarin, never Cantonese', () => {
+  const v = (name, lang, local = true, def = false) => ({ name, lang, localService: local, default: def });
+  const hk = v('Sinji', 'zh-HK'), tw = v('Meijia', 'zh-TW'), cn = v('Tingting', 'zh-CN');
+  const google = v('Google 普通话（中国大陆）', 'zh-CN', false), yue = v('Yue', 'yue-HK');
+  assert.equal(pickVoice([hk, tw, cn]), cn);
+  assert.equal(pickVoice([google, cn]), cn, 'on the device before a server');
+  assert.equal(pickVoice([google, tw]), tw, 'local Taiwan Mandarin before a server voice');
+  assert.equal(pickVoice([hk, google]), google);
+  assert.equal(pickVoice([hk, yue]), null, 'never Cantonese');
+  assert.equal(pickVoice([v('Lili', 'zh_CN')]).name, 'Lili', 'Android writes an underscore');
+  assert.equal(pickVoice([v('A', 'cmn-Hans-CN'), hk]).name, 'A');
+  assert.equal(pickVoice([]), null);
 });
