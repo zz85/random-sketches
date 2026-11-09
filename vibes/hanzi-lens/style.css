@@ -1,0 +1,86 @@
+:root { --ink: #f6efe2; --dim: #b7ab98; --red: #c8382a; --bg: #141210; --panel: #1f1b17ee; --line: #ffd36a; }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); overflow: hidden;
+  font: 15px/1.4 system-ui, -apple-system, "PingFang SC", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; -webkit-tap-highlight-color: transparent; }
+button, .btn { font: inherit; color: var(--ink); background: #ffffff14; border: 1px solid #ffffff22; border-radius: 10px;
+  padding: 8px 12px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+button:disabled { opacity: .35; cursor: default; }
+button.primary { background: var(--red); border-color: var(--red); }
+.seal { font-family: "Songti SC", "Noto Serif CJK SC", serif; color: #fff; background: var(--red); border-radius: 6px; padding: 0 5px; }
+
+#stage { position: fixed; inset: 0; touch-action: none; }
+#video, #still { position: absolute; inset: 0; width: 100%; height: 100%; }
+#video { object-fit: cover; }
+#still { object-fit: contain; }
+#boxes { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+#boxes polygon { fill: #00000000; stroke: var(--line); stroke-width: 1.5; stroke-opacity: .8; vector-effect: non-scaling-stroke; pointer-events: all; cursor: pointer; }
+#boxes polygon.read { fill: #14121033; }
+#boxes polygon.sel { stroke: #fff; stroke-width: 2.5; fill: #ffd36a22; }
+#boxes.quiet polygon { stroke-opacity: .35; }
+#boxes.dense polygon { stroke-opacity: .3; }
+#boxes.dense polygon.sel { stroke-opacity: 1; }
+#labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.py { position: absolute; white-space: nowrap; color: #fff; background: #000a; border-radius: 4px; padding: 0 .25em;
+  line-height: 1.25; font-weight: 600; letter-spacing: .01em; transition: left .25s, top .25s; transform: translate(-50%, -100%); }
+.py.v { transform: translate(0, -50%); }
+.py.weak { color: #ffd9a0; }
+#labels.off .py { display: none; }
+
+#bar { position: fixed; top: 0; left: 0; right: 0; display: flex; justify-content: space-between; align-items: center;
+  padding: calc(8px + env(safe-area-inset-top)) 12px 8px; background: linear-gradient(#000a, #0000); z-index: 3; }
+.brand { font-weight: 700; font-size: 17px; display: flex; gap: 8px; align-items: center; }
+.tools { display: flex; gap: 6px; }
+.tools button, .tools .btn { min-width: 40px; height: 38px; padding: 0 10px; background: #0008; }
+#modeBtn.off { opacity: .55; text-decoration: line-through; }
+
+#status { position: fixed; left: 12px; bottom: calc(14px + env(safe-area-inset-bottom)); z-index: 3;
+  background: #000b; border-radius: 99px; padding: 4px 12px; font-size: 13px; color: var(--dim); white-space: nowrap; pointer-events: none; }
+#status:empty { display: none; }
+
+#start { position: fixed; inset: 0; display: grid; place-items: center; z-index: 4; padding: 20px;
+  background: radial-gradient(ellipse at 50% 30%, #2a221c, var(--bg)); }
+#start .card { max-width: 440px; text-align: center; }
+#start .big { font-size: 64px; display: inline-block; padding: 0 14px; border-radius: 14px; }
+#start h1 { margin: 12px 0 6px; font-size: 26px; }
+#start p { color: var(--dim); }
+#start .small { font-size: 13px; }
+#start .row { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 18px; }
+
+#controls { position: fixed; left: 0; right: 0; bottom: 0; display: flex; justify-content: center; z-index: 3;
+  padding: 16px 0 calc(22px + env(safe-area-inset-bottom)); background: linear-gradient(#0000, #0009); }
+#shutter { width: 72px; height: 72px; border-radius: 50%; border: 4px solid #fff; background: #fff3; padding: 0; }
+#shutter::after { content: ''; width: 54px; height: 54px; border-radius: 50%; background: #fff; }
+#shutter.frozen { background: #fff3; }
+#shutter.frozen::after { content: '↺'; background: none; color: #fff; font-size: 34px; width: auto; height: auto; line-height: 1; }
+#shutter.busy::after { background: var(--line); animation: pulse 1s infinite alternate; }
+@keyframes pulse { to { opacity: .4; } }
+
+#sheet { position: fixed; left: 0; right: 0; bottom: 0; max-height: 62vh; overflow-y: auto; z-index: 5;
+  background: var(--panel); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border-radius: 18px 18px 0 0; padding: 8px 16px calc(16px + env(safe-area-inset-bottom)); box-shadow: 0 -8px 30px #0008; }
+@media (min-width: 800px) { #sheet { left: auto; right: 16px; bottom: 16px; width: 420px; max-height: calc(100vh - 100px); border-radius: 18px; } }
+.grip { width: 40px; height: 4px; border-radius: 2px; background: #fff4; margin: 0 auto 10px; }
+.sheet-head { display: flex; gap: 10px; align-items: flex-start; justify-content: space-between; }
+.sheet-btns { display: flex; gap: 4px; flex: none; }
+.sheet-btns button { padding: 6px 9px; }
+.line-big { font-size: 28px; line-height: 1.9; word-break: break-all; }
+.line-big ruby { cursor: pointer; ruby-position: over; }
+.line-big rt { font-size: 13px; color: var(--line); font-weight: 600; }
+.line-big ruby.sel { background: #ffd36a33; border-radius: 4px; }
+.line-pinyin { color: var(--dim); margin: 2px 0 10px; }
+.list-line { padding: 8px 0; border-bottom: 1px solid #ffffff14; cursor: pointer; }
+.list-line .zh { font-size: 20px; }
+.list-line .pyl { color: var(--dim); font-size: 13px; }
+.word { display: grid; grid-template-columns: auto 1fr; gap: 2px 14px; padding: 10px 0; border-top: 1px solid #ffffff14; cursor: pointer; }
+.word .hz { font-size: 26px; line-height: 1.2; grid-row: span 2; }
+.word .pz { color: var(--line); font-weight: 600; }
+.word .df { color: var(--ink); font-size: 14px; }
+.word .alt { color: var(--dim); font-size: 13px; }
+.word.open > .df { display: none; }
+.word .more { grid-column: 2; font-size: 14px; }
+.word .more .ent { margin-top: 8px; }
+.word .more .ent b { color: var(--line); }
+.word .chars { color: var(--dim); font-size: 13px; margin-top: 6px; }
+.word.unknown .pz { color: var(--dim); }
+.credit { color: var(--dim); font-size: 11px; margin-top: 14px; }

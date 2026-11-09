@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Hanzi Lens 读 — pinyin and meanings for Chinese text through the camera</title>
+<meta name="description" content="Point the camera at Chinese text to see the pinyin over every character, and tap a line for each word's meanings. Runs on the device, works offline.">
+<meta name="theme-color" content="#141210">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="style.css">
+<script src="../pwa/install.js"></script>
+</head>
+<body>
+<div id="stage">
+  <video id="video" playsinline muted autoplay></video>
+  <canvas id="still" hidden></canvas>
+  <svg id="boxes"></svg>
+  <div id="labels"></div>
+</div>
+
+<header id="bar">
+  <div class="brand"><span class="seal">读</span> Hanzi Lens</div>
+  <div class="tools">
+    <button id="modeBtn" title="Pinyin over the text, or outlines only (p)">拼</button>
+    <button id="listBtn" title="All the text (l)" disabled>☰</button>
+    <label class="btn" title="Open a photo (o)">⇪<input id="file" type="file" accept="image/*" hidden></label>
+    <button data-pwa-install style="display:none" title="Install the app">⤓</button>
+  </div>
+</header>
+
+<div id="status" aria-live="polite"></div>
+
+<section id="start">
+  <div class="card">
+    <div class="big seal">读</div>
+    <h1>Hanzi Lens</h1>
+    <p>Point the camera at Chinese text to see the pinyin over every character. Tap a line for each word's meanings.</p>
+    <p class="small">Everything runs on this device: PP-OCRv5 reads the text, CC-CEDICT gives readings and meanings. The first start downloads about 50 MB, then it works offline.</p>
+    <div class="row">
+      <button id="camBtn" class="primary">Start camera</button>
+      <label class="btn">Open a photo<input id="file2" type="file" accept="image/*" hidden></label>
+      <button id="sampleBtn">Try a sample</button>
+    </div>
+  </div>
+</section>
+
+<footer id="controls" hidden>
+  <button id="shutter" title="Freeze the picture and read all of it (space)" aria-label="Freeze"></button>
+</footer>
+
+<section id="sheet" hidden>
+  <div class="grip"></div>
+  <div class="sheet-head">
+    <div id="sheetLine" class="line-big"></div>
+    <div class="sheet-btns">
+      <button id="speakBtn" title="Read it aloud"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/></svg></button>
+      <button id="copyBtn" title="Copy the text"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg></button>
+      <button id="closeBtn" title="Close (Esc)">✕</button>
+    </div>
+  </div>
+  <div id="sheetPinyin" class="line-pinyin"></div>
+  <div id="words"></div>
+</section>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

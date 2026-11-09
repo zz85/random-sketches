@@ -1,0 +1,17 @@
+{
+  "name": "Hanzi Lens — pinyin and meanings through the camera",
+  "short_name": "Hanzi Lens",
+  "description": "Point the camera at Chinese text to see the pinyin over every character, and tap a line for each word's meanings. Runs on the device, works offline.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#141210",
+  "theme_color": "#141210",
+  "categories": ["education", "travel", "utilities"],
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

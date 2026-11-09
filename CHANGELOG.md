@@ -1,6 +1,10 @@
 # Logs
 
+9 Nov 2026
+- Hanzi Lens: dense menus read as rows, not columns (a second detector pass on the image stretched vertically when the first finds columns, and small photos scaled up to 1280 px); on a dense page only the tapped line gets pinyin; ONNX Runtime's load-time warnings silenced
+
 8 Nov 2026
+- Add [Hanzi Lens](vibes/hanzi-lens/): point the camera at Chinese text and see the pinyin over every character, tap a line for its words with pinyin and CC-CEDICT meanings. PP-OCRv5 mobile detection and recognition on ONNX Runtime Web (WebGPU or WASM) in a worker, DB post-processing and CTC decoding in plain JS, vertical columns, per-character pinyin placed from the CTC positions. Live view tracks lines between frames and reads them once the picture holds still; the shutter freezes and reads the whole frame. Words split by dynamic programming over CC-CEDICT so context picks the reading, prices and times read out, text-to-speech, photo import, offline PWA. `node --test` (13), `node smoke.js` (16 checks)
 - Hollow: sound (speaker icon or `m`): generated music on wooden bars whose tone follows the wood and finish, a melody on a motif from the piece's seed over a pad in each light's own key, and the room's hum, sanding while carving and a glass tink, all synthesised in Web Audio. The glass case is now on by default (`noglass` in the link turns it off)
 - Hollow: the turntable is now a slow camera orbit round the exhibit (`t` or space), so the piece, its case and the light stay put while the view walks round them
 - Hollow: an optional glass display case (case icon or `g`, `glass` in the link): Fresnel panes that mirror the room and the plinth, green edges, a sun glint in the beam, dust kept outside it; the piece shrinks to fit

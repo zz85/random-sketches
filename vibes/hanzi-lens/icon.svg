@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#141210"/>
+  <rect x="96" y="96" width="320" height="320" rx="40" fill="#c8382a"/>
+  <text x="256" y="356" text-anchor="middle" font-size="250" font-family="Noto Serif CJK SC, Songti SC, Droid Sans Fallback, serif" fill="#fff">读</text>
+  <text x="256" y="78" text-anchor="middle" font-size="54" font-family="sans-serif" font-weight="700" fill="#ffd36a">dú</text>
+  <path d="M60 150V60h90M362 60h90v90M452 362v90h-90M150 452H60v-90" fill="none" stroke="#ffd36a" stroke-width="18" stroke-linecap="round"/>
+</svg>
