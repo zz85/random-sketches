@@ -4,18 +4,21 @@
  * to exact versions, so they are kept cache-first once fetched: after the first run the
  * app works offline. Bump VERSION when the shell's file list changes.
  */
-const VERSION = 'hanzi-lens-v5';
+const VERSION = 'hanzi-lens-v7';
 const ASSETS = 'hanzi-lens-assets-v1';   // pinned third-party files, kept across app updates
 const SHELL = ['./', './index.html', './style.css', './app.js', './text.js', './ocr.js', './worker.js', './assets.js',
   './dict/cedict.txt.gz', './sample.jpg', './manifest.webmanifest', '../pwa/install.js', './icon.svg', './icon-192.png', './icon-512.png'];
 const PINNED = [/^https:\/\/cdn\.jsdelivr\.net\/npm\/onnxruntime-web@[\d.]+\//, /^https:\/\/huggingface\.co\/PaddlePaddle\/[^/]+\/resolve\/[0-9a-f]{40}\//];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // cache: 'no-cache' checks with the server: GitHub Pages sends max-age=600, and the HTTP
+  // cache would otherwise hand a new service worker the old files for up to 10 minutes
+  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: 'no-cache' })))).then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', (e) => {
   e.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((k) => k.startsWith('hanzi-lens-') && k !== VERSION && k !== ASSETS).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
 });
+self.addEventListener('message', (e) => { if (e.data === 'version') e.source.postMessage({ version: VERSION }); });
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
   const url = new URL(e.request.url);
@@ -32,7 +35,7 @@ self.addEventListener('fetch', (e) => {
   if (url.origin !== self.location.origin) return;
   e.respondWith(caches.open(VERSION).then(async (c) => {
     const hit = await c.match(e.request, { ignoreSearch: true });
-    const refresh = fetch(e.request).then((res) => { if (res.ok) c.put(url.pathname, res.clone()); return res; }).catch(() => null);
+    const refresh = fetch(e.request, { cache: 'no-cache' }).then((res) => { if (res.ok) c.put(url.pathname, res.clone()); return res; }).catch(() => null);
     if (hit) { e.waitUntil(refresh); return hit; }
     return (await refresh) || (e.request.mode === 'navigate' && (await c.match('./index.html'))) || new Response('offline', { status: 503 });
   }));

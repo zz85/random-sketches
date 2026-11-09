@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import zlib from 'zlib';
 import { parseDict, markSyllable, markPinyin, joinPinyin, readNumber, readTime, annotate, linePinyin, bestEntry } from './text.js';
-import { detSize, detSizeStretched, minAreaRect, rectQuad, dbBoxes, ctcDecode, parseRecDict, recTensor, readingOrder, mergeGrid, crowded } from './ocr.js';
+import { detSize, detSizeStretched, minAreaRect, rectQuad, dbBoxes, ctcDecode, parseRecDict, recTensor, readingOrder, mergeGrid, crowded, bands } from './ocr.js';
 
 const dict = parseDict(zlib.gunzipSync(fs.readFileSync(new URL('./dict/cedict.txt.gz', import.meta.url))).toString('utf8'));
 
@@ -163,4 +163,16 @@ test('a page is dense when line boxes touch the line above', () => {
   assert.equal(crowded(spaced, 1), false);
   assert.equal(crowded(packed, 1), true);
   assert.equal(crowded(spaced, 0.5), true, 'labels too small on screen');
+});
+
+test('bands cover the map once, each line in one core', () => {
+  for (const [H, bh] of [[1216, 800], [1920, 1280], [800, 800], [5000, 640]]) {
+    const bs = bands(H, bh);
+    assert.equal(bs[0].core0, 0); assert.equal(bs[bs.length - 1].core1, H);
+    bs.forEach((b, k) => {
+      assert.ok(b.y0 >= 0 && b.y0 + Math.min(bh, H) <= H);
+      if (k) { assert.equal(b.core0, bs[k - 1].core1); assert.ok(b.y0 + 0.15 * bh <= b.core0 + 1); }
+      if (k < bs.length - 1) assert.ok(b.core1 <= b.y0 + bh - 0.14 * bh);
+    });
+  }
 });

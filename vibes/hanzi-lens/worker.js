@@ -11,7 +11,7 @@
  *       (answered with results: null when a newer frame has replaced frame `id`)
  * A line: { quad, vertical, score, text?, confidence?, chars?: [{ch, pos}] }
  */
-import { detSize, detSizeStretched, detTensor, dbBoxes, readingOrder, recTensor, ctcDecode, parseRecDict, mergeGrid } from './ocr.js';
+import { detSize, detSizeStretched, detTensor, dbBoxes, readingOrder, recTensor, ctcDecode, parseRecDict, mergeGrid, bands } from './ocr.js';
 
 const GRID_STRETCH = 1.5;   // vertical stretch of the second pass, for dense grids (see mergeGrid)
 import { ORT_URL, ORT_DIST, MODELS } from './assets.js';
@@ -77,10 +77,37 @@ async function detPass(img, { w, h }) {
   return dbBoxes(prob, mw, mh, img.width / mw, img.height / mh);
 }
 
+/**
+ * The stretched pass, run in bands of the first pass's size. A larger input crashed iOS
+ * Safari's WebGPU (iPhone, iOS 18.7: the tab died at a 1280x1216 pass after a 1280x800 one),
+ * and the same shape lets ONNX Runtime reuse the first pass's buffers.
+ */
+async function detBands(img, base, { w, h }) {
+  const whole = pixels(img.bitmap, w, h, 'stretched');
+  const boxes = [];
+  for (const b of bands(h, Math.min(base.h, h))) {
+    const bh = Math.min(base.h, h);
+    trace(`detect band ${w}x${bh} at ${b.y0} of ${h}`);
+    const band = { data: whole.data.subarray(b.y0 * w * 4, (b.y0 + bh) * w * 4), width: w, height: bh };
+    const out = await det.run({ [det.inputNames[0]]: new ort.Tensor('float32', detTensor(band), [1, 3, bh, w]) });
+    const map = out[det.outputNames[0]];
+    const prob = await map.getData();
+    map.dispose?.();
+    // a region touching an inner edge of the band is cut there: the next band has it whole
+    const cutTop = b.y0 > 0, cutBottom = b.y0 + bh < h;
+    for (const x of dbBoxes(prob, w, bh, img.width / w, img.height / h, { oy: b.y0 })) {
+      if ((cutTop && x.mapY0 <= b.y0) || (cutBottom && x.mapY1 >= b.y0 + bh - 1)) continue;
+      if (x.mapCy >= b.core0 && x.mapCy < b.core1) boxes.push(x);
+    }
+  }
+  return boxes;
+}
+
 async function detect(img, detLong) {
-  let boxes = await detPass(img, detSize(img.width, img.height, detLong));
+  const base = detSize(img.width, img.height, detLong);
+  let boxes = await detPass(img, base);
   // columns may be rows of a dense grid read the wrong way: check with a stretched pass
-  if (boxes.some((b) => b.vertical)) boxes = mergeGrid(boxes, await detPass(img, detSizeStretched(img.width, img.height, detLong, GRID_STRETCH)));
+  if (boxes.some((b) => b.vertical)) boxes = mergeGrid(boxes, await detBands(img, base, detSizeStretched(img.width, img.height, detLong, GRID_STRETCH)));
   return readingOrder(boxes);
 }
 

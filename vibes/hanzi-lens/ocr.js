@@ -95,19 +95,20 @@ export function rectQuad({ cx, cy, ux, uy, w, h }) {
  * distance (area * ratio / perimeter), since the model predicts a shrunk text kernel.
  */
 export function dbBoxes(prob, mapW, mapH, sx, sy, opt = {}) {
-  const { thresh, boxThresh, unclip, minSize } = { ...DET, ...opt };
+  const { thresh, boxThresh, unclip, minSize, oy = 0 } = { ...DET, ...opt };   // oy: the map's first row in a taller map (bands)
   const n = mapW * mapH, label = new Int32Array(n), boxes = [];
   const stack = new Int32Array(n);
   let next = 0;
   for (let s = 0; s < n; s++) {
     if (label[s] || prob[s] <= thresh) continue;
     next++;
-    let top = 0, sum = 0, count = 0;
+    let top = 0, sum = 0, count = 0, yMin = Infinity, yMax = -Infinity;
     stack[top++] = s; label[s] = next;
     const edge = [];                     // boundary pixels, enough for the hull
     while (top) {
       const p = stack[--top], x = p % mapW, y = (p - x) / mapW;
       sum += prob[p]; count++;
+      if (y < yMin) yMin = y; if (y > yMax) yMax = y;
       let boundary = false;
       for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
         if (!dx && !dy) continue;
@@ -126,12 +127,12 @@ export function dbBoxes(prob, mapW, mapH, sx, sy, opt = {}) {
     rect.w += 2 * d; rect.h += 2 * d;
     if (Math.min(rect.w, rect.h) < minSize + 2) continue;
     // to image pixels (the map is the detector input, scaled from the image by sx, sy)
-    const cx = rect.cx * sx, cy = rect.cy * sy;
+    const cx = rect.cx * sx, cy = (rect.cy + oy) * sy;
     const ux = rect.ux * sx, uy = rect.uy * sy, ul = Math.hypot(ux, uy);
     const vx = -rect.uy * sx, vy = rect.ux * sy, vl = Math.hypot(vx, vy);
     const r = { cx, cy, ux: ux / ul, uy: uy / ul, w: rect.w * ul, h: rect.h * vl };
     const { quad, vertical } = rectQuad(r);
-    boxes.push({ quad, vertical, score: sum / count, rect: r });
+    boxes.push({ quad, vertical, score: sum / count, rect: r, mapCy: rect.cy + oy, mapY0: yMin + oy, mapY1: yMax + oy });
   }
   return boxes;
 }
@@ -250,6 +251,23 @@ export function detSizeStretched(w, h, longSide, sy) {
 
 const bbox = (q) => { const xs = q.map((p) => p[0]), ys = q.map((p) => p[1]); return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]; };
 const wide = (b) => { const { len, thick } = quadSize(b.quad); return !b.vertical && len >= 1.8 * thick; };
+
+/**
+ * Bands of `bh` rows covering a map `H` rows tall, overlapping by about 30%. A box belongs
+ * to the band whose core (the band less half the overlap at each inner edge) holds its
+ * centre, so each line is kept once and whole: a line shorter than half the overlap that is
+ * centred in a core lies inside its band. Returns [{ y0, core0, core1 }] in map rows.
+ */
+export function bands(H, bh) {
+  if (H <= bh) return [{ y0: 0, core0: 0, core1: H }];
+  const n = Math.ceil((H - bh) / (bh * 0.7)) + 1, step = (H - bh) / (n - 1), out = [];
+  for (let k = 0; k < n; k++) out.push({ y0: Math.round(k * step) });
+  out.forEach((b, k) => {
+    b.core0 = k === 0 ? 0 : (b.y0 + out[k - 1].y0 + bh) / 2;
+    b.core1 = k === n - 1 ? H : (out[k + 1].y0 + b.y0 + bh) / 2;
+  });
+  return out;
+}
 
 /**
  * A dense menu is a grid: the gap between rows is about the gap between characters in a

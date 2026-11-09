@@ -467,4 +467,16 @@ if (!navigator.mediaDevices?.getUserMedia) $('camBtn').hidden = true;
     el.querySelector('button').onclick = () => { navigator.clipboard?.writeText(el.querySelector('pre').textContent); status('Copied'); };
   }
 }
-if ('serviceWorker' in navigator && !params.has('nosw')) navigator.serviceWorker.register('sw.js').catch(() => {});
+const BUILD = 'v7';   // shown on the start screen; keep in step with sw.js VERSION
+$('build').textContent = `build ${BUILD}`;
+if ('serviceWorker' in navigator && !params.has('nosw')) {
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});
+  // a new service worker took over: reload once so this page runs its files
+  // (not on the first visit, when there was no old one)
+  let reloaded = !navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (reloaded || S.view !== 'start') return;
+    reloaded = true;
+    location.reload();
+  });
+}
