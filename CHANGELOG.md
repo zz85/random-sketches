@@ -1,6 +1,7 @@
 # Logs
 
 9 Nov 2026
+- Hanzi Lens: CPU (WASM) by default, since iOS Safari's WebGPU killed the tab after a read; a "Use the GPU (WebGPU)" box on the start screen, kept on the device (`?ep=webgpu` / `?ep=wasm` for one visit)
 - Hanzi Lens: dense menus read as rows, not columns (a second detector pass on the image stretched vertically when the first finds columns, run only on the rows around those columns and in passes no larger than the first, since a larger input crashed iOS Safari's WebGPU, and small photos scaled up to 1280 px); on a dense page only the tapped line gets pinyin; ONNX Runtime's load-time warnings silenced
 
 8 Nov 2026

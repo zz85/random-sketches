@@ -45,6 +45,8 @@ button.primary { background: var(--red); border-color: var(--red); }
 #start h1 { margin: 12px 0 6px; font-size: 26px; }
 #start p { color: var(--dim); }
 #start .small { font-size: 13px; }
+#start .gpu { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+#start .gpu input { width: 16px; height: 16px; margin: 0; }
 #start .row { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 18px; }
 
 #controls { position: fixed; left: 0; right: 0; bottom: 0; display: flex; justify-content: center; z-index: 3;

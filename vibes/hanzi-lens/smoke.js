@@ -61,6 +61,10 @@ try {
     await b.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/hanzi-lens/` });
     await waitFor(() => b.evaluate('!!window.__hl'), 10000);
     check('start screen', await b.evaluate(`!document.getElementById('start').hidden`));
+    await shot('start');
+    // CPU by default; the GPU box is a choice kept on the device (unticked again before the read)
+    const box = await b.evaluate(`(()=>{const g=document.getElementById('gpuBox'); const before=g.checked; if (g.disabled) return {before, disabled:true}; g.click(); const kept=localStorage.getItem('hanzi-lens-ep'); g.click(); return {before, kept, after:localStorage.getItem('hanzi-lens-ep')}})()`);
+    check('CPU by default, GPU box kept on the device', box.before === false && (box.disabled || (box.kept === 'webgpu' && box.after === 'wasm')), JSON.stringify(box));
 
     // ---- a photo: the sample ----
     const t0 = Date.now();
