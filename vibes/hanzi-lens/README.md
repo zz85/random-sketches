@@ -34,6 +34,8 @@ build by default). The smoke test needs the network on its first run to fetch th
 - On a dense page, such as a full menu where the lines touch, only the line you tap gets
   pinyin, so the labels don't cover the text. `?dense=1` or `?dense=0` forces it either way.
 - **拼** (or `p`) switches between pinyin and outlines only.
+- **字** (or `d`), or **Dictionary** on the start screen: look a word up by 汉字 (simplified or traditional), pinyin with or without tones (`nihao`, `ni3hao3`, `nǐ hǎo`) or English. CC-CEDICT has no word frequencies, so common words are ranked first by how many dictionary words use their characters, with dialect, literary and variant senses after.
+- **Install app** on the start screen installs it (Android / desktop Chrome), or shows how to add it to the Home Screen on iOS. Page zoom is locked on phones.
 - The reader runs on the CPU (WASM) by default; the "Use the GPU (WebGPU)" box on the start screen switches it, and the choice is kept on the device. `?ep=webgpu` or `?ep=wasm` overrides it for one visit, and `?ep=split` runs the detector on the CPU and the recogniser on the GPU. On the GPU the reader is closed after each full read to free GPU memory (iOS Safari killed the tab otherwise) and made again for the next one; `?keep=1` keeps it; `?det=960` sets the detector size for a frozen picture (1280 by default; smaller uses less memory and misses more on dense pages).
 
 ## How it works

@@ -203,3 +203,27 @@ test('voice: on the device first, mainland Mandarin, never Cantonese', () => {
   assert.equal(pickVoice([v('A', 'cmn-Hans-CN'), hk]).name, 'A');
   assert.equal(pickVoice([]), null);
 });
+
+test('lookup by Chinese, pinyin with or without tones, and English', async () => {
+  const { parseDict, lookup, plainPinyin } = await import('./text.js');
+  const d = parseDict([
+    '銀行\t银行\tyin2 hang2\tbank/CL:家[jia1]',
+    '銀行卡\t银行卡\tyin2 hang2 ka3\tbank card',
+    '你好\t你好\tni3 hao3\thello; hi',
+    '吃\t吃\tchi1\tto eat; to consume',
+    '喫\t吃\tchi1\tvariant of 吃[chi1]',
+    '馬\t马\tma3\thorse',
+    '媽\t妈\tma1\tma; mom',
+  ].join('\n'));
+  const first = (q) => lookup(d, q)[0]?.entry.simp;
+  assert.deepEqual(plainPinyin('nǐ hǎo'), { letters: 'nihao', tones: '33' });
+  assert.equal(first('银行'), '银行');
+  assert.deepEqual(lookup(d, '银行').map((r) => r.entry.simp), ['银行', '银行卡']);
+  assert.equal(first('銀行'), '银行', 'traditional finds the same word');
+  for (const q of ['nihao', 'ni3hao3', 'nǐ hǎo', 'NiHao']) assert.equal(first(q), '你好', q);
+  assert.equal(lookup(d, 'ma1').length, 1, 'tones narrow it');
+  assert.equal(first('bank'), '银行');
+  assert.equal(first('to eat'), '吃');
+  assert.equal(lookup(d, 'eat')[0].entry.defs[0], 'to eat; to consume', 'the real sense before the variant');
+  assert.deepEqual(lookup(d, '  '), []);
+});

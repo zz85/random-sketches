@@ -8,7 +8,7 @@
  * Freeze (shutter, or a photo): the whole frame is read at the larger detector size, and
  * tapping a line opens its words with pinyin and CC-CEDICT meanings.
  */
-import { parseDict, annotate, linePinyin, meanings, joinPinyin, pickVoice } from './text.js';
+import { parseDict, annotate, linePinyin, meanings, joinPinyin, markPinyin, pickVoice, lookup } from './text.js';
 import { crowded } from './ocr.js';
 
 const $ = (id) => document.getElementById(id);
@@ -363,9 +363,14 @@ async function openPhoto(file) {
 
 const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-function closeSheet() { $('sheet').hidden = true; S.sel = null; S.listOpen = false; draw(); }
+function closeSheet() {
+  $('sheet').hidden = true; S.sel = null; S.listOpen = false;
+  if (S.dictOpen) { S.dictOpen = false; $('dictInput').hidden = true; $('dictInput').blur(); $('sheet').classList.remove('dict'); $('sheetLine').hidden = false; }
+  draw();
+}
 
 function openLine(line) {
+  if (S.dictOpen) closeSheet();
   S.sel = line; S.listOpen = false;
   const ann = line.ann || (S.dict && annotate(line.text, S.dict));
   if (!ann) return;
@@ -374,6 +379,7 @@ function openLine(line) {
     ? `<ruby data-t="${i}">${esc(t.text)}<rt>${esc(joinPinyin(t.pinyin))}</rt></ruby>`
     : `<span>${esc(t.text)}</span>`).join('');
   $('sheetPinyin').textContent = linePinyin(ann);
+  S.tokens = ann.tokens;
   const words = ann.tokens.filter((t) => t.kind === 'word' || t.kind === 'number');
   $('words').innerHTML = words.map((t) => wordHtml(t, ann.tokens.indexOf(t))).join('') +
     `<div class="credit">Readings and meanings: CC-CEDICT (CC BY-SA 4.0). Reading confidence ${Math.round((line.confidence || 0) * 100)}%.</div>`;
@@ -395,7 +401,7 @@ function wordHtml(t, i) {
 }
 
 function expandWord(el) {
-  const t = S.sel.ann.tokens[+el.dataset.t];
+  const t = S.tokens && S.tokens[+el.dataset.t];
   if (!t || t.kind !== 'word') return;
   if (el.classList.toggle('open')) {
     const all = meanings(t).slice(1).map((m) => `<div class="ent"><b>${esc(m.pinyin)}</b> ${m.trad !== m.simp ? esc(m.simp + ' / ' + m.trad) + ' ' : ''}— ${esc(m.defs.join('; '))}</div>`).join('');
@@ -410,6 +416,7 @@ function expandWord(el) {
 function openList() {
   const lines = S.frozen ? S.frozen.lines : [];
   if (!lines.length) return;
+  if (S.dictOpen) closeSheet();
   S.sel = null; S.listOpen = true;
   $('sheetLine').innerHTML = '<span style="font-size:18px">All the text</span>';
   $('sheetPinyin').textContent = `${lines.length} lines`;
@@ -417,6 +424,41 @@ function openList() {
   $('sheet').hidden = false; $('sheet').scrollTop = 0;
   draw();
 }
+
+// ---- dictionary lookup ----
+
+async function openDict(query) {
+  S.sel = null; S.listOpen = false; S.dictOpen = true;
+  const input = $('dictInput');
+  $('sheet').classList.add('dict');
+  $('sheetLine').hidden = true;
+  input.hidden = false;
+  if (query != null) input.value = query;
+  $('sheet').hidden = false;
+  $('speakBtn').hidden = !('speechSynthesis' in window);
+  input.focus();
+  draw();
+  if (!S.dict) { $('sheetPinyin').textContent = 'Loading the dictionary…'; $('words').innerHTML = ''; }
+  await loadDict();
+  runLookup();
+}
+
+let lookupTimer = 0;
+function runLookup() {
+  if (!S.dictOpen || !S.dict) return;
+  const q = $('dictInput').value;
+  const res = lookup(S.dict, q, 60);
+  // each result as a word token, so the list and its expanded meanings are the line sheet's
+  S.tokens = res.map(({ entry: e }) => ({ kind: 'word', text: e.simp, entry: e, entries: S.dict.get(e.simp) || [e], pinyin: markPinyin(e.pinyin) }));
+  $('sheetPinyin').textContent = !q.trim() ? 'Type a word in 汉字, pinyin (nihao, ni3hao3) or English'
+    : res.length ? `${res.length}${res.length >= 60 ? '+' : ''} ${res[0].kind === 'english' ? 'words for' : 'results for'} “${q.trim()}”` : `Nothing found for “${q.trim()}”`;
+  $('words').innerHTML = S.tokens.map((t, i) => wordHtml(t, i)).join('') + (res.length ? '<div class="credit">CC-CEDICT (CC BY-SA 4.0)</div>' : '');
+  $('sheet').scrollTop = 0;
+}
+$('dictInput').addEventListener('input', () => { clearTimeout(lookupTimer); lookupTimer = setTimeout(runLookup, 150); });
+$('dictInput').addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheet(); else if (e.key === 'Enter') { clearTimeout(lookupTimer); runLookup(); e.target.blur(); } });
+$('dictBtn').onclick = () => (S.dictOpen ? closeSheet() : openDict());
+$('dictBtn2').onclick = () => openDict();
 
 // Chrome lists its voices a moment after the page loads: wait for them the first time
 function voices() {
@@ -483,8 +525,8 @@ $('sheetLine').addEventListener('click', (e) => {
   if (w) { if (!w.classList.contains('open')) expandWord(w); w.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
 });
 $('closeBtn').onclick = closeSheet;
-$('speakBtn').onclick = () => { if (S.sel) speak(S.sel.text); else if (S.listOpen && S.frozen) speak(S.frozen.lines.map((l) => l.text).join('。')); };
-$('copyBtn').onclick = () => { const t = S.sel ? S.sel.text : S.frozen ? S.frozen.lines.map((l) => l.text).join('\n') : ''; navigator.clipboard?.writeText(t).then(() => status('Copied'), () => {}); };
+$('speakBtn').onclick = () => { if (S.dictOpen) { const q = $('dictInput').value.trim(), t = /\p{Script=Han}/u.test(q) ? q : S.tokens?.[0]?.text; if (t) speak(t); } else if (S.sel) speak(S.sel.text); else if (S.listOpen && S.frozen) speak(S.frozen.lines.map((l) => l.text).join('。')); };
+$('copyBtn').onclick = () => { const t = S.dictOpen ? (S.tokens?.[0]?.text || '') : S.sel ? S.sel.text : S.frozen ? S.frozen.lines.map((l) => l.text).join('\n') : ''; navigator.clipboard?.writeText(t).then(() => status('Copied'), () => {}); };
 $('listBtn').onclick = openList;
 $('modeBtn').onclick = () => { S.mode = S.mode === 'pinyin' ? 'boxes' : 'pinyin'; localStorage.setItem('hl-mode', S.mode); $('modeBtn').classList.toggle('off', S.mode !== 'pinyin'); draw(); };
 $('modeBtn').classList.toggle('off', S.mode !== 'pinyin');
@@ -498,6 +540,7 @@ addEventListener('keydown', (e) => {
   if (e.key === 'Escape') closeSheet();
   else if (e.key === ' ' && S.view !== 'start') { e.preventDefault(); $('shutter').click(); }
   else if (e.key === 'p') $('modeBtn').click();
+  else if (e.key === 'd') { e.preventDefault(); $('dictBtn').click(); }
   else if (e.key === 'l') openList();
   else if (e.key === 'o') $('file').click();
 });
@@ -515,7 +558,7 @@ if (!navigator.mediaDevices?.getUserMedia) $('camBtn').hidden = true;
     el.querySelector('button').onclick = () => { navigator.clipboard?.writeText(el.querySelector('pre').textContent); status('Copied'); };
   }
 }
-const BUILD = 'v13';   // shown on the start screen; keep in step with sw.js VERSION
+const BUILD = 'v14';   // shown on the start screen; keep in step with sw.js VERSION
 $('build').textContent = `build ${BUILD}`;
 if ('serviceWorker' in navigator && !params.has('nosw')) {
   navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});

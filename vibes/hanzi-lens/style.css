@@ -1,7 +1,7 @@
 :root { --ink: #f6efe2; --dim: #b7ab98; --red: #c8382a; --bg: #141210; --panel: #1f1b17ee; --line: #ffd36a; }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
-html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); overflow: hidden;
+html, body { touch-action: manipulation; -webkit-text-size-adjust: 100%; margin: 0; height: 100%; background: var(--bg); color: var(--ink); overflow: hidden;
   font: 15px/1.4 system-ui, -apple-system, "PingFang SC", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; -webkit-tap-highlight-color: transparent; }
 button, .btn { font: inherit; color: var(--ink); background: #ffffff14; border: 1px solid #ffffff22; border-radius: 10px;
   padding: 8px 12px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
@@ -88,3 +88,11 @@ button.primary { background: var(--red); border-color: var(--red); }
 .credit { color: var(--dim); font-size: 11px; margin-top: 14px; }
 #crash { margin-top: 18px; text-align: left; }
 #crash pre { background: #0008; border-radius: 8px; padding: 8px; font-size: 11px; max-height: 30vh; overflow: auto; white-space: pre-wrap; color: var(--dim); }
+
+/* dictionary lookup, in the sheet: 16px or more, so iOS doesn't zoom in on focus */
+#dictInput { display: block; width: 100%; box-sizing: border-box; margin: 4px 0 6px; padding: 10px 12px; font-size: 18px;
+  color: var(--ink); background: #00000055; border: 1px solid #ffffff2a; border-radius: 10px; outline: none; }
+#dictInput:focus { border-color: var(--line); }
+#dictInput[hidden] { display: none; }
+#sheet.dict { max-height: 80vh; }
+@media (min-width: 800px) { #sheet.dict { top: 72px; max-height: none; } }

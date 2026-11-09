@@ -16,7 +16,7 @@
 
 /** Parse dict/cedict.txt.gz's text (see tools/build-cedict.mjs) into a lookup. */
 export function parseDict(text) {
-  const map = new Map();
+  const map = new Map(), all = [];
   let maxLen = 1, count = 0;
   const add = (key, e) => {
     const list = map.get(key);
@@ -35,11 +35,12 @@ export function parseDict(text) {
       const e = { trad, simp, pinyin: line.slice(b + 1, c), defs: line.slice(c + 1).split('/') };
       add(simp, e);
       if (trad !== simp) add(trad, e);
+      all.push(e);
       count++;
     }
     i = j + 1;
   }
-  return { map, maxLen: Math.min(maxLen, 12), count, get: (w) => map.get(w) || null, has: (w) => map.has(w) };
+  return { map, all, maxLen: Math.min(maxLen, 12), count, get: (w) => map.get(w) || null, has: (w) => map.has(w) };
 }
 
 // ---- pinyin ----
@@ -264,6 +265,119 @@ export function meanings(token) {
   const list = token.entries ? [...token.entries] : [];
   if (token.entry) { list.splice(list.indexOf(token.entry), 1); list.unshift(token.entry); }
   return list.map((e) => ({ trad: e.trad, simp: e.simp, pinyin: markPinyin(e.pinyin).join(' '), defs: e.defs }));
+}
+
+// ---- lookup ----
+
+const PLAIN = { ā: 'a1', á: 'a2', ǎ: 'a3', à: 'a4', ē: 'e1', é: 'e2', ě: 'e3', è: 'e4', ī: 'i1', í: 'i2', ǐ: 'i3', ì: 'i4',
+  ō: 'o1', ó: 'o2', ǒ: 'o3', ò: 'o4', ū: 'u1', ú: 'u2', ǔ: 'u3', ù: 'u4', ǖ: 'v1', ǘ: 'v2', ǚ: 'v3', ǜ: 'v4', ü: 'v' };
+/**
+ * Pinyin as letters alone, for matching: tone marks and numbers dropped, ü as v, no spaces
+ * or apostrophes. With `tones`, the tones kept as one digit each, in order ("ni3hao3" ->
+ * "33"), so a query that gives tones matches only those.
+ */
+export function plainPinyin(p) {
+  let letters = '', tones = '';
+  for (const ch of p.toLowerCase().replace(/u:/g, 'v')) {
+    const m = PLAIN[ch];
+    if (m) { letters += m[0]; if (m[1]) tones += m[1]; }
+    else if (/[a-z]/.test(ch)) letters += ch;
+    else if (/[1-5]/.test(ch)) tones += ch;
+  }
+  return { letters, tones };
+}
+// a CEDICT reading's tones, one a syllable (5 for the neutral tone)
+const entryTones = (p) => p.split(' ').map((s) => (s.match(/[1-5]$/) || ['5'])[0]).join('');
+
+// Built once on the first lookup: each entry's plain pinyin, tones and senses, and how
+// common it looks. CEDICT has no frequencies, so commonness is read from the dictionary
+// itself: a character that many words use is a common one (吃 is in hundreds, 𠯪 in one),
+// and a word is as common as its rarest character. Senses marked dialect, literary,
+// archaic, a variant or a surname count against it.
+const RARE = /^(\((dialect|literary|archaic|old|Cantonese|Taiwan|Tw|classical|onom\.)|(old |archaic )?variant of|used in|surname|see |abbr\. for)/i;
+function index(dict) {
+  if (dict.idx) return dict.idx;
+  const uses = new Map();
+  for (const e of dict.all) for (const c of new Set(e.simp)) uses.set(c, (uses.get(c) || 0) + 1);
+  for (const e of dict.all) {
+    const p = plainPinyin(e.pinyin);
+    e.py = p.letters; e.tn = entryTones(e.pinyin);
+    e.dl = e.defs.flatMap((d) => d.toLowerCase().split('; '));
+    let common = Infinity;
+    for (const c of e.simp) common = Math.min(common, uses.get(c) || 1);
+    const rare = e.defs.filter((d) => RARE.test(d)).length / e.defs.length;
+    // log of the rarest character's use, less for rare senses and capitalised (proper) names
+    // and a little less for each character, so 鸡 comes before 缩头乌龟 for "chicken"
+    e.rank = Math.log(1 + common) - 3 * rare - (/^[A-Z]/.test(e.pinyin) ? 1.5 : 0) - 0.35 * ([...e.simp].length - 1);
+  }
+  return (dict.idx = true);
+}
+const words = (q) => q.toLowerCase().replace(/^(to |a |an |the )/, '').trim();
+
+/**
+ * Look a query up in the dictionary: Chinese (the word itself first, then words that start
+ * with it, then words that hold it), pinyin with or without tones ("nihao", "ni3hao3",
+ * "nǐ hǎo"), or English (a sense that is the query, then senses that hold it as a whole
+ * word). Common words first within each group (see index). Returns [{ entry, kind }], at
+ * most `limit`; kind is 'han', 'pinyin' or 'english'.
+ */
+export function lookup(dict, query, limit = 60) {
+  const q = query.trim();
+  if (!q) return [];
+  index(dict);
+  const out = [], seen = new Set();
+  const push = (e, kind) => { if (!seen.has(e) && out.length < limit) { seen.add(e); out.push({ entry: e, kind }); } };
+  const common = (a, b) => b.rank - a.rank || [...a.simp].length - [...b.simp].length;
+  if (/[\u3400-\u9fff\uf900-\ufaff]/.test(q)) {
+    const han = q.replace(/\s+/g, '');
+    for (const e of (dict.get(han) || []).slice().sort(common)) push(e, 'han');
+    const starts = [], holds = [];
+    for (const e of dict.all) {
+      if (e.simp === han || e.trad === han) continue;
+      if (e.simp.startsWith(han) || e.trad.startsWith(han)) starts.push(e);
+      else if (e.simp.includes(han) || e.trad.includes(han)) holds.push(e);
+    }
+    const shortFirst = (a, b) => [...a.simp].length - [...b.simp].length || common(a, b);
+    for (const e of starts.sort(shortFirst)) push(e, 'han');
+    for (const e of holds.sort(shortFirst)) push(e, 'han');
+    return out;
+  }
+  const { letters, tones } = plainPinyin(q);
+  if (letters && /^[a-zA-Z\u00c0-\u024f1-5' :]+$/.test(q)) {
+    const exact = [], starts = [];
+    for (const e of dict.all) {
+      if (tones && !e.tn.startsWith(tones)) continue;
+      if (e.py === letters) exact.push(e); else if (letters.length >= 2 && e.py.startsWith(letters)) starts.push(e);
+    }
+    for (const e of exact.sort(common)) push(e, 'pinyin');
+    // a word such as "ma" or "bank" may be pinyin or English: pinyin first where it fits
+    // a reading, then English senses after
+    if (exact.length || tones) {
+      for (const e of starts.sort((a, b) => [...a.simp].length - [...b.simp].length || common(a, b))) { if (out.length >= limit / 2 && !tones) break; push(e, 'pinyin'); }
+      if (tones) return out;
+    }
+  }
+  const w = words(q), re = new RegExp(`(^|[^a-z])${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^a-z])`);
+  const exact = [], holds = [];
+  for (const e of dict.all) {
+    let best = 0;
+    for (const d of e.dl) {
+      if (words(d.replace(/^\([^)]*\) */, '').replace(/ \(.*\)$/, '')) === w) { best = 2; break; }
+      if (!best && re.test(d)) best = 1;
+    }
+    if (best === 2) exact.push(e); else if (best === 1) holds.push(e);
+  }
+  const english = [];
+  for (const e of exact.sort(common)) english.push(e);
+  for (const e of holds.sort(common)) english.push(e);
+  // English hits ahead of pinyin prefixes, behind exact pinyin readings
+  const pinyinExact = out.filter((x) => x.entry.py === letters);
+  const rest = out.filter((x) => x.entry.py !== letters);
+  out.length = 0; seen.clear();
+  for (const x of pinyinExact) push(x.entry, 'pinyin');
+  for (const e of english) push(e, 'english');
+  for (const x of rest) push(x.entry, 'pinyin');
+  return out;
 }
 
 // ---- voice ----

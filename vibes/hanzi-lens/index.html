@@ -2,7 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no, viewport-fit=cover">
+<script>
+  // page zoom locked on phones: iOS Safari ignores user-scalable=no, so its pinch gestures are stopped here
+  for (const t of ['gesturestart', 'gesturechange', 'gestureend']) document.addEventListener(t, (e) => e.preventDefault(), { passive: false });
+  document.addEventListener('touchmove', (e) => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
+</script>
 <title>Hanzi Lens 读 — pinyin and meanings for Chinese text through the camera</title>
 <meta name="description" content="Point the camera at Chinese text to see the pinyin over every character, and tap a line for each word's meanings. Runs on the device, works offline.">
 <meta name="theme-color" content="#141210">
@@ -23,6 +28,7 @@
 <header id="bar">
   <div class="brand"><span class="seal">读</span> Hanzi Lens</div>
   <div class="tools">
+    <button id="dictBtn" title="Look up a word (d)">字</button>
     <button id="modeBtn" title="Pinyin over the text, or outlines only (p)">拼</button>
     <button id="listBtn" title="All the text (l)" disabled>☰</button>
     <label class="btn" title="Open a photo (o)">⇪<input id="file" type="file" accept="image/*" hidden></label>
@@ -42,6 +48,8 @@
       <button id="camBtn" class="primary">Start camera</button>
       <label class="btn">Open a photo<input id="file2" type="file" accept="image/*" hidden></label>
       <button id="sampleBtn">Try a sample</button>
+      <button id="dictBtn2">Dictionary</button>
+      <button data-pwa-install style="display:none">Install app</button>
     </div>
     <p class="small"><label class="gpu"><input id="gpuBox" type="checkbox"> Use the GPU (WebGPU)</label></p>
     <p id="build" class="small"></p>
@@ -67,6 +75,7 @@
       <button id="closeBtn" title="Close (Esc)">✕</button>
     </div>
   </div>
+  <input id="dictInput" type="search" placeholder="汉字, pinyin or English" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" hidden>
   <div id="sheetPinyin" class="line-pinyin"></div>
   <div id="words"></div>
 </section>

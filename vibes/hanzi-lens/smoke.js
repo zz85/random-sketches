@@ -62,6 +62,18 @@ try {
     await waitFor(() => b.evaluate('!!window.__hl'), 10000);
     check('start screen', await b.evaluate(`!document.getElementById('start').hidden`));
     await shot('start');
+    check('install button and dictionary on the start screen', await b.evaluate(`!!document.querySelector('#start [data-pwa-install]') && !!document.getElementById('dictBtn2')`));
+    check('page zoom locked', await b.evaluate(`/user-scalable=no/.test(document.querySelector('meta[name=viewport]').content)`));
+    // ---- the dictionary pane ----
+    await tap('#dictBtn2');
+    const look = async (q) => { await b.evaluate(`(()=>{const i=document.getElementById('dictInput'); i.value=${JSON.stringify(q)}; i.dispatchEvent(new Event('input'))})()`); await sleep(100); await waitFor(() => b.evaluate(`!!__hl.S.dict && document.querySelectorAll('#words .word').length>0 && __hl.S.tokens.length>0 && document.getElementById('sheetPinyin').textContent.includes(${JSON.stringify(q)})`), 30000); return b.evaluate(`[...document.querySelectorAll('#words .word .hz')].slice(0,3).map(e=>e.textContent)`); };
+    const r1 = await look('银行'), r2 = await look('nihao'), r3 = await look('chicken');
+    check('dictionary looks up Chinese, pinyin and English', r1[0] === '银行' && r2[0] === '你好' && r3[0] === '鸡', [r1[0], r2[0], r3[0]].join(' / '));
+    await tap('#words .word');
+    check('a result opens all its meanings', await b.evaluate(`!!document.querySelector('#words .word.open .more')`));
+    await shot('dict');
+    await tap('#closeBtn');
+    check('closing the dictionary leaves the start screen', await b.evaluate(`document.getElementById('sheet').hidden && !document.getElementById('start').hidden && document.getElementById('dictInput').hidden`));
     // CPU by default; the GPU box is a choice kept on the device (unticked again before the read)
     const box = await b.evaluate(`(()=>{const g=document.getElementById('gpuBox'); const before=g.checked; if (g.disabled) return {before, disabled:true}; g.click(); const kept=localStorage.getItem('hanzi-lens-ep'); g.click(); return {before, kept, after:localStorage.getItem('hanzi-lens-ep')}})()`);
     check('CPU by default, GPU box kept on the device', box.before === false && (box.disabled || (box.kept === 'webgpu' && box.after === 'wasm')), JSON.stringify(box));
