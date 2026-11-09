@@ -14,7 +14,7 @@ import { crowded } from './ocr.js';
 const $ = (id) => document.getElementById(id);
 const video = $('video'), still = $('still'), boxesSvg = $('boxes'), labels = $('labels');
 const params = new URLSearchParams(location.search);
-const LIVE_DET = 640, FREEZE_DET = 1280, MAX_PHOTO = 2560;
+const LIVE_DET = 640, FREEZE_DET = +params.get('det') || 1280, MAX_PHOTO = 2560;
 
 const S = {
   dict: null, dictP: null, ready: null, ep: '',

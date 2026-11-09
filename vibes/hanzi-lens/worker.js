@@ -32,27 +32,36 @@ async function init(want) {
     fetch(MODELS.recYml).then((r) => r.text()),
   ]);
   recDict = parseRecDict(yml);
+  // logSeverityLevel 3: errors only (the load-time warnings about unused initialisers and
+  // shape ops kept on the CPU are expected)
+  const opts = { graphOptimizationLevel: 'all', logSeverityLevel: 3 };
   const make = async (buf) => {
     if (gpu) {
-      try { return { s: await ort.InferenceSession.create(buf, { executionProviders: ['webgpu'], graphOptimizationLevel: 'all' }), ep: 'webgpu' }; }
+      try { return { s: await ort.InferenceSession.create(buf, { ...opts, executionProviders: ['webgpu'] }), ep: 'webgpu' }; }
       catch (e) { console.warn('WebGPU session failed, using WASM', e); }
     }
-    return { s: await ort.InferenceSession.create(buf, { executionProviders: ['wasm'], graphOptimizationLevel: 'all' }), ep: 'wasm' };
+    return { s: await ort.InferenceSession.create(buf, { ...opts, executionProviders: ['wasm'] }), ep: 'wasm' };
   };
   const d = await make(detBuf), r = await make(recBuf);
   det = d.s; rec = r.s; ep = d.ep === r.ep ? d.ep : `${d.ep}+${r.ep}`;
   return { ep, ms: Math.round(performance.now() - t0), chars: recDict.length };
 }
 
-function pixels(bitmap, w, h) {
-  const c = new OffscreenCanvas(w, h), g = c.getContext('2d', { willReadFrequently: true });
+// One canvas per use, reused: Safari counts canvas memory against a low limit and frees a
+// dropped canvas's memory late, so a new canvas per frame runs out of it in the live view.
+const canvases = new Map();
+function pixels(bitmap, w, h, use) {
+  let c = canvases.get(use);
+  if (!c) { c = new OffscreenCanvas(w, h); canvases.set(use, c); }
+  else if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  const g = c.getContext('2d', { willReadFrequently: true });
   g.imageSmoothingQuality = 'high';
   g.drawImage(bitmap, 0, 0, w, h);
   return g.getImageData(0, 0, w, h);
 }
 
 async function detPass(img, { w, h }) {
-  const small = pixels(img.bitmap, w, h);
+  const small = pixels(img.bitmap, w, h, `det${w}`);
   const out = await det.run({ [det.inputNames[0]]: new ort.Tensor('float32', detTensor(small), [1, 3, h, w]) });
   const map = out[det.outputNames[0]];
   const [, , mh, mw] = map.dims;
@@ -68,8 +77,15 @@ async function detect(img, detLong) {
   return readingOrder(boxes);
 }
 
+// The full-resolution pixels (8 MB for a 1080p frame) are read only when a line is: the live
+// view sends a frame every few hundred ms and reads lines from few of them.
+function fullPixels(img) {
+  if (!img.data) img.data = pixels(img.bitmap, img.width, img.height, 'full').data;
+  return img;
+}
+
 async function read(img, quad) {
-  const { tensor, width, used } = recTensor(img, quad);
+  const { tensor, width, used } = recTensor(fullPixels(img), quad);
   const out = await rec.run({ [rec.inputNames[0]]: new ort.Tensor('float32', tensor, [1, 3, 48, width]) });
   const t = out[rec.outputNames[0]];
   const [, T, C] = t.dims;
@@ -90,8 +106,7 @@ self.onmessage = (e) => {
       try {
         const t0 = performance.now();
         const { bitmap } = m;
-        const full = pixels(bitmap, bitmap.width, bitmap.height);
-        const img = { data: full.data, width: full.width, height: full.height, bitmap };
+        const img = { data: null, width: bitmap.width, height: bitmap.height, bitmap };
         const boxes = await detect(img, m.detLong);
         const tDet = performance.now() - t0;
         const lines = [];
@@ -100,7 +115,7 @@ self.onmessage = (e) => {
           if (m.read) Object.assign(line, await read(img, b.quad));
           if (!m.read || line.text) lines.push(line);
         }
-        if (last && last.img.bitmap !== bitmap) last.img.bitmap.close?.();
+        if (last && last.img.bitmap !== bitmap) { last.img.bitmap.close?.(); last.img.data = null; }
         last = { id: m.id, img };
         self.postMessage({ type: 'lines', id: m.id, w: img.width, h: img.height, lines, ms: Math.round(performance.now() - t0), detMs: Math.round(tDet) });
       } catch (err) {
