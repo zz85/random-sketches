@@ -270,6 +270,42 @@ export function bands(H, bh) {
 }
 
 /**
+ * The rows of the stretched map (`H` rows tall, `sy` map rows per image pixel) that the
+ * stretched pass needs to see: each column of `cols` (image pixels) with a margin of one
+ * character, its width, above and below, so the rows a grid column cuts across are whole.
+ * The pass runs the full width, since a row crossing a column runs well past it on both
+ * sides. Spans that overlap or touch join; each is then grown to a multiple of `step`
+ * rows (clamped to the map), so the detector sees few input shapes. Returns [[y0, y1]].
+ */
+export function gridSpans(cols, H, sy, step = 256) {
+  const raw = cols.map((c) => {
+    const [x0, y0, x1, y1] = bbox(c.quad), m = x1 - x0;
+    return [Math.max(0, Math.floor((y0 - m) * sy)), Math.min(H, Math.ceil((y1 + m) * sy))];
+  }).sort((a, b) => a[0] - b[0]);
+  const grow = ([y0, y1]) => {
+    const h = Math.min(H, Math.ceil((y1 - y0) / step) * step);
+    const c = Math.round((y0 + y1 - h) / 2);
+    const s = Math.max(0, Math.min(H - h, c));
+    return [s, s + h];
+  };
+  let spans = [];
+  for (const r of raw) {
+    const p = spans[spans.length - 1];
+    if (p && r[0] <= p[1]) p[1] = Math.max(p[1], r[1]); else spans.push([...r]);
+  }
+  // growing can make spans overlap again: join and grow until stable
+  for (;;) {
+    const g = spans.map(grow), out = [];
+    for (const r of g) {
+      const p = out[out.length - 1];
+      if (p && r[0] <= p[1]) p[1] = Math.max(p[1], r[1]); else out.push([...r]);
+    }
+    if (out.length === g.length) return out;
+    spans = out;
+  }
+}
+
+/**
  * A dense menu is a grid: the gap between rows is about the gap between characters in a
  * row, and the detector joins characters of successive rows into columns. A pass on the
  * image stretched vertically separates the rows. For each column of `base` (the normal

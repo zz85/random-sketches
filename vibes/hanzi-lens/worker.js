@@ -11,7 +11,7 @@
  *       (answered with results: null when a newer frame has replaced frame `id`)
  * A line: { quad, vertical, score, text?, confidence?, chars?: [{ch, pos}] }
  */
-import { detSize, detSizeStretched, detTensor, dbBoxes, readingOrder, recTensor, ctcDecode, parseRecDict, mergeGrid, bands } from './ocr.js';
+import { detSize, detSizeStretched, detTensor, dbBoxes, readingOrder, recTensor, ctcDecode, parseRecDict, mergeGrid, bands, gridSpans } from './ocr.js';
 
 const GRID_STRETCH = 1.5;   // vertical stretch of the second pass, for dense grids (see mergeGrid)
 import { ORT_URL, ORT_DIST, MODELS } from './assets.js';
@@ -56,13 +56,13 @@ async function init(want) {
 // One canvas per use, reused: Safari counts canvas memory against a low limit and frees a
 // dropped canvas's memory late, so a new canvas per frame runs out of it in the live view.
 const canvases = new Map();
-function pixels(bitmap, w, h, use) {
+function pixels(bitmap, w, h, use, src) {   // src: [x, y, w, h] of the bitmap, all of it when left out
   let c = canvases.get(use);
   if (!c) { c = new OffscreenCanvas(w, h); canvases.set(use, c); }
   else if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
   const g = c.getContext('2d', { willReadFrequently: true });
   g.imageSmoothingQuality = 'high';
-  g.drawImage(bitmap, 0, 0, w, h);
+  if (src) g.drawImage(bitmap, ...src, 0, 0, w, h); else g.drawImage(bitmap, 0, 0, w, h);
   return g.getImageData(0, 0, w, h);
 }
 
@@ -78,26 +78,32 @@ async function detPass(img, { w, h }) {
 }
 
 /**
- * The stretched pass, run in bands of the first pass's size. A larger input crashed iOS
- * Safari's WebGPU (iPhone, iOS 18.7: the tab died at a 1280x1216 pass after a 1280x800 one),
- * and the same shape lets ONNX Runtime reuse the first pass's buffers.
+ * The stretched pass, run only on the rows around the columns the first pass found (see
+ * gridSpans), each span in bands no taller than the first pass. A larger input crashed iOS
+ * Safari's WebGPU (iPhone, iOS 18.7: the tab died at a 1280x1216 pass after a 1280x800
+ * one); spans in steps of 256 rows keep the input shapes few, so ONNX Runtime allocates
+ * few buffers, and a single column, as on most pages, costs one small pass.
  */
-async function detBands(img, base, { w, h }) {
-  const whole = pixels(img.bitmap, w, h, 'stretched');
-  const boxes = [];
-  for (const b of bands(h, Math.min(base.h, h))) {
-    const bh = Math.min(base.h, h);
-    trace(`detect band ${w}x${bh} at ${b.y0} of ${h}`);
-    const band = { data: whole.data.subarray(b.y0 * w * 4, (b.y0 + bh) * w * 4), width: w, height: bh };
-    const out = await det.run({ [det.inputNames[0]]: new ort.Tensor('float32', detTensor(band), [1, 3, bh, w]) });
-    const map = out[det.outputNames[0]];
-    const prob = await map.getData();
-    map.dispose?.();
-    // a region touching an inner edge of the band is cut there: the next band has it whole
-    const cutTop = b.y0 > 0, cutBottom = b.y0 + bh < h;
-    for (const x of dbBoxes(prob, w, bh, img.width / w, img.height / h, { oy: b.y0 })) {
-      if ((cutTop && x.mapY0 <= b.y0) || (cutBottom && x.mapY1 >= b.y0 + bh - 1)) continue;
-      if (x.mapCy >= b.core0 && x.mapCy < b.core1) boxes.push(x);
+async function detStretched(img, base, cols, { w, h }) {
+  const boxes = [], sy = h / img.height;
+  for (const [s0, s1] of gridSpans(cols, h, sy)) {
+    const sh = s1 - s0, bh = Math.min(base.h, sh);
+    const span = pixels(img.bitmap, w, sh, 'span', [0, s0 / sy, img.width, sh / sy]);
+    for (const b of bands(sh, bh)) {
+      const y0 = s0 + b.y0;
+      trace(`detect ${w}x${bh} at ${y0} of ${h}`);
+      const band = { data: span.data.subarray(b.y0 * w * 4, (b.y0 + bh) * w * 4), width: w, height: bh };
+      const out = await det.run({ [det.inputNames[0]]: new ort.Tensor('float32', detTensor(band), [1, 3, bh, w]) });
+      const map = out[det.outputNames[0]];
+      const prob = await map.getData();
+      map.dispose?.();
+      // a region touching an edge of the band inside the map is cut there: drop it (the
+      // next band has it whole, or it lies outside the columns' margin)
+      const cutTop = y0 > 0, cutBottom = y0 + bh < h;
+      for (const x of dbBoxes(prob, w, bh, img.width / w, 1 / sy, { oy: y0 })) {
+        if ((cutTop && x.mapY0 <= y0) || (cutBottom && x.mapY1 >= y0 + bh - 1)) continue;
+        if (x.mapCy >= s0 + b.core0 && x.mapCy < s0 + b.core1) boxes.push(x);
+      }
     }
   }
   return boxes;
@@ -107,7 +113,8 @@ async function detect(img, detLong) {
   const base = detSize(img.width, img.height, detLong);
   let boxes = await detPass(img, base);
   // columns may be rows of a dense grid read the wrong way: check with a stretched pass
-  if (boxes.some((b) => b.vertical)) boxes = mergeGrid(boxes, await detBands(img, base, detSizeStretched(img.width, img.height, detLong, GRID_STRETCH)));
+  const cols = boxes.filter((b) => b.vertical);
+  if (cols.length) boxes = mergeGrid(boxes, await detStretched(img, base, cols, detSizeStretched(img.width, img.height, detLong, GRID_STRETCH)));
   return readingOrder(boxes);
 }
 

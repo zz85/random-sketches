@@ -1,7 +1,7 @@
 # Logs
 
 9 Nov 2026
-- Hanzi Lens: dense menus read as rows, not columns (a second detector pass on the image stretched vertically when the first finds columns, and small photos scaled up to 1280 px); on a dense page only the tapped line gets pinyin; ONNX Runtime's load-time warnings silenced
+- Hanzi Lens: dense menus read as rows, not columns (a second detector pass on the image stretched vertically when the first finds columns, run only on the rows around those columns and in passes no larger than the first, since a larger input crashed iOS Safari's WebGPU, and small photos scaled up to 1280 px); on a dense page only the tapped line gets pinyin; ONNX Runtime's load-time warnings silenced
 
 8 Nov 2026
 - Add [Hanzi Lens](vibes/hanzi-lens/): point the camera at Chinese text and see the pinyin over every character, tap a line for its words with pinyin and CC-CEDICT meanings. PP-OCRv5 mobile detection and recognition on ONNX Runtime Web (WebGPU or WASM) in a worker, DB post-processing and CTC decoding in plain JS, vertical columns, per-character pinyin placed from the CTC positions. Live view tracks lines between frames and reads them once the picture holds still; the shutter freezes and reads the whole frame. Words split by dynamic programming over CC-CEDICT so context picks the reading, prices and times read out, text-to-speech, photo import, offline PWA. `node --test` (13), `node smoke.js` (16 checks)

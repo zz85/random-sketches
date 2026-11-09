@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import zlib from 'zlib';
 import { parseDict, markSyllable, markPinyin, joinPinyin, readNumber, readTime, annotate, linePinyin, bestEntry } from './text.js';
-import { detSize, detSizeStretched, minAreaRect, rectQuad, dbBoxes, ctcDecode, parseRecDict, recTensor, readingOrder, mergeGrid, crowded, bands } from './ocr.js';
+import { detSize, detSizeStretched, minAreaRect, rectQuad, dbBoxes, ctcDecode, parseRecDict, recTensor, readingOrder, mergeGrid, crowded, bands, gridSpans } from './ocr.js';
 
 const dict = parseDict(zlib.gunzipSync(fs.readFileSync(new URL('./dict/cedict.txt.gz', import.meta.url))).toString('utf8'));
 
@@ -175,4 +175,17 @@ test('bands cover the map once, each line in one core', () => {
       if (k < bs.length - 1) assert.ok(b.core1 <= b.y0 + bh - 0.14 * bh);
     });
   }
+});
+
+test('gridSpans: the rows around each column, joined, in steps of 256', () => {
+  const col = (cx, cy, h, w = 40) => rectQuad({ cx, cy, ux: 1, uy: 0, w, h });
+  // one column 160 px tall at y 300, map 1.5x the image: margin 40 px: map rows 270..630, grown to 512 rows about its centre
+  assert.deepEqual(gridSpans([col(100, 300, 160)], 1216, 1.5), [[194, 706]]);
+  // two columns close together join; one far away stays apart
+  const s = gridSpans([col(100, 200, 100), col(300, 300, 100), col(100, 700, 60)], 1216, 1.5);
+  assert.equal(s.length, 2);
+  for (const [a, b] of s) { assert.ok(a >= 0 && b <= 1216); assert.equal((b - a) % 256, 0); }
+  assert.ok(s[0][1] <= s[1][0]);
+  // columns covering the page give one span of the whole map
+  assert.deepEqual(gridSpans([col(100, 100, 180), col(200, 400, 400), col(300, 700, 200)], 1216, 1.5), [[0, 1216]]);
 });
