@@ -63,6 +63,9 @@ export const P = {
   slosh: 0.04,       // share of the shell's move that a loose vertex lags behind
   kendall: 0.6,      // how much the peel angle matters: load x (1 + kendall x cos(arm, glued side))
   peelFloor: 0.03,   // strain an arm must pass before it loads the glue at all
+  reach: 0.996,      // the pinch's reach along loose sheet, kept per link it crosses (and per substep without a pinch)
+  selfLoad: 0.08,    // share of the peel load that counts where no pinch reaches: the sheet's own weight, and a
+                     // shell turned upside down, peel only this much (wet membrane clings; its weight is nothing)
   calm: 0.82,        // velocity kept per substep by a vertex next to a fresh break (decays back to damp)
 };
 
@@ -111,6 +114,8 @@ export function makeSim(m, table, { substeps = 8, iters = 3 } = {}) {
   const sA = instancedArray(new Float32Array(NS * 4), 'vec4'), sB = instancedArray(new Float32Array(NS * 4), 'vec4');
   // x: 1 at a fresh break, decaying; y: 1 once a peeled vertex has been lifted well clear of the shell
   const calmB = instancedArray(new Float32Array(N * 2), 'vec2');
+  // how much the pinch reaches each vertex through loose sheet: 1 under the fingertip, falling off along the sheet
+  const pullB = instancedArray(new Float32Array(N), 'float');
 
   const dt = uniform(1 / 60 / substeps);
   const grav = uniform(new Vector3(0, -P.gravity, 0)), vmax = uniform(P.vmax), visc = uniform(P.visc), frameDt = uniform(1 / 60);
@@ -118,7 +123,7 @@ export function makeSim(m, table, { substeps = 8, iters = 3 } = {}) {
   const stepNo = uniform(0);
   // the shell's frame: table plane in it (dot(p, tblN) >= tblD), whether the cup counts, and the move to undo
   const tblN = uniform(new Vector3(0, 1, 0)), tblD = uniform(TABLE_Y), cupOn = uniform(1), moveM = uniform(new Matrix4());
-  const kendall = uniform(P.kendall), peelFloor = uniform(P.peelFloor), slosh = uniform(P.slosh), neck = uniform(P.neck), fade = uniform(P.fade), calmK = uniform(P.calm);
+  const pinching = uniform(0), reach = uniform(P.reach), selfLoad = uniform(P.selfLoad), kendall = uniform(P.kendall), peelFloor = uniform(P.peelFloor), slosh = uniform(P.slosh), neck = uniform(P.neck), fade = uniform(P.fade), calmK = uniform(P.calm);
   const damp = uniform(P.damp), omega = uniform(P.omega), comp = uniform(P.comp), adhK = uniform(P.adh), adhBreak = uniform(P.adhBreak);
   const yieldS = uniform(P.yield), creep = uniform(P.creep), smooth = uniform(P.smooth), maxPlastic = uniform(P.maxPlastic), bendK = uniform(P.bendK);
   const tFrom = uniform(new Vector3()), tTo = uniform(new Vector3()), alpha = uniform(1);
@@ -171,13 +176,16 @@ export function makeSim(m, table, { substeps = 8, iters = 3 } = {}) {
   const viscPass = Fn(() => {
     const i = int(instanceIndex);
     const vi = pos.element(i).xyz.sub(prev.element(i).xyz).toVar();
-    const acc = vec3(0).toVar(), n = float(0).toVar();
+    const acc = vec3(0).toVar(), n = float(0).toVar(), reachN = float(0).toVar();
     Loop(MAXL, ({ i: k }) => {
       const L = links.element(adj.element(i.mul(MAXL).add(k))).toVar();
       const o = select(int(L.x).equal(i), int(L.y), int(L.x));
       const live = select(L.w.greaterThan(0.5), float(1), float(0));
       acc.addAssign(pos.element(o).xyz.sub(prev.element(o).xyz).mul(live)); n.addAssign(live);
+      // the pinch's reach comes through live links from loose sheet only: glued sheet carries the load into the shell
+      reachN.assign(max(reachN, pullB.element(o).mul(live).mul(select(anchor.element(o).w.lessThan(0.5), float(1), float(0)))));
     });
+    pullB.element(i).assign(max(grab.element(i).w.min(1), reachN.mul(reach)).mul(pinching));
     const vs = select(n.greaterThan(0), mix(vi, acc.div(n.max(1)), visc.mul(float(1).sub(anchor.element(i).w))), vi);
     posB.element(i).assign(vec4(vs, 0));
   })().compute(N);
@@ -227,7 +235,7 @@ export function makeSim(m, table, { substeps = 8, iters = 3 } = {}) {
       const live = select(L.w.greaterThan(0.5), float(1), float(0));
       // only an arm that is off the wall counts (its far end lifted at least a fraction of a millimetre): the
       // solver's leftover tension in sheet lying flat on the shell doesn't unzip it
-      const ao = anchor.element(o).toVar(), glNb = ao.w;
+      const ao = anchor.element(o).toVar(), glNb = select(ao.w.greaterThan(0.5), float(1), float(0));
       const lifted = smoothstep(0.015, 0.06, length(ao.xyz).sub(length(src.element(o).xyz)));
       const t = C.div(L.z).sub(peelFloor).max(0).mul(float(1).sub(glNb)).mul(live).mul(lifted);
       tens.addAssign(t); arm.addAssign(d.div(len).mul(t));
@@ -240,15 +248,17 @@ export function makeSim(m, table, { substeps = 8, iters = 3 } = {}) {
     // and the solver's leftovers don't unzip the sheet by themselves.
     const tg = toGlued.sub(nOut.mul(toGlued.dot(nOut)));
     const G = select(length(tg).greaterThan(1e-5), normalize(tg), vec3(0));
-    const peel = tens.add(arm.dot(G).mul(kendall));
+    // the load counts in full only where the pinch reaches the front through loose sheet; the rest is the sheet's
+    // own weight, which a wet membrane's cling and this thin a sheet's lightness make all but nothing
+    const peel = tens.add(arm.dot(G).mul(kendall)).mul(mix(selfLoad, float(1), pullB.element(i)));
     const x = xi.add(acc.mul(omega).div(wsum.max(1))).toVar();
     If(an.w.greaterThan(0.5), () => {
       // glue strength: patchy, and weaker near the crack (prev.w)
       const thr = adhBreak.mul(prev.element(i).w).mul(hash(instanceIndex).mul(0.8).add(0.6));
-      // the glue lets go; wet = 2 marks it for spawnPass (the solve is at WebGPU's 8 storage buffers already)
-      If(peel.greaterThan(thr), () => { anchor.element(i).w.assign(0); an.w.assign(0); wet.element(i).assign(2); });
+      // the glue lets go; anchor.w = 0.25 marks it for spawnPass (the solve is at WebGPU's 8 storage buffers)
+      If(peel.greaterThan(thr), () => { anchor.element(i).w.assign(0.25); an.w.assign(0); });
     });
-    x.assign(mix(x, an.xyz, adhK.mul(an.w)));
+    x.assign(mix(x, an.xyz, adhK.mul(select(an.w.greaterThan(0.5), float(1), float(0)))));
     const g = grab.element(i).toVar();
     If(g.w.greaterThan(0), () => { x.assign(mix(x, mix(tFrom, tTo, alpha).add(g.xyz), g.w)); });
     dst.element(i).assign(vec4(collide(x), 1));
@@ -302,8 +312,8 @@ export function makeSim(m, table, { substeps = 8, iters = 3 } = {}) {
   // what a peel leaves: the count, a wet spot, and now and then a thread of egg white drawn out of it
   const spawnPass = Fn(() => {
     const i = int(instanceIndex);
-    If(wet.element(i).greaterThan(1.5), () => {
-      wet.element(i).assign(1); atomicAdd(counters.element(1), uint(1));
+    If(anchor.element(i).w.greaterThan(0.2).and(anchor.element(i).w.lessThan(0.3)), () => {
+      anchor.element(i).w.assign(0); wet.element(i).assign(1); atomicAdd(counters.element(1), uint(1));
       If(hash(instanceIndex.add(uint(stepNo).mul(7919))).lessThan(strandP), () => {
         const slot = int(atomicAdd(counters.element(3), uint(1)).mod(uint(NS)));
         If(sB.element(slot).y.lessThan(0.5), () => {
@@ -424,10 +434,10 @@ export function makeSim(m, table, { substeps = 8, iters = 3 } = {}) {
       pickPos.value.set(p[0], p[1], p[2]);
       pickAnc.value.set(m.pos[vi * 3], m.pos[vi * 3 + 1], m.pos[vi * 3 + 2]);
       tFrom.value.set(p[0], p[1], p[2]); tTo.value.copy(tFrom.value);
-      renderer.compute(grabStart); this.grabbing = true;
+      renderer.compute(grabStart); this.grabbing = true; pinching.value = 1;
     },
     grabMove(x, y, z) { tTo.value.set(x, y, z); },
-    grabEnd() { renderer.compute(grabEnd); this.grabbing = false; },
+    grabEnd() { renderer.compute(grabEnd); this.grabbing = false; pinching.value = 0; },
     target: () => tTo.value,
     async readPositions() { return new Float32Array(await renderer.getArrayBufferAsync(pos.value)); },
     async readStrands() { return new Float32Array(await renderer.getArrayBufferAsync(sB.value)); },

@@ -138,6 +138,15 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
     check('held up, the flap is in view', down.onScreen);
     check('held up, a pull downward peels it', down.c[1] - down.c[4] > info.N * 0.12 && !down.nan, JSON.stringify(down.c.slice(0, 5)));
     log(`downward peel torn about ${(down.c[0] * info.edge * 10 / 1.5).toFixed(0)} mm`);
+    // turned upside down after the pull, the loose sheet hangs and the rest stays on: its weight doesn't peel it
+    await E('__membrane.endGrab(); __membrane.steps(30)');
+    const before = await E('__membrane.counters()');
+    await E('__membrane.pickUp([1, 0, 0, 0]); __membrane.steps(240)');
+    const after2 = await E('__membrane.counters()');
+    const gl = await E('__membrane.world.glued');
+    check('upside down, the membrane hangs on (gravity alone hardly peels it)', (after2[1] - after2[4]) - (before[1] - before[4]) < gl * 0.04,
+      `${(((before[1] - before[4]) / gl) * 100).toFixed(0)}% -> ${(((after2[1] - after2[4]) / gl) * 100).toFixed(0)}% off in 4 s upside down`);
+    await shot('upside_down');
     await E('__membrane.refresh()'); await shot('hud');
     const hudTxt = await E(`[document.getElementById('peeled').textContent, document.getElementById('torn').textContent, document.querySelector('#lifebar i').style.width]`);
     check('the top bars show the peel and what is left intact', /%/.test(hudTxt[0]) && /mm torn|no tears/.test(hudTxt[1]) && parseFloat(hudTxt[2]) < 100, hudTxt.join(' | '));

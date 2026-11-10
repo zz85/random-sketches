@@ -9,7 +9,7 @@
 // What the app reports (events) picks and scales them: peeling, tearing, threads being drawn out and snapping,
 // a patch sticking back down, the pinch and the release.
 export function makeAudio({ ctx: given = null } = {}) {
-  let ctx = given, noise = null, out = null, bed = null, on = given ? true : localStorage.getItem('membrane.sound') !== '0';
+  let ctx = given, noise = null, out = null, peelBus = null, bed = null, on = given ? true : localStorage.getItem('membrane.sound') !== '0';
   const rate = { peel: 0, stretch: 0 };
   let peelAcc = 0, peelNext = 30;
   const setup = () => {
@@ -23,14 +23,18 @@ export function makeAudio({ ctx: given = null } = {}) {
     conv.buffer = ir;
     const wetG = ctx.createGain(); wetG.gain.value = 0.18;
     out.connect(comp); out.connect(conv); conv.connect(wetG); wetG.connect(comp); comp.connect(ctx.destination);
-    // the running peel bed: pink-ish noise, low-passed, with a slow wobble so it sucks rather than hisses
+    // the peel's own bus: quieter than the rest, and rolled off above 3.5 kHz, so it stays a soft sticky sound
+    peelBus = ctx.createGain(); peelBus.gain.value = 0.8;
+    const pl = ctx.createBiquadFilter(); pl.type = 'lowpass'; pl.frequency.value = 3500; pl.Q.value = 0.5;
+    peelBus.connect(pl); pl.connect(out);
+    // the running peel bed: low-passed noise, gently moving, under the grains: a faint sticky hiss, not a wah
     const src = ctx.createBufferSource(); src.buffer = noise; src.loop = true;
-    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 400; lp.Q.value = 3;
-    const bp = ctx.createBiquadFilter(); bp.type = 'peaking'; bp.frequency.value = 900; bp.gain.value = 8; bp.Q.value = 2;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 500; lp.Q.value = 0.7;
+    const bp = ctx.createBiquadFilter(); bp.type = 'peaking'; bp.frequency.value = 1100; bp.gain.value = 3; bp.Q.value = 1;
     const g = ctx.createGain(); g.gain.value = 0;
-    const lfo = ctx.createOscillator(), lfoG = ctx.createGain(); lfo.frequency.value = 7; lfoG.gain.value = 180;
+    const lfo = ctx.createOscillator(), lfoG = ctx.createGain(); lfo.frequency.value = 3; lfoG.gain.value = 40;
     lfo.connect(lfoG); lfoG.connect(lp.frequency);
-    src.connect(lp); lp.connect(bp); bp.connect(g); g.connect(out); src.start(); lfo.start();
+    src.connect(lp); lp.connect(bp); bp.connect(g); g.connect(peelBus); src.start(); lfo.start();
     bed = { g, lp, lfo };
   };
   const start = () => {
@@ -41,30 +45,30 @@ export function makeAudio({ ctx: given = null } = {}) {
   const env = (g, t, a, gain, dur) => { g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(gain, t + a); g.gain.exponentialRampToValueAtTime(0.0001, t + dur); };
 
   // one bubble: f0 Hz, rising by `rise` (0.3 is a small bubble, 1+ a big gulpy one), over `dur` seconds
-  const bubble = (t, f0, dur, gain, rise = 0.5) => {
+  const bubble = (t, f0, dur, gain, rise = 0.5, dest = out) => {
     const o = ctx.createOscillator(); o.type = 'sine';
     o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f0 * (1 + rise), t + dur);
     const g = ctx.createGain(); env(g, t, 0.0015, gain, dur);
-    o.connect(g); g.connect(out); o.start(t); o.stop(t + dur + 0.02);
+    o.connect(g); g.connect(dest); o.start(t); o.stop(t + dur + 0.02);
   };
-  const grain = (t, freq, q, dur, gain) => {
+  const grain = (t, freq, q, dur, gain, dest = out) => {
     const s = ctx.createBufferSource(); s.buffer = noise; s.playbackRate.value = R(0.7, 1.2);
     const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = freq; f.Q.value = q;
     const g = ctx.createGain(); env(g, t, 0.0006, gain, dur);
-    s.connect(f); f.connect(g); g.connect(out); s.start(t, R(0, 0.9), dur + 0.01);
+    s.connect(f); f.connect(g); g.connect(dest); s.start(t, R(0, 0.9), dur + 0.01);
   };
   // a squelch: noise through two formants gliding from "oo" (300, 800 Hz) to "ah" (750, 1200 Hz), and back if `back`
-  const squelch = (t, dur, gain, back = false, low = 1) => {
+  const squelch = (t, dur, gain, back = false, low = 1, dest = out, q = 1) => {
     const s = ctx.createBufferSource(); s.buffer = noise; s.playbackRate.value = R(0.4, 0.6);
     const g = ctx.createGain(); env(g, t, dur * 0.3, gain, dur);
-    for (const [a, b, q] of [[300, 750, 9], [800, 1200, 7]]) {
-      const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = q;
+    for (const [a, b, qq] of [[300, 750, 9], [800, 1200, 7]]) {
+      const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = qq * q;
       f.frequency.setValueAtTime(a * low * R(0.85, 1.15), t);
       f.frequency.exponentialRampToValueAtTime(b * low * R(0.85, 1.15), t + dur * (back ? 0.5 : 0.9));
       if (back) f.frequency.exponentialRampToValueAtTime(a * low, t + dur);
       s.connect(f); f.connect(g);
     }
-    g.connect(out); s.start(t, R(0, 0.9), dur + 0.02);
+    g.connect(dest); s.start(t, R(0, 0.9), dur + 0.02);
   };
   // a soft wet thump: a low sine falling in pitch, for a patch slapping down on the shell
   const thump = (t, gain) => {
@@ -81,15 +85,13 @@ export function makeAudio({ ctx: given = null } = {}) {
     release(t = ctx.currentTime + 0.005) { thump(t, 0.25); squelch(t + 0.01, 0.11, 0.2, true, 0.8); for (let k = 0; k < 3; k++) bubble(t + R(0.02, 0.12), R(500, 1400), R(0.02, 0.05), 0.05, 0.4); },
     // n vertices let go in one frame: a squelch for a burst, a fizz of grains and small bubbles for a steady peel
     peel(n, t0 = ctx.currentTime + 0.01, span = 1 / 30) {
-      // a fizz kept low and sparse, so it sounds moist rather than frying: grains below 3 kHz, small bubbles,
-      // as many as the peel rate asks for on average
-      const ng = Math.min(8, Math.floor(n / 5 + Math.random()));
-      for (let k = 0; k < ng; k++) grain(t0 + R(0, span), R(900, 3000), R(2, 5), R(0.003, 0.008), R(0.04, 0.1));
-      const nb = Math.min(5, Math.floor(n / 10 + Math.random()));
-      for (let k = 0; k < nb; k++) bubble(t0 + R(0, span), R(500, 1800), R(0.015, 0.04), R(0.03, 0.08), R(0.3, 1.0));
-      // every few dozen vertices, a squelch, sooner and louder when it comes off in a rush
+      // mostly broad, quiet ticks of the seal parting (broad bands sound like matter; narrow ones like a synth),
+      // a small bubble now and then, and a soft low squelch every hundred-odd vertices
+      const ng = Math.min(5, Math.floor(n / 8 + Math.random()));
+      for (let k = 0; k < ng; k++) grain(t0 + R(0, span), R(700, 2400), R(0.8, 1.6), R(0.002, 0.006), R(0.02, 0.05), peelBus);
+      if (Math.random() < Math.min(0.5, n / 60)) bubble(t0 + R(0, span), R(700, 1600), R(0.012, 0.025), R(0.012, 0.03), R(0.15, 0.4), peelBus);
       peelAcc += n;
-      if (peelAcc >= peelNext) { peelAcc = 0; peelNext = R(20, 60); squelch(t0 + R(0, span), R(0.06, 0.14), Math.min(0.32, 0.1 + n / 120), Math.random() < 0.3); }
+      if (peelAcc >= peelNext) { peelAcc = 0; peelNext = R(70, 160); squelch(t0 + R(0, span), R(0.07, 0.13), Math.min(0.12, 0.05 + n / 400), Math.random() < 0.3, 0.85, peelBus, 0.45); }
     },
     // n links tore: a crackle, still a little wet
     tear(n, t0 = ctx.currentTime + 0.01, span = 1 / 30) {
@@ -133,12 +135,11 @@ export function makeAudio({ ctx: given = null } = {}) {
       // the bed follows the peel rate (vertices a second), eased
       rate.peel += (dPeel / dt - rate.peel) * 0.25;
       rate.stretch += (stretch - rate.stretch) * 0.3;
-      const level = Math.min(0.35, rate.peel / 900) + Math.min(0.12, rate.stretch / 60);
-      bed.g.gain.setTargetAtTime(level, t, 0.05);
-      bed.lp.frequency.setTargetAtTime(350 + Math.min(1400, rate.peel * 0.9), t, 0.08);
-      bed.lfo.frequency.setTargetAtTime(5 + Math.min(14, rate.peel / 40), t, 0.1);
+      const level = Math.min(0.1, rate.peel / 2500) + Math.min(0.05, rate.stretch / 120);
+      bed.g.gain.cancelScheduledValues(t); bed.g.gain.setTargetAtTime(level, t, 0.15);
+      bed.lp.frequency.setTargetAtTime(450 + Math.min(700, rate.peel * 0.4), t, 0.2);
       // threads being drawn out creak: slow, low bubbles whose pitch climbs as they thin
-      if (rate.stretch > 1.5 && Math.random() < Math.min(0.8, rate.stretch / 25)) bubble(t + R(0, dt), R(220, 420) * (1 + rate.stretch / 40), R(0.04, 0.08), 0.05, 1.4);
+      if (rate.stretch > 2 && Math.random() < Math.min(0.3, rate.stretch / 60)) bubble(t + R(0, dt), R(260, 420) * (1 + rate.stretch / 60), R(0.04, 0.07), 0.025, 0.8, peelBus);
     },
   };
 }
