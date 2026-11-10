@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import zlib from 'zlib';
 import { parseDict, markSyllable, markPinyin, joinPinyin, readNumber, readTime, annotate, linePinyin, bestEntry, pickVoice } from './text.js';
-import { detSize, detSizeStretched, minAreaRect, rectQuad, dbBoxes, ctcDecode, parseRecDict, recTensor, readingOrder, mergeGrid, crowded, bands, gridSpans } from './ocr.js';
+import { detSize, detSizeStretched, minAreaRect, rectQuad, dbBoxes, ctcDecode, parseRecDict, recTensor, readingOrder, mergeGrid, crowded, bands, gridSpans, skewOf } from './ocr.js';
 
 const dict = parseDict(zlib.gunzipSync(fs.readFileSync(new URL('./dict/cedict.txt.gz', import.meta.url))).toString('utf8'));
 
@@ -226,4 +226,17 @@ test('lookup by Chinese, pinyin with or without tones, and English', async () =>
   assert.equal(first('to eat'), '吃');
   assert.equal(lookup(d, 'eat')[0].entry.defs[0], 'to eat; to consume', 'the real sense before the variant');
   assert.deepEqual(lookup(d, '  '), []);
+});
+
+test('skewOf: the angle of the lines, folded to a quarter turn, by length', () => {
+  const deg = (t) => Math.round((t * 180) / Math.PI);
+  const line = (cx, cy, a, w = 200, h = 30) => rectQuad({ cx, cy, ux: Math.cos(a), uy: Math.sin(a), w, h });
+  const r = (d) => (d * Math.PI) / 180;
+  assert.equal(deg(skewOf([line(100, 100, r(20)), line(100, 200, r(21)), line(100, 300, r(19))])), 20);
+  assert.equal(deg(skewOf([line(100, 100, r(-10))])), -10);
+  // a column turned the same way gives the same angle; a stray short box doesn't move it
+  const col = rectQuad({ cx: 50, cy: 50, ux: Math.cos(r(20)), uy: Math.sin(r(20)), w: 30, h: 200 });
+  assert.ok(col.vertical);
+  assert.equal(deg(skewOf([col, line(100, 100, r(20)), line(0, 0, r(-40), 60, 25)])), 20);
+  assert.equal(skewOf([line(0, 0, 0, 30, 30)]), null, 'a square box says nothing');
 });

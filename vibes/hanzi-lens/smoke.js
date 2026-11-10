@@ -165,6 +165,18 @@ try {
     await sleep(200);
     check('tapping a line in a turned view opens it', await b.evaluate(`__hl.S.sel && __hl.S.sel.text === ${JSON.stringify(want)}`), want);
     await tap('#closeBtn');
+    // a crop of the turned view: straightened, then read
+    await tap('#cropBtn');
+    await b.evaluate(`(()=>{const r=document.querySelectorAll('#boxes polygon')[${ti}].getBoundingClientRect(); __hl.S.crop={x:r.x-40,y:r.y-40,w:r.width+80,h:r.height+80}; return 1})()`);
+    await tap('#cropOk');
+    await sleep(300);
+    await readDone();
+    const turned = await b.evaluate(`({text:__hl.S.frozen.lines.map(l=>l.text), skew:JSON.parse(localStorage.getItem('hl-trace')).steps.filter(x=>/crop skew/.test(x)).pop()})`);
+    check('a crop of a turned view is straightened and read', turned.text.includes(want), `${turned.skew}: ${turned.text.join(' / ')}`);
+    await shot('cropped');
+    await tap('#revertBtn');
+    await sleep(300);
+    await readDone();
     // a crop of what shows, zoomed in on a line: read again
     await tap('#fitBtn');
     await sleep(400);
@@ -177,7 +189,6 @@ try {
     await readDone();
     const cropped = await b.evaluate(`({w:__hl.S.frozen.w, h:__hl.S.frozen.h, text:__hl.S.frozen.lines.map(l=>l.text), orig:!!__hl.S.orig})`);
     check('a crop is read again', cropped.text.includes('宫保鸡丁') && cropped.orig && cropped.w < 1200, `${cropped.w}x${cropped.h}: ${cropped.text.join(' / ')}`);
-    await shot('cropped');
     await tap('#revertBtn');
     await sleep(300);
     await readDone();

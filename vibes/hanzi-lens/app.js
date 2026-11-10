@@ -9,7 +9,7 @@
  * tapping a line opens its words with pinyin and CC-CEDICT meanings.
  */
 import { parseDict, annotate, linePinyin, meanings, joinPinyin, markPinyin, pickVoice, lookup } from './text.js';
-import { crowded } from './ocr.js';
+import { crowded, skewOf } from './ocr.js';
 
 const $ = (id) => document.getElementById(id);
 const video = $('video'), still = $('still'), boxesSvg = $('boxes'), labels = $('labels');
@@ -601,7 +601,7 @@ if (!navigator.mediaDevices?.getUserMedia) $('camBtn').hidden = true;
     el.querySelector('button').onclick = () => { navigator.clipboard?.writeText(el.querySelector('pre').textContent); status('Copied'); };
   }
 }
-const BUILD = 'v15';   // shown on the start screen; keep in step with sw.js VERSION
+const BUILD = 'v16';   // shown on the start screen; keep in step with sw.js VERSION
 $('build').textContent = `build ${BUILD}`;
 if ('serviceWorker' in navigator && !params.has('nosw')) {
   navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});
@@ -727,21 +727,38 @@ addEventListener('resize', () => { if (S.view === 'frozen' && S.frozen) S.vm = s
  * w x h canvas, as a new picture to read. A picture made from a crop of a turned view is
  * straight. Outside the old picture is mid grey.
  */
-async function remake(m, w, h) {
+async function remake(m, w, h, { straighten = false } = {}) {
   if (!S.orig) { const c = document.createElement('canvas'); c.width = still.width; c.height = still.height; c.getContext('2d').drawImage(still, 0, 0); S.orig = c; }
   const c = document.createElement('canvas');
   c.width = Math.max(16, Math.round(w)); c.height = Math.max(16, Math.round(h));
   const g = c.getContext('2d');
-  g.fillStyle = '#808080'; g.fillRect(0, 0, c.width, c.height);
-  g.imageSmoothingQuality = 'high';
-  g.setTransform(...m);
-  g.drawImage(still, 0, 0);
-  const bitmap = await createImageBitmap(c);
-  c.width = c.height = 0;
+  const paint = (mm) => {
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.fillStyle = '#808080'; g.fillRect(0, 0, c.width, c.height);
+    g.imageSmoothingQuality = 'high';
+    g.setTransform(...mm);
+    g.drawImage(still, 0, 0);
+  };
+  paint(m);
   // a small crop is scaled up for the detector no more than 2 times: blown up to 1280 px, a
   // crop of a line or two gives the detector characters far larger than it was trained on
-  const long = Math.max(bitmap.width, bitmap.height);
-  await freeze(bitmap, { edited: true, detLong: Math.min(FREEZE_DET, Math.max(640, 2 * long)) });
+  const detLong = Math.min(FREEZE_DET, Math.max(640, 2 * Math.max(c.width, c.height)));
+  if (straighten) {
+    // the detector reads level text best: find the lines' angle with a pass that only finds
+    // them, and turn the crop about its middle by that much. The picture around the crop
+    // fills the corners the turn opens, where there is any.
+    status(`${S.ep} · straightening…`);
+    $('shutter').classList.add('busy'); draw();
+    const probe = await createImageBitmap(c);
+    let t = null;
+    try { t = skewOf((await call({ type: 'frame', id: ++S.frame, bitmap: probe, detLong, read: false }, [probe])).lines); }
+    catch (err) { trace('crop skew: ' + err.message); }
+    trace(`crop skew ${t == null ? 'none' : ((t * 180) / Math.PI).toFixed(1) + ' deg'}`);
+    if (t != null && Math.abs(t) > (1.5 * Math.PI) / 180) paint(mul(around([c.width / 2, c.height / 2], 1, -t), m));
+  }
+  const bitmap = await createImageBitmap(c);
+  c.width = c.height = 0;
+  await freeze(bitmap, { edited: true, detLong });
 }
 
 $('rotBtn').onclick = () => {
@@ -818,5 +835,5 @@ $('cropOk').onclick = () => {
   k = Math.min(k, MAX_PHOTO / Math.max(r.w, r.h));
   const m = mul([k, 0, 0, k, -r.x * k, -r.y * k], f.m);
   endCrop();
-  remake(m, r.w * k, r.h * k);
+  remake(m, r.w * k, r.h * k, { straighten: true });
 };

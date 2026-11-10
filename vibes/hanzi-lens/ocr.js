@@ -339,6 +339,31 @@ export function mergeGrid(base, stretched) {
   return keep.filter((a) => !covered(a)).concat(added.map((s) => s.b));
 }
 
+// ---- skew ----
+
+/**
+ * How far the text of a picture is turned from level, in radians (clockwise on screen is
+ * positive), from its line boxes: each line's reading direction (a column's less a quarter
+ * turn), folded into -45..45 deg, and the median of them weighted by line length, so a few
+ * stray boxes don't move it. Null with no line at least twice as long as it is thick.
+ */
+export function skewOf(boxes) {
+  const v = [];
+  for (const b of boxes) {
+    const [o, a] = b.quad, { len, thick } = quadSize(b.quad);
+    if (len < 2 * thick) continue;
+    let t = Math.atan2(a[1] - o[1], a[0] - o[0]) - (b.vertical ? Math.PI / 2 : 0);
+    t = ((t + Math.PI / 4) % (Math.PI / 2) + Math.PI / 2) % (Math.PI / 2) - Math.PI / 4;
+    v.push([t, len]);
+  }
+  if (!v.length) return null;
+  v.sort((x, y) => x[0] - y[0]);
+  const half = v.reduce((s, x) => s + x[1], 0) / 2;
+  let acc = 0;
+  for (const [t, w] of v) { acc += w; if (acc >= half) return t; }
+  return v[v.length - 1][0];
+}
+
 // ---- room for pinyin ----
 
 /**
