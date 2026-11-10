@@ -26,13 +26,13 @@ if (!navigator.gpu) { $('status').textContent = 'Membrane needs WebGPU (Chrome, 
 const renderer = new THREE.WebGPURenderer({ canvas: $('gl'), antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, phone ? 2 : 1.75));
 renderer.setSize(innerWidth, innerHeight);
-renderer.toneMapping = THREE.NeutralToneMapping; renderer.toneMappingExposure = 1.0;
+renderer.toneMapping = THREE.NeutralToneMapping; renderer.toneMappingExposure = 0.95;
 renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFShadowMap;
 await renderer.init();
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x231c17);
-scene.fog = new THREE.Fog(0x231c17, 28, 62);
+scene.background = new THREE.Color(0x6e5c4b);
+scene.fog = new THREE.Fog(0x6e5c4b, 26, 60);
 const camera = new THREE.PerspectiveCamera(34, innerWidth / innerHeight, 0.3, 120);
 camera.position.set(0.3, 6.6, 6.9);
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -42,14 +42,16 @@ controls.update();
 
 const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-scene.environmentIntensity = 0.45;
-const sun = new THREE.DirectionalLight(0xfff4e6, 2.6);
-sun.position.set(-5, 13, -6); sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048); sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.02; sun.shadow.radius = 3;
-Object.assign(sun.shadow.camera, { left: -7, right: 7, top: 7, bottom: -7, near: 2, far: 40 });
+// morning: a low, warm sun from the left and behind, about 25 degrees up, softened as through a window, with long
+// soft shadows; a cool, bright sky fills the shade, and a little cool bounce comes from the room on the right
+scene.environmentIntensity = 0.38;
+const sun = new THREE.DirectionalLight(0xffd6a6, 1.75);
+sun.position.set(-12, 6.5, -5); sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048); sun.shadow.bias = -0.0005; sun.shadow.normalBias = 0.03; sun.shadow.radius = 8; sun.shadow.blurSamples = 16;
+Object.assign(sun.shadow.camera, { left: -11, right: 11, top: 9, bottom: -9, near: 2, far: 45 });
 scene.add(sun, sun.target);
-scene.add(new THREE.HemisphereLight(0xf2e8dc, 0x5a4434, 0.9));
-const fill = new THREE.DirectionalLight(0xdfe9ff, 0.5); fill.position.set(6, 5, 8); scene.add(fill);
+scene.add(new THREE.HemisphereLight(0xcfdbea, 0x6a4d36, 1.05));
+const fill = new THREE.DirectionalLight(0xc9d8ff, 0.4); fill.position.set(8, 4, 7); scene.add(fill);
 
 scene.add(buildTable(), buildCup());
 const audio = makeAudio();

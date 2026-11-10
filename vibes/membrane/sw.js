@@ -3,7 +3,7 @@
  * addons used) from unpkg is cached the first time it is fetched. Stale-while-revalidate, so it opens
  * instantly and offline. Bump VERSION when the file list changes.
  */
-const VERSION = 'membrane-v3';
+const VERSION = 'membrane-v4';
 const SHELL = ['./', './index.html', './main.js', './egg.js', './sim.js', './scene.js', './audio.js', './manifest.webmanifest', '../pwa/install.js', './icon.svg', './icon-192.png', './icon-512.png'];
 const BASE = 'https://unpkg.com/three@0.187.0/';
 const CDN = [BASE + 'build/three.webgpu.js', BASE + 'build/three.tsl.js'].concat([

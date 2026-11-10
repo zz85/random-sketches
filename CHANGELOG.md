@@ -1,6 +1,7 @@
 # Logs
 
 10 Nov 2026
+- Membrane: softer morning light (a low warm sun with long soft shadows, a cool sky fill, a satin table finish, a lighter room), new screenshots, and a short technical write-up in POST.md
 - Membrane: turned upside down, the membrane no longer falls off under its own weight. The peel load counts in full only where the pinch reaches the peel front through loose sheet; its own weight counts 8%. Upside down for 4 s after a half peel: 53% to 51% off (the loose part hangs, some sticks back), where it went to 100% in 1 s
 - Membrane: the peeling sound toned down: about 14 dB quieter, on its own bus rolled off above 3.5 kHz, with broad-band ticks in place of narrow resonant grains, fewer and smaller bubbles, rare soft squelches and a faint bed without the wah
 - Membrane: a game HUD at the top: time from the first pinch, score, a peel bar to the 92% goal and a membrane-intact bar that drains with each millimetre torn (amber, then throbbing red, shaking on each tear); tear 50 mm and you lose (Try again or New egg). An oiled oak plank table in TSL: flat-sawn cathedral rings, latewood, pores, flecks, seams

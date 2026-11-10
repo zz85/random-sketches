@@ -92,7 +92,7 @@ export function buildCup() {
 // tone, and a dark seam with a slight bevel sits between boards. Rings finer than a pixel fade to their mean.
 export function buildTable() {
   const g = new THREE.PlaneGeometry(140, 140, 1, 1); g.rotateX(-Math.PI / 2); g.translate(0, TABLE_Y, 0);
-  const mat = new THREE.MeshPhysicalNodeMaterial({ roughness: 0.5, clearcoat: 0.4, clearcoatRoughness: 0.3 });
+  const mat = new THREE.MeshPhysicalNodeMaterial({ roughness: 0.55, clearcoat: 0.18, clearcoatRoughness: 0.45 }); // oiled, satin: no varnish glare
   const W = 11.0;
   const C = (h) => { const c = new THREE.Color(h); return vec3(c.r, c.g, c.b); }; // sRGB hex to linear
   const P = positionLocal;
@@ -123,7 +123,7 @@ export function buildTable() {
     return vec4(base.mul(tone).mul(seam.mul(0.85).add(0.15)).mul(bevel.mul(0.15).add(0.85)), lw);
   })();
   mat.colorNode = wood.rgb;
-  mat.roughnessNode = float(0.4).add(wood.a.mul(0.15));
+  mat.roughnessNode = float(0.5).add(wood.a.mul(0.15));
   const m = new THREE.Mesh(g, mat); m.receiveShadow = true;
   return m;
 }
