@@ -174,3 +174,45 @@ export function buildMembrane(level, table, seed = 1) {
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+
+// ---------- the yolk (yolk.js): an icosphere, subdivided `level` times: vertices, triangles, links (edges, then bend links across each edge),
+// and for each vertex the links and triangles round it
+export const YMAXL = 12, YMAXT = 6;
+export const YR = 1.45; // cm: a yolk about 29 mm across
+export function buildYolk(level = 4, r = YR) {
+  const t = (1 + Math.sqrt(5)) / 2;
+  let V = [[-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0], [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t], [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1]];
+  let F = [[0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11], [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8], [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9], [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1]];
+  const norm = (v) => { const l = Math.hypot(...v); return v.map((x) => x / l); };
+  V = V.map(norm);
+  for (let s = 0; s < level; s++) {
+    const mid = new Map(), NF = [];
+    const m = (a, b) => { const k = a < b ? a * 1e6 + b : b * 1e6 + a; if (!mid.has(k)) { mid.set(k, V.length); V.push(norm([(V[a][0] + V[b][0]) / 2, (V[a][1] + V[b][1]) / 2, (V[a][2] + V[b][2]) / 2])); } return mid.get(k); };
+    for (const [a, b, c] of F) { const ab = m(a, b), bc = m(b, c), ca = m(c, a); NF.push([a, ab, ca], [b, bc, ab], [c, ca, bc], [ab, bc, ca]); }
+    F = NF;
+  }
+  const N = V.length, NT = F.length;
+  const pos = new Float32Array(N * 3); V.forEach((v, i) => { pos[i * 3] = v[0] * r; pos[i * 3 + 1] = v[1] * r; pos[i * 3 + 2] = v[2] * r; });
+  const P = (i) => [pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]], dist = (a, b) => Math.hypot(...P(a).map((x, k) => x - P(b)[k]));
+  // edges and the two triangles' far corners across each
+  const edge = new Map(), links = [], triEdges = new Int32Array(NT * 3), opp = [];
+  F.forEach((f, ti) => {
+    for (let k = 0; k < 3; k++) {
+      const a = f[k], b = f[(k + 1) % 3], c = f[(k + 2) % 3], key = a < b ? a * 1e6 + b : b * 1e6 + a;
+      if (!edge.has(key)) { edge.set(key, links.length); links.push([a, b, dist(a, b), -1]); opp.push([c]); } else opp[edge.get(key)].push(c);
+      triEdges[ti * 3 + k] = edge.get(key);
+    }
+  });
+  const nStruct = links.length;
+  for (let e = 0; e < nStruct; e++) if (opp[e].length === 2) links.push([opp[e][0], opp[e][1], dist(opp[e][0], opp[e][1]), e]);
+  const NL = links.length;
+  const adj = new Int32Array(N * YMAXL).fill(NL), na = new Int32Array(N);
+  links.forEach(([a, b], li) => { for (const v of [a, b]) { if (na[v] >= YMAXL) throw new Error('valence'); adj[v * YMAXL + na[v]++] = li; } });
+  const vtris = new Int32Array(N * YMAXT).fill(NT), nt = new Int32Array(N);
+  F.forEach((f, ti) => { for (const v of f) { if (nt[v] >= YMAXT) throw new Error('tri valence'); vtris[v * YMAXT + nt[v]++] = ti; } });
+  const restArea = F.map(([a, b, c]) => { const p = P(a), q = P(b), s = P(c), u = q.map((x, k) => x - p[k]), w = s.map((x, k) => x - p[k]); return 0.5 * Math.hypot(u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]); });
+  let volume = 0;
+  for (const [a, b, c] of F) { const p = P(a), q = P(b), w = P(c); volume += (p[0] * (q[1] * w[2] - q[2] * w[1]) + p[1] * (q[2] * w[0] - q[0] * w[2]) + p[2] * (q[0] * w[1] - q[1] * w[0])) / 6; }
+  return { N, NT, NL, nStruct, pos, tris: F, links, adj, vtris, triEdges, restArea, edge: links[0][2], volume, r };
+}
+

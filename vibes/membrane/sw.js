@@ -3,11 +3,11 @@
  * addons used) from unpkg is cached the first time it is fetched. Stale-while-revalidate, so it opens
  * instantly and offline. Bump VERSION when the file list changes.
  */
-const VERSION = 'membrane-v5';
-const SHELL = ['./', './index.html', './main.js', './egg.js', './sim.js', './scene.js', './audio.js', './manifest.webmanifest', '../pwa/install.js', './icon.svg', './icon-192.png', './icon-512.png'];
+const VERSION = 'membrane-v6';
+const SHELL = ['./', './index.html', './main.js', './egg.js', './sim.js', './scene.js', './audio.js', './stage.js', './style.css', './yolk.html', './yolk.js', './yolksim.js', './yolkscene.js', './manifest.webmanifest', '../pwa/install.js', './icon.svg', './icon-192.png', './icon-512.png'];
 const BASE = 'https://unpkg.com/three@0.187.0/';
 const CDN = [BASE + 'build/three.webgpu.js', BASE + 'build/three.tsl.js'].concat([
-  'controls/OrbitControls.js', 'environments/RoomEnvironment.js'].map((f) => BASE + 'examples/jsm/' + f));
+  'controls/OrbitControls.js', 'environments/RoomEnvironment.js', 'geometries/RoundedBoxGeometry.js', 'tsl/display/BloomNode.js', 'tsl/display/GodraysNode.js', 'tsl/display/BilateralBlurNode.js'].map((f) => BASE + 'examples/jsm/' + f));
 
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL).then(() => Promise.all(CDN.map((u) => c.add(u).catch(() => {}))))).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => {

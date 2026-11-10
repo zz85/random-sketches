@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0d0b0a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="description" content="Pinch a raw egg yolk by its skin and carry it to the bowl without bursting it or dropping it.">
+<title>Membrane - Yolk</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="icon.svg">
+<link rel="apple-touch-icon" href="icon-192.png">
+<script src="../pwa/install.js"></script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.187.0/build/three.webgpu.js",
+  "three/webgpu": "https://unpkg.com/three@0.187.0/build/three.webgpu.js",
+  "three/tsl": "https://unpkg.com/three@0.187.0/build/three.tsl.js",
+  "three/addons/": "https://unpkg.com/three@0.187.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="status">separating an egg&hellip;</div>
+<div id="title">MEMBRANE<small>carry the yolk by its skin</small></div>
+<div id="hint">Pinch the top of the yolk and carry it to the bowl. Grip too lightly and it slips; too hard, or swing it, and it bursts.<br>Wheel or up / down sets the grip. Lower it into the bowl before you let go.</div>
+<div id="hud">
+  <div class="row"><span id="time">0:00</span><span id="scorebox"><span id="score">0</span><small>pts</small></span></div>
+  <div class="meter" id="gripbar"><i></i><u></u><b><span>Grip</span><span id="gripv">50%</span></b></div>
+  <div class="meter" id="skinbar"><i></i><b><span>Yolk skin</span><span id="skinv">relaxed</span></b></div>
+</div>
+<div id="result"><div id="rtitle"></div><div id="rstars"></div><div id="rscore"></div><div id="rdetail"></div><div class="btns"><button id="retry">Try again</button><button id="again">New egg</button></div></div>
+<div id="pinch"></div>
+<div id="gripside"><b>GRIP</b><i></i></div>
+<div id="bar">
+  <div class="pill modes"><a href="./" title="Peel the membrane">Peel</a><a href="yolk.html" class="on" title="Carry the yolk">Yolk</a></div>
+  <div class="pill"><button id="new" title="New egg (n)">New egg</button></div>
+  <div class="pill">
+    <button id="strain" title="Show strain (s)">Strain</button>
+    <button id="sound" class="icon" title="Sound (m)" aria-label="Sound"><svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6"/><path d="M18 6.5a7.5 7.5 0 0 1 0 11"/></svg></button>
+    <button data-pwa-install class="icon" title="Install app" aria-label="Install app" style="display:none"><svg viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M12 8v6"/><path d="M9.5 11.5L12 14l2.5-2.5"/></svg></button>
+  </div>
+</div>
+<script type="module" src="yolk.js"></script>
+</body>
+</html>

@@ -1,7 +1,7 @@
 // node --test test_egg.js: the membrane mesh is sound for the GPU solver.
 import test from 'node:test';
 import assert from 'node:assert';
-import { makeRim, buildMembrane, rimAt, eggR, MAXL, MAXT } from './egg.js';
+import { makeRim, buildMembrane, rimAt, eggR, MAXL, MAXT, buildYolk, YR } from './egg.js';
 
 for (const seed of [1, 3, 7, 42]) test(`seed ${seed}: membrane mesh`, () => {
   const table = makeRim(seed), m = buildMembrane(5, table, seed);
@@ -36,4 +36,14 @@ test('rim is closed and deterministic', () => {
   assert.deepEqual(a, b);
   assert.ok(Math.abs(rimAt(a, -Math.PI) - rimAt(a, Math.PI - 1e-9)) < 0.05);
   for (const v of a) assert.ok(v > 1.3 && v < 2.0);
+});
+
+// the yolk game's yolk: a closed skin, wound outward, within the solver's slots, holding a yolk's volume
+for (const level of [3, 4]) test(`yolk mesh, level ${level}`, () => {
+  const m = buildYolk(level);
+  assert.equal(m.NT, 20 * 4 ** level);
+  assert.equal(m.nStruct * 2, m.NT * 3, 'closed: every edge has two triangles');
+  assert.equal(m.NL, m.nStruct * 2, 'a bend link across every edge');
+  assert.ok(Math.abs(m.volume / ((4 / 3) * Math.PI * YR ** 3) - 1) < 0.03, `volume ${m.volume}`);
+  for (let i = 0; i < m.N; i++) assert.ok(Math.abs(Math.hypot(m.pos[i * 3], m.pos[i * 3 + 1], m.pos[i * 3 + 2]) - YR) < 1e-6);
 });

@@ -40,6 +40,14 @@ The sound is synthesised from the same ingredients. A bubble is a sine whose pit
 
 I wanted to be able to turn the shell and peel downward, as you would with a real one. The sim runs in the shell's own frame. Each step, gravity, the table and the fingertip are turned into that frame, and the cup only counts while the shell sits in it. On a phone, one finger holds the shell and another peels. On a desktop, the arrow keys or WASD tilt it while you drag.
 
+## Carrying the yolk
+
+The second game is the photo every cook has seen: a yolk pinched by its skin, hanging like a water balloon. The yolk is a closed cloth around a liquid that doesn't compress. Each iteration puts back the volume it lost by moving every vertex out along its normal, by the lost volume over the area; the GPU sums both with integer atomics. A sphere has the least skin for its volume, so any other shape stretches the skin. That gives the game its load for free: hang the yolk from a pinch and it pulls into a teardrop with a taut neck, and swing it and the neck strains more.
+
+The pinch measures its own force. Each substep gravity moves every vertex down by g dt^2, and the pinch has to put that back to hold the yolk up. The sum of what it puts back over a frame, divided by that, reads in yolk weights: one hanging still, two or three in a yank, near zero once the bowl takes it. Your grip sets how many weights the fingers hold before the skin slides out. A tighter grip holds more, but crushes the skin between the fingers, which then breaks at less strain. A light grip drops a fast lift and a tight one bursts it. Letting go while the pinch still carries half the weight counts as a drop.
+
+The skin alone couldn't carry a lift: a few Jacobi iterations move the pinched patch and leave the rest behind, so the neck tore at once. The liquid inside is what moves a real yolk as one, so each vertex's velocity is eased a little toward the whole yolk's mean.
+
 ## Testing a GPU sketch headless
 
 `smoke.js` drives Chrome over the DevTools protocol, with SwiftShader standing in for a GPU. Headless WebGPU lost its device on the first frame it presented, so the test renders offscreen and copies each frame to a 2D canvas. A test API on `window.__membrane` grabs vertices, steps the sim and reads the counters back. With it, the smoke test checks the physics itself:
@@ -48,5 +56,6 @@ I wanted to be able to turn the shell and peel downward, as you would with a rea
 - a yank tears
 - a shell turned upside down keeps its membrane
 - the round ends in a win or a loss
+- a carried yolk reaches the bowl, a yank bursts it, a light grip drops it
 
 It also saves the audio as WAV files to check their levels.

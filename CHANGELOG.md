@@ -1,6 +1,7 @@
 # Logs
 
 10 Nov 2026
+- Membrane: a second game, Yolk (`yolk.html`): pinch a raw yolk by its skin, lift it out of the shell and carry it to a bowl. The yolk is a closed TSL compute cloth around an incompressible liquid (volume held each iteration from int-atomic sums), so hanging it pulls it into a teardrop. The pinch's own force, in yolk weights, against a grip you set (wheel, up / down, a slider on touch): too light and it slips out, too tight and the crushed skin bursts, and a fast lift or swing does either. Let go only once the bowl holds it. Chalazae that stretch and snap, a pool when it bursts, Grip and Yolk skin bars, score and stars. Peel / Yolk switch on both pages; the stage, studio and post chain moved to stage.js, the styles to style.css
 - Membrane: Hollow's studio. The table is now a small oak board on a plaster plinth in a dark cyclorama, lit by morning sun through a window: a pool of light with soft mullion shadows, godrays in the beam, bloom, AgX, vignette and grain. The camera starts further back
 - Membrane: softer morning light (a low warm sun with long soft shadows, a cool sky fill, a satin table finish, a lighter room), new screenshots, and a short technical write-up in POST.md
 - Membrane: turned upside down, the membrane no longer falls off under its own weight. The peel load counts in full only where the pinch reaches the peel front through loose sheet; its own weight counts 8%. Upside down for 4 s after a half peel: 53% to 51% off (the loose part hangs, some sticks back), where it went to 100% in 1 s

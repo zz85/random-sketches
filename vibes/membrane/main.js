@@ -4,15 +4,10 @@
 // Score: the share of the membrane you get off, less points for every millimetre torn and every extra piece. Pull slowly and it lets go of the shell and
 // comes away in a sheet; yank it, or pull straight off the wall, and it stretches, goes thin and tears.
 import * as THREE from 'three/webgpu';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { pass, mrt, output, uniform, vec2, vec3, vec4, float, mix, smoothstep, length, screenUV, screenSize, hash, time, Fn } from 'three/tsl';
-import { bloom } from 'three/addons/tsl/display/BloomNode.js';
-import { godrays } from 'three/addons/tsl/display/GodraysNode.js';
-import { bilateralBlur } from 'three/addons/tsl/display/BilateralBlurNode.js';
+import { makeStage } from './stage.js';
 import { makeRim, buildMembrane, inShell } from './egg.js';
 import { makeSim } from './sim.js';
-import { buildShell, buildCup, buildTable, buildMembraneMesh, buildStrands, buildStudio } from './scene.js';
+import { buildShell, buildMembraneMesh, buildStrands } from './scene.js';
 import { makeAudio } from './audio.js';
 
 const $ = (id) => document.getElementById(id);
@@ -26,29 +21,7 @@ let brown = Q.get('shell') !== 'white';
 
 if (!navigator.gpu) { $('status').textContent = 'Membrane needs WebGPU (Chrome, Edge, Safari 26 or Firefox 141 and later).'; throw new Error('no WebGPU'); }
 
-const renderer = new THREE.WebGPURenderer({ canvas: $('gl'), antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, phone ? 2 : 1.75));
-renderer.setSize(innerWidth, innerHeight);
-renderer.toneMapping = THREE.AgXToneMapping; renderer.toneMappingExposure = 1.0;
-renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFShadowMap;
-await renderer.init();
-
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0d0b0a);
-const camera = new THREE.PerspectiveCamera(34, innerWidth / innerHeight, 0.3, 400);
-camera.position.set(0.5, 9.2, 13.4);
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, -1.2, 0); controls.enableDamping = true; controls.dampingFactor = 0.08;
-controls.minDistance = 4; controls.maxDistance = 30; controls.maxPolarAngle = 1.45; controls.enablePan = false;
-controls.update();
-
-// a dim room for reflections in the wet sheet, and the studio: morning sun through a window, a cool sky fill
-const pmrem = new THREE.PMREMGenerator(renderer);
-scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-scene.environmentIntensity = 0.45;
-const studio = buildStudio(scene, { shadowSize: phone ? 2048 : 4096 });
-const sun = studio.key;
-scene.add(buildTable(), buildCup());
+const { renderer, scene, camera, controls, sun, draw, snapshot } = await makeStage({ Q, phone });
 const audio = makeAudio();
 
 // ---------- the shell's rig: seated in the cup, or held up in the air and turned
@@ -343,46 +316,6 @@ function keyTilt(dt) {
   for (const k of held) { if (TILT[k]) { dx += TILT[k][0]; dy += TILT[k][1]; } if (k === 'q') roll -= 1; if (k === 'e') roll += 1; }
   if (dx || dy) turnShell(dx * dt * 180, dy * dt * 180);
   if (roll) { pickUp(); const f = new THREE.Vector3(); camera.getWorldDirection(f); pose.q.premultiply(new THREE.Quaternion().setFromAxisAngle(f, roll * dt * 1.4)).normalize(); }
-}
-addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
-
-// Headless Chromium's software WebGPU loses its device on the first present to a canvas, so the smoke test
-// (`offscreen`) renders into a render target, tone maps it with a quad, and copies frames to a 2D canvas.
-const OFF = Q.has('offscreen');
-let off = null;
-if (OFF) {
-  const W = innerWidth, H = innerHeight;
-  off = { W, H, ldr: new THREE.RenderTarget(W, H) };
-  off.c2d = document.createElement('canvas'); off.c2d.width = W; off.c2d.height = H;
-  off.c2d.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;pointer-events:none'; document.body.insertBefore(off.c2d, cv.nextSibling);
-}
-// ---- post, as in Hollow: the scene, raymarched godrays from the sun's shadow map (blurred), bloom, vignette, grain
-const pipeline = new THREE.RenderPipeline(renderer);
-const scenePass = pass(scene, camera, { samples: phone ? 0 : 4 });
-const col = scenePass.getTextureNode('output'), depth = scenePass.getTextureNode('depth');
-const rays = godrays(depth, camera, sun);
-rays.raymarchSteps.value = phone ? 32 : 48; rays.resolutionScale = phone ? 0.35 : 0.5;
-rays.density.value = 0.8; rays.maxDensity.value = 0.4; rays.distanceAttenuation.value = 0.5;
-const raysBlur = bilateralBlur(rays.getTextureNode(), null, 4, 0.5).getTextureNode();
-const glow = bloom(col, 0.12, 0.5, 0.9);
-const POST = { beam: uniform(new THREE.Color(0xfff0dc)), beamGain: uniform(0.22), vignette: uniform(0.45) };
-pipeline.outputNode = Fn(() => {
-  const g = raysBlur.sample(screenUV).r;
-  // haze in the beam scatters sunlight toward you; it adds, so the shade stays dark
-  const room = col.rgb.mul(g.mul(-0.3).add(1)).add(POST.beam.mul(POST.beamGain).mul(g));
-  const c = room.add(glow.rgb);
-  const v = smoothstep(1.15, 0.25, length(screenUV.sub(0.5).mul(vec2(screenSize.x.div(screenSize.y), 1))));
-  const px = screenUV.mul(screenSize).floor();
-  const n = hash(px.x.add(px.y.mul(4111.0)).add(time.mul(60).floor().mul(7919.0).mod(65536))).sub(0.5).mul(0.006);
-  return vec4(c.mul(mix(float(1).sub(POST.vignette), float(1), v)).add(n), 1);
-})();
-function draw() {
-  renderer.setRenderTarget(OFF ? off.ldr : null); pipeline.render(); renderer.setRenderTarget(null);
-}
-async function snapshot() {
-  draw();
-  const px = await renderer.readRenderTargetPixelsAsync(off.ldr, 0, 0, off.W, off.H);
-  off.c2d.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(px.buffer, px.byteOffset, px.byteLength), off.W, off.H), 0, 0);
 }
 
 // ---------- loop: the sim runs at a fixed 60 Hz, at most two steps a frame
