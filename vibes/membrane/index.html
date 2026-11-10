@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#231c17">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="description" content="Peel the membrane off the inside of a broken eggshell. Pull gently and it comes away; pull hard and it tears.">
+<title>Membrane</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg">
+<link rel="apple-touch-icon" href="icon-192.png">
+<script src="../pwa/install.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #231c17; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  canvas { display: block; position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; }
+  body.pulling canvas { cursor: grabbing; }
+  #status { position: fixed; inset: 0; display: grid; place-items: center; color: #eef2f5; font: italic 15px Georgia, serif; letter-spacing: 0.06em; padding: 20px; text-align: center; }
+  #title { position: fixed; left: max(20px, env(safe-area-inset-left)); top: max(16px, env(safe-area-inset-top)); color: #f4f6f7; font: 300 20px/1.2 Georgia, serif;
+    letter-spacing: 0.3em; text-shadow: 0 1px 10px rgba(0, 0, 0, 0.4); pointer-events: none; transition: opacity 0.6s; }
+  #title small { display: block; letter-spacing: 0.05em; font-size: 13px; margin-top: 8px; font-style: italic; opacity: 0.85; }
+  #hint { position: fixed; left: 50%; top: calc(max(14px, env(safe-area-inset-top)) + 96px); transform: translateX(-50%); color: #f4f6f7; font: italic 14px Georgia, serif; text-align: center;
+    text-shadow: 0 1px 8px rgba(0, 0, 0, 0.5); pointer-events: none; transition: opacity 1.2s; max-width: 70vw; }
+  #hint.gone { opacity: 0; }
+  @media (max-width: 700px) { #hint { top: auto; bottom: 70px; } }
+  #bar { position: fixed; left: 50%; bottom: max(12px, env(safe-area-inset-bottom)); transform: translateX(-50%); display: flex; gap: 6px; flex-wrap: wrap; justify-content: center;
+    width: max-content; max-width: calc(100vw - 20px); opacity: 0; transition: opacity 1s; }
+  body.ready #bar { opacity: 1; }
+  body.calm #bar, body.calm #title, body.calm #hint { opacity: 0; pointer-events: none; }
+  .pill { display: flex; align-items: center; gap: 4px; border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(30, 38, 46, 0.5); border-radius: 20px; padding: 4px 6px;
+    -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); color: #eef2f5; font: 12px Georgia, serif; }
+  .pill button { appearance: none; -webkit-appearance: none; border: 0; background: transparent; color: inherit; font: inherit; padding: 6px 10px; border-radius: 16px; cursor: pointer; letter-spacing: 0.04em; }
+  .pill button.on { background: rgba(255, 255, 255, 0.22); }
+  .pill button:focus-visible { outline: 2px solid rgba(255, 255, 255, 0.7); }
+  .pill svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; display: block; }
+  .pill button.icon { padding: 6px 8px; }
+  #new { font-weight: bold; letter-spacing: 0.08em; }
+  .stat { padding: 0 8px; opacity: 0.85; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  /* the fingertip: a soft ring that reddens with the strain in the sheet */
+  #pinch { --k: 0; position: fixed; left: -22px; top: -22px; width: 44px; height: 44px; border-radius: 50%; pointer-events: none; opacity: 0; transition: opacity 0.2s;
+    border: 2px solid rgb(calc(240 + var(--k) * 15) calc(240 - var(--k) * 190) calc(235 - var(--k) * 200)); box-shadow: 0 0 calc(4px + var(--k) * 18px) rgba(255, calc(220 - var(--k) * 180), 160, 0.7); }
+  #pinch.on { opacity: 0.85; }
+  /* the game HUD, top centre: time, score, and two bars, how much is off and how much is left intact */
+  #hud { position: fixed; left: 50%; top: max(12px, env(safe-area-inset-top)); transform: translateX(-50%); width: min(460px, calc(100vw - 230px)); min-width: 240px;
+    color: #f6f1ea; font: 13px Georgia, serif; pointer-events: none; opacity: 0; transition: opacity 1s; text-shadow: 0 1px 6px rgba(0, 0, 0, 0.55); }
+  body.ready #hud { opacity: 1; }
+  body.calm #hud { opacity: 0; }
+  @media (max-width: 700px) { #hud { width: calc(100vw - 24px); top: max(64px, env(safe-area-inset-top)); } #hint { top: auto; bottom: 70px; } }
+  #hud .row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 5px; }
+  #time { font: bold 22px/1 ui-monospace, Menlo, monospace; letter-spacing: 0.04em; }
+  #scorebox { font: bold 22px/1 Georgia, serif; letter-spacing: 0.04em; }
+  #scorebox small { font-size: 12px; font-weight: normal; opacity: 0.75; margin-left: 3px; }
+  #scorebox.hit { animation: hit 0.5s; }
+  .meter { position: relative; height: 14px; border-radius: 8px; background: rgba(15, 10, 8, 0.55); border: 1px solid rgba(255, 245, 230, 0.22); overflow: hidden; margin-bottom: 6px;
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.5); }
+  .meter > i { position: absolute; inset: 0 auto 0 0; width: 0; border-radius: 8px; transition: width 0.25s ease-out, background 0.4s; }
+  .meter > b { position: absolute; inset: 0; display: flex; align-items: center; justify-content: space-between; padding: 0 8px; font: bold 10px/1 Georgia, serif;
+    letter-spacing: 0.12em; text-transform: uppercase; color: #fff; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8); }
+  #peelbar > i { background: linear-gradient(#f2c66d, #c98a2c); }
+  #peelbar::after { content: ''; position: absolute; top: -1px; bottom: -1px; left: 100%; border-left: 2px dashed rgba(255, 255, 255, 0.6); }
+  #lifebar { height: 18px; }
+  #lifebar > i { width: 100%; background: linear-gradient(#8fdc7e, #4e9e44); }
+  #lifebar.warn > i { background: linear-gradient(#ffd36a, #d99a1c); }
+  #lifebar.danger > i { background: linear-gradient(#ff7b6b, #c1372a); animation: throb 0.6s infinite alternate; }
+  #lifebar.shake { animation: shake 0.35s; }
+  @keyframes throb { from { filter: brightness(1); } to { filter: brightness(1.35); } }
+  @keyframes shake { 0%, 100% { transform: none; } 20% { transform: translateX(-5px); } 40% { transform: translateX(5px); } 60% { transform: translateX(-3px); } 80% { transform: translateX(3px); } }
+  #result.lose #rtitle { color: #ff8d7d; font-size: 30px; letter-spacing: 0.12em; }
+  #result .btns { display: flex; gap: 8px; justify-content: center; }
+  @keyframes hit { 0% { color: #ff8a7a; transform: scale(1.18); } 100% { color: inherit; transform: none; } }
+  .pop { position: fixed; pointer-events: none; font: bold 17px Georgia, serif; text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6); animation: rise 1.2s ease-out forwards; }
+  .pop.bad { color: #ff9384; }
+  @keyframes rise { from { opacity: 1; transform: translate(-50%, 0); } to { opacity: 0; transform: translate(-50%, -46px); } }
+  #result { z-index: 5; position: fixed; left: 50%; top: 46%; transform: translate(-50%, -50%) scale(0.92); min-width: 260px; padding: 22px 30px 18px; border-radius: 18px; text-align: center;
+    background: rgba(26, 32, 40, 0.78); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.18); color: #f2f4f6;
+    font: 14px Georgia, serif; opacity: 0; pointer-events: none; transition: opacity 0.5s, transform 0.5s; }
+  #result.on { opacity: 1; pointer-events: auto; transform: translate(-50%, -50%); }
+  #rtitle { font-size: 21px; letter-spacing: 0.06em; }
+  #rstars { font-size: 30px; color: #f3c969; margin: 8px 0 2px; letter-spacing: 0.15em; }
+  #rscore { font-size: 44px; font-weight: bold; }
+  #rdetail { opacity: 0.8; font-style: italic; margin: 6px 0 14px; }
+  #result button { appearance: none; border: 1px solid rgba(255, 255, 255, 0.3); background: rgba(255, 255, 255, 0.12); color: inherit; font: inherit; padding: 8px 18px; border-radius: 16px; cursor: pointer; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.187.0/build/three.webgpu.js",
+  "three/webgpu": "https://unpkg.com/three@0.187.0/build/three.webgpu.js",
+  "three/tsl": "https://unpkg.com/three@0.187.0/build/three.tsl.js",
+  "three/addons/": "https://unpkg.com/three@0.187.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="status">cracking an egg&hellip;</div>
+<div id="title">MEMBRANE<small>the skin inside an eggshell</small></div>
+<div id="hint">Pinch the loose flap and peel it off slowly. Pull too hard and it tears.<br>Drag the shell to pick it up and turn it (arrow keys tilt it while you peel).</div>
+<div id="hud">
+  <div class="row"><span id="time">0:00</span><span id="scorebox"><span id="score">0</span><small>pts</small></span></div>
+  <div class="meter" id="peelbar"><i></i><b><span>Peeled</span><span id="peeled">0%</span></b></div>
+  <div class="meter" id="lifebar"><i></i><b><span>Membrane intact</span><span id="torn">no tears</span></b></div>
+</div>
+<div id="result"><div id="rtitle"></div><div id="rstars"></div><div id="rscore"></div><div id="rdetail"></div><div class="btns"><button id="retry">Try again</button><button id="again">New egg</button></div></div>
+<div id="pinch"></div>
+<div id="bar">
+  <div class="pill"><button id="new" title="New egg (n)">New egg</button><button id="reset" class="icon" title="Start again (r)" aria-label="Start again"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.3-5.6"/><path d="M4 4v4h4"/></svg></button></div>
+  <div class="pill"><button id="hold" title="Pick up the shell and turn it toward you, or set it down (c)">Pick up</button></div>
+  <div class="pill">
+    <button id="shell" title="Shell colour (b)">Brown</button>
+    <button id="strain" title="Show strain (s)">Strain</button>
+    <button id="sound" class="icon" title="Sound (m)" aria-label="Sound"><svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6"/><path d="M18 6.5a7.5 7.5 0 0 1 0 11"/></svg></button>
+    <button data-pwa-install class="icon" title="Install app" aria-label="Install app" style="display:none"><svg viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M12 8v6"/><path d="M9.5 11.5L12 14l2.5-2.5"/></svg></button>
+  </div>
+</div>
+<script type="module" src="main.js"></script>
+</body>
+</html>
