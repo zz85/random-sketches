@@ -6,10 +6,13 @@
 import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { renderOutput, texture } from 'three/tsl';
+import { pass, mrt, output, uniform, vec2, vec3, vec4, float, mix, smoothstep, length, screenUV, screenSize, hash, time, Fn } from 'three/tsl';
+import { bloom } from 'three/addons/tsl/display/BloomNode.js';
+import { godrays } from 'three/addons/tsl/display/GodraysNode.js';
+import { bilateralBlur } from 'three/addons/tsl/display/BilateralBlurNode.js';
 import { makeRim, buildMembrane, inShell } from './egg.js';
 import { makeSim } from './sim.js';
-import { buildShell, buildCup, buildTable, buildMembraneMesh, buildStrands } from './scene.js';
+import { buildShell, buildCup, buildTable, buildMembraneMesh, buildStrands, buildStudio } from './scene.js';
 import { makeAudio } from './audio.js';
 
 const $ = (id) => document.getElementById(id);
@@ -26,33 +29,25 @@ if (!navigator.gpu) { $('status').textContent = 'Membrane needs WebGPU (Chrome, 
 const renderer = new THREE.WebGPURenderer({ canvas: $('gl'), antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, phone ? 2 : 1.75));
 renderer.setSize(innerWidth, innerHeight);
-renderer.toneMapping = THREE.NeutralToneMapping; renderer.toneMappingExposure = 0.95;
+renderer.toneMapping = THREE.AgXToneMapping; renderer.toneMappingExposure = 1.0;
 renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFShadowMap;
 await renderer.init();
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x6e5c4b);
-scene.fog = new THREE.Fog(0x6e5c4b, 26, 60);
-const camera = new THREE.PerspectiveCamera(34, innerWidth / innerHeight, 0.3, 120);
-camera.position.set(0.3, 6.6, 6.9);
+scene.background = new THREE.Color(0x0d0b0a);
+const camera = new THREE.PerspectiveCamera(34, innerWidth / innerHeight, 0.3, 400);
+camera.position.set(0.5, 9.2, 13.4);
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, -0.6, 0); controls.enableDamping = true; controls.dampingFactor = 0.08;
+controls.target.set(0, -1.2, 0); controls.enableDamping = true; controls.dampingFactor = 0.08;
 controls.minDistance = 4; controls.maxDistance = 30; controls.maxPolarAngle = 1.45; controls.enablePan = false;
 controls.update();
 
+// a dim room for reflections in the wet sheet, and the studio: morning sun through a window, a cool sky fill
 const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-// morning: a low, warm sun from the left and behind, about 25 degrees up, softened as through a window, with long
-// soft shadows; a cool, bright sky fills the shade, and a little cool bounce comes from the room on the right
-scene.environmentIntensity = 0.38;
-const sun = new THREE.DirectionalLight(0xffd6a6, 1.75);
-sun.position.set(-12, 6.5, -5); sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048); sun.shadow.bias = -0.0005; sun.shadow.normalBias = 0.03; sun.shadow.radius = 8; sun.shadow.blurSamples = 16;
-Object.assign(sun.shadow.camera, { left: -11, right: 11, top: 9, bottom: -9, near: 2, far: 45 });
-scene.add(sun, sun.target);
-scene.add(new THREE.HemisphereLight(0xcfdbea, 0x6a4d36, 1.05));
-const fill = new THREE.DirectionalLight(0xc9d8ff, 0.4); fill.position.set(8, 4, 7); scene.add(fill);
-
+scene.environmentIntensity = 0.45;
+const studio = buildStudio(scene, { shadowSize: phone ? 2048 : 4096 });
+const sun = studio.key;
 scene.add(buildTable(), buildCup());
 const audio = makeAudio();
 
@@ -62,11 +57,11 @@ const HOLD = new THREE.Vector3(0, 0.9, 0.8);
 const pose = { held: false, pos: new THREE.Vector3(), q: new THREE.Quaternion() }; // where the rig is heading
 let wantDist = 0; // a camera distance to ease to, once, as the shell goes up (it needs more room) or comes down
 function pickUp(q) {
-  if (!pose.held) { pose.held = true; pose.pos.copy(HOLD); wantDist = Math.max(camera.position.distanceTo(controls.target), 12.5); }
+  if (!pose.held) { pose.held = true; pose.pos.copy(HOLD); wantDist = Math.max(camera.position.distanceTo(controls.target), 18.5); }
   if (q) pose.q.copy(q);
   $('hold').textContent = 'Set down'; $('hold').classList.add('on');
 }
-function setDown() { if (pose.held) wantDist = 9.6; pose.held = false; pose.pos.set(0, 0, 0); pose.q.identity(); $('hold').textContent = 'Pick up'; $('hold').classList.remove('on'); }
+function setDown() { if (pose.held) wantDist = 16.8; pose.held = false; pose.pos.set(0, 0, 0); pose.q.identity(); $('hold').textContent = 'Pick up'; $('hold').classList.remove('on'); }
 // the preset hold: opening turned to face you, tipped down a little, so the far wall peels down toward you
 const FACING = new THREE.Quaternion().setFromEuler(new THREE.Euler(0.8, 0, 0));
 // turn the shell by a screen drag of (dx, dy) pixels, about the camera's own axes (a trackball)
@@ -357,16 +352,32 @@ const OFF = Q.has('offscreen');
 let off = null;
 if (OFF) {
   const W = innerWidth, H = innerHeight;
-  off = { W, H, hdr: new THREE.RenderTarget(W, H, { type: THREE.HalfFloatType, samples: 4 }), ldr: new THREE.RenderTarget(W, H) };
-  off.quad = new THREE.QuadMesh(new THREE.NodeMaterial());
-  off.quad.material.fragmentNode = renderOutput(texture(off.hdr.texture), THREE.NeutralToneMapping, THREE.SRGBColorSpace);
+  off = { W, H, ldr: new THREE.RenderTarget(W, H) };
   off.c2d = document.createElement('canvas'); off.c2d.width = W; off.c2d.height = H;
   off.c2d.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;pointer-events:none'; document.body.insertBefore(off.c2d, cv.nextSibling);
 }
+// ---- post, as in Hollow: the scene, raymarched godrays from the sun's shadow map (blurred), bloom, vignette, grain
+const pipeline = new THREE.RenderPipeline(renderer);
+const scenePass = pass(scene, camera, { samples: phone ? 0 : 4 });
+const col = scenePass.getTextureNode('output'), depth = scenePass.getTextureNode('depth');
+const rays = godrays(depth, camera, sun);
+rays.raymarchSteps.value = phone ? 32 : 48; rays.resolutionScale = phone ? 0.35 : 0.5;
+rays.density.value = 0.8; rays.maxDensity.value = 0.4; rays.distanceAttenuation.value = 0.5;
+const raysBlur = bilateralBlur(rays.getTextureNode(), null, 4, 0.5).getTextureNode();
+const glow = bloom(col, 0.12, 0.5, 0.9);
+const POST = { beam: uniform(new THREE.Color(0xfff0dc)), beamGain: uniform(0.22), vignette: uniform(0.45) };
+pipeline.outputNode = Fn(() => {
+  const g = raysBlur.sample(screenUV).r;
+  // haze in the beam scatters sunlight toward you; it adds, so the shade stays dark
+  const room = col.rgb.mul(g.mul(-0.3).add(1)).add(POST.beam.mul(POST.beamGain).mul(g));
+  const c = room.add(glow.rgb);
+  const v = smoothstep(1.15, 0.25, length(screenUV.sub(0.5).mul(vec2(screenSize.x.div(screenSize.y), 1))));
+  const px = screenUV.mul(screenSize).floor();
+  const n = hash(px.x.add(px.y.mul(4111.0)).add(time.mul(60).floor().mul(7919.0).mod(65536))).sub(0.5).mul(0.006);
+  return vec4(c.mul(mix(float(1).sub(POST.vignette), float(1), v)).add(n), 1);
+})();
 function draw() {
-  if (!OFF) { renderer.render(scene, camera); return; }
-  renderer.setRenderTarget(off.hdr); renderer.render(scene, camera);
-  renderer.setRenderTarget(off.ldr); off.quad.render(renderer); renderer.setRenderTarget(null);
+  renderer.setRenderTarget(OFF ? off.ldr : null); pipeline.render(); renderer.setRenderTarget(null);
 }
 async function snapshot() {
   draw();

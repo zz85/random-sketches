@@ -22,6 +22,10 @@ The plain law made the sheet unzip under its own weight, especially with the she
 
 Past 15% strain a link creeps longer for good, so the membrane stays baggy where you stretched it. Each link breaks at its own strain, 0.5 ± 25%, tested against its strain low-passed over a few substeps so that one solver spike can't snap it. A breaking link necks: it fades out over a few substeps instead of vanishing. The load moves to its neighbours, so a tear runs, but the two sides drift apart and don't spring back.
 
+## The studio
+
+The egg sits on a small oak board on a plaster plinth, in the same kind of room as [Hollow](../hollow/POST.md): a seamless grey cyclorama lit only through a window. The window is a set of boxes in the sun's path that only the shadow camera sees. The sun falls on the board as a pool with soft mullion shadows across it, and the room around stays dark. Godrays march the same shadow map, so the haze in the beam has the window's shape. Bloom, AgX tone mapping, a vignette and grain finish it.
+
 ## Making it wet
 
 The egg is raw, so everything is slimy:

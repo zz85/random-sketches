@@ -156,7 +156,7 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
     await shot('result');
     await E("document.getElementById('result').classList.remove('on')");
     // torn past the limit: a fresh egg yanked hard several times loses
-    await E('__membrane.setDown(); __membrane.steps(120); __membrane.rebuild(5)'); await E('__membrane.steps(20)');
+    await E('__membrane.setDown(); __membrane.steps(120); __membrane.rebuild(5); __membrane.camera.position.set(0.5, 9.2, 13.4); __membrane.controls.update()'); await E('__membrane.steps(20)');
     const yanks = [];
     for (let k = 0; k < 6 && !(await E('__membrane.result && __membrane.result.lost')); k++) {
       const r = await pull(8, 9, [0.4 * k - 1, 1, 0.5]); await E('__membrane.endGrab(); __membrane.steps(10); __membrane.refresh()');

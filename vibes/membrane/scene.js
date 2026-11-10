@@ -4,6 +4,7 @@ import { Fn, attribute, varying, int, float, vec3, vec4, select, mix, smoothstep
   mx_fractal_noise_float, mx_noise_float, mx_worley_noise_float, uniform, dot, normalize, max, pow, abs, cameraPosition, positionWorld, normalView, positionView, length, cross, exp, sin, cos, If, attribute as attr, fract, sqrt, min, fwidth } from 'three/tsl';
 import { eggR, rimAt, THICK, RIM_N } from './egg.js';
 import { TABLE_Y, CUP, NS } from './sim.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 
 // ---------- shell: inner face, outer face and the broken edge between them, on a (theta, t) grid
 export function buildShell(table, { brown = true } = {}) {
@@ -90,10 +91,12 @@ export function buildCup() {
 // growth rings at r = sqrt(y^2 + d^2) close into cathedral arches along it. Earlywood ramps into a dense late
 // band each year, ring widths drift, fine fibres and the odd ray fleck run along the grain, each board has its own
 // tone, and a dark seam with a slight bevel sits between boards. Rings finer than a pixel fade to their mean.
+export const BOARD = { w: 17, d: 12.5, t: 2 };
 export function buildTable() {
-  const g = new THREE.PlaneGeometry(140, 140, 1, 1); g.rotateX(-Math.PI / 2); g.translate(0, TABLE_Y, 0);
-  const mat = new THREE.MeshPhysicalNodeMaterial({ roughness: 0.55, clearcoat: 0.18, clearcoatRoughness: 0.45 }); // oiled, satin: no varnish glare
-  const W = 11.0;
+  // a small board, its top at the table height, sitting on the plinth
+  const g = new RoundedBoxGeometry(BOARD.w, BOARD.t, BOARD.d, 3, 0.4); g.translate(0, TABLE_Y - BOARD.t / 2, 0);
+  const mat = new THREE.MeshPhysicalNodeMaterial({ roughness: 0.55, clearcoat: 0.1, clearcoatRoughness: 0.5 }); // oiled, satin: no varnish glare
+  const W = 6.25;
   const C = (h) => { const c = new THREE.Color(h); return vec3(c.r, c.g, c.b); }; // sRGB hex to linear
   const P = positionLocal;
   const wood = Fn(() => {
@@ -124,7 +127,7 @@ export function buildTable() {
   })();
   mat.colorNode = wood.rgb;
   mat.roughnessNode = float(0.5).add(wood.a.mul(0.15));
-  const m = new THREE.Mesh(g, mat); m.receiveShadow = true;
+  const m = new THREE.Mesh(g, mat); m.receiveShadow = true; m.castShadow = true;
   return m;
 }
 
@@ -267,4 +270,59 @@ export function buildStrands(sim) {
   const mesh = new THREE.Mesh(g, mat); mesh.frustumCulled = false; mesh.renderOrder = 3;
   mesh.userData = { dispose: () => { g.dispose(); mat.dispose(); } };
   return mesh;
+}
+
+// ---------- the studio, after Hollow's gallery: a seamless cyclorama (floor curving up into the back wall) in
+// warm grey, a plaster plinth under the board, and morning light that comes in only through a window. The window
+// is a mask in the light's path that the shadow camera alone sees, so the light falls as a pool with mullion
+// shadows, and the godrays pass, which marches the same shadow map, draws the beams.
+const MASK_LAYER = 1;
+export const FLOOR_Y = TABLE_Y - BOARD.t - 46;
+function cycGeometry() {
+  const R = 30, zWall = -55, pts = [];
+  for (let z = 120; z > zWall + R; z -= 10) pts.push([z, FLOOR_Y]);
+  for (let i = 0; i <= 16; i++) { const a = (i / 16) * Math.PI / 2; pts.push([zWall + R - Math.sin(a) * R, FLOOR_Y + R - Math.cos(a) * R]); }
+  for (let y = FLOOR_Y + R + 10; y <= FLOOR_Y + 220; y += 10) pts.push([zWall, y]);
+  const W = 320, nx = 32, pos = [], idx = [];
+  for (let i = 0; i < pts.length; i++) for (let j = 0; j <= nx; j++) pos.push(-W / 2 + (W * j) / nx, pts[i][1], pts[i][0]);
+  for (let i = 0; i < pts.length - 1; i++) for (let j = 0; j < nx; j++) { const a = i * (nx + 1) + j, b = a + nx + 1; idx.push(a, b, a + 1, a + 1, b, b + 1); }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals();
+  return g;
+}
+function windowMask() {
+  const g = new THREE.Group(), mat = new THREE.MeshBasicNodeMaterial({ side: THREE.DoubleSide });
+  const box = (w, h, x, y) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.5), mat); m.position.set(x, y, 0); m.castShadow = true; m.layers.set(MASK_LAYER); g.add(m); };
+  const hw = 5.5, hh = 8, cols = 2, rows = 3, bar = 0.45, E = 160;
+  box(E, E, 0, hh + E / 2); box(E, E, 0, -hh - E / 2); box(E, 2 * hh, -hw - E / 2, 0); box(E, 2 * hh, hw + E / 2, 0);
+  for (let c = 1; c < cols; c++) box(bar, 2 * hh, -hw + (2 * hw * c) / cols, 0);
+  for (let r = 1; r < rows; r++) box(2 * hw, bar, 0, -hh + (2 * hh * r) / rows);
+  return g;
+}
+export function buildStudio(scene, { shadowSize = 4096 } = {}) {
+  const cycMat = new THREE.MeshStandardNodeMaterial({ roughness: 0.9, metalness: 0 });
+  const mottle = mx_fractal_noise_float(positionWorld.mul(0.026), 3, 2, 0.5, 1).mul(0.12).add(mx_noise_float(positionWorld.mul(0.18)).mul(0.03));
+  cycMat.colorNode = vec3(0.21, 0.19, 0.17).mul(mottle.add(1));
+  const cyc = new THREE.Mesh(cycGeometry(), cycMat); cyc.receiveShadow = true; scene.add(cyc);
+  // the plinth: white plaster, a little narrower than the board
+  const plMat = new THREE.MeshStandardNodeMaterial({ roughness: 0.93, metalness: 0 });
+  plMat.colorNode = vec3(0.74, 0.715, 0.67).mul(mx_noise_float(positionWorld.mul(0.8)).mul(0.025).add(1));
+  const H = TABLE_Y - BOARD.t - FLOOR_Y;
+  const plinth = new THREE.Mesh(new RoundedBoxGeometry(BOARD.w - 4, H, BOARD.d - 4, 3, 0.3), plMat);
+  plinth.position.y = FLOOR_Y + H / 2; plinth.castShadow = plinth.receiveShadow = true; scene.add(plinth);
+  // morning sun through the window: low, warm white, from behind on the left
+  const key = new THREE.DirectionalLight(0xffeedb, 4.2);
+  key.castShadow = true; key.shadow.mapSize.set(shadowSize, shadowSize);
+  const sc = key.shadow.camera; Object.assign(sc, { left: -62, right: 62, top: 62, bottom: -62, near: 1, far: 400 });
+  sc.layers.enable(MASK_LAYER);
+  key.shadow.bias = -0.0003; key.shadow.normalBias = 0.04; key.shadow.radius = 5;
+  key.target.position.set(0, TABLE_Y + 2, 0);
+  const az = THREE.MathUtils.degToRad(-128), el = THREE.MathUtils.degToRad(30), D = 180;
+  const dir = new THREE.Vector3(Math.sin(az) * Math.cos(el), Math.sin(el), Math.cos(az) * Math.cos(el));
+  key.position.copy(key.target.position).addScaledVector(dir, D);
+  scene.add(key, key.target);
+  const mask = windowMask(); mask.position.copy(key.target.position).addScaledVector(dir, D - 4); mask.lookAt(key.position); scene.add(mask);
+  // fill: a cool sky from the window side and a little warm bounce off the floor
+  const fill = new THREE.HemisphereLight(0xc8d4e6, 0x3a3028, 0.85); scene.add(fill);
+  return { key, fill, cyc, plinth, mask, dir, MASK_LAYER };
 }
