@@ -10,13 +10,16 @@ function SailModelFactory(root) {
   const BASE = { loa: 29.3, lwl: 7.628, main: 22.57, jib: 33.4, spin: 60.3, gen: 50, mast: 12.2, boom: 3.7, jibFoot: 5.6, pole: 3.7, mass: 5648, crew: 465, wet: 21.73 };
   // Coefficients the model can't measure, fitted to the ORC polar by calib/calibrate.js (calib/cal.json).
   const CAL = {
-    lift: 0.7989, parasitic: 0.02939, kite: 0.7514,   // sail lift scale, sail parasitic drag, spinnaker efficiency
-    fric: 0.003328, heelDrag: 1.903,                 // hull skin friction coefficient, extra friction at 30 deg heel
-    cw: 0.01949, fnExp: 9.195,  // residuary resistance / weight at Froude number 0.4, and how fast it rises
-    rm: 42220,                // righting moment per unit sin(heel) of the base boat, N m
-    spinClear: 0.4892,          // how much of the main's wind shadow a squared-back spinnaker gets out of
-    sheetMin: 16.06,             // genoa sheeting angle with the sheet in hard (lead on the track), deg
-    windage: 2.529,              // hull, rig and crew windage area x drag coefficient, m^2
+    lift: 0.8179, parasitic: 0.03642, kite: 0.8678,   // sail lift scale, sail parasitic drag, spinnaker efficiency
+    fric: 0.003474, heelDrag: 1.835,                 // hull skin friction coefficient, extra friction at 30 deg heel
+    cw: 0.01921, fnExp: 9.457,  // residuary resistance / weight at Froude number 0.4, and how fast it rises
+    rm: 41460,                // righting moment per unit sin(heel) of the base boat, N m
+    spinClear: 0.1569,          // how much of the main's wind shadow a squared-back spinnaker gets out of
+    shadow: 0.3288,               // headsail power left in the main's wind shadow dead downwind (apparent wind 180)
+    shadowExp: 1.511,               // how the shadow grows from 120 deg apparent to dead downwind (1 = linear)
+    kiteTight: 0.7674,            // spinnaker power lost with the apparent wind forward of the beam (at 55 deg apparent)
+    sheetMin: 16.8,             // genoa sheeting angle with the sheet in hard (lead on the track), deg
+    windage: 1.926,              // hull, rig and crew windage area x drag coefficient, m^2
   };
   function makeBoat(ft) {
     const k = ft / BASE.loa, lwl = BASE.lwl * k;
@@ -187,13 +190,18 @@ function SailModelFactory(root) {
     let drive = 0, side = 0, hm = 0, fMain = 0, fHead = 0;
     const out = { main: [], head: [] };
     out.jib = out.head;
-    const blanket = aw0.awa > 120 ? 0.35 + 0.65 * (180 - aw0.awa) / 60 : 1; // headsail in the main's shadow on a run
+    // Headsail in the main's wind shadow on a run: from none at 120 deg apparent to CAL.shadow left dead downwind.
+    // The shadow deepens faster near dead downwind (CAL.shadowExp), where the main stands square across the kite.
+    const blanket = aw0.awa > 120 ? 1 - (1 - CAL.shadow) * Math.pow((aw0.awa - 120) / 60, CAL.shadowExp) : 1;
     let factor = hd.clFactor, blk = blanket;
     if (hd.kind === 'spin') {
       // Pole at right angles to the apparent wind shows the whole sail; squared back it gets clear of the main.
       hd.idealPole = clamp(aw0.awa - 90, 5, 90);
       const e = (hd.poleDeg - hd.idealPole) / 60;
-      factor *= clamp(1 - 0.6 * e * e, 0.4, 1) * (1 - 0.25 * clamp((115 - aw0.awa) / 40, 0, 1));
+      // With the apparent wind forward of the beam the pole is on the forestay and the luff curls: the kite turns into a
+      // poor, heavily twisted reacher. It bites hardest in light air, where the boat's own speed pulls the wind forward.
+      const tight = clamp((115 - aw0.awa) / 60, 0, 1);
+      factor *= clamp(1 - 0.6 * e * e, 0.4, 1) * (1 - CAL.kiteTight * tight * tight);
       blk = blanket + (1 - blanket) * CAL.spinClear * clamp(hd.poleDeg / Math.max(hd.idealPole, 10), 0, 1);
     } else if (hd.kind === 'gen') {
       // Tack down on a tight reach (luff tension), eased up on a broad one (the sail rotates out from behind the main).

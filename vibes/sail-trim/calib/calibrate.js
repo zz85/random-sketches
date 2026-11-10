@@ -18,6 +18,9 @@ function points() {
     pts.push({ tws, twa: ORC.gybeAngle[i], target: ORC.runVmg[i] / -Math.cos(ORC.gybeAngle[i] * D), kind: 'run', w: 2 });
     // Pointing: sailing higher or lower than ORC's VMG angle must not make a better VMG than ORC's.
     for (const d of [-7, 7]) pts.push({ tws, twa: ORC.beatAngle[i] + d, vmgMax: ORC.beatVmg[i], kind: 'beat' + (d > 0 ? '+' : '-'), w: 3 });
+    // Running too deep: past ORC's gybe angle the VMG must not beat ORC's own VMG at that angle (its speeds at 165 and 180).
+    const orcAt = (a) => { const t = (a - 165) / 15; return (ORC.speeds[165][i] * (1 - t) + ORC.speeds[180][i] * t) * -Math.cos(a * D); };
+    for (const a of [170, 175]) if (a > ORC.gybeAngle[i] + 4) pts.push({ tws, twa: a, vmgMax: orcAt(a), kind: 'deep' + a, w: 3 });
     for (const d of [-12, 12]) { const a = Math.min(180, ORC.gybeAngle[i] + d); if (a < ORC.gybeAngle[i] + 1) { if (d > 0) continue; } pts.push({ tws, twa: a, vmgMax: ORC.runVmg[i], kind: 'run' + (d > 0 ? '+' : '-'), w: 2 }); }
   });
   return pts;
@@ -44,7 +47,7 @@ const vmgOf = (p, bs) => bs * Math.abs(Math.cos(p.twa * D));
 const errOf = (p, s) => (p.target ? (s.bs - p.target) / p.target : Math.max(0, vmgOf(p, s.bs) - p.vmgMax) / p.vmgMax);
 const loss = (pts, sp) => pts.reduce((a, p, i) => a + p.w * errOf(p, sp[i]) ** 2, 0) / pts.reduce((a, p) => a + p.w, 0);
 
-const PARAMS = { lift: [0.6, 1.5], parasitic: [0.005, 0.06], kite: [0.5, 1.5], fric: [0.0025, 0.0045], heelDrag: [0, 2], cw: [0.003, 0.05], fnExp: [2, 10], rm: [15000, 120000], windage: [0.5, 8], spinClear: [0.1, 1], sheetMin: [8, 17] };
+const PARAMS = { lift: [0.6, 1.5], parasitic: [0.005, 0.06], kite: [0.5, 1.5], fric: [0.0025, 0.0045], heelDrag: [0, 2], cw: [0.003, 0.05], fnExp: [2, 10], rm: [15000, 120000], windage: [0.5, 8], spinClear: [0.1, 1], sheetMin: [8, 17], shadow: [0.1, 0.8], shadowExp: [0.7, 3], kiteTight: [0, 0.9] };
 const KEYS = Object.keys(PARAMS);
 const toCal = (x) => Object.fromEntries(KEYS.map((k, i) => [k, PARAMS[k][0] + Math.min(1, Math.max(0, x[i])) * (PARAMS[k][1] - PARAMS[k][0])]));
 const toX = (cal) => KEYS.map((k) => (cal[k] - PARAMS[k][0]) / (PARAMS[k][1] - PARAMS[k][0]));
@@ -126,7 +129,7 @@ async function main() {
       }
       return b;
     };
-    const u = best([36, 38, 40, 42, 44, 46, 48, 50], 'jib', 1), d = best([140, 145, 150, 155, 160, 165, 170, 175, 180], 'spin', -1);
+    const u = best([36, 38, 40, 42, 44, 46, 48, 50], 'jib', 1), d = best(Array.from({ length: 21 }, (_, j) => 140 + 2 * j), 'spin', -1);
     console.log(`${String(tws).padStart(2)} kn  beat ${u.twa} deg VMG ${u.v.toFixed(2)} (ORC ${ORC.beatAngle[i]} deg ${ORC.beatVmg[i].toFixed(2)})   run ${d.twa} deg VMG ${d.v.toFixed(2)} (ORC ${ORC.gybeAngle[i]} deg ${ORC.runVmg[i].toFixed(2)})`);
   }
   const sails = {}; pts.forEach((p, i) => { (sails[p.kind] = sails[p.kind] || []).push(sp[i].sail); });

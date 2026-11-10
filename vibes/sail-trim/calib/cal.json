@@ -1,13 +1,16 @@
 {
- "lift": 0.7989,
- "parasitic": 0.02939,
- "kite": 0.7514,
- "fric": 0.003328,
- "heelDrag": 1.903,
- "cw": 0.01949,
- "fnExp": 9.195,
- "rm": 42220,
- "windage": 2.529,
- "spinClear": 0.4892,
- "sheetMin": 16.06
+ "lift": 0.8179,
+ "parasitic": 0.03642,
+ "kite": 0.8678,
+ "fric": 0.003474,
+ "heelDrag": 1.835,
+ "cw": 0.01921,
+ "fnExp": 9.457,
+ "rm": 41460,
+ "windage": 1.926,
+ "spinClear": 0.1569,
+ "sheetMin": 16.8,
+ "shadow": 0.3288,
+ "shadowExp": 1.511,
+ "kiteTight": 0.7674
 }
