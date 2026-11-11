@@ -2,9 +2,11 @@
 
 Light off water, after the Wallace sets in *Blade Runner 2049*. Three sets, each lit only by light thrown off rippling water:
 
-- **Corridor**: the planked wooden passage with stairs climbing through receding, tilted portal frames, with thin bright lines running down the walls and over the steps.
+- **Corridor**: the wide concrete passage with stairs climbing through receding, tilted portal frames, with thin bright lines running down the walls and over the steps.
 - **Office**: Wallace's office: warm concrete, pilasters and a long shelf, a skylight, a desk and chairs, with broad, slow gold ribbons over the back wall and floor.
-- **Hall**: the hall of water: a black flooded floor, a wooden platform with two leather chairs, stepping stones, a slit of light overhead and fine ripples on the curved walls.
+- **Hall**: the hall of water: a black flooded floor, a wooden platform with two leather chairs, stepping stones, a disc of light swinging slowly on a long cable overhead and fine ripples on the curved walls.
+
+All three share one gold lamp colour, one rough concrete and one grade, so they read as one building.
 
 ![corridor](shot_corridor.jpg)
 ![office](shot_office.jpg)

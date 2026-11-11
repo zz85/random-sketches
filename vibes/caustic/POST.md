@@ -28,6 +28,10 @@ Each set has its own water, so its own look:
 
 `depth` is the focus. Short and the lines are soft; long and they sharpen, then break up into a busy net as rays cross more than once.
 
+## One concrete
+
+The walls, floors and frames of all three sets are one material, `rough()` in `materials.js`: board-formed concrete. A height field is built from broad fractal blotches, a fine sandy grit, small air pits from Worley noise and faint horizontal formwork streaks. The same field darkens the colour where it is low and goes through `bumpMap` into the normal, so a raking caustic catches the grain: the lines break up a little over the grit, as they do on the set. Tall panel seams are cut in the same way. Only the hall's deck is still wood.
+
 ## Projecting it
 
 In r187 a `SpotLight` takes a `colorNode`: a TSL function from the point's coordinate in the light's projection (its shadow matrix) to a colour. Each "Fresnel" is a spot light whose `colorNode` samples the caustic texture at that coordinate, turned, repeated 2 to 4.5 times and drifting slowly, so two lamps off the same water don't show the same pattern. Because it's a real light with a shadow map, the portal frames, roof beams, desk and chairs cut shadows into the ripples, which is most of what makes it read as the film.
@@ -39,6 +43,10 @@ The real sets glow because the amber light bounces off wood and concrete. Two ch
 - **One virtual light per beam.** Where each beam lands, a dim, unshadowed point light sits just off the surface, in the beam's colour times the surface's, carrying a few percent of the beam's power. This is instant radiosity cut down to one bounce and one light. It warms the ceiling, the floor and the shadow sides, and it costs almost nothing, so phones keep it.
 - **SSGI with TRAA.** On desktop, three's `ssgi` node runs on a scene pass that also writes albedo, normals and velocity (MRT). It's composited as `beauty * AO + albedo * GI`, then temporal reprojection AA (`traa`) averages away its noise over frames, and antialiases too. The GI button turns it off.
 
+## The hanging light
+
+The hall's light is a thin glowing disc on a long cable, so from the shore it reads as the ellipse in the film. It hangs from a pivot 13 m up and swings as a pendulum: two slow sines, 7.2 s and 9.1 s, of 3.4 and 2.3 degrees, so its path wanders. The spot light that throws the pool of light onto the platform hangs from the same pivot and aims at a fixed point, so the pool and the chairs' shadows sway with it, and the disc's reflection slides over the black water.
+
 ## Haze, water and the lens
 
 - **Haze**: a `VolumeNodeMaterial` box raymarched at half resolution, lit by the same projected spot lights, so each beam carries its ripples through the air. A Bayer dither per frame hides the step pattern, and the volume goes through a bloom mip chain as a blur before it's added. It has to stay faint: at the first setting tried, the haze washed every set out to beige.
@@ -47,14 +55,16 @@ The real sets glow because the amber light bounces off wood and concrete. Two ch
 
 ## Where the orange comes from
 
-The amber comes from four places, and they stack:
+The gold comes from four places, and they stack:
 
-1. **The lamps**: every caustic spot light is gold (`0xffa53a` and nearby), as tungsten through warm gels is.
-2. **The materials**: wood is orange-brown, the concrete warm grey, the leather cream.
-3. **The bounce lights**: their colour is lamp times surface, so orange squared.
-4. **The grade**, last and strongest: each pixel is pulled toward its luminance times an amber tint, `mix(tint * luma * 2.2, colour, sat)`, with a toe that sinks the shadows. Each set's `look` sets its own tint and `sat` (corridor 1.0/0.62/0.26 at 0.55, office 1.0/0.66/0.24 at 0.45, hall 1.0/0.68/0.30 at 0.6). Lower `sat` means more monochrome amber.
+1. **The lamps**: every caustic spot light is the same gold, `0xffb840` (or `0xffc050` for the skylight and the hanging light), as tungsten through warm gels is.
+2. **The materials**: all three sets share one rough concrete, a neutral warm grey (`0x76694e`), so the walls don't add a colour of their own.
+3. **The bounce lights**: their colour is lamp times surface.
+4. **The grade**, last and strongest: each pixel is pulled toward its luminance times a gold tint, `mix(tint * luma * 2.2, colour, sat)`, with a toe that sinks the shadows. All three sets share one grade: tint 1.0 / 0.70 / 0.14 with sat 0.28, so only 28% of the scene's own colour survives.
 
-The Tune panel's **Warmth** slider moves the grade's tint toward grey (same luminance) and the lamps toward white, and past 1 makes it more orange still. **Colour** sets how much of the scene's own colour survives the grade. The wood stays wood-coloured either way.
+The first version gave each set its own lamp colour, material and grade, and the corridor was the most orange on all four counts: oiled wood that is orange-brown itself, lamps at `0xffa53a` (the most orange), a tint whose green was lowest (0.62) and wood-coloured bounce lights. Against the three film stills, which are all the same gold, that read as a different film. Now `scenes.js` holds one `GOLD`, one `GRADE` and one `CONCRETE` for all three, and the sets differ only in their water and their geometry.
+
+The Tune panel's **Warmth** slider moves the grade's tint toward grey (same luminance) and the lamps toward white, and past 1 makes it more orange still. **Colour** sets how much of the scene's own colour survives the grade.
 
 ![Warmth 0.25, choppier water](shot_tune.jpg)
 

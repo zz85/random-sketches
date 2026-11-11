@@ -1,7 +1,7 @@
 // materials.js - procedural surfaces in TSL: the corridor's planked wood, Wallace's warm concrete, leather,
 // dark lacquer and the black water of the hall.
 import * as THREE from 'three/webgpu';
-import { Fn, vec2, vec3, float, positionWorld, normalWorld, abs, mix, smoothstep, fract, floor, mx_noise_float, mx_fractal_noise_float, hash, select, color, uniform, reflector, time, sin, normalView, positionLocal } from 'three/tsl';
+import { Fn, vec2, vec3, float, positionWorld, normalWorld, abs, mix, smoothstep, fract, floor, mx_noise_float, mx_fractal_noise_float, mx_worley_noise_float, bumpMap, hash, select, color, uniform, reflector, time, sin, normalView, positionLocal } from 'three/tsl';
 
 // world-space coordinates on the face a fragment is on: (along, up) for walls, (x, z) for floors
 const faceUV = Fn(() => {
@@ -40,6 +40,30 @@ export function concrete({ base = 0x8a6a3a, panel = [3, 3], rough = 0.6, seam = 
     return A.mul(blot.add(pores)).mul(s.mul(seam).add(1 - seam));
   })();
   m.roughnessNode = Fn(() => float(rough).add(mx_noise_float(vec3(faceUV().mul(0.8), 4)).mul(0.15)))();
+  return m;
+}
+
+// The one wall surface of all three sets: rough board-formed concrete. Broad blotches and stains, sandy grit,
+// small air pits, tall panel seams, and the same height field bumped into the normal so a raking caustic
+// catches the grain. Its colour is a neutral warm grey: the gold comes from the lamps and the grade.
+export function rough({ base = 0x76694e, panel = [1.5, 3.2], seam = 0.3, rough = 0.88, bump = 1, scale = 1 } = {}) {
+  const m = new THREE.MeshStandardNodeMaterial({ roughness: rough, metalness: 0 });
+  const A = color(base);
+  const parts = Fn(() => {
+    const uv = faceUV().mul(scale);
+    const blot = mx_fractal_noise_float(vec3(uv.mul(0.45), 1), 4, 2, 0.5);
+    const grit = mx_fractal_noise_float(vec3(uv.mul(38), 3), 3, 2.1, 0.55);
+    const pit = smoothstep(0.08, 0.02, mx_worley_noise_float(vec3(uv.mul(11), 5)));
+    const board = mx_noise_float(vec3(uv.x.mul(0.6), uv.y.mul(9), 7)); // faint horizontal formwork streaks
+    return vec3(blot, grit, pit).add(vec3(0, board.mul(0.4), 0));
+  });
+  const seamOf = Fn(() => { const g = fract(faceUV().div(vec2(...panel))), e = vec2(...panel).mul(g.min(g.oneMinus())); return smoothstep(0.0, 0.01, e.x.min(e.y)); });
+  m.colorNode = Fn(() => {
+    const q = parts();
+    return A.mul(q.x.mul(0.22).add(1)).mul(q.y.mul(0.12).add(1)).mul(q.z.mul(-0.45).add(1)).mul(seamOf().mul(seam).add(1 - seam));
+  })();
+  m.normalNode = bumpMap(Fn(() => { const q = parts(); return q.y.mul(0.5).add(q.x.mul(0.2)).sub(q.z.mul(0.8)).add(seamOf().mul(0.6)); })(), 0.012 * bump);
+  m.roughnessNode = Fn(() => float(rough).add(parts().y.mul(0.06)))();
   return m;
 }
 

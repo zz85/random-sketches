@@ -288,6 +288,7 @@ function frame() {
   if (tour && !pending) { const s = cur.shots[shotIndex]; shotT += dt / s.dur; place(shotT); if (shotT > 1 && !fadeT) next(); }
   else if (!tour) controls.update();
   wt += dt * TUNE.speed;
+  cur.update?.(t);
   for (const c of cur.caustics) c.update(wt);
   if (drone.on) drone.set(name);
   if (!OFF) draw();
@@ -301,7 +302,7 @@ if ('serviceWorker' in navigator && !SHOT && location.protocol === 'https:') nav
 // for the smoke test
 window.__caustic = {
   renderer, scene, camera, sets, get set() { return name; }, LOOK, hazeOn, GI, TUNE, applyTune, splashAt, splashAll, renderBars,
-  show, async frame(n = 1, dt = 1 / 30) { for (let i = 0; i < n; i++) { t += dt; wt += dt * TUNE.speed; for (const c of cur.caustics) c.update(wt); if (tour && cur) { shotT += dt / cur.shots[shotIndex].dur; place(Math.min(1, shotT)); } } await snapshot(); },
+  show, async frame(n = 1, dt = 1 / 30) { for (let i = 0; i < n; i++) { t += dt; wt += dt * TUNE.speed; cur.update?.(t); for (const c of cur.caustics) c.update(wt); if (tour && cur) { shotT += dt / cur.shots[shotIndex].dur; place(Math.min(1, shotT)); } } await snapshot(); },
   shot(i, at = 0.5) { startShot(i); shotT = at; place(at); },
   // a splash's effect on the caustic: the mean |difference| between the texture with and without one
   async splashTest() {
