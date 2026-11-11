@@ -1,0 +1,16 @@
+{
+  "name": "Caustic - glass, a magic mirror and a pool that draw with light",
+  "short_name": "Caustic",
+  "description": "Shape a piece of glass, a bronze magic mirror or a pool's water so that the light it bends draws your picture.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#0a0b0d",
+  "theme_color": "#0a0b0d",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

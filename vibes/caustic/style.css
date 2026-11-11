@@ -1,0 +1,48 @@
+html, body { margin: 0; height: 100%; overflow: hidden; background: #0a0b0d; color: #eef1f4; font: 13px Georgia, serif; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+canvas#gl { display: block; position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; }
+button, input, a { font: inherit; color: inherit; }
+#title { position: fixed; left: max(20px, env(safe-area-inset-left)); top: max(16px, env(safe-area-inset-top)); font: 300 20px/1.2 Georgia, serif; letter-spacing: 0.32em; pointer-events: none; text-shadow: 0 1px 10px #000; }
+#title small { display: block; letter-spacing: 0.04em; font-size: 13px; margin-top: 8px; font-style: italic; opacity: 0.8; }
+#side { position: fixed; right: max(16px, env(safe-area-inset-right)); top: max(16px, env(safe-area-inset-top)); width: 150px; text-align: right; pointer-events: none; }
+#preview { width: 150px; height: 150px; border-radius: 8px; opacity: 0; transition: opacity 0.6s; background: #000; box-shadow: 0 2px 18px rgba(0, 0, 0, 0.6); }
+body.designing #preview { opacity: 0.95; }
+#progwrap { height: 3px; background: rgba(255, 255, 255, 0.12); border-radius: 2px; margin: 8px 0 6px; overflow: hidden; opacity: 0; transition: opacity 0.6s; }
+body.designing #progwrap { opacity: 1; }
+#progbar { display: block; height: 100%; width: 0; background: #f1c27a; transition: width 0.2s; }
+#progress, #relief { font-size: 11px; opacity: 0.75; font-variant-numeric: tabular-nums; text-shadow: 0 1px 4px #000; }
+#relief { font-style: italic; }
+#bar { position: fixed; left: 50%; bottom: max(12px, env(safe-area-inset-bottom)); transform: translateX(-50%); display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; width: max-content; max-width: calc(100vw - 20px); }
+.pill { display: flex; align-items: center; flex-wrap: wrap; justify-content: center; gap: 2px; border: 1px solid rgba(255, 255, 255, 0.18); background: rgba(24, 28, 34, 0.6); border-radius: 20px; padding: 4px 6px; -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+.pill button, .pill a, #panel button, #drawbox button { appearance: none; border: 0; background: transparent; padding: 6px 10px; border-radius: 16px; cursor: pointer; letter-spacing: 0.03em; text-decoration: none; }
+.pill button.on, #panel button.on { background: rgba(255, 255, 255, 0.2); }
+.pill button:hover, .pill a:hover { background: rgba(255, 255, 255, 0.1); }
+.pills { max-width: 640px; }
+#text { width: 76px; background: rgba(0, 0, 0, 0.35); border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 12px; padding: 4px 8px; outline: none; -webkit-user-select: text; user-select: text; }
+#padwrap { position: fixed; left: max(18px, env(safe-area-inset-left)); bottom: max(70px, calc(env(safe-area-inset-bottom) + 60px)); text-align: center; font-size: 11px; opacity: 0.85; }
+#pad { width: 96px; height: 96px; border-radius: 50%; border: 1px solid rgba(255, 255, 255, 0.25); background: radial-gradient(circle, rgba(255, 220, 160, 0.12), rgba(20, 24, 30, 0.55) 70%); position: relative; touch-action: none; cursor: grab; margin-bottom: 4px; }
+#pad::after { content: ''; position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px; border-radius: 50%; background: rgba(255, 255, 255, 0.35); }
+#paddot { position: absolute; left: 50%; top: 50%; width: 18px; height: 18px; margin: -9px; border-radius: 50%; background: #ffd99a; box-shadow: 0 0 14px #ffb84d; pointer-events: none; }
+#panel { position: fixed; right: max(16px, env(safe-area-inset-right)); bottom: 70px; width: 270px; padding: 12px 14px; border-radius: 14px; background: rgba(24, 28, 34, 0.75); border: 1px solid rgba(255, 255, 255, 0.15);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); display: none; }
+body.panel #panel { display: block; }
+#panel label { display: grid; grid-template-columns: 96px 1fr 54px; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 12px; }
+#panel label span { text-align: right; opacity: 0.75; font-size: 11px; font-variant-numeric: tabular-nums; }
+#panel input[type=range] { width: 100%; accent-color: #f1c27a; }
+#panel .row { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+#panel .row button { border: 1px solid rgba(255, 255, 255, 0.18); }
+body:not([data-mode=water]) #panel .pool { display: none; }
+body[data-mode=mirror] #panel .disp, body[data-mode=mirror] #sun, body[data-mode=water] #stl { display: none; }
+#drawbox { position: fixed; inset: 0; display: none; place-items: center; align-content: center; gap: 12px; background: rgba(0, 0, 0, 0.75); z-index: 10; }
+body.drawing #drawbox { display: grid; }
+#draw { width: min(80vw, 70vh); height: min(80vw, 70vh); border-radius: 10px; touch-action: none; cursor: crosshair; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.25); }
+#drawbox .row { display: flex; gap: 8px; justify-content: center; }
+#drawbox button { border: 1px solid rgba(255, 255, 255, 0.3); background: rgba(40, 44, 52, 0.8); }
+#toast { position: fixed; left: 50%; top: 18%; transform: translateX(-50%); max-width: 80vw; padding: 10px 16px; border-radius: 12px; background: rgba(20, 24, 30, 0.85); font-style: italic; opacity: 0; transition: opacity 0.4s; pointer-events: none; text-align: center; }
+#toast.on { opacity: 1; }
+body.calm #bar, body.calm #title, body.calm #side, body.calm #padwrap, body.calm #panel { display: none; }
+@media (max-width: 700px) {
+  #title { font-size: 16px; } #title small { font-size: 11px; max-width: 55vw; }
+  #side { width: 104px; } #preview { width: 104px; height: 104px; }
+  #padwrap { bottom: auto; top: 110px; } #pad { width: 76px; height: 76px; }
+  #panel { left: 10px; right: 10px; width: auto; bottom: 140px; }
+}
