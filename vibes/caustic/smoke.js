@@ -22,7 +22,7 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
 
 (async () => {
   await new Promise((r) => server.listen(PORT, '127.0.0.1', r));
-  const b = await launch({ port: 9435, width: 1280, height: 640 });
+  const b = await launch({ port: +process.env.CDP || 9435, width: 1280, height: 640 });
   const E = (s) => b.evaluate(s);
   await b.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false });
   const shot = async (name) => { const r = await b.send('Page.captureScreenshot', { format: 'png' }); const buf = Buffer.from(r.result.data, 'base64'); fs.writeFileSync(path.join(OUT, `${name}.png`), buf); const keep = { corridor: 'corridor', office: 'office', hall_2: 'hall' }[name];
@@ -49,13 +49,15 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
         if (!tag || i === 0) await shot(`${tag}${set}${i ? '_' + i : ''}`);
       }
       const st = await E('__caustic.causticStats()');
-      check(`${tag}${set}: the caustic is lit and has lines`, st.mean > 0.5 && st.mean < 1.6 && st.sd > 0.4 && st.max > 3, `mean ${st.mean.toFixed(2)}, sd ${st.sd.toFixed(2)}, max ${st.max.toFixed(1)}`);
+      check(`${tag}${set}: the caustic is lit and has lines`, st.mean > 0.5 && st.mean < 1.6 && st.sd > 0.4 && st.max > 3 && st.lit > 0.05, `mean ${st.mean.toFixed(2)}, sd ${st.sd.toFixed(2)}, max ${st.max.toFixed(1)}, lit ${(st.lit * 100).toFixed(0)}%`);
+      const pc = await E('__caustic.posCheck()');
+      check(`${tag}${set}: each beam's map of the set matches a traced ray`, pc.length > 0 && pc.every((p) => p.n >= 8 && p.bad < 1), pc.map((p) => `${p.n} probes, worst ${p.bad.toFixed(2)}`).join('; '));
       const er = errors(); check(`${tag}${set}: no console or shader errors`, er.length === 0, er.slice(0, 3).join(' | ').slice(0, 1500));
       if (!tag) {
         const sd = await E('__caustic.splashTest()');
         check(`${set}: a splash ripples the caustic`, sd > 0.02, `mean change ${sd.toFixed(3)}`);
         await E('__caustic.shot(0, 0.4)');
-        const n = await E(`__caustic.splashAt(innerWidth * ${set === 'hall' ? 0.12 : 0.5}, innerHeight * ${set === 'hall' ? 0.3 : 0.5})`);
+        const n = await E(`__caustic.splashAt(innerWidth * ${set === 'hall' ? 0.12 : set === 'corridor' ? 0.15 : 0.5}, innerHeight * ${set === 'hall' ? 0.3 : 0.5})`);
         check(`${set}: a tap on a lit wall lands in a caustic beam`, n > 0, `${n} beams`);
       }
       if (!tag) { await E('__caustic.shot(0, 0.4); __caustic.splashAll(1.2)'); await E('__caustic.frame(100)'); await shot(`splash_${set}`); }

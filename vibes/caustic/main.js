@@ -174,8 +174,8 @@ function show(n, shot = 0) {
 //   warmth: how orange it is. 0 drains the amber from the grade and the lamps (the wood and concrete keep
 //           their own colour), 1 is the film, past 1 is more orange still.
 //   colour: how much of the scene's own colour survives the grade (0: monochrome amber, 1: ungraded colour).
-//   size:   the ripples' size on the walls (the caustic tile's repeat across each beam).
-//   sharp:  how far the light travels from the water to the wall: the focus of the bright lines.
+//   size:   the ripples' size: the water's wavelengths.
+//   sharp:  how far each ray is thrown past where it lands, as if the walls were further: the focus of the lines.
 //   height: the waves' height: calm to choppy.
 //   speed:  how fast the water moves.
 const TUNE = { warmth: 1, colour: 1, exposure: 1, haze: 1, size: 1, sharp: 1, height: 1, speed: 1 };
@@ -190,30 +190,20 @@ function applyTune() {
     l.userData.color0 ??= l.color.clone();
     const w = Math.min(1, TUNE.warmth), c0 = l.userData.color0, y = 0.2126 * c0.r + 0.7152 * c0.g + 0.0722 * c0.b;
     l.color.setRGB(y + (c0.r - y) * w, y + (c0.g - y) * w, y + (c0.b - y) * w);
-    if (l.userData.scale) l.userData.scale.value = l.userData.scale0 / TUNE.size;
   }
-  for (const c of S.caustics) { c.depth.value = c.base.depth * TUNE.sharp; c.amp.value = c.base.amp * TUNE.height; }
+  for (const c of S.caustics) { c.depth.value = c.base.depth * TUNE.sharp; c.amp.value = c.base.amp * TUNE.height; if (c.scale) c.scale.value = 1 / TUNE.size; }
 }
 
 // Splashes: tap a lit wall and the water that throws that light ripples. The tap's point is found in the scene,
-// then in each caustic beam that lights it, by the same projection the light uses (its shadow matrix, then the
-// turn, repeat and drift its colorNode applies), so the ring starts on the tile exactly where you touched.
-const ray = new THREE.Raycaster(), ndc = new THREE.Vector2(), v4 = new THREE.Vector4(), uv2 = new THREE.Vector2();
-const nodeTime = () => renderer._nodes?.nodeFrame?.time ?? 0;
+// then, for each beam, the ray from its source to that point is met with its water: the ring starts there.
+const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
 function splashAt(x, y) {
   ndc.set((x / innerWidth) * 2 - 1, -(y / innerHeight) * 2 + 1); ray.setFromCamera(ndc, camera);
   const hit = ray.intersectObject(cur.group, true).find((h) => h.object.isMesh);
   let n = 0;
   if (hit) for (const l of cur.lights) {
-    if (!l.userData.caustic) continue;
-    l.shadow.updateMatrices(l);
-    v4.set(hit.point.x, hit.point.y, hit.point.z, 1).applyMatrix4(l.shadow.matrix);
-    if (v4.w <= 0) continue;
-    const u = v4.x / v4.w, v = v4.y / v4.w;
-    if (u < 0 || u > 1 || v < 0 || v > 1) continue;
-    uv2.set(u - 0.5, v - 0.5).rotateAround({ x: 0, y: 0 }, l.userData.rot).multiplyScalar(l.userData.scale.value);
-    const dr = l.userData.drift.value; uv2.addScaledVector(dr, nodeTime());
-    l.userData.caustic.splash(uv2.x, uv2.y, 1); n++;
+    const w = l.userData.trough, uv = w?.waterUV(hit.point);
+    if (uv) { w.splash(uv[0], uv[1], 1); n++; }
   }
   if (!n) splashAll(1); // the floor of the hall, or a dark corner: stir the water anyway
   return n;
@@ -309,20 +299,38 @@ window.__caustic = {
   renderer, scene, camera, sets, get set() { return name; }, LOOK, hazeOn, GI, TUNE, applyTune, splashAt, splashAll, renderBars,
   show, async frame(n = 1, dt = 1 / 30) { for (let i = 0; i < n; i++) { t += dt; wt += dt * TUNE.speed; cur.update?.(t); for (const c of cur.caustics) c.update(wt); if (tour && cur) { shotT += dt / cur.shots[shotIndex].dur; place(Math.min(1, shotT)); } } await snapshot(); },
   shot(i, at = 0.5) { startShot(i); shotT = at; place(at); },
+  // the position maps against a ray cast on the CPU from each source through the same places of its projection:
+  // the worst miss in metres over the probes that hit something
+  async posCheck() {
+    const rc = new THREE.Raycaster(), worst = [];
+    for (const w of cur.caustics) {
+      if (!w.probe) continue;
+      const uvs = []; for (let i = 0; i < 6; i++) for (let j = 0; j < 6; j++) uvs.push([0.12 + 0.76 * i / 5, 0.12 + 0.76 * j / 5]);
+      const got = await w.probe(uvs), cam = w.cam2; let bad = 0, n = 0;
+      uvs.forEach(([u, v], k) => {
+        rc.setFromCamera(new THREE.Vector2(2 * u - 1, 2 * v - 1), cam); rc.far = cam.far;
+        const h = rc.intersectObject(cur.group, true).find((x) => x.object.isMesh && x.point.clone().sub(w.C).dot(w.room) >= 0.005);
+        if (!h || got[k][3] < 0.5) return;
+        n++; bad = Math.max(bad, Math.hypot(h.point.x - got[k][0], h.point.y - got[k][1], h.point.z - got[k][2]) / Math.max(1, h.distance * 0.03));
+      });
+      worst.push({ n, bad });
+    }
+    return worst;
+  },
   // a splash's effect on the caustic: the mean |difference| between the texture with and without one
   async splashTest() {
-    const c = cur.caustics[0], s = c.rt.width, read = async () => renderer.readRenderTargetPixelsAsync(c.rt, 0, 0, s, s);
+    const c = cur.caustics[0], read = async () => renderer.readRenderTargetPixelsAsync(c.rt, 0, 0, c.rt.width, c.rt.height);
     const T0 = 40; c.update(T0); c.splash(0.5, 0.5, 1); const d = c.drops[(c.nextDrop + 7) % 8];
     c.update(T0 + 2); const a = await read(); const w = d.w; d.w = 0; c.update(T0 + 2); const b = await read(); d.w = w;
-    let m = 0, N = 0; for (let i = 0; i < a.length; i += 16) { m += Math.abs(THREE.DataUtils.fromHalfFloat(a[i + 1]) - THREE.DataUtils.fromHalfFloat(b[i + 1])); N++; }
+    let m = 0, N = 0; for (let i = 0; i < a.length; i += 16) { const x = THREE.DataUtils.fromHalfFloat(a[i + 1]), y = THREE.DataUtils.fromHalfFloat(b[i + 1]); if (!(x > 0.02 || y > 0.02)) continue; m += Math.abs(x - y); N++; } // over the lit footprint
     return m / N;
   },
   // the mean and the spread of the caustic texture, to see that it is lit and has lines
   async causticStats() {
-    const c = cur.caustics[0], s = c.rt.width;
-    const px = await renderer.readRenderTargetPixelsAsync(c.rt, 0, 0, s, s);
-    let m = 0, m2 = 0, hi = 0, N = 0;
-    for (let i = 0; i < px.length; i += 16) { const v = THREE.DataUtils.fromHalfFloat(px[i + 1]); m += v; m2 += v * v; hi = Math.max(hi, v); N++; }
-    m /= N; return { mean: m, sd: Math.sqrt(m2 / N - m * m), max: hi };
+    const c = cur.caustics[0];
+    const px = await renderer.readRenderTargetPixelsAsync(c.rt, 0, 0, c.rt.width, c.rt.height);
+    let m = 0, m2 = 0, hi = 0, N = 0, all = 0;
+    for (let i = 0; i < px.length; i += 16) { const v = THREE.DataUtils.fromHalfFloat(px[i + 1]); all++; if (!(v > 0.02)) continue; m += v; m2 += v * v; hi = Math.max(hi, v); N++; }
+    m /= N; return { mean: m, sd: Math.sqrt(m2 / N - m * m), max: hi, lit: N / all };
   },
 };

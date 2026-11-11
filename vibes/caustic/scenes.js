@@ -1,7 +1,8 @@
 /*
  * scenes.js - the three sets, after Blade Runner 2049's Wallace building, each lit as Deakins lit it: big lamps
- * aimed into water so that the reflections, not the lamps, light the room. Here each reflection is a spot light
- * carrying a live caustic (caustics.js), with shadows.
+ * aimed into water so that the reflections, not the lamps, light the room. Here each lamp has its own water, a
+ * trough or a glass tank placed in the set, whose bent rays are traced out to the walls (caustics.js, Trough), and
+ * a spot light at the light's apparent source carries the result, with shadows.
  *
  *   corridor - the planked wooden corridor with stairs up to a receding frame of portals, its walls streaked with
  *              thin moving lines of light that come in steeply from above.
@@ -16,7 +17,7 @@
 import * as THREE from 'three/webgpu';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { texture, uv, vec3, vec2, time, Fn, color, float } from 'three/tsl';
-import { Caustics, causticSpot, bounce } from './caustics.js';
+import { Caustics, Trough, bounce } from './caustics.js';
 import { wood, rough, plain, leather, water } from './materials.js';
 
 // One palette for the three sets, as in the film: the same gold lamps (tungsten through warm gels), the same rough
@@ -82,18 +83,21 @@ export function corridor(renderer, { phone = false } = {}) {
   box(g, W + 0.4, 0.2, 2.8, planks, 0, H + 0.1, zp - 0.5);
   box(g, 20, 0.2, 30, dark, 0, H + 3.2, -4, { cast: false }); // a dark sky over it all, for the haze to end on
 
-  // light: steep reflections from above, from either side and from behind, all off one sloshing trough
-  const lines = new Caustics(renderer, { kMin: 2, kMax: 9, amp: 1.0, depth: 0.0675, speed: 0.55, dir: 0.3, spread: 1.1, grid: phone ? 160 : 256, seed: 3 });
-  const sh = phone ? 512 : 1024;
-  const L = [
-    aim(g, causticSpot(lines, { color: GOLD, intensity: 1900, angle: 0.4, penumbra: 0.5, scale: 3.6, rot: 0.6, shadow: sh, far: 40 }), [8.5, 15, -2], [-2.7, 2.2, -3.2]),
-    aim(g, causticSpot(lines, { color: GOLD, intensity: 1700, angle: 0.38, penumbra: 0.5, scale: 3.2, rot: -0.7, drift: [0.004, 0.002], shadow: sh, far: 40 }), [-8.5, 15, -1], [2.7, 2.2, -2.5]),
-    aim(g, causticSpot(lines, { color: GOLD2, intensity: 1200, angle: 0.34, penumbra: 0.6, scale: 3.0, rot: 1.6, shadow: sh, far: 40 }), [0.5, 13, 8], [0, 1, -6.5]),
+  // light: three lamps high outside, each shining down through a glass tank of water over the open roof, steeply
+  // onto the walls from either side and down the stairs from behind
+  const sh = phone ? 512 : 1024, res = phone ? 512 : 1024;
+  const tank = (o) => new Trough(renderer, { mode: 'refract', color: GOLD, res, shadow: sh, far: 40, lMin: 0.2, lMax: 0.9, slope: 0.05, speed: 0.3, slosh: 0, disp: 0.012, ...o });
+  const W3 = [
+    tank({ at: [1.5, 7, -2.75], size: [2.5, 4.5], from: [8.5, 15, -2], lux: 6.6, dir: 0.3, spread: 1.1, seed: 3 }),
+    tank({ at: [-1.5, 7, -1.94], size: [2.5, 4.5], from: [-8.5, 15, -1], lux: 6, dir: -0.4, spread: 1.1, seed: 4 }),
+    tank({ at: [0.25, 7, 0.75], size: [3, 3], color: GOLD2, from: [0.5, 13, 8], lux: 4.2, seed: 6 }),
   ];
+  for (const w of W3) { g.add(w.light, w.light.target); w.bake(g); }
+  const L = W3.map((w) => w.light);
   for (const l of L) g.add(bounce(l, { albedo: BOUNCE, share: 0.02, off: 1.0 }));
   const fill = new THREE.HemisphereLight(0x8a7044, 0x1a1408, 0.06); g.add(fill);
   return {
-    group: g, caustics: [lines], lights: L,
+    group: g, caustics: W3, lights: L,
     look: { exposure: 0.72, ...GRADE, haze: 0.0205, fog: 0x2a1f0c, bg: 0x050302 },
     volume: { size: [W, H + 1.5, z0 - z1], at: [0, (H + 1.5) / 2, (z0 + z1) / 2] },
     shots: [
@@ -138,20 +142,29 @@ export function office(renderer, { phone = false } = {}) {
   box(g, 0.8, 0.45, 0.8, lacquer, 3.4, 0.225, -2.5);
   box(g, 0.12, 0.2, 0.12, plain(0xeee4d0, 0.15), 3.3, 0.55, -2.4);
 
-  // light: the reflection of water from troughs along the front wall up onto the back and side walls, and the
-  // skylight's down onto the floor. Broad, slow ribbons.
-  const broad = new Caustics(renderer, { kMin: 2, kMax: 6, amp: 1.0, depth: 0.054, speed: 0.4, dir: 0, spread: 0.9, grid: phone ? 160 : 256, seed: 11 });
-  const sh = phone ? 512 : 1024;
-  const L = [
-    aim(g, causticSpot(broad, { color: GOLD, intensity: 900, angle: 0.42, penumbra: 0.7, scale: 2.4, rot: 0.1, shadow: sh }), [0, 0.6, 5.3], [0, 3.6, -8]),
-    aim(g, causticSpot(broad, { color: GOLD, intensity: 650, angle: 0.5, penumbra: 0.7, scale: 2.2, rot: 1.3, drift: [0.003, 0], shadow: sh }), [4.7, 0.5, 5], [-5.4, 3.2, -3]),
-    aim(g, causticSpot(broad, { color: GOLD, intensity: 650, angle: 0.5, penumbra: 0.7, scale: 2.1, rot: -1.2, drift: [-0.002, 0.003], shadow: sh }), [-4.7, 0.5, 5], [5.4, 3.2, -3]),
-    aim(g, causticSpot(soft, { color: GOLD2, intensity: 1300, angle: 0.62, penumbra: 0.8, scale: 2.0, rot: 0.4, shadow: sh }), [0, 14, -1.5], [0, 0, -0.5]),
+  // light: low lamps shining down into troughs of water on the floor along the front wall, their reflections
+  // fanning up over the back and side walls and the ceiling; and a lamp over the skylight's tank, down onto the
+  // floor. Broad, slow ribbons.
+  const sh = phone ? 512 : 1024, res = phone ? 512 : 1024;
+  const trough = (o) => new Trough(renderer, { mode: 'reflect', color: GOLD, res, shadow: sh, far: 40, lMin: 0.06, lMax: 0.3, slope: 0.015, dir: Math.PI / 2, spread: 0.4, speed: 0.3, slosh: 0.01, ...o });
+  const dark = plain(0x050403, 0.9), still = plain(0x020202, 0.05);
+  const W4 = [
+    trough({ at: [0, 0.3, 4.7], size: [2.4, 1.2], from: [0, 0.05, 5.6], lux: 4.9, seed: 11 }),
+    trough({ at: [3.6, 0.3, 3.0], size: [1.4, 1.4], from: [4.4, 0.04, 3.54], lux: 3.5, seed: 12 }),
+    trough({ at: [-3.6, 0.3, 3.0], size: [1.4, 1.4], from: [-4.4, 0.04, 3.54], lux: 3.5, seed: 13 }),
+    new Trough(renderer, { mode: 'refract', color: GOLD2, res, shadow: sh, far: 40, at: [0, 5.92, -1.5], size: [4.4, 1.3], from: [0, 14, -1.5], near: 8.05, lux: 6.2, lMin: 0.3, lMax: 1.2, slope: 0.15, speed: 0.25, slosh: 0, seed: 7 }),
   ];
+  for (const w of W4.slice(0, 3)) { // the troughs themselves: dark boxes brim-full of still black water
+    const [sx, sz] = [w.size.x + 0.12, w.size.y + 0.12];
+    box(g, sx, 0.29, sz, dark, w.C.x, 0.145, w.C.z, { cast: false });
+    const top = new THREE.Mesh(new THREE.PlaneGeometry(w.size.x, w.size.y), still); top.rotation.x = -Math.PI / 2; top.position.copy(w.C).y -= 0.004; g.add(top);
+  }
+  for (const w of W4) { g.add(w.light, w.light.target); w.bake(g); }
+  const L = W4.map((w) => w.light);
   for (const l of L) g.add(bounce(l, { albedo: BOUNCE, share: 0.06, off: 2.0 }));
   g.add(new THREE.HemisphereLight(0x8a7044, 0x2a2010, 0.08));
   return {
-    group: g, caustics: [broad, soft], lights: L,
+    group: g, caustics: [...W4, soft], lights: L,
     look: { exposure: 0.72, ...GRADE, haze: 0.0103, fog: 0x2a200c, bg: 0x070502 },
     volume: { size: [2 * X, H, zf - zb], at: [0, H / 2, (zf + zb) / 2] },
     shots: [
@@ -191,20 +204,24 @@ export function hall(renderer, scene, { phone = false } = {}) {
   slit.position.y = -LEN; pivot.add(slit);
   const down = new THREE.SpotLight(GOLD2, 260, 0, 0.45, 0.8, 2); down.castShadow = true; down.shadow.mapSize.set(1024, 1024); down.shadow.bias = -0.0004;
   down.position.set(0, -LEN - 0.1, 0.2); pivot.add(down); down.target.position.set(0, 0, -0.5); g.add(down.target);
-  const ripples = new Caustics(renderer, { kMin: 2, kMax: 9, amp: 1.0, depth: 0.06, speed: 0.5, dir: 0, spread: Math.PI, grid: phone ? 160 : 256, seed: 5 });
-  const gold = GOLD, sh = phone ? 512 : 1024;
-  const L = [
-    aim(g, causticSpot(ripples, { color: gold, intensity: 5000, angle: 0.5, penumbra: 1, scale: 3.0, rot: 0.2, shadow: sh, far: 90 }), [-4, 0.1, 10], [-12, 0.5, -6]),
-    aim(g, causticSpot(ripples, { color: gold, intensity: 5000, angle: 0.5, penumbra: 1, scale: 2.8, rot: -0.4, drift: [0.002, 0], shadow: sh, far: 90 }), [4, 0.1, 10], [12, 0.5, -6]),
-    down,
+  // the wall light: two lamps low by the platform shine down onto the flooded floor, which throws fine ripples up
+  // the far curved walls
+  const sh = phone ? 512 : 1024;
+  const pool = (o) => new Trough(renderer, { mode: 'reflect', color: GOLD, res: phone ? 512 : 1024, shadow: sh, far: 90, lMin: 0.07, lMax: 0.3, slope: 0.015, speed: 0.35, slosh: 0, ...o });
+  const src = (c, to, d) => { const v = new THREE.Vector3(...to).sub(new THREE.Vector3(...c)).normalize(); return new THREE.Vector3(...c).addScaledVector(v, -d).toArray(); };
+  const W2 = [
+    pool({ at: [-6, 0, 4], size: [2, 2], from: src([-6, 0, 4], [-12, 3, -6], 1.5), lux: 8.8, seed: 5 }),
+    pool({ at: [6, 0, 4], size: [2, 2], from: src([6, 0, 4], [12, 3, -6], 1.5), lux: 8.8, seed: 8 }),
   ];
+  const L = [...W2.map((w) => w.light), down];
+  for (const w of W2) { g.add(w.light, w.light.target); w.bake(g); }
   for (const l of L.slice(0, 2)) g.add(bounce(l, { albedo: BOUNCE, share: 0.01, off: 4.0 }));
   pivot.updateMatrixWorld(true); down.position.applyMatrix4(pivot.matrixWorld); // bounce() reads world positions
   const deckBounce = bounce(down, { albedo: 0x7a6040, share: 0.02, off: 1.6 }); g.add(deckBounce);
   down.position.set(0, -LEN - 0.1, 0.2);
   g.add(new THREE.HemisphereLight(0x3a3018, 0x050302, 0.03));
   return {
-    group: g, caustics: [ripples], lights: L, reflector: w.reflector,
+    group: g, caustics: W2, lights: L, reflector: w.reflector,
     look: { exposure: 1.0, ...GRADE, haze: 0.0066, fog: 0x0a0803, bg: 0x000000 },
     volume: { size: [50, 14, 30], at: [0, 7, -9] }, // stops short of the low wall lamps, which would glare
     shots: [

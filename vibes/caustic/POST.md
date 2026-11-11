@@ -12,29 +12,57 @@ Roger Deakins didn't add the ripples in post. His crew built shallow troughs of 
 2. project it from a lamp, the way a slide projector would, with shadows;
 3. let the room's materials, bounce light, haze and the lens do the rest.
 
-## The caustic texture
+## Water you can place
 
-`caustics.js` draws a caustic into a square half-float render target each frame. The water is a sum of 12 travelling sine waves. Their wave vectors are whole numbers of cycles across the square, so the pattern tiles, and a lamp can repeat it across its beam with no seams.
+The first version drew one tileable caustic texture per set and repeated it across each lamp's beam. It looked like wallpaper: the same tile three or four times on a wall, every cell the same size near and far, the lines equally sharp everywhere, and a round beam that didn't come out of anything. Real water light has a source. It fans out of the trough's shape, the cells stretch along the throw, and the lines sharpen with distance from the water.
 
-To find where the light goes, a fine grid mesh covering the square is drawn with each vertex moved by `depth * grad(h)`: for small slopes that's where a ray reflected or refracted at that point lands on a wall `depth` away. In the fragment shader, the light per area is the grid cell's area before the move over its area after it, both taken from screen-space derivatives (`dFdx`, `dFdy` of the old and new positions). Where neighbouring rays cross, the cell shrinks to almost nothing, the ratio spikes, and you get the bright lines. Additive blending sums overlapping folds. The mean stays 1, since light is only moved around, so a lamp's intensity is its average brightness. The mesh is drawn three times, for red, green and blue, at depths 4% apart, which gives the slight colour fringe real caustics have.
+So each lamp now has its own water, a real rectangle in the set (`Trough` in `caustics.js`):
 
-Each set has its own water, so its own look:
+- **Corridor:** three lamps high outside shine down through glass tanks of water over the open roof (refraction).
+- **Office:** three low lamps shine down into troughs on the floor along the front wall, which throw their reflections up over the walls and ceiling, and a lamp over the skylight shines down through its tank onto the floor.
+- **Hall:** two lamps by the platform shine onto the flooded floor, which throws ripples up the curved walls.
 
-| set | waves (cycles per tile) | depth | speed | look |
+The spot light that carries the pattern sits where the light appears to come from: the lamp itself for a tank, or the lamp's mirror image under the water for a trough. Its cone, falloff and shadow map are then the real ones. The water itself is 12 waves with wavelengths in metres, picked log-uniformly in a range per set, scaled to an rms slope, moving at the speed real water waves move at (slowed down), plus the trough's slow sloshing mode.
+
+## Tracing it
+
+Each frame, a grid of rays is traced from the lamp through the water and out into the set:
+
+1. Each grid vertex is a point on the water, and its ray is bent by the wave normal there: the mirror law for a trough, Snell's law twice (into the water, out through the flat glass) for a tank.
+2. The ray has to go as far as whatever it hits. Once per set, each lamp renders a map of the set from its source, with every texel holding the world position there (the water's own side is left out). The bent ray is pushed out by the distance the map gives, the landing is looked up in the map again, and that is done twice, so each ray stops on the wall, stair or frame it really lands on.
+3. The grid is drawn where its rays land, in the lamp's own projection. Each fragment adds the flat water's footprint area divided by the wavy water's, from screen-space derivatives. Flat water gives 1 over the footprint, and the waves bunch it into lines where neighbouring rays cross.
+4. The spot light's `colorNode` reads that texture at each point's place in its projection.
+
+Several details make this work at a sensible cost:
+
+- **The texture fits the footprint.** A trough seen from low down is a wide, short trapezoid, so the texture is fitted to it (an off-centre frustum around the water's outline) instead of the round cone. That gives about a million texels, shaped like the light.
+- **The rays are spread evenly in that projection,** not evenly over the water. The vertices are the points where the projection's rays cross the water, so the rays are as dense on the far wall as near the source, and no triangle facet shows.
+- **Dispersion only where it's real.** A tank draws its grid three times at slightly different throws for red, green and blue fringes. A mirror doesn't split colours, so a trough draws it once.
+
+What comes out of this, without being designed in:
+
+- The pattern fans out of the water's rectangle, so the edges of the light are the trough's edges.
+- Cells are small and tight where the light hits close to the source and large far away. On the office's back wall the ribbons crowd together low down and spread higher up, as in the stills.
+- Focus changes with distance. In the corridor, the tanks are 1 to 7 m above the surfaces they light, so the tops of the walls get soft light and the bottoms and stairs get sharp lines.
+- Every surface the beam meets gets its own focus, and a frame's shadow can split one ray family between two distances.
+
+The cost is one draw of a grid of about 150,000 cells per lamp per frame (three for a tank), plus two texture reads per vertex. The position maps are made once, since the sets don't move. With 3 or 4 lamps a set, that's around 1 to 3 ms a frame on a desktop GPU, an estimate I haven't measured on real hardware.
+
+| set | water | wavelengths | rms slope | look |
 |---|---|---|---|---|
-| corridor | 2 to 9, one direction | 0.075 | 0.55 | thin, sharp lines sloshing one way |
-| office | 2 to 6, and 1 to 4 for the skylight | 0.06, 0.1 | 0.4, 0.35 | broad, slow ribbons |
-| hall | 5 to 16, every direction | 0.05 | 0.6 | a fine net of ripples |
+| corridor | three roof tanks, refraction | 0.2 to 0.9 m | 0.05 | steep nets, soft high, sharp low |
+| office | three floor troughs, reflection; a skylight tank | 0.06 to 0.3 m; 0.3 to 1.2 m | 0.015; 0.15 | ribbons fanning up the walls; a soft net on the floor |
+| hall | two patches of the flooded floor, reflection | 0.07 to 0.3 m | 0.015 | ripples crowding toward the waterline |
 
-`depth` is the focus. Short and the lines are soft; long and they sharpen, then break up into a busy net as rays cross more than once.
+The test checks each position map against a ray cast on the CPU from the same source through the same places, on both backends: 30 or more probes per lamp, within a few centimetres.
 
 ## One concrete
 
 The walls, floors and frames of all three sets are one material, `rough()` in `materials.js`: board-formed concrete. A height field is built from broad fractal blotches, a fine sandy grit, small air pits from Worley noise and faint horizontal formwork streaks. The same field darkens the colour where it is low and goes through `bumpMap` into the normal, so a raking caustic catches the grain: the lines break up a little over the grit, as they do on the set. Tall panel seams are cut in the same way. Only the hall's deck is still wood.
 
-## Projecting it
+## Shadows
 
-In r187 a `SpotLight` takes a `colorNode`: a TSL function from the point's coordinate in the light's projection (its shadow matrix) to a colour. Each "Fresnel" is a spot light whose `colorNode` samples the caustic texture at that coordinate, turned, repeated 2 to 4.5 times and drifting slowly, so two lamps off the same water don't show the same pattern. Because it's a real light with a shadow map, the portal frames, roof beams, desk and chairs cut shadows into the ripples, which is most of what makes it read as the film.
+In r187 a `SpotLight` takes a `colorNode`, a TSL function from the point's coordinate in the light's projection to a colour. Each lamp's spot light uses it to read its traced texture. Because it's a real light with a shadow map, placed where the light seems to come from, the portal frames, roof beams, desk and chairs cut true shadows into the ripples. That is most of what makes it read as the film.
 
 ## Global illumination
 
@@ -70,11 +98,11 @@ The Tune panel's **Warmth** slider moves the grade's tint toward grey (same lumi
 
 ## Touching the water
 
-The texture is made fresh each frame from the wave sum, so disturbing the water just adds terms to it. A splash is a ring-shaped wave packet: 14 cycles per tile, running out at 0.18 tiles per second of water time, widening and dying away over a few seconds. Distances are taken across the tile's wrap, so it tiles too. Eight can be in flight at once. Only the slope enters the caustic, so each splash adds `dh/dr * d/r` to the gradient.
+The rays are traced fresh each frame from the wave sum, so disturbing the water just adds terms to it. A splash is a ring-shaped wave packet on the water: 14 cycles across it, running out at 0.18 of its size per second of water time, widening and dying away over a few seconds. Eight can be in flight at once on each water. Only the slope bends the rays, so each splash adds `dh/dr * d/r` to it.
 
-Tapping a wall puts a splash where you touched: the tap is raycast into the set, the hit point goes through each caustic lamp's shadow matrix (the same projection the light uses), then through the lamp's turn, repeat and drift, which gives the spot on the water tile that lights that point. A tap on a dark spot, or the hall's floor, stirs the water at random. The Splash button and `s` do that too.
+Tapping a wall puts a splash where you touched: the tap is raycast into the set, and the line from each lamp's source to the hit point is met with that lamp's water, which gives the spot on the water that lights that point. A tap on a dark spot, or the hall's floor, stirs the water at random. The Splash button and `s` do that too.
 
-The other water controls scale the set's own values: **Ripple size** (the tile's repeat across each beam), **Sharpness** (the depth, so the focus), **Wave height** (the slope amplitude: calm to choppy) and **Water speed** (the water's own clock, so it slows smoothly instead of jumping).
+The other water controls scale the set's own values: **Ripple size** (the water's wavelengths), **Sharpness** (how far each ray is thrown past where it lands, as if the walls were further, so the focus), **Wave height** (the slope amplitude: calm to choppy) and **Water speed** (the water's own clock, so it slows smoothly instead of jumping).
 
 ## Sound
 
@@ -84,6 +112,6 @@ Two separate things. **Sound** is a drone: detuned saws a fifth apart through a 
 
 ## Testing
 
-`node smoke.js` drives headless Chrome over CDP, with no dependencies. It renders every shot of every set, checks that each caustic texture is lit and has lines (mean near 1, high variance, bright peaks), that a splash changes the texture, that a tap on a lit wall lands in a beam, that Warmth 0 really drains the amber, and that four bars of the score render offline (`OfflineAudioContext`) with sound in them.
+`node smoke.js` drives headless Chrome over CDP, with no dependencies. It renders every shot of every set, checks that each traced texture is lit and has lines (mean near 1 over its footprint, high variance, bright peaks), that each lamp's position map matches rays cast on the CPU, that a splash changes the texture, that a tap on a lit wall lands in a beam, that Warmth 0 really drains the amber, and that four bars of the score render offline (`OfflineAudioContext`) with sound in them.
 
 One snag: SwiftShader's software WebGPU loses its device on the haze pass, since every step of the raymarch samples several shadowed, projected lights. Any one of the haze, the projection or the shadows alone is fine. So the test runs the full look on WebGL 2 and WebGPU without the haze, and the page reloads with `?novol` if a real GPU ever loses its device. It hasn't been tried on real GPUs or phones yet.
