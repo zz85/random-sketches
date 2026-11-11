@@ -120,9 +120,11 @@ export function corridor(renderer, { phone = false, hq = false } = {}) {
     look: { exposure: 0.72, ...GRADE, haze: 0.0205, fog: 0x2a1f0c, bg: 0x050302 },
     volume: { size: [W, H + 1.5, z0 - z1], at: [0, (H + 1.5) / 2, (z0 + z1) / 2] },
     shots: [
-      { from: [0, 1.55, 2.6], to: [0, 1.6, -1.2], look0: [0, 2.0, -8], look1: [0, 2.1, -9], dur: 16, fov: 58 },
-      { from: [-2.0, 3.2, -1.5], to: [-1.6, 3.0, -3.5], look0: [2.6, 2.2, -4], look1: [2.6, 2.0, -6], dur: 12, fov: 50 },
-      { from: [1.5, 0.45, -2.2], to: [0.8, 0.6, -3.6], look0: [0, 1.0, -8], look1: [0, 1.6, -9], dur: 12, fov: 58 },
+      // every shot square to the room: the camera looks level and straight at a wall, so its verticals stay
+      // vertical and its edges run square across the frame
+      { from: [0, 1.6, 2.6], to: [0, 1.6, -1.2], look0: [0, 1.6, -11], look1: [0, 1.6, -11], dur: 16, fov: 58 },
+      { from: [-2.2, 2.2, -0.8], to: [-2.2, 2.2, -3.4], look0: [3, 2.2, -0.8], look1: [3, 2.2, -3.4], dur: 12, fov: 58 },
+      { from: [0, 0.8, -1.8], to: [0, 0.9, -3.0], look0: [0, 0.8, -11], look1: [0, 0.9, -11], dur: 12, fov: 54 },
     ],
     update() {},
   };
@@ -198,9 +200,9 @@ export function office(renderer, { phone = false, hq = false } = {}) {
     look: { exposure: 0.72, ...GRADE, haze: 0.0103, fog: 0x2a200c, bg: 0x070502 },
     volume: { size: [2 * X, H, zf - zb], at: [0, H / 2, (zf + zb) / 2] },
     shots: [
-      { from: [0, 1.7, 5.5], to: [0, 1.75, 4.0], look0: [0, 2.3, -8], look1: [0, 2.2, -8], dur: 18, fov: 72 },
-      { from: [-4.4, 1.4, 3.2], to: [-3.6, 1.5, 2.2], look0: [3.3, 1.2, -3], look1: [3.1, 1.3, -3.5], dur: 12, fov: 68 },
-      { from: [3.0, 4.5, 5.0], to: [1.2, 4.8, 5.0], look0: [-1.5, 1.5, -6], look1: [0, 1.4, -6], dur: 12, fov: 72 },
+      { from: [0, 2.0, 5.5], to: [0, 2.0, 4.0], look0: [0, 2.0, -8], look1: [0, 2.0, -8], dur: 18, fov: 72 },
+      { from: [-4.6, 1.8, -1.0], to: [-4.6, 1.8, -3.4], look0: [5.4, 1.8, -1.0], look1: [5.4, 1.8, -3.4], dur: 12, fov: 66 },
+      { from: [2.4, 3.0, 5.5], to: [0.4, 3.0, 5.5], look0: [2.4, 3.0, -8], look1: [0.4, 3.0, -8], dur: 12, fov: 66 },
     ],
     update() {},
   };
@@ -213,12 +215,12 @@ export function hall(renderer, scene, { phone = false, hq = false } = {}) {
   // walls meet in the dark behind a low square deck that stands in the water, with two armchairs and a table on
   // it and a line of stepping stones running off its far side. Light off the water climbs both walls from a
   // glowing band at the waterline, and a long ellipse of light hangs high over the deck.
-  const g = new THREE.Group(), S = 14, HW = 20; // the far walls at x = -S and z = -S; the room's height
+  const g = new THREE.Group(), S = 14, HW = 20; // the walls at x = +-S and z = +-S; the room's height
   const deck = wood({ base: 0x4a3418, light: 0x7a5a30, h: 0.5, rough: 0.55 });
   const black = leather(0x141110, 0.38), steel = plain(0x3a3632, 0.35, 1), stone = plain(0x0d0b09, 0.6), tableMat = plain(0x0c0a08, 0.35);
   const w = water(g, { size: 160, y: 0, ripple: 0.006 });
   g.add(w.mesh);
-  const DX = -0.5, DZ = -0.5; // the deck's centre
+  const DX = -1, DZ = 0; // the deck's centre
   box(g, 10, 0.24, 9, deck, DX, 0.1, DZ);
   armchair(g, black, steel, DX - 2.6, DZ - 2.4, 0.5, 1.1); armchair(g, black, steel, DX - 0.9, DZ - 2.1, -0.2, 1.1);
   box(g, 0.9, 0.42, 0.6, tableMat, DX - 1.8, 0.43, DZ - 3.3);
@@ -229,11 +231,11 @@ export function hall(renderer, scene, { phone = false, hq = false } = {}) {
   // the walls: four flat walls of big cast panels (the near two behind the camera), a dark reveal at the
   // waterline, and a black ceiling
   const wallMat = rough({ base: 0x6e6450, panel: [4.8, 3.4], seam: 0.18 }), revealMat = plain(0x030202, 0.9);
-  for (const [x, z, wx, wz] of [[-S, 0, 0.4, 2 * S + 8], [0, -S, 2 * S + 8, 0.4], [S + 8, 0, 0.4, 2 * S + 8], [0, S + 8, 2 * S + 8, 0.4]]) {
+  for (const [x, z, wx, wz] of [[-S, 0, 0.4, 2 * S], [0, -S, 2 * S, 0.4], [S, 0, 0.4, 2 * S], [0, S, 2 * S, 0.4]]) {
     box(g, wx, HW, wz, wallMat, x + (wx < 1 ? -Math.sign(x) * 0.2 : 0), HW / 2 - 0.5, z + (wz < 1 ? -Math.sign(z) * 0.2 : 0), { cast: false });
     box(g, wx < 1 ? 0.06 : wx, 0.08, wz < 1 ? 0.06 : wz, revealMat, x + (wx < 1 ? -Math.sign(x) * 0.02 : 0), 0.35, z + (wz < 1 ? -Math.sign(z) * 0.02 : 0), { cast: false });
   }
-  box(g, 2 * S + 10, 0.3, 2 * S + 10, plain(0x020101, 1), 4, HW - 0.4, 4, { cast: false });
+  box(g, 2 * S + 1, 0.3, 2 * S + 1, plain(0x020101, 1), 0, HW - 0.4, 0, { cast: false });
   // the light overhead: a long thin ellipse high over the deck on a cable from the dark, swinging slowly as a
   // pendulum, and the beam it throws down onto the deck swinging with it
   const pivot = new THREE.Group(); pivot.position.set(DX - 0.5, HW - 0.6, DZ - 1.5); g.add(pivot);
@@ -243,27 +245,29 @@ export function hall(renderer, scene, { phone = false, hq = false } = {}) {
   slit.name = 'slit'; slit.scale.set(3.4, 1, 0.7); slit.rotation.y = Math.PI / 4; slit.position.y = -LEN; pivot.add(slit); // its long axis across the view from the near corner
   const down = new THREE.SpotLight(GOLD2, 900, 0, 0.32, 0.8, 2); down.castShadow = true; down.shadow.mapSize.set(1024, 1024); down.shadow.bias = -0.0004;
   down.position.set(0, -LEN - 0.1, 0.2); pivot.add(down); down.target.position.set(DX, 0, DZ); g.add(down.target);
-  // the wall light: lamps out in the room shine down onto long strips of the water along the foot of each far
-  // wall, whose reflections climb the walls, brightest at the waterline and breaking into ripples higher up
+  // the wall light: lamps out in the room shine down onto long strips of the water along the foot of the back
+  // and side walls, whose reflections climb the walls, brightest at the waterline and breaking into ripples higher up
   const sh = phone ? 512 : 1024;
   const pool = (o) => new Trough(renderer, { mode: 'reflect', color: GOLD, res: phone ? 512 : hq ? 2048 : 1024, shadow: sh, far: 90, lMin: 0.5, lMax: 1.8, slope: 0.009, speed: 0.3, slosh: 0, edge: 0.15, ...o });
   const V3 = (a) => new THREE.Vector3(...a);
   const src = (c, to, d) => V3(c).addScaledVector(V3(to).sub(V3(c)).normalize(), -d).toArray();
   // (each strip stays clear of the deck, which would shadow the water under it)
-  const PL = [-S + 4.1, 0, -1], PB = [-1, 0, -S + 4.1];
+  const PL = [-S + 4.1, 0, 0], PR = [S - 4.1, 0, 0], PB = [0, 0, -S + 4.1], LONG = 2 * S - 3;
   const W2 = [
-    pool({ at: PL, size: [8, 24], turn: 0, from: src(PL, [-S, 3.6, -1], 22), lux: 4.2, edge: 0.3, seed: 5 }),
-    pool({ at: PB, size: [24, 8], turn: 0, from: src(PB, [-1, 3.6, -S], 22), lux: 4.2, edge: 0.3, seed: 8 }),
+    pool({ at: PB, size: [LONG, 8], from: src(PB, [0, 3.6, -S], 22), lux: 4.2, edge: 0.3, seed: 8 }),
+    pool({ at: PL, size: [8, LONG], from: src(PL, [-S, 3.6, 0], 22), lux: 4.2, edge: 0.3, seed: 5 }),
+    pool({ at: PR, size: [8, LONG], from: src(PR, [S, 3.6, 0], 22), lux: 4.2, edge: 0.3, seed: 9 }),
   ];
   const L = [...W2.map((w) => w.light), down];
   for (const w of W2) { g.add(w.light, w.light.target); w.bake(g); }
   const n0 = g.children.length;
-  for (const l of L.slice(0, 2)) g.add(bounce(l, { albedo: BOUNCE, share: 0.01, off: 3.0 }));
+  for (const l of L.slice(0, 3)) g.add(bounce(l, { albedo: BOUNCE, share: 0.01, off: 3.0 }));
   const n1 = g.children.length;
   const ripples = new Caustics(renderer, { kMin: 2, kMax: 9, amp: 1.0, depth: 0.06, speed: 0.5, dir: 0, spread: Math.PI, grid: phone ? 160 : 256, seed: 5 });
   const C = classic(g, [
-    aim(g, causticSpot(ripples, { color: GOLD, intensity: 5000, angle: 0.5, penumbra: 1, scale: 3.0, rot: 0.2, shadow: sh, far: 90 }), [8, 0.1, 6], [-S, 4, -1]),
-    aim(g, causticSpot(ripples, { color: GOLD, intensity: 5000, angle: 0.5, penumbra: 1, scale: 2.8, rot: -0.4, drift: [0.002, 0], shadow: sh, far: 90 }), [6, 0.1, 8], [1, 4, -S]),
+    aim(g, causticSpot(ripples, { color: GOLD, intensity: 5000, angle: 0.55, penumbra: 1, scale: 3.0, rot: 0.2, shadow: sh, far: 90 }), [0, 0.1, 13.5], [0, 4, -S]),
+    aim(g, causticSpot(ripples, { color: GOLD, intensity: 4000, angle: 0.55, penumbra: 1, scale: 2.8, rot: -0.4, drift: [0.002, 0], shadow: sh, far: 90 }), [13.5, 0.1, 0], [-S, 4, 0]),
+    aim(g, causticSpot(ripples, { color: GOLD, intensity: 4000, angle: 0.55, penumbra: 1, scale: 2.9, rot: 0.9, shadow: sh, far: 90 }), [-13.5, 0.1, 0], [S, 4, 0]),
   ], { albedo: BOUNCE, share: 0.01, off: 3.0 });
   pivot.updateMatrixWorld(true); down.position.applyMatrix4(pivot.matrixWorld); // bounce() reads world positions
   const deckBounce = bounce(down, { albedo: 0x7a6040, share: 0.02, off: 1.6 }); g.add(deckBounce);
@@ -272,14 +276,15 @@ export function hall(renderer, scene, { phone = false, hq = false } = {}) {
   return {
     group: g, caustics: W2, lights: L, reflector: w.reflector,
     tuned: { exposure: 0.6, size: 0.6, height: 0.5 },
-    modes: { traced: { ...traced(g, W2.map((w) => w.light), n0, n1), caustics: W2, tuned: { exposure: 0.6, size: 0.6, height: 0.5 } }, classic: { ...C, caustics: [ripples], tuned: {} }, shared: [down] },
+    modes: { traced: { ...traced(g, W2.map((w) => w.light), n0, n1), caustics: W2, tuned: { exposure: 0.6, size: 0.6, height: 0.5 } }, classic: { ...C, caustics: [ripples], tuned: { exposure: 0.4 } }, shared: [down] },
     look: { exposure: 1.0, ...GRADE, haze: 0.0066, fog: 0x0a0803, bg: 0x000000 },
     volume: { size: [2 * S - 1, HW - 1, 2 * S - 1], at: [0, HW / 2, 0] },
     shots: [
-      // the still: from the near corner, looking across the deck into the far one
-      { from: [11, 3.2, 10.5], to: [10, 3.0, 9.5], look0: [-9, 4.6, -9], look1: [-9, 4.4, -9.5], dur: 18, fov: 52 },
-      { from: [-9, 0.9, 6], to: [-8, 0.8, 5], look0: [DX, 0.8, DZ - 2], look1: [DX + 1, 1.0, DZ - 2.5], dur: 12, fov: 48 },
-      { from: [10, 0.6, -1], to: [8.5, 0.7, -1.5], look0: [-S, 3, -6], look1: [-S, 4, -8], dur: 14, fov: 54 },
+      // square to the room: level, straight at the back wall across the deck, then at the side wall, then low
+      // over the water, trucking along the back wall
+      { from: [0, 2.4, 12.5], to: [0, 2.4, 10.5], look0: [0, 2.4, -S], look1: [0, 2.4, -S], dur: 18, fov: 56 },
+      { from: [11, 1.4, 1.2], to: [11, 1.4, -1.2], look0: [-S, 1.4, 1.2], look1: [-S, 1.4, -1.2], dur: 12, fov: 56 },
+      { from: [5, 0.7, 7], to: [2.5, 0.7, 7], look0: [5, 0.7, -S], look1: [2.5, 0.7, -S], dur: 14, fov: 56 },
     ],
     // a slow pendulum swing, mostly side to side (5 degrees each way, 7.6 s), with a little fore-and-aft so it wanders
     update(t) { pivot.rotation.z = 0.09 * Math.sin(t * 2 * Math.PI / 7.6); pivot.rotation.x = 0.02 * Math.sin(t * 2 * Math.PI / 11.3 + 1.3); },

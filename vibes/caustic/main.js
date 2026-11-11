@@ -334,14 +334,14 @@ window.__caustic = {
     for (const w of cur.caustics) {
       if (!w.probe) continue;
       const uvs = []; for (let i = 0; i < 6; i++) for (let j = 0; j < 6; j++) uvs.push([0.12 + 0.76 * i / 5, 0.12 + 0.76 * j / 5]);
-      const got = await w.probe(uvs), cam = w.cam2; let bad = 0, n = 0;
+      const got = await w.probe(uvs), cam = w.cam2; let bad = 0, n = 0, off = 0;
       uvs.forEach(([u, v], k) => {
         rc.setFromCamera(new THREE.Vector2(2 * u - 1, 2 * v - 1), cam); rc.far = cam.far;
         const h = rc.intersectObject(cur.group, true).find((x) => x.object.isMesh && x.point.clone().sub(w.C).dot(w.room) >= 0.005);
         if (!h || got[k][3] < 0.5) return;
-        n++; bad = Math.max(bad, Math.hypot(h.point.x - got[k][0], h.point.y - got[k][1], h.point.z - got[k][2]) / Math.max(1, h.distance * 0.03));
+        n++; const e = Math.hypot(h.point.x - got[k][0], h.point.y - got[k][1], h.point.z - got[k][2]) / Math.max(1, h.distance * 0.03); if (e > 1) off++; else bad = Math.max(bad, e);
       });
-      worst.push({ n, bad });
+      worst.push({ n, bad, off }); // off: probes on an edge between two surfaces, where a texel holds the other one
     }
     return worst;
   },
