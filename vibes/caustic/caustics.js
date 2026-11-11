@@ -11,7 +11,7 @@
  * colour fringes of a real one. The texture's mean is 1, so a light's intensity is its average brightness.
  */
 import * as THREE from 'three/webgpu';
-import { Fn, uniform, uniformArray, vec2, vec3, vec4, float, positionGeometry, positionWorld, varying, dFdx, dFdy, abs, max, min, Loop, sin, cos, sqrt, int, exp, fract, length, If, normalize, reflect, refract, smoothstep, texture, Discard, screenCoordinate, screenUV } from 'three/tsl';
+import { Fn, uniform, uniformArray, vec2, vec3, vec4, float, positionGeometry, positionWorld, varying, dFdx, dFdy, abs, max, min, Loop, sin, cos, sqrt, int, exp, fract, length, If, normalize, reflect, refract, smoothstep, texture, Discard, screenCoordinate, screenUV, mix } from 'three/tsl';
 
 const WAVES = 12;
 const DROPS = 8; // splashes in flight at once, each a ring that runs out from where it hit and dies away
@@ -24,8 +24,10 @@ export class Caustics {
    */
   constructor(renderer, { size = 512, grid = 256, kMin = 2, kMax = 7, amp = 1, depth = 0.08, speed = 1, dir = 0, spread = Math.PI, disp = 0.04, seed = 1 } = {}) {
     this.renderer = renderer;
-    this.rt = new THREE.RenderTarget(size, size, { type: THREE.HalfFloatType, depthBuffer: false, wrapS: THREE.RepeatWrapping, wrapT: THREE.RepeatWrapping, magFilter: THREE.LinearFilter, minFilter: THREE.LinearFilter });
-    this.rt.texture.wrapS = this.rt.texture.wrapT = THREE.RepeatWrapping;
+    // mipmapped and anisotropic, so a tile laid on a slant (causticSpot's slant), whose cells crowd toward the
+    // waterline, averages them instead of sparkling
+    this.rt = new THREE.RenderTarget(size, size, { type: THREE.HalfFloatType, depthBuffer: false, wrapS: THREE.RepeatWrapping, wrapT: THREE.RepeatWrapping, magFilter: THREE.LinearFilter, minFilter: THREE.LinearMipmapLinearFilter, generateMipmaps: true });
+    this.rt.texture.wrapS = this.rt.texture.wrapT = THREE.RepeatWrapping; this.rt.texture.anisotropy = 8;
     this.texture = this.rt.texture;
     this.time = uniform(0); this.depth = uniform(depth); this.amp = uniform(amp);
     this.speed = speed;
@@ -399,24 +401,67 @@ export class Trough {
   }
 }
 
-// The classic way (the first version, kept as a mode): a spot light whose beam carries a tiled Caustics texture: its colour at each point is the caustic texture at that point's
-// place in the beam (scaled, turned and drifting), times `tint`. Shadows come with the spot light.
+// The classic way (the first version, kept as a mode): a spot light whose beam carries a tiled Caustics texture.
+// Two ways of laying the tile over the beam, blended by `slant` (0 to 1):
+//   flat:  the tile square across the beam, in the light's own projection, as if the water faced the lamp;
+//   slant: the tile laid on a level plane of water `water` metres above or below the lamp (toward its target),
+//          read where the ray from the lamp to each point crosses that plane. A beam that leaves the water at a
+//          low angle then stretches the cells along its throw and narrows them across it, and the pattern turns
+//          with the throw's direction, as the traced light does, without any tracing; the focus stays the same.
+// `stretch` scales the plane's coordinate along the throw beyond that, for play.
 import { rotateUV, time as T } from 'three/tsl';
-export function causticSpot(caustic, { color = 0xffb54a, intensity = 400, angle = 0.5, penumbra = 0.6, scale = 1.5, rot = 0, drift = [0, 0], shadow = 1024, near = 0.5, far = 60, blur = 0 } = {}) {
+export function causticSpot(caustic, { color = 0xffb54a, intensity = 400, angle = 0.5, penumbra = 0.6, scale = 1.5, rot = 0, drift = [0, 0], shadow = 1024, near = 0.5, far = 60, blur = 0, water = 0.6 } = {}) {
   const l = new THREE.SpotLight(color, intensity, 0, angle, penumbra, 2);
   l.castShadow = shadow > 0;
   if (shadow) { l.shadow.mapSize.set(shadow, shadow); l.shadow.camera.near = near; l.shadow.camera.far = far; l.shadow.bias = -0.0004; l.shadow.normalBias = 0.02; l.shadow.radius = 2; }
   const sc = uniform(scale), dr = uniform(new THREE.Vector2(...drift));
+  // the plane and its frame, from where the light is and where it points (set when it is aimed, read each render)
+  const P = { E: uniform(new THREE.Vector3()), y: uniform(0), u: uniform(new THREE.Vector2(1, 0)), tile: uniform(1), Linv: uniform(new THREE.Matrix4()) };
+  const slant = uniform(1), stretch = uniform(1);
+  const frame = () => {
+    l.updateMatrixWorld(); l.target.updateMatrixWorld();
+    const E = new THREE.Vector3().setFromMatrixPosition(l.matrixWorld), G = new THREE.Vector3().setFromMatrixPosition(l.target.matrixWorld);
+    const ax = G.clone().sub(E).normalize(), up = Math.sign(ax.y) || 1;
+    P.E.value.copy(E); P.y.value = E.y + up * water;
+    const h = new THREE.Vector2(ax.x, ax.z); if (h.lengthSq() < 1e-6) h.set(1, 0); P.u.value.copy(h.normalize()); // the throw, level
+    // a tile as wide as the beam's crossing of the plane, across the throw, over the repeat
+    P.tile.value = (2 * water * Math.tan(angle) / Math.max(0.05, Math.abs(ax.y))) / scale;
+    l.shadow.updateMatrices(l); P.Linv.value.copy(l.shadow.matrix).invert();
+  };
   l.colorNode = Fn(([coord]) => {
-    const uv = rotateUV(coord.xy.sub(0.5), rot, vec2(0)).mul(sc).add(dr.mul(T));
+    const flat = rotateUV(coord.xy.sub(0.5), rot, vec2(0)).mul(sc);
+    // the ray from the lamp through this place of the beam, met with the plane, in the throw's frame
+    const w = P.Linv.mul(vec4(coord.xy, 0.5, 1)), d = w.xyz.div(w.w).sub(P.E);
+    const tp = P.y.sub(P.E.y).div(d.y), q = d.mul(tp).xz;
+    // a ray that never crosses the water ahead of the lamp (a trough's light can't go below its surface) is dark,
+    // fading in over the last few degrees as its crossing runs off toward the horizon
+    const reach = smoothstep(0, 0.08, d.y.mul(P.y.sub(P.E.y).sign()).div(length(d)));
+    const along = q.dot(P.u), across = q.dot(vec2(P.u.y.negate(), P.u.x));
+    const onPlane = rotateUV(vec2(across, along.div(stretch)), rot, vec2(0)).mul(sc.div(scale)).div(P.tile);
+    const uv = mix(flat, onPlane, slant).add(dr.mul(T));
     const c = blur > 0
       ? texture(caustic.texture, uv).add(texture(caustic.texture, uv.add(vec2(blur, 0)))).add(texture(caustic.texture, uv.add(vec2(0, blur)))).add(texture(caustic.texture, uv.sub(vec2(blur, blur)))).mul(0.25)
       : texture(caustic.texture, uv);
-    return c.rgb;
+    return c.rgb.mul(mix(float(1), reach, slant));
   });
-  l.userData = { caustic, scale: sc, scale0: scale, drift: dr, rot };
+  // the same mapping on the CPU, for a tap: world point -> tile place (without the drift)
+  const tileAt = (X) => {
+    v4c.set(X.x, X.y, X.z, 1).applyMatrix4(l.shadow.matrix);
+    if (v4c.w <= 0) return null;
+    const u = v4c.x / v4c.w, v = v4c.y / v4c.w;
+    if (u < 0 || u > 1 || v < 0 || v > 1) return null;
+    const f = new THREE.Vector2(u - 0.5, v - 0.5).rotateAround({ x: 0, y: 0 }, rot).multiplyScalar(sc.value);
+    const E = P.E.value, d = X.clone().sub(E), t = (P.y.value - E.y) / d.y;
+    if (slant.value > 0.5 && !(t > 0 && t < 1)) return null;
+    const qx = d.x * t, qz = d.z * t, U = P.u.value;
+    const pl = new THREE.Vector2(qz * U.x - qx * U.y, (qx * U.x + qz * U.y) / stretch.value); // across, along
+    pl.rotateAround({ x: 0, y: 0 }, rot).multiplyScalar(sc.value / scale / P.tile.value);
+    return f.lerp(pl, slant.value);
+  };
+  l.userData = { caustic, scale: sc, scale0: scale, drift: dr, rot, slant, stretch, frame, tileAt };
   return l;
 }
+const v4c = new THREE.Vector4();
 
 // One bounce of a beam, the cheap way (instant radiosity with one virtual light): a dim, unshadowed point light
 // just off the surface the beam lands on, in that surface's colour, carrying the share of the beam's flux the

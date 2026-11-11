@@ -191,7 +191,9 @@ function show(n, shot = 0) {
 //   sharp:  how far each ray is thrown past where it lands, as if the walls were further: the focus of the lines.
 //   height: the waves' height: calm to choppy.
 //   speed:  how fast the water moves.
-const TUNE = { warmth: 1, colour: 1, exposure: 1, haze: 1, size: 1, sharp: 1, height: 1, speed: 1 };
+//   slant, stretch (classic only): how much the tile is laid on a level plane of water rather than square across
+//           the beam (0: the first version's flat projection), and an extra stretch along the throw.
+const TUNE = { warmth: 1, colour: 1, exposure: 1, haze: 1, size: 1, sharp: 1, height: 1, speed: 1, slant: 1, stretch: 1 };
 const lerpTint = (t, w) => { const y = 0.2126 * t[0] + 0.7152 * t[1] + 0.0722 * t[2]; return t.map((c) => Math.max(0, y + (c - y) * w)); };
 function applyTune() {
   const S = cur; if (!S) return;
@@ -205,7 +207,7 @@ function applyTune() {
     l.userData.color0 ??= l.color.clone();
     const w = Math.min(1, TUNE.warmth), c0 = l.userData.color0, y = 0.2126 * c0.r + 0.7152 * c0.g + 0.0722 * c0.b;
     l.color.setRGB(y + (c0.r - y) * w, y + (c0.g - y) * w, y + (c0.b - y) * w);
-    if (l.userData.scale0) l.userData.scale.value = l.userData.scale0 / K('size'); // classic: the tile's repeat
+    if (l.userData.scale0) { l.userData.scale.value = l.userData.scale0 / K('size'); l.userData.slant.value = TUNE.slant; l.userData.stretch.value = TUNE.stretch; } // classic: the tile's repeat and lay
   }
   for (const c of S.caustics) { c.depth.value = c.base.depth * K('sharp'); c.amp.value = c.base.amp * K('height'); if (c.scale) c.scale.value = 1 / K('size'); }
 }
@@ -221,14 +223,9 @@ function splashAt(x, y) {
     const w = l.userData.trough;
     if (w) { const uv = w.waterUV(hit.point); if (uv) { w.splash(uv[0], uv[1], 1); n++; } continue; }
     if (!l.userData.caustic) continue;
-    // classic: through the light's projection, then the turn, repeat and drift its colorNode applies, to the tile
-    l.shadow.updateMatrices(l);
-    v4.set(hit.point.x, hit.point.y, hit.point.z, 1).applyMatrix4(l.shadow.matrix);
-    if (v4.w <= 0) continue;
-    const u = v4.x / v4.w, v = v4.y / v4.w;
-    if (u < 0 || u > 1 || v < 0 || v > 1) continue;
-    uv2.set(u - 0.5, v - 0.5).rotateAround({ x: 0, y: 0 }, l.userData.rot).multiplyScalar(l.userData.scale.value);
-    uv2.addScaledVector(l.userData.drift.value, renderer._nodes?.nodeFrame?.time ?? 0);
+    // classic: the mapping its colorNode applies (flat or slanted), then its drift, to the tile
+    const t = l.userData.tileAt(hit.point); if (!t) continue;
+    uv2.copy(t).addScaledVector(l.userData.drift.value, renderer._nodes?.nodeFrame?.time ?? 0);
     l.userData.caustic.splash(uv2.x, uv2.y, 1); n++;
   }
   if (!n) splashAll(1); // the floor of the hall, or a dark corner: stir the water anyway

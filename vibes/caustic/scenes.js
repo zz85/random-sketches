@@ -37,6 +37,7 @@ function aim(g, light, from, to) {
 // The classic lights (the first version, kept as a mode): spot lights projecting a tiled caustic, with their
 // bounces, built hidden; `modes` in a set's return says which lights, caustics and tuning each mode uses.
 function classic(g, list, bounceOpt) {
+  for (const l of list) l.userData.frame?.(); // the slant's plane, from where each light is aimed
   const B = list.map((l) => bounce(l, bounceOpt));
   for (const l of [...list, ...B]) { l.visible = false; if (!l.parent) g.add(l); }
   return { lights: list, extra: B };
@@ -108,9 +109,9 @@ export function corridor(renderer, { phone = false, hq = false } = {}) {
   const lines = new Caustics(renderer, { kMin: 2, kMax: 9, amp: 1.0, depth: 0.0675, speed: 0.55, dir: 0.3, spread: 1.1, grid: phone ? 160 : 256, seed: 3 });
   const n1 = g.children.length;
   const C = classic(g, [
-    aim(g, causticSpot(lines, { color: GOLD, intensity: 1900, angle: 0.4, penumbra: 0.5, scale: 3.6, rot: 0.6, shadow: sh, far: 40 }), [8.5, 15, -2], [-2.7, 2.2, -3.2]),
-    aim(g, causticSpot(lines, { color: GOLD, intensity: 1700, angle: 0.38, penumbra: 0.5, scale: 3.2, rot: -0.7, drift: [0.004, 0.002], shadow: sh, far: 40 }), [-8.5, 15, -1], [2.7, 2.2, -2.5]),
-    aim(g, causticSpot(lines, { color: GOLD2, intensity: 1200, angle: 0.34, penumbra: 0.6, scale: 3.0, rot: 1.6, shadow: sh, far: 40 }), [0.5, 13, 8], [0, 1, -6.5]),
+    aim(g, causticSpot(lines, { color: GOLD, intensity: 1900, angle: 0.4, penumbra: 0.5, scale: 3.6, rot: 0.6, shadow: sh, far: 40, water: 3 }), [8.5, 15, -2], [-2.7, 2.2, -3.2]),
+    aim(g, causticSpot(lines, { color: GOLD, intensity: 1700, angle: 0.38, penumbra: 0.5, scale: 3.2, rot: -0.7, drift: [0.004, 0.002], shadow: sh, far: 40, water: 3 }), [-8.5, 15, -1], [2.7, 2.2, -2.5]),
+    aim(g, causticSpot(lines, { color: GOLD2, intensity: 1200, angle: 0.34, penumbra: 0.6, scale: 3.0, rot: 1.6, shadow: sh, far: 40, water: 3 }), [0.5, 13, 8], [0, 1, -6.5]),
   ], { albedo: BOUNCE, share: 0.02, off: 1.0 });
   const fill = new THREE.HemisphereLight(0x8a7044, 0x1a1408, 0.06); g.add(fill);
   return {
@@ -187,10 +188,10 @@ export function office(renderer, { phone = false, hq = false } = {}) {
   const broad = new Caustics(renderer, { kMin: 2, kMax: 6, amp: 1.0, depth: 0.054, speed: 0.4, dir: 0, spread: 0.9, grid: phone ? 160 : 256, seed: 11 });
   const n1 = g.children.length;
   const C = classic(g, [
-    aim(g, causticSpot(broad, { color: GOLD, intensity: 900, angle: 0.42, penumbra: 0.7, scale: 2.4, rot: 0.1, shadow: sh }), [0, 0.6, 5.3], [0, 3.6, -8]),
-    aim(g, causticSpot(broad, { color: GOLD, intensity: 650, angle: 0.5, penumbra: 0.7, scale: 2.2, rot: 1.3, drift: [0.003, 0], shadow: sh }), [4.7, 0.5, 5], [-5.4, 3.2, -3]),
-    aim(g, causticSpot(broad, { color: GOLD, intensity: 650, angle: 0.5, penumbra: 0.7, scale: 2.1, rot: -1.2, drift: [-0.002, 0.003], shadow: sh }), [-4.7, 0.5, 5], [5.4, 3.2, -3]),
-    aim(g, causticSpot(soft, { color: GOLD2, intensity: 1300, angle: 0.62, penumbra: 0.8, scale: 2.0, rot: 0.4, shadow: sh }), [0, 14, -1.5], [0, 0, -0.5]),
+    aim(g, causticSpot(broad, { color: GOLD, intensity: 900, angle: 0.42, penumbra: 0.7, scale: 2.4, rot: 0.1, shadow: sh, water: 0.5 }), [0, 0.6, 5.3], [0, 3.6, -8]),
+    aim(g, causticSpot(broad, { color: GOLD, intensity: 650, angle: 0.5, penumbra: 0.7, scale: 2.2, rot: 1.3, drift: [0.003, 0], shadow: sh, water: 0.5 }), [4.7, 0.5, 5], [-5.4, 3.2, -3]),
+    aim(g, causticSpot(broad, { color: GOLD, intensity: 650, angle: 0.5, penumbra: 0.7, scale: 2.1, rot: -1.2, drift: [-0.002, 0.003], shadow: sh, water: 0.5 }), [-4.7, 0.5, 5], [5.4, 3.2, -3]),
+    aim(g, causticSpot(soft, { color: GOLD2, intensity: 1300, angle: 0.62, penumbra: 0.8, scale: 2.0, rot: 0.4, shadow: sh, water: 8 }), [0, 14, -1.5], [0, 0, -0.5]),
   ], { albedo: BOUNCE, share: 0.06, off: 2.0 });
   g.add(new THREE.HemisphereLight(0x8a7044, 0x2a2010, 0.08));
   return {
@@ -236,14 +237,14 @@ export function hall(renderer, scene, { phone = false, hq = false } = {}) {
     box(g, wx < 1 ? 0.06 : wx, 0.08, wz < 1 ? 0.06 : wz, revealMat, x + (wx < 1 ? -Math.sign(x) * 0.02 : 0), 0.35, z + (wz < 1 ? -Math.sign(z) * 0.02 : 0), { cast: false });
   }
   box(g, 2 * S + 1, 0.3, 2 * S + 1, plain(0x020101, 1), 0, HW - 0.4, 0, { cast: false });
-  // the light overhead: a long thin ellipse high over the deck on a cable from the dark, swinging slowly as a
+  // the light overhead: a long thin ellipse low over the deck on a cable from the dark, swinging slowly as a
   // pendulum, and the beam it throws down onto the deck swinging with it
   const pivot = new THREE.Group(); pivot.position.set(DX - 0.5, HW - 0.6, DZ - 1.5); g.add(pivot);
-  const LEN = 10;
+  const LEN = 14.4; // its disc 5 m over the deck
   const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, LEN, 6), plain(0x050403, 0.6)); cable.position.y = -LEN / 2; pivot.add(cable);
   const slit = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 0.04, 64), new THREE.MeshBasicNodeMaterial({ color: new THREE.Color(1, 0.78, 0.4).multiplyScalar(16) }));
   slit.name = 'slit'; slit.scale.set(3.4, 1, 0.7); slit.rotation.y = Math.PI / 4; slit.position.y = -LEN; pivot.add(slit); // its long axis across the view from the near corner
-  const down = new THREE.SpotLight(GOLD2, 900, 0, 0.32, 0.8, 2); down.castShadow = true; down.shadow.mapSize.set(1024, 1024); down.shadow.bias = -0.0004;
+  const down = new THREE.SpotLight(GOLD2, 420, 0, 0.82, 0.55, 2); down.castShadow = true; down.shadow.mapSize.set(1024, 1024); down.shadow.bias = -0.0004;
   down.position.set(0, -LEN - 0.1, 0.2); pivot.add(down); down.target.position.set(DX, 0, DZ); g.add(down.target);
   // the wall light: lamps out in the room shine down onto long strips of the water along the foot of the back
   // and side walls, whose reflections climb the walls, brightest at the waterline and breaking into ripples higher up
@@ -265,9 +266,9 @@ export function hall(renderer, scene, { phone = false, hq = false } = {}) {
   const n1 = g.children.length;
   const ripples = new Caustics(renderer, { kMin: 2, kMax: 9, amp: 1.0, depth: 0.06, speed: 0.5, dir: 0, spread: Math.PI, grid: phone ? 160 : 256, seed: 5 });
   const C = classic(g, [
-    aim(g, causticSpot(ripples, { color: GOLD, intensity: 5000, angle: 0.55, penumbra: 1, scale: 3.0, rot: 0.2, shadow: sh, far: 90 }), [0, 0.1, 13.5], [0, 4, -S]),
-    aim(g, causticSpot(ripples, { color: GOLD, intensity: 4000, angle: 0.55, penumbra: 1, scale: 2.8, rot: -0.4, drift: [0.002, 0], shadow: sh, far: 90 }), [13.5, 0.1, 0], [-S, 4, 0]),
-    aim(g, causticSpot(ripples, { color: GOLD, intensity: 4000, angle: 0.55, penumbra: 1, scale: 2.9, rot: 0.9, shadow: sh, far: 90 }), [-13.5, 0.1, 0], [S, 4, 0]),
+    aim(g, causticSpot(ripples, { color: GOLD, intensity: 5000, angle: 0.55, penumbra: 1, scale: 3.0, rot: 0.2, shadow: sh, far: 90, water: 0.4 }), [0, 0.1, 13.5], [0, 4, -S]),
+    aim(g, causticSpot(ripples, { color: GOLD, intensity: 4000, angle: 0.55, penumbra: 1, scale: 2.8, rot: -0.4, drift: [0.002, 0], shadow: sh, far: 90, water: 0.4 }), [13.5, 0.1, 0], [-S, 4, 0]),
+    aim(g, causticSpot(ripples, { color: GOLD, intensity: 4000, angle: 0.55, penumbra: 1, scale: 2.9, rot: 0.9, shadow: sh, far: 90, water: 0.4 }), [-13.5, 0.1, 0], [S, 4, 0]),
   ], { albedo: BOUNCE, share: 0.01, off: 3.0 });
   pivot.updateMatrixWorld(true); down.position.applyMatrix4(pivot.matrixWorld); // bounce() reads world positions
   const deckBounce = bounce(down, { albedo: 0x7a6040, share: 0.02, off: 1.6 }); g.add(deckBounce);
