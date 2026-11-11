@@ -1,12 +1,14 @@
 /*
- * sw.js - Caustic service worker: the app's own files are precached; three.js (and the addons used) from unpkg is
- * cached the first time it is fetched. Stale-while-revalidate, so it opens instantly and offline. Bump VERSION
- * when the file list changes.
+ * sw.js - Caustic service worker: the app's own files are precached; three.js (WebGPU build, TSL and the
+ * addons used) from unpkg is cached the first time it is fetched. Stale-while-revalidate, so it opens
+ * instantly and offline. Bump VERSION when the file list changes.
  */
-const VERSION = 'caustic-v1';
-const SHELL = ['./', './index.html', './main.js', './ot.js', './worker.js', './pictures.js', './style.css', './cup.html', './cup.js', './manifest.webmanifest', '../pwa/install.js', './icon.svg', './icon-192.png', './icon-512.png'];
+const VERSION = 'caustic-v2';
+const SHELL = ['./', './index.html', './main.js', './caustics.js', './materials.js', './scenes.js', './audio.js', './style.css', './manifest.webmanifest', '../pwa/install.js', './icon.svg', './icon-192.png', './icon-512.png'];
 const BASE = 'https://unpkg.com/three@0.187.0/';
-const CDN = [BASE + 'build/three.module.js', BASE + 'build/three.core.js', BASE + 'examples/jsm/controls/OrbitControls.js', BASE + 'examples/jsm/environments/RoomEnvironment.js'];
+const CDN = [BASE + 'build/three.webgpu.js', BASE + 'build/three.tsl.js'].concat([
+  'controls/OrbitControls.js', 'geometries/RoundedBoxGeometry.js', 'math/ImprovedNoise.js', 'tsl/math/Bayer.js',
+  'tsl/display/BloomNode.js', 'tsl/display/SSGINode.js', 'tsl/display/TRAANode.js'].map((f) => BASE + 'examples/jsm/' + f));
 
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL).then(() => Promise.all(CDN.map((u) => c.add(u).catch(() => {}))))).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => {

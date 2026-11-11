@@ -1,15 +1,14 @@
-// Headless check over CDP (zero deps; three.js from unpkg; WebGL on SwiftShader): the page loads with no console
-// or shader errors, each of the three surfaces is designed and its caustic, as the GPU draws it, matches the
-// picture; the picture blurs away off the designed distance; the pool's waves stir it and it settles; the cup
-// toy draws. Screenshots go to /tmp/caustic-shots (OUT=dir); SHOTS=1 also copies the README ones here.
-//   node smoke.js
+// Headless check over CDP (zero deps; three.js from unpkg; WebGPU on SwiftShader or lavapipe, `offscreen` since
+// the software device is lost on its first present to a canvas): each set loads with no console or shader
+// errors, its caustic texture is lit and has lines, and a few frames render. Screenshots go to /tmp/caustic-shots
+// (OUT=dir); SHOTS=1 also copies the README ones here.   node smoke.js     Q='nogi' to add to the query
 import http from 'http';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { launch, sleep, waitFor } from './cdp.js';
 
-const DIR = path.dirname(fileURLToPath(import.meta.url)), ROOT = path.join(DIR, '..'), PORT = +process.env.PORT || 8893, OUT = process.env.OUT || '/tmp/caustic-shots';
+const DIR = path.dirname(fileURLToPath(import.meta.url)), ROOT = path.join(DIR, '..'), PORT = +process.env.PORT || 8895, OUT = process.env.OUT || '/tmp/caustic-shots';
 fs.mkdirSync(OUT, { recursive: true });
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
 const server = http.createServer((req, res) => {
@@ -23,56 +22,39 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
 
 (async () => {
   await new Promise((r) => server.listen(PORT, '127.0.0.1', r));
-  const b = await launch({ port: 9433, width: 1280, height: 800 });
+  const b = await launch({ port: 9435, width: 1280, height: 640 });
   const E = (s) => b.evaluate(s);
-  const shot = async (name) => { await sleep(400); const r = await b.send('Page.captureScreenshot', { format: 'png' }); fs.writeFileSync(path.join(OUT, `${name}.png`), Buffer.from(r.result.data, 'base64')); if (process.env.SHOTS) fs.writeFileSync(path.join(DIR, `shot_${name}.png`), Buffer.from(r.result.data, 'base64')); };
+  await b.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false });
+  const shot = async (name) => { const r = await b.send('Page.captureScreenshot', { format: 'png' }); const buf = Buffer.from(r.result.data, 'base64'); fs.writeFileSync(path.join(OUT, `${name}.png`), buf); const keep = { corridor: 'corridor', office: 'office', hall_2: 'hall' }[name];
+    if (process.env.SHOTS && keep) { const j = await b.send('Page.captureScreenshot', { format: 'jpeg', quality: 86 }); fs.writeFileSync(path.join(DIR, `shot_${keep}.jpg`), Buffer.from(j.result.data, 'base64')); } };
   const errors = () => b.events.filter((e) => (e.method === 'Runtime.consoleAPICalled' && (e.params.type === 'error' || e.params.type === 'warning')) || e.method === 'Runtime.exceptionThrown')
-    .map((e) => e.params.exceptionDetails?.exception?.description || e.params.exceptionDetails?.text || e.params.args?.map((a) => a.value ?? a.description).join(' ')).filter((s) => !/GPU stall|Automatic fallback|GL_CLOSE_PATH|swiftshader/i.test(s || ''));
-  const idle = () => waitFor(() => E('window.__caustic && !__caustic.busy && !!__caustic.state.designs[__caustic.state.mode]'), 240000);
+    .map((e) => e.params.exceptionDetails?.exception?.description || e.params.exceptionDetails?.text || e.params.args?.map((a) => a.value ?? a.description).join(' ')).filter((s) => !/GPU stall|Automatic fallback|powerPreference/i.test(s || ''));
   try {
-    const t0 = Date.now();
-    await b.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/caustic/?shot&n=128` });
-    await idle();
-    console.log(`     loaded and designed in ${((Date.now() - t0) / 1000).toFixed(1)} s`);
-    await sleep(500);
-    let er = errors();
-    check('loads without console or shader errors', er.length === 0, er.slice(0, 4).join(' | ').slice(0, 1500));
-    for (const mode of ['glass', 'mirror', 'water']) {
-      if (mode !== 'glass') { await E(`__caustic.setMode('${mode}')`); await sleep(300); await idle(); }
-      await E(`__caustic.setTilt(__caustic.CFG.${mode}.tilt, 0)`);
-      const r = await E('__caustic.readCaustic()');
-      check(`${mode}: the light draws the picture`, r.corr > 0.85, `corr ${r.corr.toFixed(3)}, mean ${r.mean.toFixed(2)}, max ${r.max.toFixed(1)}`);
-      await sleep(300); await shot(mode);
-      await E(`__caustic.setCamera('wall', true)`); await sleep(200); await shot(mode + '_screen');
-      await E(`__caustic.setFocus(0.6)`); const off = await E('__caustic.readCaustic()');
-      check(`${mode}: off the designed distance it falls apart`, off.corr < r.corr - (mode === 'water' ? 0.1 : 0.2), `corr ${off.corr.toFixed(3)} at 0.6 D`);
-      await shot(mode + '_defocus');
-      await E(`__caustic.setFocus(1); __caustic.setCamera('3d', true)`);
-    }
-    // the pool: a splash scrambles it, and it calms back
-    await E(`__caustic.poke(0.5, 0.5); __caustic.stepWaves(25)`);
-    const stir = await E('__caustic.readCaustic()');
-    await shot('water_splash');
-    await E(`__caustic.stepWaves(1500)`);
-    const calm = await E('__caustic.readCaustic()');
-    check('pool: a splash stirs the picture and the water settles', stir.corr < calm.corr - 0.03 && calm.corr > 0.85 && Number.isFinite(stir.mean), `stirred ${stir.corr.toFixed(3)}, settled ${calm.corr.toFixed(3)}`);
-    // a new picture in the glass, by text
-    await E(`__caustic.setMode('glass')`); await idle();
-    await E(`__caustic.choose('text', 'hi!')`); await sleep(200); await idle();
-    const tx = await E('__caustic.readCaustic()');
-    check('glass: text', tx.corr > 0.85, `corr ${tx.corr.toFixed(3)}`);
-    await E(`__caustic.setCamera('wall', true)`); await shot('glass_text');
-    er = errors(); check('no errors after all that', er.length === 0, er.slice(0, 4).join(' | ').slice(0, 1500));
-    // the cup
+  // SwiftShader's WebGPU loses its device on the haze (every shadowed, projected spot light sampled in a raymarch),
+  // so the full look is checked on WebGL 2 and WebGPU is checked without the haze
+  for (const [tag, q] of [['', 'webgl'], ['webgpu_', 'novol']]) {
     b.events.length = 0;
-    await b.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/caustic/cup.html?shot` });
-    await waitFor(() => E('!!window.__cup'), 60000); await sleep(600);
-    const cup = await E('__cup.stats()');
-    check('cup: rays drawn and the cardioid is the brightest curve', cup.rays > 1000 && cup.peakOnCurve, JSON.stringify(cup));
-    await shot('cup');
-    for (const [k, name] of [['parabola', 'cup_parabola'], ['heart', 'cup_heart']]) { await E(`__cup.set('${k}')`); await sleep(400); await shot(name); }
-    er = errors(); check('cup: no errors', er.length === 0, er.slice(0, 4).join(' | '));
-  } catch (e) { console.error(e); failed++; }
+    const t0 = Date.now();
+    await b.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/caustic/?shot&offscreen&${q}&${process.env.Q || ''}#corridor` });
+    await waitFor(() => E("!!window.__caustic || !!document.querySelector('#status')?.dataset.err"), 300000);
+    const bad = await E("document.querySelector('#status')?.dataset.err && document.body.innerText"); if (bad) throw new Error(bad);
+    console.log(`     loaded in ${((Date.now() - t0) / 1000).toFixed(1)} s, backend ${await E("__caustic.renderer.backend.isWebGPUBackend ? 'WebGPU' : 'WebGL'")}`);
+    for (const set of ['corridor', 'office', 'hall']) {
+      const t1 = Date.now();
+      await E(`__caustic.show('${set}')`);
+      const shots = await E('__caustic.sets[__caustic.set].shots.length');
+      for (let i = 0; i < shots; i++) {
+        await E(`__caustic.shot(${i}, 0.4)`);
+        await E('__caustic.frame(8)'); // a few frames, for the temporal AA and GI to settle
+        if (!tag || i === 0) await shot(`${tag}${set}${i ? '_' + i : ''}`);
+      }
+      const st = await E('__caustic.causticStats()');
+      check(`${tag}${set}: the caustic is lit and has lines`, st.mean > 0.5 && st.mean < 1.6 && st.sd > 0.4 && st.max > 3, `mean ${st.mean.toFixed(2)}, sd ${st.sd.toFixed(2)}, max ${st.max.toFixed(1)}`);
+      const er = errors(); check(`${tag}${set}: no console or shader errors`, er.length === 0, er.slice(0, 3).join(' | ').slice(0, 1500));
+      console.log(`     ${set}: ${shots} shots in ${((Date.now() - t1) / 1000).toFixed(1)} s`);
+    }
+  }
+  } catch (e) { console.error(e); console.error(errors().slice(0, 6).join('\n---\n').slice(0, 5000)); failed++; }
   b.kill(); server.close();
   console.log(failed ? `${failed} FAILED` : 'all ok', `(shots in ${OUT})`);
   process.exit(failed ? 1 : 0);

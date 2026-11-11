@@ -1,13 +1,13 @@
 {
-  "name": "Caustic - glass, a magic mirror and a pool that draw with light",
+  "name": "Caustic - light off water, after the Wallace sets",
   "short_name": "Caustic",
-  "description": "Shape a piece of glass, a bronze magic mirror or a pool's water so that the light it bends draws your picture.",
+  "description": "The caustic-lit Wallace sets from Blade Runner 2049: the wooden corridor, the office and the hall of water, lit by light thrown off rippling water.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "fullscreen",
-  "orientation": "any",
-  "background_color": "#0a0b0d",
-  "theme_color": "#0a0b0d",
+  "orientation": "landscape",
+  "background_color": "#000000",
+  "theme_color": "#000000",
   "icons": [
     { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
     { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },

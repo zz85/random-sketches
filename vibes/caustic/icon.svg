@@ -1,4 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="96" fill="#140d08"/><circle cx="256" cy="256" r="196" fill="#4a2a14" stroke="#efe8de" stroke-width="28"/>
-<path d="M256 256 m-98 0 a98 98 0 1 0 98 -98 a49 49 0 0 1 -98 98z" fill="none" stroke="#ffe3a8" stroke-width="10" opacity="0.9"/>
-<path d="M160 120 C 250 170, 330 250, 352 352 M118 200 C 210 220, 300 280, 330 370" stroke="#ffd58a" stroke-width="5" fill="none" opacity="0.5"/>
-<circle cx="349" cy="256" r="16" fill="#fff6dc"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs><radialGradient id="g" cx="50%" cy="40%" r="70%"><stop offset="0" stop-color="#3a2410"/><stop offset="1" stop-color="#050302"/></radialGradient></defs>
+  <rect width="512" height="512" fill="url(#g)"/>
+  <g fill="none" stroke="#f2b25c" stroke-linecap="round">
+    <path d="M40 150 C120 110 150 210 230 170 S350 90 470 140" stroke-width="10" opacity=".9"/>
+    <path d="M30 250 C110 210 170 300 250 260 S380 200 480 250" stroke-width="7" opacity=".75"/>
+    <path d="M50 340 C140 300 180 380 270 345 S390 300 470 345" stroke-width="5" opacity=".55"/>
+    <path d="M150 90 C170 170 120 240 160 320 S140 430 170 470" stroke-width="4" opacity=".5"/>
+    <path d="M360 60 C330 150 390 230 350 310 S380 420 340 470" stroke-width="4" opacity=".5"/>
+  </g>
+</svg>

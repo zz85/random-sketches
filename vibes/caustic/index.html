@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-<meta name="theme-color" content="#0a0b0d">
+<meta name="theme-color" content="#000000">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="description" content="Shape a piece of glass, a bronze magic mirror or a pool's water so that the light it bends draws your picture. Optimal transport in the browser.">
+<meta name="description" content="Rooms lit by moving reflections of water, after the Wallace sets in Blade Runner 2049: the caustics corridor, the office, the hall of water.">
 <title>Caustic</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="stylesheet" href="style.css">
@@ -15,46 +15,24 @@
 <script src="../pwa/install.js"></script>
 <script type="importmap">
 { "imports": {
-  "three": "https://unpkg.com/three@0.187.0/build/three.module.js",
+  "three": "https://unpkg.com/three@0.187.0/build/three.webgpu.js",
+  "three/webgpu": "https://unpkg.com/three@0.187.0/build/three.webgpu.js",
+  "three/tsl": "https://unpkg.com/three@0.187.0/build/three.tsl.js",
   "three/addons/": "https://unpkg.com/three@0.187.0/examples/jsm/"
 } }
 </script>
 </head>
 <body>
 <canvas id="gl"></canvas>
-<div id="title">CAUSTIC<small id="blurb"></small></div>
-<div id="side">
-  <canvas id="preview" width="200" height="200"></canvas>
-  <div id="progwrap"><i id="progbar"></i></div>
-  <div id="progress">&nbsp;</div>
-  <div id="relief"></div>
+<div class="bar top"></div><div class="bar bottom"></div>
+<div id="status">filling the troughs&hellip;</div>
+<div id="title">CAUSTIC<small>light off water, after the Wallace sets</small></div>
+<div id="caption"></div>
+<div id="ui">
+  <div class="pill"><button data-set="corridor" title="The corridor (1)">Corridor</button><button data-set="office" title="Wallace's office (2)">Office</button><button data-set="hall" title="The hall of water (3)">Hall</button></div>
+  <div class="pill"><button id="tour" title="Slow camera moves; drag to look around yourself (space: next shot)">Tour</button><button id="haze" title="Haze in the beams">Haze</button><button id="gi" title="Screen-space global illumination">GI</button><button id="bars" class="on" title="2.39:1">Scope</button><button id="sound" title="Sound">Sound</button>
+  <button data-pwa-install title="Install app" style="display:none">Install</button></div>
 </div>
-<div id="padwrap" title="Drag to move the light. Double-click to put it back.">
-  <div id="pad"><i id="paddot"></i></div>
-  <span>light</span>
-</div>
-<div id="panel">
-  <label>Screen distance <input id="focus" type="range" min="50" max="150" value="100"><span id="focusv">designed</span></label>
-  <label class="disp">Dispersion <input id="disp" type="range" min="0" max="12" value="1"><span id="dispv">x1</span></label>
-  <label>Brightness <input id="expo" type="range" min="-20" max="20" value="0"><span></span></label>
-  <label>Show relief <input id="exag" type="range" min="1" max="40" value="1"><span id="exagv">x1</span></label>
-  <label class="pool">Wind <input id="wind" type="range" min="0" max="100" value="25"><span></span></label>
-  <div class="row"><button id="sun" class="on" title="Sample the sun's half-degree disc (softer, as in real sunlight)">Sun disc</button><button id="day" title="Let the sun move">Sun moves</button><button id="again" title="Slide the light back to the previous picture">Morph back</button><button id="stl" title="Download the surface as an STL in mm, to cut or print">STL</button></div>
-</div>
-<div id="bar">
-  <div class="pill"><button data-mode="glass" title="Glass lens (1)">Glass</button><button data-mode="mirror" title="Magic mirror (2)">Mirror</button><button data-mode="water" title="Pool (3)">Pool</button></div>
-  <div class="pill pics">
-    <button data-pic="cat">Cat</button><button data-pic="moon">Moon</button><button data-pic="lotus">Lotus</button><button data-pic="eye">Eye</button><button data-pic="heart">Heart</button><button data-pic="rings">Test</button>
-    <input id="text" value="hello" maxlength="40" spellcheck="false" title="Type, then Enter"><button data-pic="text">Text</button>
-    <button data-pic="draw">Draw</button><button data-pic="photo">Photo</button><button data-pic="camera">Selfie</button>
-  </div>
-  <div class="pill"><button data-view="3d">Room</button><button data-view="wall" title="Look at the screen (v)">Screen</button><button id="panelbtn" title="Settings">&#9881;</button><a href="cup.html" title="The cup toy: caustics by reflection in 2D">Cup</a>
-    <button data-pwa-install class="icon" title="Install app" style="display:none">&#8681;</button></div>
-</div>
-<div id="drawbox"><canvas id="draw" width="512" height="512"></canvas>
-  <div class="row"><button id="drawcancel">Cancel</button><button id="drawclear">Clear</button><button id="drawdone">Shine light through it</button></div></div>
-<input id="file" type="file" accept="image/*" hidden>
-<div id="toast"></div>
 <script type="module" src="main.js"></script>
 </body>
 </html>
