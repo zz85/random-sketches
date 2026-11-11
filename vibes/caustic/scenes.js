@@ -8,8 +8,8 @@
  *              thin moving lines of light that come in steeply from above.
  *   office   - Wallace's office: a warm concrete box with a skylight over water, a long desk, white chairs, broad
  *              slow ribbons of light over the walls and the floor.
- *   hall     - the hall of water: a black flooded floor, a wooden platform with two chairs, stepping stones, a
- *              slit of light overhead, fine ripples climbing the far curved walls.
+ *   hall     - the hall of water: a dark square room flooded with black water, a low wooden deck with chairs,
+ *              stepping stones, a long ellipse of light overhead, ripples climbing the two far walls.
  *
  * Each returns { group, caustics, lights, shots, look, update(t) }; `shots` are slow camera moves (from, to, aim
  * from, aim to, seconds, fov).
@@ -17,7 +17,7 @@
 import * as THREE from 'three/webgpu';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { texture, uv, vec3, vec2, time, Fn, color, float } from 'three/tsl';
-import { Caustics, Trough, bounce } from './caustics.js';
+import { Caustics, Trough, causticSpot, bounce } from './caustics.js';
 import { wood, rough, plain, leather, water } from './materials.js';
 
 // One palette for the three sets, as in the film: the same gold lamps (tungsten through warm gels), the same rough
@@ -33,6 +33,15 @@ function box(g, w, h, d, mat, x, y, z, { cast = true, receive = true, round = 0 
 function aim(g, light, from, to) {
   light.position.set(...from); light.target.position.set(...to); g.add(light, light.target); return light;
 }
+
+// The classic lights (the first version, kept as a mode): spot lights projecting a tiled caustic, with their
+// bounces, built hidden; `modes` in a set's return says which lights, caustics and tuning each mode uses.
+function classic(g, list, bounceOpt) {
+  const B = list.map((l) => bounce(l, bounceOpt));
+  for (const l of [...list, ...B]) { l.visible = false; if (!l.parent) g.add(l); }
+  return { lights: list, extra: B };
+}
+function traced(g, lights, from, to) { return { lights, extra: g.children.slice(from, to).filter((o) => o.isPointLight) }; }
 
 // a mid-century armchair: cushion, back, arms, slim legs
 function armchair(g, mat, legMat, x, z, ry, s = 1) {
@@ -94,11 +103,20 @@ export function corridor(renderer, { phone = false, hq = false } = {}) {
   ];
   for (const w of W3) { g.add(w.light, w.light.target); w.bake(g); }
   const L = W3.map((w) => w.light);
+  const n0 = g.children.length;
   for (const l of L) g.add(bounce(l, { albedo: BOUNCE, share: 0.02, off: 1.0 }));
+  const lines = new Caustics(renderer, { kMin: 2, kMax: 9, amp: 1.0, depth: 0.0675, speed: 0.55, dir: 0.3, spread: 1.1, grid: phone ? 160 : 256, seed: 3 });
+  const n1 = g.children.length;
+  const C = classic(g, [
+    aim(g, causticSpot(lines, { color: GOLD, intensity: 1900, angle: 0.4, penumbra: 0.5, scale: 3.6, rot: 0.6, shadow: sh, far: 40 }), [8.5, 15, -2], [-2.7, 2.2, -3.2]),
+    aim(g, causticSpot(lines, { color: GOLD, intensity: 1700, angle: 0.38, penumbra: 0.5, scale: 3.2, rot: -0.7, drift: [0.004, 0.002], shadow: sh, far: 40 }), [-8.5, 15, -1], [2.7, 2.2, -2.5]),
+    aim(g, causticSpot(lines, { color: GOLD2, intensity: 1200, angle: 0.34, penumbra: 0.6, scale: 3.0, rot: 1.6, shadow: sh, far: 40 }), [0.5, 13, 8], [0, 1, -6.5]),
+  ], { albedo: BOUNCE, share: 0.02, off: 1.0 });
   const fill = new THREE.HemisphereLight(0x8a7044, 0x1a1408, 0.06); g.add(fill);
   return {
     group: g, caustics: W3, lights: L,
     tuned: { exposure: 1.75, haze: 6, size: 1.63, sharp: 0.28, speed: 1.35 },
+    modes: { traced: { ...traced(g, L, n0, n1), caustics: W3, tuned: { exposure: 1.75, haze: 6, size: 1.63, sharp: 0.28, speed: 1.35 } }, classic: { ...C, caustics: [lines], tuned: {} } },
     look: { exposure: 0.72, ...GRADE, haze: 0.0205, fog: 0x2a1f0c, bg: 0x050302 },
     volume: { size: [W, H + 1.5, z0 - z1], at: [0, (H + 1.5) / 2, (z0 + z1) / 2] },
     shots: [
@@ -162,11 +180,21 @@ export function office(renderer, { phone = false, hq = false } = {}) {
   }
   for (const w of W4) { g.add(w.light, w.light.target); w.bake(g); }
   const L = W4.map((w) => w.light);
+  const n0 = g.children.length;
   for (const l of L) g.add(bounce(l, { albedo: BOUNCE, share: 0.06, off: 2.0 }));
+  const broad = new Caustics(renderer, { kMin: 2, kMax: 6, amp: 1.0, depth: 0.054, speed: 0.4, dir: 0, spread: 0.9, grid: phone ? 160 : 256, seed: 11 });
+  const n1 = g.children.length;
+  const C = classic(g, [
+    aim(g, causticSpot(broad, { color: GOLD, intensity: 900, angle: 0.42, penumbra: 0.7, scale: 2.4, rot: 0.1, shadow: sh }), [0, 0.6, 5.3], [0, 3.6, -8]),
+    aim(g, causticSpot(broad, { color: GOLD, intensity: 650, angle: 0.5, penumbra: 0.7, scale: 2.2, rot: 1.3, drift: [0.003, 0], shadow: sh }), [4.7, 0.5, 5], [-5.4, 3.2, -3]),
+    aim(g, causticSpot(broad, { color: GOLD, intensity: 650, angle: 0.5, penumbra: 0.7, scale: 2.1, rot: -1.2, drift: [-0.002, 0.003], shadow: sh }), [-4.7, 0.5, 5], [5.4, 3.2, -3]),
+    aim(g, causticSpot(soft, { color: GOLD2, intensity: 1300, angle: 0.62, penumbra: 0.8, scale: 2.0, rot: 0.4, shadow: sh }), [0, 14, -1.5], [0, 0, -0.5]),
+  ], { albedo: BOUNCE, share: 0.06, off: 2.0 });
   g.add(new THREE.HemisphereLight(0x8a7044, 0x2a2010, 0.08));
   return {
     group: g, caustics: [...W4, soft], lights: L,
     tuned: { exposure: 0.5 },
+    modes: { traced: { ...traced(g, L, n0, n1), caustics: [...W4, soft], tuned: { exposure: 0.5 } }, classic: { ...C, caustics: [broad, soft], tuned: {} } },
     look: { exposure: 0.72, ...GRADE, haze: 0.0103, fog: 0x2a200c, bg: 0x070502 },
     volume: { size: [2 * X, H, zf - zb], at: [0, H / 2, (zf + zb) / 2] },
     shots: [
@@ -181,43 +209,62 @@ export function office(renderer, { phone = false, hq = false } = {}) {
 // ---------------------------------------------------------------- the hall of water
 
 export function hall(renderer, scene, { phone = false, hq = false } = {}) {
-  const g = new THREE.Group();
-  const deck = wood({ base: 0x3a2412, light: 0x6a4824, h: 0.45, rough: 0.5 });
-  const black = leather(0x141110, 0.38), steel = plain(0x3a3632, 0.35, 1), stone = plain(0x0d0b09, 0.6);
+  // A great dark square room flooded with black water, seen from one corner toward the far one: two flat concrete
+  // walls meet in the dark behind a low square deck that stands in the water, with two armchairs and a table on
+  // it and a line of stepping stones running off its far side. Light off the water climbs both walls from a
+  // glowing band at the waterline, and a long ellipse of light hangs high over the deck.
+  const g = new THREE.Group(), S = 14, HW = 20; // the far walls at x = -S and z = -S; the room's height
+  const deck = wood({ base: 0x4a3418, light: 0x7a5a30, h: 0.5, rough: 0.55 });
+  const black = leather(0x141110, 0.38), steel = plain(0x3a3632, 0.35, 1), stone = plain(0x0d0b09, 0.6), tableMat = plain(0x0c0a08, 0.35);
   const w = water(g, { size: 160, y: 0, ripple: 0.006 });
   g.add(w.mesh);
-  box(g, 9, 0.28, 6, deck, 0, 0.1, 0);
-  armchair(g, black, steel, -0.9, -0.6, 0.35); armchair(g, black, steel, 0.5, -0.4, -0.3);
-  box(g, 0.5, 0.4, 0.5, plain(0x0c0a08, 0.3), -0.25, 0.44, -1.4);
-  for (const [x, h] of [[-0.35, 0.22], [-0.2, 0.26], [-0.12, 0.18]]) box(g, 0.06, h, 0.06, plain(0x2a1d10, 0.1), x, 0.64 + h / 2, -1.4);
-  for (let k = 0; k < 9; k++) box(g, 0.75, 0.16, 0.5, stone, 5.3 + k * 1.15, 0.05, 2.2 + k * 0.12);
-  // the far walls: two long curved screens, open in the middle (the dark beyond), for the light to climb
-  const wallMat = rough({ base: 0x6a604c, panel: [6, 40], seam: 0.1 });
-  for (const s of [-1, 1]) {
-    const geo = new THREE.CylinderGeometry(17, 17, 16, 96, 1, true, s < 0 ? Math.PI + 0.25 : Math.PI - 1.45, 1.2);
-    const m = new THREE.Mesh(geo, wallMat); m.material.side = THREE.BackSide; m.position.set(0, 8, 8); m.receiveShadow = true; g.add(m);
+  const DX = -0.5, DZ = -0.5; // the deck's centre
+  box(g, 10, 0.24, 9, deck, DX, 0.1, DZ);
+  armchair(g, black, steel, DX - 2.6, DZ - 2.4, 0.5, 1.1); armchair(g, black, steel, DX - 0.9, DZ - 2.1, -0.2, 1.1);
+  box(g, 0.9, 0.42, 0.6, tableMat, DX - 1.8, 0.43, DZ - 3.3);
+  for (const [x, h] of [[-2.0, 0.22], [-1.85, 0.26], [-1.7, 0.18]]) box(g, 0.06, h, 0.06, plain(0x2a1d10, 0.1), DX + x, 0.64 + h / 2, DZ - 3.3);
+  armchair(g, black, steel, DX + 1.4, DZ - 3.6, -0.1, 1.0); box(g, 0.7, 0.4, 0.5, tableMat, DX + 2.6, 0.42, DZ - 3.7); // further back in the dark
+  // the stepping stones: low slabs running off the deck's right side along the water
+  for (let k = 0; k < 8; k++) box(g, 0.55, 0.16, 1.1, stone, DX + 5.7 + k * 1.05, 0.05, DZ - 1.2 + k * 0.08);
+  // the walls: four flat walls of big cast panels (the near two behind the camera), a dark reveal at the
+  // waterline, and a black ceiling
+  const wallMat = rough({ base: 0x6e6450, panel: [4.8, 3.4], seam: 0.18 }), revealMat = plain(0x030202, 0.9);
+  for (const [x, z, wx, wz] of [[-S, 0, 0.4, 2 * S + 8], [0, -S, 2 * S + 8, 0.4], [S + 8, 0, 0.4, 2 * S + 8], [0, S + 8, 2 * S + 8, 0.4]]) {
+    box(g, wx, HW, wz, wallMat, x + (wx < 1 ? -Math.sign(x) * 0.2 : 0), HW / 2 - 0.5, z + (wz < 1 ? -Math.sign(z) * 0.2 : 0), { cast: false });
+    box(g, wx < 1 ? 0.06 : wx, 0.08, wz < 1 ? 0.06 : wz, revealMat, x + (wx < 1 ? -Math.sign(x) * 0.02 : 0), 0.35, z + (wz < 1 ? -Math.sign(z) * 0.02 : 0), { cast: false });
   }
-  // the light hanging overhead: a thin glowing disc (an ellipse from where you stand) on a long cable from the dark,
-  // swinging slowly as a pendulum, and the beam it throws down onto the platform swinging with it
-  const pivot = new THREE.Group(); pivot.position.set(0, 13, -7.5); g.add(pivot);
-  const LEN = 7.4;
+  box(g, 2 * S + 10, 0.3, 2 * S + 10, plain(0x020101, 1), 4, HW - 0.4, 4, { cast: false });
+  // the light overhead: a long thin ellipse high over the deck on a cable from the dark, swinging slowly as a
+  // pendulum, and the beam it throws down onto the deck swinging with it
+  const pivot = new THREE.Group(); pivot.position.set(DX - 0.5, HW - 0.6, DZ - 1.5); g.add(pivot);
+  const LEN = 10;
   const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, LEN, 6), plain(0x050403, 0.6)); cable.position.y = -LEN / 2; pivot.add(cable);
-  const slit = new THREE.Mesh(new THREE.CylinderGeometry(2.0, 2.0, 0.04, 64), new THREE.MeshBasicNodeMaterial({ color: new THREE.Color(1, 0.78, 0.4).multiplyScalar(16) }));
-  slit.position.y = -LEN; pivot.add(slit);
-  const down = new THREE.SpotLight(GOLD2, 260, 0, 0.45, 0.8, 2); down.castShadow = true; down.shadow.mapSize.set(1024, 1024); down.shadow.bias = -0.0004;
-  down.position.set(0, -LEN - 0.1, 0.2); pivot.add(down); down.target.position.set(0, 0, -0.5); g.add(down.target);
-  // the wall light: two lamps low by the platform shine down onto the flooded floor, which throws fine ripples up
-  // the far curved walls
+  const slit = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 0.04, 64), new THREE.MeshBasicNodeMaterial({ color: new THREE.Color(1, 0.78, 0.4).multiplyScalar(16) }));
+  slit.name = 'slit'; slit.scale.set(3.4, 1, 0.7); slit.rotation.y = Math.PI / 4; slit.position.y = -LEN; pivot.add(slit); // its long axis across the view from the near corner
+  const down = new THREE.SpotLight(GOLD2, 900, 0, 0.32, 0.8, 2); down.castShadow = true; down.shadow.mapSize.set(1024, 1024); down.shadow.bias = -0.0004;
+  down.position.set(0, -LEN - 0.1, 0.2); pivot.add(down); down.target.position.set(DX, 0, DZ); g.add(down.target);
+  // the wall light: lamps out in the room shine down onto long strips of the water along the foot of each far
+  // wall, whose reflections climb the walls, brightest at the waterline and breaking into ripples higher up
   const sh = phone ? 512 : 1024;
-  const pool = (o) => new Trough(renderer, { mode: 'reflect', color: GOLD, res: phone ? 512 : hq ? 2048 : 1024, shadow: sh, far: 90, lMin: 0.07, lMax: 0.3, slope: 0.015, speed: 0.35, slosh: 0, ...o });
-  const src = (c, to, d) => { const v = new THREE.Vector3(...to).sub(new THREE.Vector3(...c)).normalize(); return new THREE.Vector3(...c).addScaledVector(v, -d).toArray(); };
+  const pool = (o) => new Trough(renderer, { mode: 'reflect', color: GOLD, res: phone ? 512 : hq ? 2048 : 1024, shadow: sh, far: 90, lMin: 0.5, lMax: 1.8, slope: 0.009, speed: 0.3, slosh: 0, edge: 0.15, ...o });
+  const V3 = (a) => new THREE.Vector3(...a);
+  const src = (c, to, d) => V3(c).addScaledVector(V3(to).sub(V3(c)).normalize(), -d).toArray();
+  // (each strip stays clear of the deck, which would shadow the water under it)
+  const PL = [-S + 4.1, 0, -1], PB = [-1, 0, -S + 4.1];
   const W2 = [
-    pool({ at: [-6, 0, 4], size: [2, 2], from: src([-6, 0, 4], [-12, 3, -6], 1.5), lux: 8.8, seed: 5 }),
-    pool({ at: [6, 0, 4], size: [2, 2], from: src([6, 0, 4], [12, 3, -6], 1.5), lux: 8.8, seed: 8 }),
+    pool({ at: PL, size: [8, 24], turn: 0, from: src(PL, [-S, 3.6, -1], 22), lux: 4.2, edge: 0.3, seed: 5 }),
+    pool({ at: PB, size: [24, 8], turn: 0, from: src(PB, [-1, 3.6, -S], 22), lux: 4.2, edge: 0.3, seed: 8 }),
   ];
   const L = [...W2.map((w) => w.light), down];
   for (const w of W2) { g.add(w.light, w.light.target); w.bake(g); }
-  for (const l of L.slice(0, 2)) g.add(bounce(l, { albedo: BOUNCE, share: 0.01, off: 4.0 }));
+  const n0 = g.children.length;
+  for (const l of L.slice(0, 2)) g.add(bounce(l, { albedo: BOUNCE, share: 0.01, off: 3.0 }));
+  const n1 = g.children.length;
+  const ripples = new Caustics(renderer, { kMin: 2, kMax: 9, amp: 1.0, depth: 0.06, speed: 0.5, dir: 0, spread: Math.PI, grid: phone ? 160 : 256, seed: 5 });
+  const C = classic(g, [
+    aim(g, causticSpot(ripples, { color: GOLD, intensity: 5000, angle: 0.5, penumbra: 1, scale: 3.0, rot: 0.2, shadow: sh, far: 90 }), [8, 0.1, 6], [-S, 4, -1]),
+    aim(g, causticSpot(ripples, { color: GOLD, intensity: 5000, angle: 0.5, penumbra: 1, scale: 2.8, rot: -0.4, drift: [0.002, 0], shadow: sh, far: 90 }), [6, 0.1, 8], [1, 4, -S]),
+  ], { albedo: BOUNCE, share: 0.01, off: 3.0 });
   pivot.updateMatrixWorld(true); down.position.applyMatrix4(pivot.matrixWorld); // bounce() reads world positions
   const deckBounce = bounce(down, { albedo: 0x7a6040, share: 0.02, off: 1.6 }); g.add(deckBounce);
   down.position.set(0, -LEN - 0.1, 0.2);
@@ -225,15 +272,17 @@ export function hall(renderer, scene, { phone = false, hq = false } = {}) {
   return {
     group: g, caustics: W2, lights: L, reflector: w.reflector,
     tuned: { exposure: 0.6, size: 0.6, height: 0.5 },
+    modes: { traced: { ...traced(g, W2.map((w) => w.light), n0, n1), caustics: W2, tuned: { exposure: 0.6, size: 0.6, height: 0.5 } }, classic: { ...C, caustics: [ripples], tuned: {} }, shared: [down] },
     look: { exposure: 1.0, ...GRADE, haze: 0.0066, fog: 0x0a0803, bg: 0x000000 },
-    volume: { size: [50, 14, 30], at: [0, 7, -9] }, // stops short of the low wall lamps, which would glare
+    volume: { size: [2 * S - 1, HW - 1, 2 * S - 1], at: [0, HW / 2, 0] },
     shots: [
-      { from: [3, 6.5, 18], to: [1.5, 6.0, 16], look0: [0, 2.2, -5], look1: [0, 2.4, -5], dur: 18, fov: 50 },
-      { from: [-6, 0.9, 6], to: [-4.5, 0.8, 5], look0: [0.5, 0.8, -1], look1: [0, 1.0, -2], dur: 12, fov: 48 },
-      { from: [12, 0.5, 9], to: [9, 0.6, 8], look0: [-2, 2.5, -8], look1: [-4, 3.5, -9], dur: 14, fov: 50 },
+      // the still: from the near corner, looking across the deck into the far one
+      { from: [11, 3.2, 10.5], to: [10, 3.0, 9.5], look0: [-9, 4.6, -9], look1: [-9, 4.4, -9.5], dur: 18, fov: 52 },
+      { from: [-9, 0.9, 6], to: [-8, 0.8, 5], look0: [DX, 0.8, DZ - 2], look1: [DX + 1, 1.0, DZ - 2.5], dur: 12, fov: 48 },
+      { from: [10, 0.6, -1], to: [8.5, 0.7, -1.5], look0: [-S, 3, -6], look1: [-S, 4, -8], dur: 14, fov: 54 },
     ],
-    // a slow pendulum swing, mostly left to right (7.5 degrees each way, 7.6 s), with a little fore-and-aft so it wanders
-    update(t) { pivot.rotation.z = 0.13 * Math.sin(t * 2 * Math.PI / 7.6); pivot.rotation.x = 0.02 * Math.sin(t * 2 * Math.PI / 11.3 + 1.3); },
+    // a slow pendulum swing, mostly side to side (5 degrees each way, 7.6 s), with a little fore-and-aft so it wanders
+    update(t) { pivot.rotation.z = 0.09 * Math.sin(t * 2 * Math.PI / 7.6); pivot.rotation.x = 0.02 * Math.sin(t * 2 * Math.PI / 11.3 + 1.3); },
   };
 }
 

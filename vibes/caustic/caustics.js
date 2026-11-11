@@ -156,7 +156,7 @@ export class Trough {
       const q = this.C.clone().addScaledVector(this.T, a * size[0] / 2).addScaledVector(this.B, b * size[1] / 2);
       ang = Math.max(ang, q.sub(this.E).normalize().angleTo(axis));
     }
-    l.angle = Math.min(1.35, ang * 1.12 + 0.03);
+    l.angle = Math.min(1.45, ang * 1.3 + 0.05); l.penumbra = 0.2; // wide enough that the cone never cuts the traced light, which the water's own outline bounds
     l.castShadow = shadow > 0;
     if (shadow) { l.shadow.mapSize.set(shadow, shadow); l.shadow.camera.near = near; l.shadow.camera.far = far; l.shadow.bias = -0.0004; l.shadow.normalBias = 0.02; l.shadow.radius = 2; }
     l.shadow.camera.near = near; l.shadow.camera.far = far;
@@ -397,6 +397,25 @@ export class Trough {
     const h = (i) => THREE.DataUtils.fromHalfFloat(px[i]);
     return uvs.map((_, i) => [h(i * 4), h(i * 4 + 1), h(i * 4 + 2), h(i * 4 + 3)]);
   }
+}
+
+// The classic way (the first version, kept as a mode): a spot light whose beam carries a tiled Caustics texture: its colour at each point is the caustic texture at that point's
+// place in the beam (scaled, turned and drifting), times `tint`. Shadows come with the spot light.
+import { rotateUV, time as T } from 'three/tsl';
+export function causticSpot(caustic, { color = 0xffb54a, intensity = 400, angle = 0.5, penumbra = 0.6, scale = 1.5, rot = 0, drift = [0, 0], shadow = 1024, near = 0.5, far = 60, blur = 0 } = {}) {
+  const l = new THREE.SpotLight(color, intensity, 0, angle, penumbra, 2);
+  l.castShadow = shadow > 0;
+  if (shadow) { l.shadow.mapSize.set(shadow, shadow); l.shadow.camera.near = near; l.shadow.camera.far = far; l.shadow.bias = -0.0004; l.shadow.normalBias = 0.02; l.shadow.radius = 2; }
+  const sc = uniform(scale), dr = uniform(new THREE.Vector2(...drift));
+  l.colorNode = Fn(([coord]) => {
+    const uv = rotateUV(coord.xy.sub(0.5), rot, vec2(0)).mul(sc).add(dr.mul(T));
+    const c = blur > 0
+      ? texture(caustic.texture, uv).add(texture(caustic.texture, uv.add(vec2(blur, 0)))).add(texture(caustic.texture, uv.add(vec2(0, blur)))).add(texture(caustic.texture, uv.sub(vec2(blur, blur)))).mul(0.25)
+      : texture(caustic.texture, uv);
+    return c.rgb;
+  });
+  l.userData = { caustic, scale: sc, scale0: scale, drift: dr, rot };
+  return l;
 }
 
 // One bounce of a beam, the cheap way (instant radiosity with one virtual light): a dim, unshadowed point light

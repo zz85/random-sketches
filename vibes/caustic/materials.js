@@ -4,12 +4,13 @@ import * as THREE from 'three/webgpu';
 import { Fn, vec2, vec3, float, positionWorld, normalWorld, abs, mix, smoothstep, fract, floor, mx_noise_float, mx_fractal_noise_float, mx_worley_noise_float, bumpMap, hash, select, color, uniform, reflector, time, sin, normalView, positionLocal } from 'three/tsl';
 
 // world-space coordinates on the face a fragment is on: (along, up) for walls, (x, z) for floors
-const faceUV = Fn(() => {
+const faceUVBox = Fn(() => {
   const n = abs(normalWorld), p = positionWorld;
   return select(n.y.greaterThan(0.6), p.xz, select(n.x.greaterThan(n.z), p.zy, p.xy));
 });
 
 // planks laid horizontally, as in the corridor: long streaky grain, a plank every `h` metres, dark joints
+const faceUV = faceUVBox;
 export function wood({ base = 0x6b4422, light = 0xb07a3e, h = 0.16, rough = 0.55, gloss = false } = {}) {
   const m = new THREE.MeshStandardNodeMaterial({ roughness: rough, metalness: 0 });
   const A = color(base), B = color(light);
@@ -46,8 +47,11 @@ export function concrete({ base = 0x8a6a3a, panel = [3, 3], rough = 0.6, seam = 
 // The one wall surface of all three sets: rough board-formed concrete. Broad blotches and stains, sandy grit,
 // small air pits, tall panel seams, and the same height field bumped into the normal so a raking caustic
 // catches the grain. Its colour is a neutral warm grey: the gold comes from the lamps and the grade.
-export function rough({ base = 0x76694e, panel = [1.5, 3.2], seam = 0.3, rough = 0.88, bump = 1, scale = 1 } = {}) {
+// `uvm`: the surface's own coordinates in metres, for a curved wall, where the box-style projection by the normal
+// would jump between axes and break the panels into facets
+export function rough({ base = 0x76694e, panel = [1.5, 3.2], seam = 0.3, rough = 0.88, bump = 1, scale = 1, uvm = null } = {}) {
   const m = new THREE.MeshStandardNodeMaterial({ roughness: rough, metalness: 0 });
+  const faceUV = uvm ? Fn(() => uvm) : faceUVBox;
   const A = color(base);
   const parts = Fn(() => {
     const uv = faceUV().mul(scale);

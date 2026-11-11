@@ -71,6 +71,16 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
       await E("Object.assign(__caustic.TUNE, { warmth: 0.25, height: 1.8, sharp: 1.6, size: 0.6 }); __caustic.applyTune(); __caustic.shot(0, 0.4)");
       await E('__caustic.frame(8)'); await shot('tune_cold');
       await E("Object.assign(__caustic.TUNE, { warmth: 1, height: 1, sharp: 1, size: 1 }); __caustic.applyTune()");
+      // the classic mode: every set lit by the tiled, projected caustic again, and back
+      await E("__caustic.setMode('classic')");
+      for (const set of ['corridor', 'office', 'hall']) {
+        await E(`__caustic.show('${set}'); __caustic.shot(0, 0.4)`); await E('__caustic.frame(6)'); await shot(`classic_${set}`);
+        const st = await E('__caustic.causticStats()');
+        check(`classic ${set}: the tiled caustic is lit and has lines`, st.mean > 0.5 && st.mean < 1.6 && st.sd > 0.4 && st.max > 3, `mean ${st.mean.toFixed(2)}, sd ${st.sd.toFixed(2)}, max ${st.max.toFixed(1)}`);
+        const n = await E('__caustic.splashAt(innerWidth * 0.5, innerHeight * 0.4)');
+        check(`classic ${set}: a tap lands in a beam`, n > 0, `${n} beams`);
+      }
+      await E("__caustic.setMode('traced')");
       const mu = await E('__caustic.renderBars(4, 64)');
       check('music: four bars render with sound in them', mu.rms > 0.01 && mu.peak < 4 && Number.isFinite(mu.rms), `rms ${mu.rms.toFixed(3)}, peak ${mu.peak.toFixed(2)}, ${mu.seconds.toFixed(1)} s`);
       const er = errors(); check('tune and music: no console errors', er.length === 0, er.slice(0, 3).join(' | ').slice(0, 1500));

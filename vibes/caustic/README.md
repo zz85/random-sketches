@@ -4,7 +4,7 @@ Light off water, after the Wallace sets in *Blade Runner 2049*. Three sets, each
 
 - **Corridor**: the wide concrete passage with stairs climbing through receding, tilted portal frames, with thin bright lines running down the walls and over the steps.
 - **Office**: Wallace's office: warm concrete, pilasters and a long shelf, a skylight, a desk and chairs, with broad, slow gold ribbons over the back wall and floor.
-- **Hall**: the hall of water: a black flooded floor, a wooden platform with two leather chairs, stepping stones, a disc of light swinging slowly on a long cable overhead and fine ripples on the curved walls.
+- **Hall**: the hall of water: a dark square room flooded with black water, a low wooden deck with leather chairs and a table, stepping stones off its side, a long ellipse of light swinging slowly on a cable overhead, and ripples climbing the flat concrete walls from the waterline.
 
 All three share one gold lamp colour, one rough concrete and one grade, so they read as one building.
 
@@ -17,6 +17,7 @@ All three share one gold lamp colour, one rough concrete and one grade, so they 
 - **Corridor / Office / Hall** (keys 1, 2, 3) switch sets.
 - **Tour** plays slow camera moves with fade cuts. Space jumps to the next shot. Drag to look around yourself (orbit, zoom); Tour picks the moves up again.
 - **Tap a lit wall** to splash the water that lights it: a ring of ripples runs out from where you touched. **Splash** (`s`) stirs the water at random.
+- **Classic** (`c`, or `?classic`) switches every set to the first version's light: one tiled caustic texture projected through each spot light, in place of each lamp's own water traced into the set.
 - **Tune** (`t`) opens sliders: Warmth (how orange: the grade's tint and the lamps' colour), Colour (how much of the scene's own colour survives the grade), Exposure, Haze, Ripple size, Sharpness (the focus of the lines), Wave height (calm to choppy) and Water speed. Each scales the set's own value, which already holds that set's tuning (corridor: exposure 1.75, haze 6, ripples 1.63, sharpness 0.28, speed 1.35; office: exposure 0.5; hall: exposure 0.6, ripples 0.6, waves 0.5); double-click a slider, or Reset, to go back.
 - `?hq` doubles the traced light's resolution (a 2048-texel short side, up to 6144 long): sharper lines on near walls, four times the texels and video memory, desktop only.
 - **Haze** puts haze in the beams. **GI** turns screen-space global illumination on or off. **Scope** shows the 2.39:1 bars. **Sound** plays a drone with water under it. **Music** (`m`) plays a slow synthesised cyberpunk score. `h` hides the UI.

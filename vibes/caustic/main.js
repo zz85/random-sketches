@@ -150,6 +150,17 @@ async function snapshot() {
 
 const sets = {};
 let cur = null, name = null;
+// the water light's mode: 'traced' (each lamp's own water, traced into the set) or 'classic' (the first version: a
+// tiled caustic texture projected through each spot light)
+let mode = Q.has('classic') ? 'classic' : 'traced';
+function applyMode(S) {
+  if (!S.modes) return;
+  for (const [k, M] of Object.entries(S.modes)) if (k !== 'shared') for (const o of [...M.lights, ...M.extra]) o.visible = k === mode;
+  const M = S.modes[mode];
+  S.lights = [...M.lights, ...(S.modes.shared ?? [])]; S.caustics = M.caustics; S.tuned = M.tuned;
+  for (const l of S.lights) l.layers.enable(VOL);
+}
+function setMode(m) { mode = m; if (cur) { applyMode(cur); applyTune(); } $('classic')?.classList.toggle('on', mode === 'classic'); }
 function build(n) {
   if (!sets[n]) sets[n] = n === 'hall' ? SCENES.hall(renderer, scene, { phone, hq: HQ }) : SCENES[n](renderer, { phone, hq: HQ });
   return sets[n];
@@ -158,6 +169,7 @@ function show(n, shot = 0) {
   const S = build(n);
   if (cur) scene.remove(cur.group);
   cur = S; name = n; scene.add(S.group);
+  applyMode(S);
   for (const l of S.lights) l.layers.enable(VOL);
   scene.background = new THREE.Color(S.look.bg);
   volMesh.scale.set(...S.volume.size); volMesh.position.set(...S.volume.at);
@@ -193,20 +205,31 @@ function applyTune() {
     l.userData.color0 ??= l.color.clone();
     const w = Math.min(1, TUNE.warmth), c0 = l.userData.color0, y = 0.2126 * c0.r + 0.7152 * c0.g + 0.0722 * c0.b;
     l.color.setRGB(y + (c0.r - y) * w, y + (c0.g - y) * w, y + (c0.b - y) * w);
+    if (l.userData.scale0) l.userData.scale.value = l.userData.scale0 / K('size'); // classic: the tile's repeat
   }
   for (const c of S.caustics) { c.depth.value = c.base.depth * K('sharp'); c.amp.value = c.base.amp * K('height'); if (c.scale) c.scale.value = 1 / K('size'); }
 }
 
 // Splashes: tap a lit wall and the water that throws that light ripples. The tap's point is found in the scene,
 // then, for each beam, the ray from its source to that point is met with its water: the ring starts there.
-const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+const ray = new THREE.Raycaster(), ndc = new THREE.Vector2(), v4 = new THREE.Vector4(), uv2 = new THREE.Vector2();
 function splashAt(x, y) {
   ndc.set((x / innerWidth) * 2 - 1, -(y / innerHeight) * 2 + 1); ray.setFromCamera(ndc, camera);
   const hit = ray.intersectObject(cur.group, true).find((h) => h.object.isMesh);
   let n = 0;
   if (hit) for (const l of cur.lights) {
-    const w = l.userData.trough, uv = w?.waterUV(hit.point);
-    if (uv) { w.splash(uv[0], uv[1], 1); n++; }
+    const w = l.userData.trough;
+    if (w) { const uv = w.waterUV(hit.point); if (uv) { w.splash(uv[0], uv[1], 1); n++; } continue; }
+    if (!l.userData.caustic) continue;
+    // classic: through the light's projection, then the turn, repeat and drift its colorNode applies, to the tile
+    l.shadow.updateMatrices(l);
+    v4.set(hit.point.x, hit.point.y, hit.point.z, 1).applyMatrix4(l.shadow.matrix);
+    if (v4.w <= 0) continue;
+    const u = v4.x / v4.w, v = v4.y / v4.w;
+    if (u < 0 || u > 1 || v < 0 || v > 1) continue;
+    uv2.set(u - 0.5, v - 0.5).rotateAround({ x: 0, y: 0 }, l.userData.rot).multiplyScalar(l.userData.scale.value);
+    uv2.addScaledVector(l.userData.drift.value, renderer._nodes?.nodeFrame?.time ?? 0);
+    l.userData.caustic.splash(uv2.x, uv2.y, 1); n++;
   }
   if (!n) splashAll(1); // the floor of the hall, or a dark corner: stir the water anyway
   return n;
@@ -255,6 +278,8 @@ $('sound').onclick = () => { drone.toggle(); $('sound').classList.toggle('on', d
 const music = new Music();
 $('music').onclick = () => { music.toggle(); $('music').classList.toggle('on', music.on); };
 $('splash').onclick = () => splashAll(1.2);
+$('classic').onclick = () => setMode(mode === 'classic' ? 'traced' : 'classic');
+$('classic').classList.toggle('on', mode === 'classic');
 $('tunebtn').onclick = () => { $('tune').classList.toggle('open'); $('tunebtn').classList.toggle('on'); };
 for (const el of document.querySelectorAll('#tune input')) {
   const out = el.nextElementSibling, k = el.dataset.k;
@@ -267,7 +292,7 @@ addEventListener('keydown', (e) => {
   if (e.key === '1') cut(() => show('corridor')); if (e.key === '2') cut(() => show('office')); if (e.key === '3') cut(() => show('hall'));
   if (e.key === 'h') document.body.classList.toggle('calm');
   if (e.key === ' ') { e.preventDefault(); next(); }
-  if (e.key === 's') splashAll(1.2); if (e.key === 'm') $('music').click(); if (e.key === 't') $('tunebtn').click();
+  if (e.key === 's') splashAll(1.2); if (e.key === 'c') $('classic').click(); if (e.key === 'm') $('music').click(); if (e.key === 't') $('tunebtn').click();
 });
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
 
@@ -299,7 +324,7 @@ if ('serviceWorker' in navigator && !SHOT && location.protocol === 'https:') nav
 
 // for the smoke test
 window.__caustic = {
-  renderer, scene, camera, sets, get set() { return name; }, LOOK, hazeOn, GI, TUNE, applyTune, splashAt, splashAll, renderBars,
+  renderer, scene, camera, sets, get set() { return name; }, setMode, get mode() { return mode; }, LOOK, hazeOn, GI, TUNE, applyTune, splashAt, splashAll, renderBars,
   show, async frame(n = 1, dt = 1 / 30) { for (let i = 0; i < n; i++) { t += dt; wt += dt * TUNE.speed * (cur.tuned?.speed ?? 1); cur.update?.(t); for (const c of cur.caustics) c.update(wt); if (tour && cur) { shotT += dt / cur.shots[shotIndex].dur; place(Math.min(1, shotT)); } } await snapshot(); },
   shot(i, at = 0.5) { startShot(i); shotT = at; place(at); },
   // the position maps against a ray cast on the CPU from each source through the same places of its projection:
