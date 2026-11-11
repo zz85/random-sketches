@@ -32,6 +32,7 @@ const Q = new URLSearchParams(location.search + '&' + location.hash.slice(1));
 const $ = (id) => document.getElementById(id);
 const phone = matchMedia('(pointer: coarse)').matches || Q.has('phone');
 const OFF = Q.has('offscreen'), SHOT = Q.has('shot');
+const HQ = Q.has('hq'); // twice the traced light's resolution: 4x the texels and video memory
 const VOL = 10; // the layer the haze and its lights are on
 
 // ---------------------------------------------------------------- renderer
@@ -150,7 +151,7 @@ async function snapshot() {
 const sets = {};
 let cur = null, name = null;
 function build(n) {
-  if (!sets[n]) sets[n] = n === 'hall' ? SCENES.hall(renderer, scene, { phone }) : SCENES[n](renderer, { phone });
+  if (!sets[n]) sets[n] = n === 'hall' ? SCENES.hall(renderer, scene, { phone, hq: HQ }) : SCENES[n](renderer, { phone, hq: HQ });
   return sets[n];
 }
 function show(n, shot = 0) {
@@ -182,16 +183,18 @@ const TUNE = { warmth: 1, colour: 1, exposure: 1, haze: 1, size: 1, sharp: 1, he
 const lerpTint = (t, w) => { const y = 0.2126 * t[0] + 0.7152 * t[1] + 0.0722 * t[2]; return t.map((c) => Math.max(0, y + (c - y) * w)); };
 function applyTune() {
   const S = cur; if (!S) return;
+  // each set's own tuning (found by eye on each set) is the sliders' 1: TUNE scales it
+  const D = { exposure: 1, haze: 1, size: 1, sharp: 1, height: 1, speed: 1, ...S.tuned }, K = (k) => TUNE[k] * D[k];
   LOOK.tint.value.set(...lerpTint(S.look.tint, TUNE.warmth));
   LOOK.sat.value = TUNE.colour <= 1 ? S.look.sat * TUNE.colour : S.look.sat + (1 - S.look.sat) * (TUNE.colour - 1);
-  renderer.toneMappingExposure = S.look.exposure * TUNE.exposure;
-  hazeAmount.value = S.look.haze * TUNE.haze;
+  renderer.toneMappingExposure = S.look.exposure * K('exposure');
+  hazeAmount.value = S.look.haze * K('haze');
   for (const l of S.lights) {
     l.userData.color0 ??= l.color.clone();
     const w = Math.min(1, TUNE.warmth), c0 = l.userData.color0, y = 0.2126 * c0.r + 0.7152 * c0.g + 0.0722 * c0.b;
     l.color.setRGB(y + (c0.r - y) * w, y + (c0.g - y) * w, y + (c0.b - y) * w);
   }
-  for (const c of S.caustics) { c.depth.value = c.base.depth * TUNE.sharp; c.amp.value = c.base.amp * TUNE.height; if (c.scale) c.scale.value = 1 / TUNE.size; }
+  for (const c of S.caustics) { c.depth.value = c.base.depth * K('sharp'); c.amp.value = c.base.amp * K('height'); if (c.scale) c.scale.value = 1 / K('size'); }
 }
 
 // Splashes: tap a lit wall and the water that throws that light ripples. The tap's point is found in the scene,
@@ -282,7 +285,7 @@ function frame() {
   }
   if (tour && !pending) { const s = cur.shots[shotIndex]; shotT += dt / s.dur; place(shotT); if (shotT > 1 && !fadeT) next(); }
   else if (!tour) controls.update();
-  wt += dt * TUNE.speed;
+  wt += dt * TUNE.speed * (cur.tuned?.speed ?? 1);
   cur.update?.(t);
   for (const c of cur.caustics) c.update(wt);
   if (drone.on) drone.set(name);
@@ -297,7 +300,7 @@ if ('serviceWorker' in navigator && !SHOT && location.protocol === 'https:') nav
 // for the smoke test
 window.__caustic = {
   renderer, scene, camera, sets, get set() { return name; }, LOOK, hazeOn, GI, TUNE, applyTune, splashAt, splashAll, renderBars,
-  show, async frame(n = 1, dt = 1 / 30) { for (let i = 0; i < n; i++) { t += dt; wt += dt * TUNE.speed; cur.update?.(t); for (const c of cur.caustics) c.update(wt); if (tour && cur) { shotT += dt / cur.shots[shotIndex].dur; place(Math.min(1, shotT)); } } await snapshot(); },
+  show, async frame(n = 1, dt = 1 / 30) { for (let i = 0; i < n; i++) { t += dt; wt += dt * TUNE.speed * (cur.tuned?.speed ?? 1); cur.update?.(t); for (const c of cur.caustics) c.update(wt); if (tour && cur) { shotT += dt / cur.shots[shotIndex].dur; place(Math.min(1, shotT)); } } await snapshot(); },
   shot(i, at = 0.5) { startShot(i); shotT = at; place(at); },
   // the position maps against a ray cast on the CPU from each source through the same places of its projection:
   // the worst miss in metres over the probes that hit something

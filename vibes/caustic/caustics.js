@@ -133,7 +133,7 @@ export class Trough {
    */
   constructor(renderer, {
     mode = 'reflect', at = [0, 0, 0], size = [2, 1], turn = 0, from, color = 0xffb840, lux = 6, lMin = 0.05, lMax = 0.3, slope = 0.03, dir = 0, spread = Math.PI,
-    speed = 0.3, slosh = 0.01, disp = mode === 'reflect' ? 0 : 0.03, cell = 2, res = 1024, posRes = 384, shadow = 1024, near = 0.3, far = 60, seed = 1, edge = 0.03, eta = 1.333, soft = 0.035, blur = 0.8,
+    speed = 0.3, slosh = 0.01, disp = mode === 'reflect' ? 0 : 0.03, cell = 4, res = 1024, posRes = 384, shadow = 1024, near = 0.3, far = 60, seed = 1, edge = 0.03, eta = 1.333, soft = 0.035, blur = 0.8,
   } = {}) {
     this.renderer = renderer; this.mode = mode; this.lux = lux;
     this.C = new THREE.Vector3(...at);
@@ -183,14 +183,14 @@ export class Trough {
     const rw = cam.aspect >= 1 ? Math.min(3 * res, Math.round(res * cam.aspect)) : res, rh = cam.aspect >= 1 ? res : Math.min(3 * res, Math.round(res / cam.aspect));
     // mipmapped, so a wall far off or seen at a slant averages lines thinner than its pixels instead of catching
     // them on some pixels and not others (which beads the lines' edges)
-    this.rt = new THREE.RenderTarget(rw, rh, { type: THREE.HalfFloatType, depthBuffer: false, magFilter: THREE.LinearFilter, minFilter: THREE.LinearFilter });
+    this.rt = new THREE.RenderTarget(rw, rh, { type: THREE.HalfFloatType, depthBuffer: false, magFilter: THREE.LinearFilter, minFilter: THREE.LinearMipmapLinearFilter, generateMipmaps: true });
     // The traced light is then blurred a little, by the lamp's size: the ray grid's folds end on its triangles'
     // edges, a sawtooth a cell long that a near wall magnifies into beads along every bright line; a real lamp's
     // own size softens a fold's edge by about as much.
     const rtOpt = { type: THREE.HalfFloatType, depthBuffer: false, magFilter: THREE.LinearFilter, minFilter: THREE.LinearFilter };
     this.rtH = new THREE.RenderTarget(rw, rh, rtOpt);
-    this.rtOut = new THREE.RenderTarget(rw, rh, { ...rtOpt, minFilter: THREE.LinearMipmapLinearFilter, generateMipmaps: true });
-    this.texture = this.rtOut.texture; this.texture.anisotropy = 4;
+    this.rtOut = this.rt; // the vertical pass writes back over the trace, so a lamp holds two targets, not three
+    this.texture = this.rt.texture; this.texture.anisotropy = 4;
     const blurPass = (src, dx, dy) => {
       const m = new THREE.MeshBasicNodeMaterial({ depthTest: false, depthWrite: false });
       m.fragmentNode = Fn(() => {

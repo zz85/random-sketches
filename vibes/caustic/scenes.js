@@ -46,7 +46,7 @@ function armchair(g, mat, legMat, x, z, ry, s = 1) {
 
 // ---------------------------------------------------------------- the corridor
 
-export function corridor(renderer, { phone = false } = {}) {
+export function corridor(renderer, { phone = false, hq = false } = {}) {
   const g = new THREE.Group(), W = 5.4, H = 5.6, z0 = 3, z1 = -10.6;
   const planks = rough({ panel: [1.6, 6] });
   const floorWood = rough({ base: 0x6e6450, panel: [2.7, 2.7], rough: 0.75 });
@@ -85,7 +85,7 @@ export function corridor(renderer, { phone = false } = {}) {
 
   // light: three lamps high outside, each shining down through a glass tank of water over the open roof, steeply
   // onto the walls from either side and down the stairs from behind
-  const sh = phone ? 512 : 1024, res = phone ? 512 : 1024;
+  const sh = phone ? 512 : 1024, res = phone ? 512 : hq ? 2048 : 1024;
   const tank = (o) => new Trough(renderer, { mode: 'refract', color: GOLD, res, shadow: sh, far: 40, lMin: 0.2, lMax: 0.9, slope: 0.05, speed: 0.3, slosh: 0, disp: 0.012, ...o });
   const W3 = [
     tank({ at: [1.5, 7, -2.75], size: [2.5, 4.5], from: [8.5, 15, -2], lux: 6.6, dir: 0.3, spread: 1.1, seed: 3 }),
@@ -98,6 +98,7 @@ export function corridor(renderer, { phone = false } = {}) {
   const fill = new THREE.HemisphereLight(0x8a7044, 0x1a1408, 0.06); g.add(fill);
   return {
     group: g, caustics: W3, lights: L,
+    tuned: { exposure: 1.75, haze: 6, size: 1.63, sharp: 0.28, speed: 1.35 },
     look: { exposure: 0.72, ...GRADE, haze: 0.0205, fog: 0x2a1f0c, bg: 0x050302 },
     volume: { size: [W, H + 1.5, z0 - z1], at: [0, (H + 1.5) / 2, (z0 + z1) / 2] },
     shots: [
@@ -111,7 +112,7 @@ export function corridor(renderer, { phone = false } = {}) {
 
 // ---------------------------------------------------------------- Wallace's office
 
-export function office(renderer, { phone = false } = {}) {
+export function office(renderer, { phone = false, hq = false } = {}) {
   const g = new THREE.Group(), X = 5.4, H = 6, zf = 6, zb = -8;
   const walls = rough({ panel: [2.6, 3], seam: 0.25 });
   const floorMat = rough({ base: 0x6e6450, panel: [4, 4], rough: 0.45, seam: 0.15, bump: 0.5 });
@@ -145,7 +146,7 @@ export function office(renderer, { phone = false } = {}) {
   // light: low lamps shining down into troughs of water on the floor along the front wall, their reflections
   // fanning up over the back and side walls and the ceiling; and a lamp over the skylight's tank, down onto the
   // floor. Broad, slow ribbons.
-  const sh = phone ? 512 : 1024, res = phone ? 512 : 1024;
+  const sh = phone ? 512 : 1024, res = phone ? 512 : hq ? 2048 : 1024;
   const trough = (o) => new Trough(renderer, { mode: 'reflect', color: GOLD, res, shadow: sh, far: 40, lMin: 0.06, lMax: 0.3, slope: 0.015, dir: Math.PI / 2, spread: 0.4, speed: 0.3, slosh: 0.01, ...o });
   const dark = plain(0x050403, 0.9), still = plain(0x020202, 0.05);
   const W4 = [
@@ -165,6 +166,7 @@ export function office(renderer, { phone = false } = {}) {
   g.add(new THREE.HemisphereLight(0x8a7044, 0x2a2010, 0.08));
   return {
     group: g, caustics: [...W4, soft], lights: L,
+    tuned: { exposure: 0.5 },
     look: { exposure: 0.72, ...GRADE, haze: 0.0103, fog: 0x2a200c, bg: 0x070502 },
     volume: { size: [2 * X, H, zf - zb], at: [0, H / 2, (zf + zb) / 2] },
     shots: [
@@ -178,7 +180,7 @@ export function office(renderer, { phone = false } = {}) {
 
 // ---------------------------------------------------------------- the hall of water
 
-export function hall(renderer, scene, { phone = false } = {}) {
+export function hall(renderer, scene, { phone = false, hq = false } = {}) {
   const g = new THREE.Group();
   const deck = wood({ base: 0x3a2412, light: 0x6a4824, h: 0.45, rough: 0.5 });
   const black = leather(0x141110, 0.38), steel = plain(0x3a3632, 0.35, 1), stone = plain(0x0d0b09, 0.6);
@@ -207,7 +209,7 @@ export function hall(renderer, scene, { phone = false } = {}) {
   // the wall light: two lamps low by the platform shine down onto the flooded floor, which throws fine ripples up
   // the far curved walls
   const sh = phone ? 512 : 1024;
-  const pool = (o) => new Trough(renderer, { mode: 'reflect', color: GOLD, res: phone ? 512 : 1024, shadow: sh, far: 90, lMin: 0.07, lMax: 0.3, slope: 0.015, speed: 0.35, slosh: 0, ...o });
+  const pool = (o) => new Trough(renderer, { mode: 'reflect', color: GOLD, res: phone ? 512 : hq ? 2048 : 1024, shadow: sh, far: 90, lMin: 0.07, lMax: 0.3, slope: 0.015, speed: 0.35, slosh: 0, ...o });
   const src = (c, to, d) => { const v = new THREE.Vector3(...to).sub(new THREE.Vector3(...c)).normalize(); return new THREE.Vector3(...c).addScaledVector(v, -d).toArray(); };
   const W2 = [
     pool({ at: [-6, 0, 4], size: [2, 2], from: src([-6, 0, 4], [-12, 3, -6], 1.5), lux: 8.8, seed: 5 }),
@@ -222,6 +224,7 @@ export function hall(renderer, scene, { phone = false } = {}) {
   g.add(new THREE.HemisphereLight(0x3a3018, 0x050302, 0.03));
   return {
     group: g, caustics: W2, lights: L, reflector: w.reflector,
+    tuned: { exposure: 0.6, size: 0.6, height: 0.5 },
     look: { exposure: 1.0, ...GRADE, haze: 0.0066, fog: 0x0a0803, bg: 0x000000 },
     volume: { size: [50, 14, 30], at: [0, 7, -9] }, // stops short of the low wall lamps, which would glare
     shots: [
