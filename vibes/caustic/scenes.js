@@ -179,7 +179,7 @@ export function hall(renderer, scene, { phone = false } = {}) {
   // the far walls: two long curved screens, open in the middle (the dark beyond), for the light to climb
   const wallMat = rough({ base: 0x6a604c, panel: [6, 40], seam: 0.1 });
   for (const s of [-1, 1]) {
-    const geo = new THREE.CylinderGeometry(24, 24, 16, 96, 1, true, s < 0 ? Math.PI + 0.25 : Math.PI - 1.45, 1.2);
+    const geo = new THREE.CylinderGeometry(17, 17, 16, 96, 1, true, s < 0 ? Math.PI + 0.25 : Math.PI - 1.45, 1.2);
     const m = new THREE.Mesh(geo, wallMat); m.material.side = THREE.BackSide; m.position.set(0, 8, 8); m.receiveShadow = true; g.add(m);
   }
   // the light hanging overhead: a thin glowing disc (an ellipse from where you stand) on a long cable from the dark,
@@ -191,11 +191,11 @@ export function hall(renderer, scene, { phone = false } = {}) {
   slit.position.y = -LEN; pivot.add(slit);
   const down = new THREE.SpotLight(GOLD2, 260, 0, 0.45, 0.8, 2); down.castShadow = true; down.shadow.mapSize.set(1024, 1024); down.shadow.bias = -0.0004;
   down.position.set(0, -LEN - 0.1, 0.2); pivot.add(down); down.target.position.set(0, 0, -0.5); g.add(down.target);
-  const ripples = new Caustics(renderer, { kMin: 5, kMax: 16, amp: 1.0, depth: 0.045, speed: 0.6, dir: 0, spread: Math.PI, grid: phone ? 160 : 256, seed: 5 });
+  const ripples = new Caustics(renderer, { kMin: 2, kMax: 9, amp: 1.0, depth: 0.06, speed: 0.5, dir: 0, spread: Math.PI, grid: phone ? 160 : 256, seed: 5 });
   const gold = GOLD, sh = phone ? 512 : 1024;
   const L = [
-    aim(g, causticSpot(ripples, { color: gold, intensity: 5000, angle: 0.5, penumbra: 1, scale: 4.5, rot: 0.2, shadow: sh, far: 90 }), [-4, 0.1, 10], [-17, 0.5, -10]),
-    aim(g, causticSpot(ripples, { color: gold, intensity: 5000, angle: 0.5, penumbra: 1, scale: 4.2, rot: -0.4, drift: [0.002, 0], shadow: sh, far: 90 }), [4, 0.1, 10], [17, 0.5, -10]),
+    aim(g, causticSpot(ripples, { color: gold, intensity: 5000, angle: 0.5, penumbra: 1, scale: 3.0, rot: 0.2, shadow: sh, far: 90 }), [-4, 0.1, 10], [-12, 0.5, -6]),
+    aim(g, causticSpot(ripples, { color: gold, intensity: 5000, angle: 0.5, penumbra: 1, scale: 2.8, rot: -0.4, drift: [0.002, 0], shadow: sh, far: 90 }), [4, 0.1, 10], [12, 0.5, -6]),
     down,
   ];
   for (const l of L.slice(0, 2)) g.add(bounce(l, { albedo: BOUNCE, share: 0.01, off: 4.0 }));
@@ -210,7 +210,7 @@ export function hall(renderer, scene, { phone = false } = {}) {
     shots: [
       { from: [3, 6.5, 18], to: [1.5, 6.0, 16], look0: [0, 2.2, -5], look1: [0, 2.4, -5], dur: 18, fov: 50 },
       { from: [-6, 0.9, 6], to: [-4.5, 0.8, 5], look0: [0.5, 0.8, -1], look1: [0, 1.0, -2], dur: 12, fov: 48 },
-      { from: [12, 0.5, 9], to: [9, 0.6, 8], look0: [-2, 2.5, -10], look1: [-5, 3.5, -12], dur: 14, fov: 50 },
+      { from: [12, 0.5, 9], to: [9, 0.6, 8], look0: [-2, 2.5, -8], look1: [-4, 3.5, -9], dur: 14, fov: 50 },
     ],
     // a slow pendulum swing, mostly left to right (7.5 degrees each way, 7.6 s), with a little fore-and-aft so it wanders
     update(t) { pivot.rotation.z = 0.13 * Math.sin(t * 2 * Math.PI / 7.6); pivot.rotation.x = 0.02 * Math.sin(t * 2 * Math.PI / 11.3 + 1.3); },
