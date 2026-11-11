@@ -153,6 +153,7 @@ let cur = null, name = null;
 // the water light's mode: 'traced' (each lamp's own water, traced into the set) or 'classic' (the first version: a
 // tiled caustic texture projected through each spot light)
 let mode = Q.has('classic') ? 'classic' : 'traced';
+let people = Q.has('figures'); // the figures from the stills: Luv walking, Wallace standing or seated
 function applyMode(S) {
   if (!S.modes) return;
   for (const [k, M] of Object.entries(S.modes)) if (k !== 'shared') for (const o of [...M.lights, ...M.extra]) o.visible = k === mode;
@@ -160,6 +161,7 @@ function applyMode(S) {
   S.lights = [...M.lights, ...(S.modes.shared ?? [])]; S.caustics = M.caustics; S.tuned = M.tuned;
   for (const l of S.lights) l.layers.enable(VOL);
 }
+function setPeople(on) { people = on; for (const S of Object.values(sets)) if (S.figures) S.figures.group.visible = on; $('figures')?.classList.toggle('on', on); }
 function setMode(m) { mode = m; if (cur) { applyMode(cur); applyTune(); } $('classic')?.classList.toggle('on', mode === 'classic'); }
 function build(n) {
   if (!sets[n]) sets[n] = n === 'hall' ? SCENES.hall(renderer, scene, { phone, hq: HQ }) : SCENES[n](renderer, { phone, hq: HQ });
@@ -170,6 +172,7 @@ function show(n, shot = 0) {
   if (cur) scene.remove(cur.group);
   cur = S; name = n; scene.add(S.group);
   applyMode(S);
+  if (S.figures) S.figures.group.visible = people;
   for (const l of S.lights) l.layers.enable(VOL);
   scene.background = new THREE.Color(S.look.bg);
   volMesh.scale.set(...S.volume.size); volMesh.position.set(...S.volume.at);
@@ -277,6 +280,8 @@ $('music').onclick = () => { music.toggle(); $('music').classList.toggle('on', m
 $('splash').onclick = () => splashAll(1.2);
 $('classic').onclick = () => setMode(mode === 'classic' ? 'traced' : 'classic');
 $('classic').classList.toggle('on', mode === 'classic');
+$('figures').onclick = () => setPeople(!people);
+$('figures').classList.toggle('on', people);
 $('tunebtn').onclick = () => { $('tune').classList.toggle('open'); $('tunebtn').classList.toggle('on'); };
 for (const el of document.querySelectorAll('#tune input')) {
   const out = el.nextElementSibling, k = el.dataset.k;
@@ -289,7 +294,7 @@ addEventListener('keydown', (e) => {
   if (e.key === '1') cut(() => show('corridor')); if (e.key === '2') cut(() => show('office')); if (e.key === '3') cut(() => show('hall'));
   if (e.key === 'h') document.body.classList.toggle('calm');
   if (e.key === ' ') { e.preventDefault(); next(); }
-  if (e.key === 's') splashAll(1.2); if (e.key === 'c') $('classic').click(); if (e.key === 'm') $('music').click(); if (e.key === 't') $('tunebtn').click();
+  if (e.key === 's') splashAll(1.2); if (e.key === 'c') $('classic').click(); if (e.key === 'f') $('figures').click(); if (e.key === 'm') $('music').click(); if (e.key === 't') $('tunebtn').click();
 });
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
 
@@ -308,7 +313,7 @@ function frame() {
   if (tour && !pending) { const s = cur.shots[shotIndex]; shotT += dt / s.dur; place(shotT); if (shotT > 1 && !fadeT) next(); }
   else if (!tour) controls.update();
   wt += dt * TUNE.speed * (cur.tuned?.speed ?? 1);
-  cur.update?.(t);
+  cur.update?.(t); if (people) cur.figures?.update(t);
   for (const c of cur.caustics) c.update(wt);
   if (drone.on) drone.set(name);
   if (!OFF) draw();
@@ -321,8 +326,8 @@ if ('serviceWorker' in navigator && !SHOT && location.protocol === 'https:') nav
 
 // for the smoke test
 window.__caustic = {
-  renderer, scene, camera, sets, get set() { return name; }, setMode, get mode() { return mode; }, LOOK, hazeOn, GI, TUNE, applyTune, splashAt, splashAll, renderBars,
-  show, async frame(n = 1, dt = 1 / 30) { for (let i = 0; i < n; i++) { t += dt; wt += dt * TUNE.speed * (cur.tuned?.speed ?? 1); cur.update?.(t); for (const c of cur.caustics) c.update(wt); if (tour && cur) { shotT += dt / cur.shots[shotIndex].dur; place(Math.min(1, shotT)); } } await snapshot(); },
+  renderer, scene, camera, sets, get set() { return name; }, setMode, get mode() { return mode; }, setPeople, LOOK, hazeOn, GI, TUNE, applyTune, splashAt, splashAll, renderBars,
+  show, async frame(n = 1, dt = 1 / 30) { for (let i = 0; i < n; i++) { t += dt; wt += dt * TUNE.speed * (cur.tuned?.speed ?? 1); cur.update?.(t); if (people) cur.figures?.update(t); for (const c of cur.caustics) c.update(wt); if (tour && cur) { shotT += dt / cur.shots[shotIndex].dur; place(Math.min(1, shotT)); } } await snapshot(); },
   shot(i, at = 0.5) { startShot(i); shotT = at; place(at); },
   // the position maps against a ray cast on the CPU from each source through the same places of its projection:
   // the worst miss in metres over the probes that hit something

@@ -71,6 +71,17 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
       await E("Object.assign(__caustic.TUNE, { warmth: 0.25, height: 1.8, sharp: 1.6, size: 0.6 }); __caustic.applyTune(); __caustic.shot(0, 0.4)");
       await E('__caustic.frame(8)'); await shot('tune_cold');
       await E("Object.assign(__caustic.TUNE, { warmth: 1, height: 1, sharp: 1, size: 1 }); __caustic.applyTune()");
+      // the people: shown in every set, and the walkers walk
+      await E('__caustic.setPeople(true)');
+      for (const set of ['corridor', 'office', 'hall']) {
+        await E(`__caustic.show('${set}'); __caustic.shot(0, 0.4)`);
+        const p0 = await E('__caustic.sets[__caustic.set].figures.group.children.map((c) => c.getWorldPosition(c.position.clone()).toArray())');
+        await E('__caustic.frame(45)'); await shot(`people_${set}`);
+        const p1 = await E('__caustic.sets[__caustic.set].figures.group.children.map((c) => c.getWorldPosition(c.position.clone()).toArray())');
+        const moved = Math.max(...p0.map((a, i) => Math.hypot(a[0] - p1[i][0], a[2] - p1[i][2])));
+        check(`people ${set}: shown, and a walker walks`, p0.length > 0 && moved > 0.5, `${p0.length} figures, moved ${moved.toFixed(2)} m in 1.5 s`);
+      }
+      await E('__caustic.setPeople(false)');
       // the classic mode: every set lit by the tiled, projected caustic again, and back
       await E("__caustic.setMode('classic')");
       for (const set of ['corridor', 'office', 'hall']) {
