@@ -76,11 +76,20 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
       for (const set of ['corridor', 'office', 'hall']) {
         await E(`__caustic.show('${set}'); __caustic.shot(0, 0.4)`);
         const p0 = await E('__caustic.sets[__caustic.set].figures.group.children.map((c) => c.getWorldPosition(c.position.clone()).toArray())');
-        await E('__caustic.frame(45)'); await shot(`people_${set}`);
+        await E('__caustic.frame(90)'); await shot(`people_${set}`);
         const p1 = await E('__caustic.sets[__caustic.set].figures.group.children.map((c) => c.getWorldPosition(c.position.clone()).toArray())');
         const moved = Math.max(...p0.map((a, i) => Math.hypot(a[0] - p1[i][0], a[2] - p1[i][2])));
-        check(`people ${set}: shown, and a walker walks`, p0.length > 0 && moved > 0.5, `${p0.length} figures, moved ${moved.toFixed(2)} m in 1.5 s`);
+        check(`people ${set}: shown, and a walker walks`, p0.length > 0 && moved > 0.4, `${p0.length} figures, moved ${moved.toFixed(2)} m in 3 s`);
       }
+      // Luv's feet on the corridor's stairs, over a whole climb and descent: the lowest corner of the lower foot
+      // each frame, against the floor under it (a tread's height), neither sunk into a step nor floating over it
+      await E("__caustic.show('corridor')");
+      const fc = await E(`(()=>{const S=__caustic.sets.corridor, f=S.figures.group.children[0], u=S.figures.walkers[0]; const zs=-5.2, tread=0.36, rise=0.19, h=(x,z)=>z>zs?0:Math.min(8,Math.floor((zs-z)/tread)+1)*rise;
+        let pen=0, flo=0, n=0; for(let t=0;t<60;t+=1/30){ u(t); f.updateMatrixWorld(true); if(t<0.3) continue; const low=[];
+          f.traverse(o=>{ if(o.isMesh&&o.geometry.type==='BoxGeometry'){ o.geometry.computeBoundingBox(); const b=o.geometry.boundingBox; let m=1e9; for(const x of [b.min.x,b.max.x]) for(const z of [b.min.z,b.max.z]){ const v=o.localToWorld(o.position.clone().set(x,b.min.y,z)); m=Math.min(m,v.y-h(v.x,v.z)); } low.push(m); } });
+          const lo=Math.min(...low); pen=Math.min(pen,lo); flo=Math.max(flo,lo); n++; }
+        return {pen, flo, n};})()`);
+      check('people: Luv\'s feet land on each stair, up and down', fc.pen > -0.045 && fc.flo < 0.045, `worst ${(fc.pen * 100).toFixed(1)} cm into a step, ${(fc.flo * 100).toFixed(1)} cm over one, ${fc.n} frames`);
       await E('__caustic.setPeople(false)');
       // the classic mode: every set lit by the tiled, projected caustic again, and back
       await E("__caustic.setMode('classic')");

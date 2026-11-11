@@ -47,7 +47,7 @@ function classic(g, list, bounceOpt) {
 function people(g, list) {
   const grp = new THREE.Group(); grp.visible = false; g.add(grp);
   for (const p of list) grp.add(p.f.root);
-  return { group: grp, update: (t) => { for (const p of list) p.update(t); } };
+  return { group: grp, walkers: list.map((p) => p.update), update: (t) => { for (const p of list) p.update(t); } };
 }
 
 function traced(g, lights, from, to) { return { lights, extra: g.children.slice(from, to).filter((o) => o.isPointLight) }; }
