@@ -319,7 +319,7 @@ window.__caustic = {
   },
   // a splash's effect on the caustic: the mean |difference| between the texture with and without one
   async splashTest() {
-    const c = cur.caustics[0], read = async () => renderer.readRenderTargetPixelsAsync(c.rt, 0, 0, c.rt.width, c.rt.height);
+    const c = cur.caustics[0], read = async () => renderer.readRenderTargetPixelsAsync(c.rtOut ?? c.rt, 0, 0, c.rt.width, c.rt.height);
     const T0 = 40; c.update(T0); c.splash(0.5, 0.5, 1); const d = c.drops[(c.nextDrop + 7) % 8];
     c.update(T0 + 2); const a = await read(); const w = d.w; d.w = 0; c.update(T0 + 2); const b = await read(); d.w = w;
     let m = 0, N = 0; for (let i = 0; i < a.length; i += 16) { const x = THREE.DataUtils.fromHalfFloat(a[i + 1]), y = THREE.DataUtils.fromHalfFloat(b[i + 1]); if (!(x > 0.02 || y > 0.02)) continue; m += Math.abs(x - y); N++; } // over the lit footprint
@@ -328,7 +328,7 @@ window.__caustic = {
   // the mean and the spread of the caustic texture, to see that it is lit and has lines
   async causticStats() {
     const c = cur.caustics[0];
-    const px = await renderer.readRenderTargetPixelsAsync(c.rt, 0, 0, c.rt.width, c.rt.height);
+    const px = await renderer.readRenderTargetPixelsAsync(c.rtOut ?? c.rt, 0, 0, c.rt.width, c.rt.height);
     let m = 0, m2 = 0, hi = 0, N = 0, all = 0;
     for (let i = 0; i < px.length; i += 16) { const v = THREE.DataUtils.fromHalfFloat(px[i + 1]); all++; if (!(v > 0.02)) continue; m += v; m2 += v * v; hi = Math.max(hi, v); N++; }
     m /= N; return { mean: m, sd: Math.sqrt(m2 / N - m * m), max: hi, lit: N / all };

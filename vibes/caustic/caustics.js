@@ -11,7 +11,7 @@
  * colour fringes of a real one. The texture's mean is 1, so a light's intensity is its average brightness.
  */
 import * as THREE from 'three/webgpu';
-import { Fn, uniform, uniformArray, vec2, vec3, vec4, float, positionGeometry, positionWorld, varying, dFdx, dFdy, abs, max, min, Loop, sin, cos, sqrt, int, exp, fract, length, If, normalize, reflect, refract, smoothstep, texture, Discard, screenCoordinate } from 'three/tsl';
+import { Fn, uniform, uniformArray, vec2, vec3, vec4, float, positionGeometry, positionWorld, varying, dFdx, dFdy, abs, max, min, Loop, sin, cos, sqrt, int, exp, fract, length, If, normalize, reflect, refract, smoothstep, texture, Discard, screenCoordinate, screenUV } from 'three/tsl';
 
 const WAVES = 12;
 const DROPS = 8; // splashes in flight at once, each a ring that runs out from where it hit and dies away
@@ -129,11 +129,11 @@ export class Trough {
    * waves: lMin/lMax wavelengths in metres, slope (rms), dir/spread (radians in the water's frame), speed (time
    * scale, 1 = real water), slosh (the slope of the trough's sloshing mode); disp: red/blue throw spread;
    * res: the traced texture's texels (res x res, shaped to the footprint); cell: texels per grid cell of rays;
-   * near/far: the light's camera.
+   * near/far: the light's camera; blur: texels per tap of the lamp-size blur; soft: the lamp's size, as how much it rounds the folds' peaks (peak 1 / soft).
    */
   constructor(renderer, {
     mode = 'reflect', at = [0, 0, 0], size = [2, 1], turn = 0, from, color = 0xffb840, lux = 6, lMin = 0.05, lMax = 0.3, slope = 0.03, dir = 0, spread = Math.PI,
-    speed = 0.3, slosh = 0.01, disp = mode === 'reflect' ? 0 : 0.03, cell = 2.5, res = 1024, posRes = 384, shadow = 1024, near = 0.3, far = 60, seed = 1, edge = 0.03, eta = 1.333,
+    speed = 0.3, slosh = 0.01, disp = mode === 'reflect' ? 0 : 0.03, cell = 2, res = 1024, posRes = 384, shadow = 1024, near = 0.3, far = 60, seed = 1, edge = 0.03, eta = 1.333, soft = 0.035, blur = 0.8,
   } = {}) {
     this.renderer = renderer; this.mode = mode; this.lux = lux;
     this.C = new THREE.Vector3(...at);
@@ -178,10 +178,29 @@ export class Trough {
     cam.fov = 2 * Math.atan(TY) * 180 / Math.PI; cam.aspect = TX / TY;
     cam.setViewOffset(2 * TX * PX, 2 * TY * PX, (x0 + TX) * PX, (TY - y1) * PX, (x1 - x0) * PX, (y1 - y0) * PX);
     cam.updateProjectionMatrix(); cam.aspect = (x1 - x0) / (y1 - y0); // (the aspect of the window, for the texture's size)
-    // as many texels as a res x res square, shaped like the footprint (a trough seen low is wide and short)
-    const rw = Math.min(4 * res, Math.max(64, Math.round(res * Math.sqrt(cam.aspect)))), rh = Math.min(4 * res, Math.max(64, Math.round(res / Math.sqrt(cam.aspect))));
+    // shaped like the footprint (a trough seen low is wide and short), its short side `res` texels so the light
+    // has as many across the walls' height as along them, its long side at most 3 res
+    const rw = cam.aspect >= 1 ? Math.min(3 * res, Math.round(res * cam.aspect)) : res, rh = cam.aspect >= 1 ? res : Math.min(3 * res, Math.round(res / cam.aspect));
+    // mipmapped, so a wall far off or seen at a slant averages lines thinner than its pixels instead of catching
+    // them on some pixels and not others (which beads the lines' edges)
     this.rt = new THREE.RenderTarget(rw, rh, { type: THREE.HalfFloatType, depthBuffer: false, magFilter: THREE.LinearFilter, minFilter: THREE.LinearFilter });
-    this.texture = this.rt.texture;
+    // The traced light is then blurred a little, by the lamp's size: the ray grid's folds end on its triangles'
+    // edges, a sawtooth a cell long that a near wall magnifies into beads along every bright line; a real lamp's
+    // own size softens a fold's edge by about as much.
+    const rtOpt = { type: THREE.HalfFloatType, depthBuffer: false, magFilter: THREE.LinearFilter, minFilter: THREE.LinearFilter };
+    this.rtH = new THREE.RenderTarget(rw, rh, rtOpt);
+    this.rtOut = new THREE.RenderTarget(rw, rh, { ...rtOpt, minFilter: THREE.LinearMipmapLinearFilter, generateMipmaps: true });
+    this.texture = this.rtOut.texture; this.texture.anisotropy = 4;
+    const blurPass = (src, dx, dy) => {
+      const m = new THREE.MeshBasicNodeMaterial({ depthTest: false, depthWrite: false });
+      m.fragmentNode = Fn(() => {
+        const u = screenUV, o = vec2(dx / rw, dy / rh).mul(blur), c = vec3(0).toVar();
+        for (const [k, w] of [[-2, 0.06], [-1, 0.24], [0, 0.4], [1, 0.24], [2, 0.06]]) c.addAssign(texture(src.texture, u.add(o.mul(k))).level(0).rgb.mul(w));
+        return vec4(c, 1);
+      })();
+      const sc = new THREE.Scene(); const q = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), m); q.frustumCulled = false; sc.add(q); return sc;
+    };
+    this.blurH = blurPass(this.rt, 1, 0); this.blurV = blurPass(this.rtH, 0, 1); this.quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, -1, 1);
     const pw = Math.max(32, Math.round(posRes * rw / res)), ph = Math.max(32, Math.round(posRes * rh / res));
     this.posRT = new THREE.RenderTarget(pw, ph, { type: THREE.HalfFloatType, depthBuffer: true, magFilter: THREE.NearestFilter, minFilter: THREE.NearestFilter });
     this.M = uniform(new THREE.Matrix4().set(0.5, 0, 0, 0.5, 0, 0.5, 0, 0.5, 0, 0, 0.5, 0.5, 0, 0, 0, 1).multiply(cam.projectionMatrix).multiply(cam.matrixWorldInverse));
@@ -235,6 +254,18 @@ export class Trough {
     const posAt = (u) => texture(this.posRT.texture, vec2(u.x, u.y.oneMinus())).level(0);
     const far0 = float(far * 0.5);
     const reach = (p, u) => { const R = posAt(u); return R.w.greaterThan(0.5).select(length(R.xyz.sub(p)), far0); };
+    // The same, blended between the four texels around u, so a ray's throw changes smoothly and its landing
+    // doesn't step from texel to texel; but only where the four lie on one surface (their distances within 6% of
+    // each other), so an edge between a wall and the floor far behind it isn't blurred into a distance neither has.
+    const posSize = uniform(new THREE.Vector2(pw, ph));
+    const reachSmooth = (p, u) => {
+      const f = vec2(u.x, u.y.oneMinus()).mul(posSize).sub(0.5), i = f.floor(), w = f.sub(i);
+      const at = (dx, dy) => { const R = texture(this.posRT.texture, i.add(vec2(dx + 0.5, dy + 0.5)).div(posSize)).level(0); return R.w.greaterThan(0.5).select(length(R.xyz.sub(p)), far0); };
+      const a = at(0, 0), b = at(1, 0), c = at(0, 1), d = at(1, 1);
+      const lo = min(min(a, b), min(c, d)), hi = max(max(a, b), max(c, d));
+      const blend = a.mul(w.x.oneMinus()).add(b.mul(w.x)).mul(w.y.oneMinus()).add(c.mul(w.x.oneMinus()).add(d.mul(w.x)).mul(w.y));
+      return hi.sub(lo).lessThan(lo.mul(0.06)).select(blend, reach(p, u));
+    };
 
     // The grid is laid out evenly over the light's own projection (not over the water), each vertex the point of
     // the water its ray crosses, so the rays are as dense on the far wall as near the source and no facet shows.
@@ -249,27 +280,41 @@ export class Trough {
     for (const [ch, f] of passes) {
       const mt = new THREE.MeshBasicNodeMaterial({ transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide });
       mt.blending = THREE.CustomBlending; mt.blendSrc = THREE.OneFactor; mt.blendDst = THREE.OneFactor; mt.blendEquation = THREE.AddEquation;
-      const uv = positionGeometry.xy, Q = Minv.mul(vec4(uv, 0.5, 1)), dq = Q.xyz.div(Q.w).sub(Eu);
-      const p = Eu.add(dq.mul(Cu.sub(Eu).dot(Nu).div(dq.dot(Nu))));
-      const x = vec2(p.sub(Cu).dot(Tu), p.sub(Cu).dot(Bu)), g = x.div(sizeU).add(0.5);
-      const sl = slopeAt(x, g);
-      const nrm = normalize(Nu.sub(Tu.mul(sl.x)).sub(Bu.mul(sl.y)));
-      const I = normalize(p.sub(Lu));
-      // the bent ray, and the flat water's (which runs straight from the source)
-      const d = mode === 'reflect' ? reflect(I, nrm) : refract(refract(I, nrm, 1 / eta), Nu, eta);
-      const u0 = uv; // the flat water's ray lands where the grid vertex is in the projection
-      const D0 = reach(p, u0);
-      const thr = this.depth.mul(f);
-      const D1 = reach(p, proj(p.add(d.mul(D0.mul(thr)))));
-      const D2 = reach(p, proj(p.add(d.mul(D1.mul(thr)))));
-      const u2 = proj(p.add(d.mul(D2.mul(thr))));
-      const vA = varying(u0), vB = varying(u2), vG = varying(g);
-      mt.positionNode = vec3(u2, 0);
+      // one ray: from the source through the water at grid place uv, bent, thrown to the surface it lands on
+      const land = (uv) => {
+        const Q = Minv.mul(vec4(uv, 0.5, 1)), dq = Q.xyz.div(Q.w).sub(Eu);
+        const p = Eu.add(dq.mul(Cu.sub(Eu).dot(Nu).div(dq.dot(Nu))));
+        const x = vec2(p.sub(Cu).dot(Tu), p.sub(Cu).dot(Bu)), g = x.div(sizeU).add(0.5);
+        const sl = slopeAt(x, g);
+        const nrm = normalize(Nu.sub(Tu.mul(sl.x)).sub(Bu.mul(sl.y)));
+        const I = normalize(p.sub(Lu));
+        const d = mode === 'reflect' ? reflect(I, nrm) : refract(refract(I, nrm, 1 / eta), Nu, eta);
+        const thr = this.depth.mul(f);
+        const D0 = reach(p, uv); // the flat water's ray lands where uv is in the projection
+        const D1 = reachSmooth(p, proj(p.add(d.mul(D0.mul(thr)))));
+        const D2 = reachSmooth(p, proj(p.add(d.mul(D1.mul(thr)))));
+        return { u: proj(p.add(d.mul(D2.mul(thr)))), g };
+      };
+      // The light per area is the flat footprint's area over the landed one: the inverse of the map's Jacobian
+      // determinant. It is taken at each vertex, from two more rays half a cell along each grid axis, and the
+      // signed determinant is interpolated across each triangle, so the brightness changes smoothly from vertex to
+      // vertex and a fold (where the determinant passes through 0) falls as a sharp line inside a triangle, not
+      // along its edges.
+      const uv = positionGeometry.xy, h = vec2(0.5 / nx, 0.5 / ny);
+      const r0 = land(uv), rx = land(uv.add(vec2(h.x, 0))), ry = land(uv.add(vec2(0, h.y)));
+      const jx = rx.u.sub(r0.u).div(h.x), jy = ry.u.sub(r0.u).div(h.y);
+      const det = jx.x.mul(jy.y).sub(jx.y.mul(jy.x));
+      const vDet = varying(det), vG = varying(r0.g), vA = varying(uv), vB = varying(r0.u);
+      mt.positionNode = vec3(r0.u, 0);
       mt.colorNode = Fn(() => {
-        const a = dFdx(vA), b = dFdy(vA), c = dFdx(vB), e = dFdy(vB);
-        const src = abs(a.x.mul(b.y).sub(a.y.mul(b.x))), dst = max(abs(c.x.mul(e.y).sub(c.y.mul(e.x))), 1e-14);
         const rim = smoothstep(0, edge, vG.x).mul(smoothstep(0, edge, vG.x.oneMinus())).mul(smoothstep(0, edge, vG.y)).mul(smoothstep(0, edge, vG.y.oneMinus()));
-        return vec4(ch.mul(min(src.div(dst), 60).mul(rim)), 1);
+        // a lamp isn't a point: its size rounds the fold's peak off over a few texels instead of a spike a texel
+        // wide, which a wall would catch on some pixels and miss on others
+        // ... and never more than twice the triangle's own area ratio, which conserves the light exactly: a vertex
+        // whose determinant happens to be near 0 on a triangle that isn't folded would light it up as a bead
+        const a = dFdx(vA), b = dFdy(vA), c = dFdx(vB), e = dFdy(vB);
+        const tri = abs(a.x.mul(b.y).sub(a.y.mul(b.x))).div(max(abs(c.x.mul(e.y).sub(c.y.mul(e.x))), 1e-14));
+        return vec4(ch.mul(min(float(1).div(sqrt(vDet.mul(vDet).add(soft * soft))), tri.mul(2)).mul(rim)), 1);
       })();
       const mesh = new THREE.Mesh(geo, mt); mesh.frustumCulled = false; this.scene.add(mesh);
     }
@@ -333,6 +378,8 @@ export class Trough {
     const r = this.renderer, prev = r.getRenderTarget(), ac = r.autoClear;
     r.setRenderTarget(this.rt); r.setClearColor(0x000000, 0); r.clear(); r.autoClear = false;
     r.render(this.scene, this.cam);
+    r.setRenderTarget(this.rtH); r.render(this.blurH, this.quadCam);
+    r.setRenderTarget(this.rtOut); r.render(this.blurV, this.quadCam);
     r.autoClear = ac; r.setRenderTarget(prev);
   }
 
