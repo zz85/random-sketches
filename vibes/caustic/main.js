@@ -153,7 +153,7 @@ function build(n) {
   if (!sets[n]) sets[n] = n === 'hall' ? SCENES.hall(renderer, scene, { phone }) : SCENES[n](renderer, { phone });
   return sets[n];
 }
-function show(n) {
+function show(n, shot = 0) {
   const S = build(n);
   if (cur) scene.remove(cur.group);
   cur = S; name = n; scene.add(S.group);
@@ -164,7 +164,7 @@ function show(n) {
   document.querySelectorAll('[data-set]').forEach((b) => b.classList.toggle('on', b.dataset.set === n));
   $('caption').textContent = { corridor: 'The corridor', office: 'Wallace', hall: 'The hall of water' }[n];
   $('caption').classList.remove('on'); void $('caption').offsetWidth; $('caption').classList.add('on');
-  shotIndex = 0; startShot(0, true);
+  startShot(shot, true);
   history.replaceState(null, '', '#' + n);
 }
 
@@ -232,9 +232,14 @@ function place(t) {
   if (camera.fov !== s.fov) { camera.fov = s.fov; camera.updateProjectionMatrix(); }
 }
 const order = ['corridor', 'office', 'hall'];
-function next() { // the next shot, and after a set's last shot the next set
-  if (shotIndex + 1 < cur.shots.length) cut(() => startShot(shotIndex + 1));
-  else cut(() => show(order[(order.indexOf(name) + 1) % order.length]));
+// The tour goes round the sets first: corridor, office, hall at their first angle, then all three again at
+// their second, and so on, so every cut changes the room.
+let round = 0;
+function next() {
+  const k = order.indexOf(name) + 1;
+  if (k >= order.length) round++;
+  const n = order[k % order.length];
+  cut(() => show(n, round % build(n).shots.length));
 }
 function cut(fn) { pending = fn; fadeT = 0.0001; }
 function freeLook() { if (!tour) return; tour = false; controls.enabled = true; $('tour').classList.remove('on'); }

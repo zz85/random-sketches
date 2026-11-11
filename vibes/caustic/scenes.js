@@ -22,7 +22,7 @@ import { wood, rough, plain, leather, water } from './materials.js';
 // One palette for the three sets, as in the film: the same gold lamps (tungsten through warm gels), the same rough
 // concrete, the same grade (each colour pulled toward its luminance times this gold; sat is how much survives).
 const GOLD = 0xffb840, GOLD2 = 0xffc050;
-const GRADE = { tint: [1.0, 0.7, 0.14], sat: 0.28 };
+const GRADE = { tint: [1.0, 0.7, 0.14], sat: 0.88 };
 const CONCRETE = 0x8a7c62, BOUNCE = 0x8a7656;
 
 function box(g, w, h, d, mat, x, y, z, { cast = true, receive = true, round = 0 } = {}) {
@@ -83,7 +83,7 @@ export function corridor(renderer, { phone = false } = {}) {
   box(g, 20, 0.2, 30, dark, 0, H + 3.2, -4, { cast: false }); // a dark sky over it all, for the haze to end on
 
   // light: steep reflections from above, from either side and from behind, all off one sloshing trough
-  const lines = new Caustics(renderer, { kMin: 2, kMax: 9, amp: 1.0, depth: 0.075, speed: 0.55, dir: 0.3, spread: 1.1, grid: phone ? 160 : 256, seed: 3 });
+  const lines = new Caustics(renderer, { kMin: 2, kMax: 9, amp: 1.0, depth: 0.0675, speed: 0.55, dir: 0.3, spread: 1.1, grid: phone ? 160 : 256, seed: 3 });
   const sh = phone ? 512 : 1024;
   const L = [
     aim(g, causticSpot(lines, { color: GOLD, intensity: 1900, angle: 0.4, penumbra: 0.5, scale: 3.6, rot: 0.6, shadow: sh, far: 40 }), [8.5, 15, -2], [-2.7, 2.2, -3.2]),
@@ -94,12 +94,12 @@ export function corridor(renderer, { phone = false } = {}) {
   const fill = new THREE.HemisphereLight(0x8a7044, 0x1a1408, 0.06); g.add(fill);
   return {
     group: g, caustics: [lines], lights: L,
-    look: { exposure: 0.72, ...GRADE, haze: 0.05, fog: 0x2a1f0c, bg: 0x050302 },
+    look: { exposure: 0.72, ...GRADE, haze: 0.0205, fog: 0x2a1f0c, bg: 0x050302 },
     volume: { size: [W, H + 1.5, z0 - z1], at: [0, (H + 1.5) / 2, (z0 + z1) / 2] },
     shots: [
-      { from: [0, 1.55, 2.6], to: [0, 1.6, -1.2], look0: [0, 2.0, -8], look1: [0, 2.1, -9], dur: 16, fov: 46 },
-      { from: [-2.0, 3.2, -1.5], to: [-1.6, 3.0, -3.5], look0: [2.6, 2.2, -4], look1: [2.6, 2.0, -6], dur: 12, fov: 40 },
-      { from: [1.5, 0.45, -2.2], to: [0.8, 0.6, -3.6], look0: [0, 1.0, -8], look1: [0, 1.6, -9], dur: 12, fov: 46 },
+      { from: [0, 1.55, 2.6], to: [0, 1.6, -1.2], look0: [0, 2.0, -8], look1: [0, 2.1, -9], dur: 16, fov: 58 },
+      { from: [-2.0, 3.2, -1.5], to: [-1.6, 3.0, -3.5], look0: [2.6, 2.2, -4], look1: [2.6, 2.0, -6], dur: 12, fov: 50 },
+      { from: [1.5, 0.45, -2.2], to: [0.8, 0.6, -3.6], look0: [0, 1.0, -8], look1: [0, 1.6, -9], dur: 12, fov: 58 },
     ],
     update() {},
   };
@@ -123,7 +123,7 @@ export function office(renderer, { phone = false } = {}) {
   }
   box(g, 2 * X, H, 0.4, walls, 0, H / 2, zf + 0.2);
   // the skylight: a well in the ceiling over water, glowing with its own caustic
-  const soft = new Caustics(renderer, { kMin: 1, kMax: 4, amp: 1.0, depth: 0.1, speed: 0.35, dir: 0.2, spread: Math.PI, grid: phone ? 128 : 192, seed: 7, disp: 0.03 });
+  const soft = new Caustics(renderer, { kMin: 1, kMax: 4, amp: 1.0, depth: 0.09, speed: 0.35, dir: 0.2, spread: Math.PI, grid: phone ? 128 : 192, seed: 7, disp: 0.03 });
   const sky = new THREE.MeshBasicNodeMaterial();
   sky.colorNode = texture(soft.texture, uv().mul(vec2(1.6, 0.5))).rgb.mul(color(0xffb860)).mul(2.2).add(color(0x5a3810));
   const skyMesh = new THREE.Mesh(new THREE.PlaneGeometry(4.6, 1.4), sky); skyMesh.rotation.x = Math.PI / 2; skyMesh.position.set(0, H - 0.01, -1.5); g.add(skyMesh);
@@ -140,7 +140,7 @@ export function office(renderer, { phone = false } = {}) {
 
   // light: the reflection of water from troughs along the front wall up onto the back and side walls, and the
   // skylight's down onto the floor. Broad, slow ribbons.
-  const broad = new Caustics(renderer, { kMin: 2, kMax: 6, amp: 1.0, depth: 0.06, speed: 0.4, dir: 0, spread: 0.9, grid: phone ? 160 : 256, seed: 11 });
+  const broad = new Caustics(renderer, { kMin: 2, kMax: 6, amp: 1.0, depth: 0.054, speed: 0.4, dir: 0, spread: 0.9, grid: phone ? 160 : 256, seed: 11 });
   const sh = phone ? 512 : 1024;
   const L = [
     aim(g, causticSpot(broad, { color: GOLD, intensity: 900, angle: 0.42, penumbra: 0.7, scale: 2.4, rot: 0.1, shadow: sh }), [0, 0.6, 5.3], [0, 3.6, -8]),
@@ -152,12 +152,12 @@ export function office(renderer, { phone = false } = {}) {
   g.add(new THREE.HemisphereLight(0x8a7044, 0x2a2010, 0.08));
   return {
     group: g, caustics: [broad, soft], lights: L,
-    look: { exposure: 0.72, ...GRADE, haze: 0.025, fog: 0x2a200c, bg: 0x070502 },
+    look: { exposure: 0.72, ...GRADE, haze: 0.0103, fog: 0x2a200c, bg: 0x070502 },
     volume: { size: [2 * X, H, zf - zb], at: [0, H / 2, (zf + zb) / 2] },
     shots: [
-      { from: [0, 1.7, 5.5], to: [0, 1.75, 4.0], look0: [0, 2.3, -8], look1: [0, 2.2, -8], dur: 18, fov: 62 },
-      { from: [-4.4, 1.4, 3.2], to: [-3.6, 1.5, 2.2], look0: [3.3, 1.2, -3], look1: [3.1, 1.3, -3.5], dur: 12, fov: 54 },
-      { from: [3.0, 4.5, 5.0], to: [1.2, 4.8, 5.0], look0: [-1.5, 1.5, -6], look1: [0, 1.4, -6], dur: 12, fov: 58 },
+      { from: [0, 1.7, 5.5], to: [0, 1.75, 4.0], look0: [0, 2.3, -8], look1: [0, 2.2, -8], dur: 18, fov: 72 },
+      { from: [-4.4, 1.4, 3.2], to: [-3.6, 1.5, 2.2], look0: [3.3, 1.2, -3], look1: [3.1, 1.3, -3.5], dur: 12, fov: 68 },
+      { from: [3.0, 4.5, 5.0], to: [1.2, 4.8, 5.0], look0: [-1.5, 1.5, -6], look1: [0, 1.4, -6], dur: 12, fov: 72 },
     ],
     update() {},
   };
@@ -179,7 +179,7 @@ export function hall(renderer, scene, { phone = false } = {}) {
   // the far walls: two long curved screens, open in the middle (the dark beyond), for the light to climb
   const wallMat = rough({ base: 0x6a604c, panel: [6, 40], seam: 0.1 });
   for (const s of [-1, 1]) {
-    const geo = new THREE.CylinderGeometry(34, 34, 16, 96, 1, true, s < 0 ? Math.PI + 0.25 : Math.PI - 1.45, 1.2);
+    const geo = new THREE.CylinderGeometry(24, 24, 16, 96, 1, true, s < 0 ? Math.PI + 0.25 : Math.PI - 1.45, 1.2);
     const m = new THREE.Mesh(geo, wallMat); m.material.side = THREE.BackSide; m.position.set(0, 8, 8); m.receiveShadow = true; g.add(m);
   }
   // the light hanging overhead: a thin glowing disc (an ellipse from where you stand) on a long cable from the dark,
@@ -191,11 +191,11 @@ export function hall(renderer, scene, { phone = false } = {}) {
   slit.position.y = -LEN; pivot.add(slit);
   const down = new THREE.SpotLight(GOLD2, 260, 0, 0.45, 0.8, 2); down.castShadow = true; down.shadow.mapSize.set(1024, 1024); down.shadow.bias = -0.0004;
   down.position.set(0, -LEN - 0.1, 0.2); pivot.add(down); down.target.position.set(0, 0, -0.5); g.add(down.target);
-  const ripples = new Caustics(renderer, { kMin: 5, kMax: 16, amp: 1.0, depth: 0.05, speed: 0.6, dir: 0, spread: Math.PI, grid: phone ? 160 : 256, seed: 5 });
+  const ripples = new Caustics(renderer, { kMin: 5, kMax: 16, amp: 1.0, depth: 0.045, speed: 0.6, dir: 0, spread: Math.PI, grid: phone ? 160 : 256, seed: 5 });
   const gold = GOLD, sh = phone ? 512 : 1024;
   const L = [
-    aim(g, causticSpot(ripples, { color: gold, intensity: 5000, angle: 0.5, penumbra: 1, scale: 4.5, rot: 0.2, shadow: sh, far: 90 }), [-4, 0.1, 12], [-24, 0.5, -14]),
-    aim(g, causticSpot(ripples, { color: gold, intensity: 5000, angle: 0.5, penumbra: 1, scale: 4.2, rot: -0.4, drift: [0.002, 0], shadow: sh, far: 90 }), [4, 0.1, 12], [24, 0.5, -14]),
+    aim(g, causticSpot(ripples, { color: gold, intensity: 5000, angle: 0.5, penumbra: 1, scale: 4.5, rot: 0.2, shadow: sh, far: 90 }), [-4, 0.1, 10], [-17, 0.5, -10]),
+    aim(g, causticSpot(ripples, { color: gold, intensity: 5000, angle: 0.5, penumbra: 1, scale: 4.2, rot: -0.4, drift: [0.002, 0], shadow: sh, far: 90 }), [4, 0.1, 10], [17, 0.5, -10]),
     down,
   ];
   for (const l of L.slice(0, 2)) g.add(bounce(l, { albedo: BOUNCE, share: 0.01, off: 4.0 }));
@@ -205,15 +205,15 @@ export function hall(renderer, scene, { phone = false } = {}) {
   g.add(new THREE.HemisphereLight(0x3a3018, 0x050302, 0.03));
   return {
     group: g, caustics: [ripples], lights: L, reflector: w.reflector,
-    look: { exposure: 1.0, ...GRADE, haze: 0.016, fog: 0x0a0803, bg: 0x000000 },
+    look: { exposure: 1.0, ...GRADE, haze: 0.0066, fog: 0x0a0803, bg: 0x000000 },
     volume: { size: [50, 14, 30], at: [0, 7, -9] }, // stops short of the low wall lamps, which would glare
     shots: [
-      { from: [3, 6.5, 18], to: [1.5, 6.0, 16], look0: [0, 2.2, -5], look1: [0, 2.4, -5], dur: 18, fov: 40 },
-      { from: [-6, 0.9, 6], to: [-4.5, 0.8, 5], look0: [0.5, 0.8, -1], look1: [0, 1.0, -2], dur: 12, fov: 38 },
-      { from: [12, 0.5, 9], to: [9, 0.6, 8], look0: [-2, 2.5, -12], look1: [-6, 3.5, -16], dur: 14, fov: 40 },
+      { from: [3, 6.5, 18], to: [1.5, 6.0, 16], look0: [0, 2.2, -5], look1: [0, 2.4, -5], dur: 18, fov: 50 },
+      { from: [-6, 0.9, 6], to: [-4.5, 0.8, 5], look0: [0.5, 0.8, -1], look1: [0, 1.0, -2], dur: 12, fov: 48 },
+      { from: [12, 0.5, 9], to: [9, 0.6, 8], look0: [-2, 2.5, -10], look1: [-5, 3.5, -12], dur: 14, fov: 50 },
     ],
-    // two slow pendulum swings at slightly different periods, so the light's path wanders like a real one
-    update(t) { pivot.rotation.x = 0.06 * Math.sin(t * 2 * Math.PI / 7.2); pivot.rotation.z = 0.04 * Math.sin(t * 2 * Math.PI / 9.1 + 1.3); },
+    // a slow pendulum swing, mostly left to right (7.5 degrees each way, 7.6 s), with a little fore-and-aft so it wanders
+    update(t) { pivot.rotation.z = 0.13 * Math.sin(t * 2 * Math.PI / 7.6); pivot.rotation.x = 0.02 * Math.sin(t * 2 * Math.PI / 11.3 + 1.3); },
   };
 }
 

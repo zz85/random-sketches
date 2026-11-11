@@ -19,7 +19,7 @@ All three share one gold lamp colour, one rough concrete and one grade, so they 
 - **Tap a lit wall** to splash the water that lights it: a ring of ripples runs out from where you touched. **Splash** (`s`) stirs the water at random.
 - **Tune** (`t`) opens sliders: Warmth (how orange: the grade's tint and the lamps' colour), Colour (how much of the scene's own colour survives the grade), Exposure, Haze, Ripple size, Sharpness (the focus of the lines), Wave height (calm to choppy) and Water speed. Each scales the set's own value; double-click a slider, or Reset, to go back.
 - **Haze** puts haze in the beams. **GI** turns screen-space global illumination on or off. **Scope** shows the 2.39:1 bars. **Sound** plays a drone with water under it. **Music** (`m`) plays a slow synthesised cyberpunk score. `h` hides the UI.
-- Query flags: `?set=hall`, `?webgl` (the WebGL 2 backend), `?phone` (the lighter path phones get), `?nohaze`, `?novol`, `?nogi`, `?notaa`, `?steps=N` (haze steps), `?free` (no tour), `?paused`.
+- Query flags: `?set=hall`, `?webgl` (the WebGL 2 backend), `?phone` (the lighter path phones get), `?nohaze`, `?novol`, `?nogi`, `?notaa`, `?steps=N` (haze steps), `?free` (no tour; the tour cuts through the three sets in turn, then round again at each set's next angle), `?paused`.
 
 ## How it works
 

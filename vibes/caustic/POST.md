@@ -45,7 +45,7 @@ The real sets glow because the amber light bounces off wood and concrete. Two ch
 
 ## The hanging light
 
-The hall's light is a thin glowing disc on a long cable, so from the shore it reads as the ellipse in the film. It hangs from a pivot 13 m up and swings as a pendulum: two slow sines, 7.2 s and 9.1 s, of 3.4 and 2.3 degrees, so its path wanders. The spot light that throws the pool of light onto the platform hangs from the same pivot and aims at a fixed point, so the pool and the chairs' shadows sway with it, and the disc's reflection slides over the black water.
+The hall's light is a thin glowing disc on a long cable, so from the shore it reads as the ellipse in the film. It hangs from a pivot 13 m up and swings as a pendulum: mostly left to right, 7.5 degrees each way every 7.6 s, with a small fore-and-aft sway of about 1 degree at 11.3 s so its path wanders. The spot light that throws the pool of light onto the platform hangs from the same pivot and aims at a fixed point, so the pool and the chairs' shadows sway with it, and the disc's reflection slides over the black water.
 
 ## Haze, water and the lens
 
@@ -60,7 +60,7 @@ The gold comes from four places, and they stack:
 1. **The lamps**: every caustic spot light is the same gold, `0xffb840` (or `0xffc050` for the skylight and the hanging light), as tungsten through warm gels is.
 2. **The materials**: all three sets share one rough concrete, a neutral warm grey (`0x76694e`), so the walls don't add a colour of their own.
 3. **The bounce lights**: their colour is lamp times surface.
-4. **The grade**, last and strongest: each pixel is pulled toward its luminance times a gold tint, `mix(tint * luma * 2.2, colour, sat)`, with a toe that sinks the shadows. All three sets share one grade: tint 1.0 / 0.70 / 0.14 with sat 0.28, so only 28% of the scene's own colour survives.
+4. **The grade**, last and strongest: each pixel is pulled toward its luminance times a gold tint, `mix(tint * luma * 2.2, colour, sat)`, with a toe that sinks the shadows. All three sets share one grade: tint 1.0 / 0.70 / 0.14 with sat 0.88, so most of the scene's own colour survives and the gold lamps on warm concrete carry the tone, with the tint only pulling the rest toward amber. (A first pass kept just 28%, which flattened everything to one beige; the settings that look right came from tuning by eye in the Tune panel and were then baked in as the defaults.)
 
 The first version gave each set its own lamp colour, material and grade, and the corridor was the most orange on all four counts: oiled wood that is orange-brown itself, lamps at `0xffa53a` (the most orange), a tint whose green was lowest (0.62) and wood-coloured bounce lights. Against the three film stills, which are all the same gold, that read as a different film. Now `scenes.js` holds one `GOLD`, one `GRADE` and one `CONCRETE` for all three, and the sets differ only in their water and their geometry.
 
