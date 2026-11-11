@@ -51,7 +51,27 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
       const st = await E('__caustic.causticStats()');
       check(`${tag}${set}: the caustic is lit and has lines`, st.mean > 0.5 && st.mean < 1.6 && st.sd > 0.4 && st.max > 3, `mean ${st.mean.toFixed(2)}, sd ${st.sd.toFixed(2)}, max ${st.max.toFixed(1)}`);
       const er = errors(); check(`${tag}${set}: no console or shader errors`, er.length === 0, er.slice(0, 3).join(' | ').slice(0, 1500));
+      if (!tag) {
+        const sd = await E('__caustic.splashTest()');
+        check(`${set}: a splash ripples the caustic`, sd > 0.02, `mean change ${sd.toFixed(3)}`);
+        await E('__caustic.shot(0, 0.4)');
+        const n = await E(`__caustic.splashAt(innerWidth * ${set === 'hall' ? 0.12 : 0.5}, innerHeight * ${set === 'hall' ? 0.3 : 0.5})`);
+        check(`${set}: a tap on a lit wall lands in a caustic beam`, n > 0, `${n} beams`);
+      }
+      if (!tag) { await E('__caustic.shot(0, 0.4); __caustic.splashAll(1.2)'); await E('__caustic.frame(100)'); await shot(`splash_${set}`); }
       console.log(`     ${set}: ${shots} shots in ${((Date.now() - t1) / 1000).toFixed(1)} s`);
+    }
+    if (!tag) {
+      // the Tune panel: no warmth gives a grey grade and white lamps; then a stormy, cold look for a screenshot
+      await E("__caustic.show('office'); Object.assign(__caustic.TUNE, { warmth: 0 }); __caustic.applyTune()");
+      const tint = await E('[...__caustic.LOOK.tint.value.toArray()]');
+      check('tune: warmth 0 drains the amber', Math.max(...tint) - Math.min(...tint) < 1e-6, tint.map((v) => v.toFixed(3)).join(' '));
+      await E("Object.assign(__caustic.TUNE, { warmth: 0.25, height: 1.8, sharp: 1.6, size: 0.6 }); __caustic.applyTune(); __caustic.shot(0, 0.4)");
+      await E('__caustic.frame(8)'); await shot('tune_cold');
+      await E("Object.assign(__caustic.TUNE, { warmth: 1, height: 1, sharp: 1, size: 1 }); __caustic.applyTune()");
+      const mu = await E('__caustic.renderBars(4, 64)');
+      check('music: four bars render with sound in them', mu.rms > 0.01 && mu.peak < 4 && Number.isFinite(mu.rms), `rms ${mu.rms.toFixed(3)}, peak ${mu.peak.toFixed(2)}, ${mu.seconds.toFixed(1)} s`);
+      const er = errors(); check('tune and music: no console errors', er.length === 0, er.slice(0, 3).join(' | ').slice(0, 1500));
     }
   }
   } catch (e) { console.error(e); console.error(errors().slice(0, 6).join('\n---\n').slice(0, 5000)); failed++; }

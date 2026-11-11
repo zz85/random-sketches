@@ -28,9 +28,20 @@
 <div id="status">filling the troughs&hellip;</div>
 <div id="title">CAUSTIC<small>light off water, after the Wallace sets</small></div>
 <div id="caption"></div>
+<div id="tune">
+  <label>Warmth <input type="range" data-k="warmth" min="0" max="1.6" step="0.01" value="1"><output>1.00</output></label>
+  <label>Colour <input type="range" data-k="colour" min="0" max="2" step="0.01" value="1"><output>1.00</output></label>
+  <label>Exposure <input type="range" data-k="exposure" min="0.3" max="2.5" step="0.01" value="1"><output>1.00</output></label>
+  <label>Haze <input type="range" data-k="haze" min="0" max="6" step="0.01" value="1"><output>1.00</output></label>
+  <label>Ripple size <input type="range" data-k="size" min="0.3" max="3" step="0.01" value="1"><output>1.00</output></label>
+  <label>Sharpness <input type="range" data-k="sharp" min="0" max="2.5" step="0.01" value="1"><output>1.00</output></label>
+  <label>Wave height <input type="range" data-k="height" min="0" max="2.5" step="0.01" value="1"><output>1.00</output></label>
+  <label>Water speed <input type="range" data-k="speed" min="0" max="4" step="0.01" value="1"><output>1.00</output></label>
+  <button id="reset">Reset</button>
+</div>
 <div id="ui">
   <div class="pill"><button data-set="corridor" title="The corridor (1)">Corridor</button><button data-set="office" title="Wallace's office (2)">Office</button><button data-set="hall" title="The hall of water (3)">Hall</button></div>
-  <div class="pill"><button id="tour" title="Slow camera moves; drag to look around yourself (space: next shot)">Tour</button><button id="haze" title="Haze in the beams">Haze</button><button id="gi" title="Screen-space global illumination">GI</button><button id="bars" class="on" title="2.39:1">Scope</button><button id="sound" title="Sound">Sound</button>
+  <div class="pill"><button id="tour" title="Slow camera moves; drag to look around yourself (space: next shot)">Tour</button><button id="haze" title="Haze in the beams">Haze</button><button id="gi" title="Screen-space global illumination">GI</button><button id="bars" class="on" title="2.39:1">Scope</button><button id="splash" title="Disturb the water (s); or tap a lit wall">Splash</button><button id="tunebtn" title="Tune the look and the water (t)">Tune</button><button id="sound" title="The drone and the water">Sound</button><button id="music" title="Music (m)">Music</button>
   <button data-pwa-install title="Install app" style="display:none">Install</button></div>
 </div>
 <script type="module" src="main.js"></script>

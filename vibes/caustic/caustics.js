@@ -11,9 +11,10 @@
  * colour fringes of a real one. The texture's mean is 1, so a light's intensity is its average brightness.
  */
 import * as THREE from 'three/webgpu';
-import { Fn, uniform, uniformArray, vec2, vec3, vec4, float, positionGeometry, varying, dFdx, dFdy, abs, max, min, Loop, sin, cos, sqrt, int } from 'three/tsl';
+import { Fn, uniform, uniformArray, vec2, vec3, vec4, float, positionGeometry, varying, dFdx, dFdy, abs, max, min, Loop, sin, cos, sqrt, int, exp, fract, length, If } from 'three/tsl';
 
 const WAVES = 12;
+const DROPS = 8; // splashes in flight at once, each a ring that runs out from where it hit and dies away
 
 export class Caustics {
   /*
@@ -41,6 +42,10 @@ export class Caustics {
       P.push(rnd() * Math.PI * 2);
     }
     const waves = uniformArray(K, 'vec4'), phases = uniformArray(P, 'float');
+    this.base = { depth, amp, speed };
+    // splashes: (x, y) on the tile, the water's time it hit, its strength; an old one's strength is 0
+    this.drops = Array.from({ length: DROPS }, () => new THREE.Vector4(0, 0, -100, 0)); this.nextDrop = 0;
+    const drops = this.dropArr = uniformArray(this.drops, 'vec4');
     const grad = Fn(([p]) => {
       const g = vec2(0).toVar();
       Loop(WAVES, ({ i }) => {
@@ -48,7 +53,19 @@ export class Caustics {
         const ph = k.dot(p).sub(w.w.mul(this.time)).add(phases.element(i));
         g.addAssign(k.mul(w.z.mul(cos(ph))));
       });
-      return g.mul(this.amp).mul(1 / (Math.PI * 2));
+      g.mulAssign(this.amp);
+      // each splash: a wave packet of 14 cycles a tile on a ring running out at 0.18 tile/s, widening and fading;
+      // the distance is taken across the tile's wrap so it tiles too. Only the slope matters: dh/dr along d/r.
+      Loop(DROPS, ({ i }) => {
+        const D = drops.element(i), age = this.time.sub(D.z);
+        If(D.w.greaterThan(0).and(age.greaterThan(0)).and(age.lessThan(8)), () => {
+          const d = fract(p.sub(D.xy).add(0.5)).sub(0.5), r = max(length(d), 1e-4);
+          const x = r.sub(age.mul(0.18)), w = age.mul(0.03).add(0.03);
+          const env = D.w.mul(0.06).mul(exp(age.mul(-0.45))).mul(exp(x.mul(x).div(w.mul(w)).negate())).div(sqrt(r.mul(20).add(1)));
+          g.addAssign(d.div(r).mul(sin(x.mul(Math.PI * 2 * 14)).mul(env).mul(-Math.PI * 2 * 14)));
+        });
+      });
+      return g.mul(1 / (Math.PI * 2));
     });
     // grid over [-0.5, 1.5]^2, so light thrown in from beyond the tile's edges is kept; the camera sees [0, 1]^2
     const n = Math.round(grid * 2);
@@ -70,6 +87,12 @@ export class Caustics {
       const mesh = new THREE.Mesh(geo, m); mesh.frustumCulled = false; this.scene.add(mesh);
     }
   }
+  // a splash at (x, y) on the tile (wrapped), of the given strength
+  splash(x, y, strength = 1) {
+    const d = this.drops[this.nextDrop]; this.nextDrop = (this.nextDrop + 1) % DROPS;
+    d.set(x - Math.floor(x), y - Math.floor(y), this.time.value, strength);
+  }
+  // t: the water's own clock in seconds (main.js runs it faster or slower with the Speed control)
   update(t) {
     this.time.value = t * this.speed;
     const r = this.renderer, prev = r.getRenderTarget(), ac = r.autoClear;
@@ -94,7 +117,7 @@ export function causticSpot(caustic, { color = 0xffb54a, intensity = 400, angle 
       : texture(caustic.texture, uv);
     return c.rgb;
   });
-  l.userData = { scale: sc, drift: dr };
+  l.userData = { caustic, scale: sc, scale0: scale, drift: dr, rot };
   return l;
 }
 

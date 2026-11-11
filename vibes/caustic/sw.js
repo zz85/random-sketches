@@ -3,8 +3,8 @@
  * addons used) from unpkg is cached the first time it is fetched. Stale-while-revalidate, so it opens
  * instantly and offline. Bump VERSION when the file list changes.
  */
-const VERSION = 'caustic-v2';
-const SHELL = ['./', './index.html', './main.js', './caustics.js', './materials.js', './scenes.js', './audio.js', './style.css', './manifest.webmanifest', '../pwa/install.js', './icon.svg', './icon-192.png', './icon-512.png'];
+const VERSION = 'caustic-v3';
+const SHELL = ['./', './index.html', './main.js', './caustics.js', './materials.js', './scenes.js', './audio.js', './music.js', './style.css', './manifest.webmanifest', '../pwa/install.js', './icon.svg', './icon-192.png', './icon-512.png'];
 const BASE = 'https://unpkg.com/three@0.187.0/';
 const CDN = [BASE + 'build/three.webgpu.js', BASE + 'build/three.tsl.js'].concat([
   'controls/OrbitControls.js', 'geometries/RoundedBoxGeometry.js', 'math/ImprovedNoise.js', 'tsl/math/Bayer.js',

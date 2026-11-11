@@ -26,6 +26,7 @@ import { ImprovedNoise } from 'three/addons/math/ImprovedNoise.js';
 import { bayer16 } from 'three/addons/tsl/math/Bayer.js';
 import { SCENES } from './scenes.js';
 import { Drone } from './audio.js';
+import { Music, renderBars } from './music.js';
 
 const Q = new URLSearchParams(location.search + '&' + location.hash.slice(1));
 const $ = (id) => document.getElementById(id);
@@ -159,13 +160,65 @@ function show(n) {
   for (const l of S.lights) l.layers.enable(VOL);
   scene.background = new THREE.Color(S.look.bg);
   volMesh.scale.set(...S.volume.size); volMesh.position.set(...S.volume.at);
-  hazeAmount.value = S.look.haze; LOOK.tint.value.set(...S.look.tint); LOOK.sat.value = S.look.sat; renderer.toneMappingExposure = S.look.exposure;
+  applyTune();
   document.querySelectorAll('[data-set]').forEach((b) => b.classList.toggle('on', b.dataset.set === n));
   $('caption').textContent = { corridor: 'The corridor', office: 'Wallace', hall: 'The hall of water' }[n];
   $('caption').classList.remove('on'); void $('caption').offsetWidth; $('caption').classList.add('on');
   shotIndex = 0; startShot(0, true);
   history.replaceState(null, '', '#' + n);
 }
+
+// ---------------------------------------------------------------- tuning: the look and the water, live
+
+// Each control scales the set's own value (1 = as designed), so switching sets keeps your changes in proportion.
+//   warmth: how orange it is. 0 drains the amber from the grade and the lamps (the wood and concrete keep
+//           their own colour), 1 is the film, past 1 is more orange still.
+//   colour: how much of the scene's own colour survives the grade (0: monochrome amber, 1: ungraded colour).
+//   size:   the ripples' size on the walls (the caustic tile's repeat across each beam).
+//   sharp:  how far the light travels from the water to the wall: the focus of the bright lines.
+//   height: the waves' height: calm to choppy.
+//   speed:  how fast the water moves.
+const TUNE = { warmth: 1, colour: 1, exposure: 1, haze: 1, size: 1, sharp: 1, height: 1, speed: 1 };
+const lerpTint = (t, w) => { const y = 0.2126 * t[0] + 0.7152 * t[1] + 0.0722 * t[2]; return t.map((c) => Math.max(0, y + (c - y) * w)); };
+function applyTune() {
+  const S = cur; if (!S) return;
+  LOOK.tint.value.set(...lerpTint(S.look.tint, TUNE.warmth));
+  LOOK.sat.value = TUNE.colour <= 1 ? S.look.sat * TUNE.colour : S.look.sat + (1 - S.look.sat) * (TUNE.colour - 1);
+  renderer.toneMappingExposure = S.look.exposure * TUNE.exposure;
+  hazeAmount.value = S.look.haze * TUNE.haze;
+  for (const l of S.lights) {
+    l.userData.color0 ??= l.color.clone();
+    const w = Math.min(1, TUNE.warmth), c0 = l.userData.color0, y = 0.2126 * c0.r + 0.7152 * c0.g + 0.0722 * c0.b;
+    l.color.setRGB(y + (c0.r - y) * w, y + (c0.g - y) * w, y + (c0.b - y) * w);
+    if (l.userData.scale) l.userData.scale.value = l.userData.scale0 / TUNE.size;
+  }
+  for (const c of S.caustics) { c.depth.value = c.base.depth * TUNE.sharp; c.amp.value = c.base.amp * TUNE.height; }
+}
+
+// Splashes: tap a lit wall and the water that throws that light ripples. The tap's point is found in the scene,
+// then in each caustic beam that lights it, by the same projection the light uses (its shadow matrix, then the
+// turn, repeat and drift its colorNode applies), so the ring starts on the tile exactly where you touched.
+const ray = new THREE.Raycaster(), ndc = new THREE.Vector2(), v4 = new THREE.Vector4(), uv2 = new THREE.Vector2();
+const nodeTime = () => renderer._nodes?.nodeFrame?.time ?? 0;
+function splashAt(x, y) {
+  ndc.set((x / innerWidth) * 2 - 1, -(y / innerHeight) * 2 + 1); ray.setFromCamera(ndc, camera);
+  const hit = ray.intersectObject(cur.group, true).find((h) => h.object.isMesh);
+  let n = 0;
+  if (hit) for (const l of cur.lights) {
+    if (!l.userData.caustic) continue;
+    l.shadow.updateMatrices(l);
+    v4.set(hit.point.x, hit.point.y, hit.point.z, 1).applyMatrix4(l.shadow.matrix);
+    if (v4.w <= 0) continue;
+    const u = v4.x / v4.w, v = v4.y / v4.w;
+    if (u < 0 || u > 1 || v < 0 || v > 1) continue;
+    uv2.set(u - 0.5, v - 0.5).rotateAround({ x: 0, y: 0 }, l.userData.rot).multiplyScalar(l.userData.scale.value);
+    const dr = l.userData.drift.value; uv2.addScaledVector(dr, nodeTime());
+    l.userData.caustic.splash(uv2.x, uv2.y, 1); n++;
+  }
+  if (!n) splashAll(1); // the floor of the hall, or a dark corner: stir the water anyway
+  return n;
+}
+function splashAll(k = 1) { for (const c of cur.caustics) for (let i = 0; i < 3; i++) c.splash(Math.random(), Math.random(), k * (0.6 + 0.6 * Math.random())); }
 
 // ---------------------------------------------------------------- the camera: slow moves, cut by fades
 
@@ -185,7 +238,10 @@ function next() { // the next shot, and after a set's last shot the next set
 }
 function cut(fn) { pending = fn; fadeT = 0.0001; }
 function freeLook() { if (!tour) return; tour = false; controls.enabled = true; $('tour').classList.remove('on'); }
-renderer.domElement.addEventListener('pointerdown', freeLook);
+let down = null;
+renderer.domElement.addEventListener('pointerdown', (e) => { down = { x: e.clientX, y: e.clientY, t: performance.now() }; });
+renderer.domElement.addEventListener('pointermove', (e) => { if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) > 8) { if (tour) { freeLook(); } down.moved = true; } });
+renderer.domElement.addEventListener('pointerup', (e) => { if (down && !down.moved && performance.now() - down.t < 400) splashAt(e.clientX, e.clientY); down = null; });
 renderer.domElement.addEventListener('wheel', freeLook, { passive: true });
 
 // ---------------------------------------------------------------- UI
@@ -198,18 +254,29 @@ $('bars').onclick = () => { document.body.classList.toggle('nobars'); $('bars').
 $('gi').onclick = () => { GI.on.value = GI.on.value ? 0 : 1; $('gi').classList.toggle('on', !!GI.on.value); };
 $('gi').classList.toggle('on', !!GI.on.value);
 $('sound').onclick = () => { drone.toggle(); $('sound').classList.toggle('on', drone.on); };
+const music = new Music();
+$('music').onclick = () => { music.toggle(); $('music').classList.toggle('on', music.on); };
+$('splash').onclick = () => splashAll(1.2);
+$('tunebtn').onclick = () => { $('tune').classList.toggle('open'); $('tunebtn').classList.toggle('on'); };
+for (const el of document.querySelectorAll('#tune input')) {
+  const out = el.nextElementSibling, k = el.dataset.k;
+  el.oninput = () => { TUNE[k] = +el.value; out.textContent = (+el.value).toFixed(2); applyTune(); };
+  el.ondblclick = () => { el.value = 1; el.oninput(); };
+}
+$('reset').onclick = () => { for (const el of document.querySelectorAll('#tune input')) { el.value = 1; el.oninput(); } };
 $('haze').classList.toggle('on', !!hazeOn.value); $('tour').classList.toggle('on', tour);
 addEventListener('keydown', (e) => {
   if (e.key === '1') cut(() => show('corridor')); if (e.key === '2') cut(() => show('office')); if (e.key === '3') cut(() => show('hall'));
   if (e.key === 'h') document.body.classList.toggle('calm');
   if (e.key === ' ') { e.preventDefault(); next(); }
+  if (e.key === 's') splashAll(1.2); if (e.key === 'm') $('music').click(); if (e.key === 't') $('tunebtn').click();
 });
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
 
 // ---------------------------------------------------------------- loop
 
 const timer = new THREE.Timer();
-let t = 0, paused = Q.has('paused');
+let t = 0, wt = 0, paused = Q.has('paused'); // wt: the water's clock, run at the Speed control
 function frame() {
   timer.update(); const dt = paused ? 0 : Math.min(0.05, timer.getDelta()); t += dt;
   if (fadeT > 0) { // fade out 0.7 s, cut, fade in 0.9 s
@@ -220,7 +287,8 @@ function frame() {
   }
   if (tour && !pending) { const s = cur.shots[shotIndex]; shotT += dt / s.dur; place(shotT); if (shotT > 1 && !fadeT) next(); }
   else if (!tour) controls.update();
-  for (const c of cur.caustics) c.update(t);
+  wt += dt * TUNE.speed;
+  for (const c of cur.caustics) c.update(wt);
   if (drone.on) drone.set(name);
   if (!OFF) draw();
 }
@@ -232,9 +300,17 @@ if ('serviceWorker' in navigator && !SHOT && location.protocol === 'https:') nav
 
 // for the smoke test
 window.__caustic = {
-  renderer, scene, camera, sets, get set() { return name; }, LOOK, hazeOn, GI,
-  show, async frame(n = 1, dt = 1 / 30) { for (let i = 0; i < n; i++) { t += dt; for (const c of cur.caustics) c.update(t); if (tour && cur) { shotT += dt / cur.shots[shotIndex].dur; place(Math.min(1, shotT)); } } await snapshot(); },
+  renderer, scene, camera, sets, get set() { return name; }, LOOK, hazeOn, GI, TUNE, applyTune, splashAt, splashAll, renderBars,
+  show, async frame(n = 1, dt = 1 / 30) { for (let i = 0; i < n; i++) { t += dt; wt += dt * TUNE.speed; for (const c of cur.caustics) c.update(wt); if (tour && cur) { shotT += dt / cur.shots[shotIndex].dur; place(Math.min(1, shotT)); } } await snapshot(); },
   shot(i, at = 0.5) { startShot(i); shotT = at; place(at); },
+  // a splash's effect on the caustic: the mean |difference| between the texture with and without one
+  async splashTest() {
+    const c = cur.caustics[0], s = c.rt.width, read = async () => renderer.readRenderTargetPixelsAsync(c.rt, 0, 0, s, s);
+    const T0 = 40; c.update(T0); c.splash(0.5, 0.5, 1); const d = c.drops[(c.nextDrop + 7) % 8];
+    c.update(T0 + 2); const a = await read(); const w = d.w; d.w = 0; c.update(T0 + 2); const b = await read(); d.w = w;
+    let m = 0, N = 0; for (let i = 0; i < a.length; i += 16) { m += Math.abs(THREE.DataUtils.fromHalfFloat(a[i + 1]) - THREE.DataUtils.fromHalfFloat(b[i + 1])); N++; }
+    return m / N;
+  },
   // the mean and the spread of the caustic texture, to see that it is lit and has lines
   async causticStats() {
     const c = cur.caustics[0], s = c.rt.width;
