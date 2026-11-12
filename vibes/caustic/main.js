@@ -25,6 +25,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { ImprovedNoise } from 'three/addons/math/ImprovedNoise.js';
 import { bayer16 } from 'three/addons/tsl/math/Bayer.js';
 import { SCENES } from './scenes.js';
+import { dressMakehuman } from './figures.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { Drone } from './audio.js';
 import { Music, renderBars } from './music.js';
 
@@ -161,6 +163,34 @@ function applyMode(S) {
   S.lights = [...M.lights, ...(S.modes.shared ?? [])]; S.caustics = M.caustics; S.tuned = M.tuned;
   for (const l of S.lights) l.layers.enable(VOL);
 }
+// Luv as a MakeHuman model (assets/luv.glb) in place of the mannequin, an experiment: loaded on first use, each
+// set's Luv dressed as that set's stills show her unless the Tune panel's choices say otherwise
+let mh = Q.has('makehuman') || Q.has('mh'), mhGltf = null, mhLoading = null;
+const LOOK_Q = { outfit: Q.get('outfit'), hair: Q.get('hair'), skin: Q.get('skin') };
+const luvLook = (S) => ({ ...(S.luvLook ?? {}), ...Object.fromEntries(Object.entries(LOOK_Q).filter(([, v]) => v)) });
+function dressSet(S) {
+  if (!S?.figures) return;
+  for (const f of S.figures.figs) if (f.kind === 'woman') {
+    if (mh && mhGltf && !f.mh) f.mh = dressMakehuman(f, mhGltf, luvLook(S));
+    else if (!mh && f.mh) { f.mh.undress(); f.mh = null; }
+    else if (f.mh) f.mh.setLook(luvLook(S));
+  }
+}
+async function setMakehuman(on) {
+  mh = on; $('mh')?.classList.toggle('on', on);
+  // (the model isn't in the repository: tools/fetch_makehuman.py downloads MakeHuman's data and builds it)
+  if (on && !mhGltf) {
+    mhLoading ??= new GLTFLoader().loadAsync('assets/luv.glb').then((g) => (mhGltf = g), () => null);
+    if (!(await mhLoading)) {
+      mhLoading = null; mh = false; $('mh')?.classList.remove('on');
+      $('caption').textContent = 'No assets/luv.glb: run python3 tools/fetch_makehuman.py'; $('caption').classList.remove('on'); void $('caption').offsetWidth; $('caption').classList.add('on');
+      return false;
+    }
+  }
+  if (on && !people) setPeople(true);
+  for (const S of Object.values(sets)) dressSet(S);
+  return true;
+}
 function setPeople(on) { people = on; for (const S of Object.values(sets)) if (S.figures) S.figures.group.visible = on; $('figures')?.classList.toggle('on', on); }
 function setMode(m) { mode = m; if (cur) { applyMode(cur); applyTune(); } $('classic')?.classList.toggle('on', mode === 'classic'); }
 function build(n) {
@@ -173,6 +203,7 @@ function show(n, shot = 0) {
   cur = S; name = n; scene.add(S.group);
   applyMode(S);
   if (S.figures) S.figures.group.visible = people;
+  dressSet(S);
   for (const l of S.lights) l.layers.enable(VOL);
   scene.background = new THREE.Color(S.look.bg);
   volMesh.scale.set(...S.volume.size); volMesh.position.set(...S.volume.at);
@@ -281,6 +312,8 @@ $('splash').onclick = () => splashAll(1.2);
 $('classic').onclick = () => setMode(mode === 'classic' ? 'traced' : 'classic');
 $('classic').classList.toggle('on', mode === 'classic');
 $('figures').onclick = () => setPeople(!people);
+$('mh').onclick = () => setMakehuman(!mh);
+for (const k of ['outfit', 'hair', 'skin']) { const el = $('luv-' + k); if (!el) continue; if (LOOK_Q[k]) el.value = LOOK_Q[k]; el.onchange = () => { LOOK_Q[k] = el.value === 'auto' ? null : el.value; for (const S of Object.values(sets)) dressSet(S); }; }
 $('figures').classList.toggle('on', people);
 $('tunebtn').onclick = () => { $('tune').classList.toggle('open'); $('tunebtn').classList.toggle('on'); };
 for (const el of document.querySelectorAll('#tune input')) {
@@ -294,7 +327,7 @@ addEventListener('keydown', (e) => {
   if (e.key === '1') cut(() => show('corridor')); if (e.key === '2') cut(() => show('office')); if (e.key === '3') cut(() => show('hall'));
   if (e.key === 'h') document.body.classList.toggle('calm');
   if (e.key === ' ') { e.preventDefault(); next(); }
-  if (e.key === 's') splashAll(1.2); if (e.key === 'c') $('classic').click(); if (e.key === 'f') $('figures').click(); if (e.key === 'm') $('music').click(); if (e.key === 't') $('tunebtn').click();
+  if (e.key === 's') splashAll(1.2); if (e.key === 'c') $('classic').click(); if (e.key === 'f') $('figures').click(); if (e.key === 'l') $('mh').click(); if (e.key === 'm') $('music').click(); if (e.key === 't') $('tunebtn').click();
 });
 addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
 
@@ -326,7 +359,7 @@ if ('serviceWorker' in navigator && !SHOT && location.protocol === 'https:') nav
 
 // for the smoke test
 window.__caustic = {
-  renderer, scene, camera, sets, get set() { return name; }, setMode, get mode() { return mode; }, setPeople, LOOK, hazeOn, GI, TUNE, applyTune, splashAt, splashAll, renderBars,
+  renderer, scene, camera, sets, get set() { return name; }, setMode, get mode() { return mode; }, setPeople, setMakehuman, get mhGltf() { return mhGltf; }, LOOK, hazeOn, GI, TUNE, applyTune, splashAt, splashAll, renderBars,
   show, async frame(n = 1, dt = 1 / 30) { for (let i = 0; i < n; i++) { t += dt; wt += dt * TUNE.speed * (cur.tuned?.speed ?? 1); cur.update?.(t); if (people) cur.figures?.update(t); for (const c of cur.caustics) c.update(wt); if (tour && cur) { shotT += dt / cur.shots[shotIndex].dur; place(Math.min(1, shotT)); } } await snapshot(); },
   shot(i, at = 0.5) { startShot(i); shotT = at; place(at); },
   // the position maps against a ray cast on the CPU from each source through the same places of its projection:

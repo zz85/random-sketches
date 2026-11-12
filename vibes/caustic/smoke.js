@@ -100,6 +100,23 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
             if (prev) r.jump=Math.max(r.jump, ...J.map((j,i)=>Math.abs(j-prev[i]))); prev=J; } }
         return { hip: r.hip*57.3, jump: r.jump*57.3 }; })()`);
       check('people: an upright walk on the level, no joint jumping between frames', gait.hip < 21.5 && gait.jump < 20, `hips within ${gait.hip.toFixed(1)} degrees on the level, fastest joint ${gait.jump.toFixed(1)} degrees in a frame`);
+      // the MakeHuman Luv: it loads, every set's Luv wears it, and its ankles follow the mannequin's as she walks
+      // (only where the model was built: tools/fetch_makehuman.py)
+      const hasMH = fs.existsSync(path.join(DIR, 'assets', 'luv.glb'));
+      if (!hasMH) console.log('     (no assets/luv.glb: skipping the MakeHuman Luv; python3 tools/fetch_makehuman.py builds it)');
+      if (hasMH) {
+      await E('__caustic.setMakehuman(true)');
+      const mh = await E(`(()=>{ const out={};
+        for (const [set, idx] of [['corridor', 0], ['office', 1], ['hall', 1]]) { __caustic.show(set); const S=__caustic.sets[set], f=S.figures.figs[idx], u=S.figures.walkers[idx]; let worst=0; const b={};
+          if (!f.mh) { out[set]=null; continue; } f.mh.model.traverse((o)=>{ if (o.isBone) b[o.name]=o; });
+          for (let t=0; t<40; t+=1/10) { u(t); f.mh.pose(); f.root.updateMatrixWorld(true);
+            for (const [side, nm] of [[1,'foot_l'],[0,'foot_r']]) worst=Math.max(worst, f.legs[side].ankle.getWorldPosition(f.root.position.clone()).distanceTo(b[nm].getWorldPosition(f.root.position.clone()))); }
+          out[set]=worst; }
+        return out; })()`);
+      check('people: the MakeHuman Luv is worn in every set and follows the walk', Object.values(mh).every((w) => w !== null && w < 0.01), Object.entries(mh).map(([k, w]) => `${k} ${w === null ? 'missing' : (w * 100).toFixed(1) + ' cm'}`).join(', '));
+      await E("__caustic.show('corridor'); __caustic.shot(0, 0.4)"); await E('__caustic.frame(30)'); await shot('people_makehuman');
+      await E('__caustic.setMakehuman(false)');
+      }
       await E('__caustic.setPeople(false)');
       // the classic mode: every set lit by the tiled, projected caustic again, and back
       await E("__caustic.setMode('classic')");

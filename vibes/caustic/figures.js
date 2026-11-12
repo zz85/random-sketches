@@ -25,16 +25,20 @@ function add(parent, mesh) { mesh.castShadow = true; mesh.receiveShadow = true; 
  * kind: 'woman' (a fitted dress to the knee, a bun, heels) or 'man' (a long loose jacket, trousers);
  * dress, skin, hair: colours; height in metres. Faces +z, standing on y = 0.
  */
-export function figure({ kind = 'woman', dress = 0xc8b898, skin = 0x5a4232, hair = 0x0c0907, height = 1.72 } = {}) {
+// The leg measures of the MakeHuman Luv (assets/luv.glb, as tools/makehuman_luv.py prints them), in metres: her
+// figure is built with them, so the walker's feet land the same for the mannequin and for the model it drives.
+export const LUV_LEGS = { hipY: 0.9288, thigh: 0.4232, shin: 0.4392, hipX: 0.0979 };
+
+export function figure({ kind = 'woman', dress = 0xc8b898, skin = 0x5a4232, hair = 0x0c0907, height = 1.72, legs: LG = null } = {}) {
   const W = kind === 'woman', s = height / (W ? 1.72 : 1.85);
   const mDress = mat(dress, 0.55, W ? 0.5 : 0), mSkin = mat(skin, 0.5), mHair = mat(hair, 0.4), mDark = mat(0x0a0806, 0.5);
   const root = new THREE.Group(), body = new THREE.Group(); root.add(body); body.scale.setScalar(s);
-  const hipY = W ? 0.92 : 0.98, thigh = W ? 0.43 : 0.46, shin = W ? 0.42 : 0.46;
+  const hipY = LG?.hipY ?? (W ? 0.92 : 0.98), thigh = LG?.thigh ?? (W ? 0.43 : 0.46), shin = LG?.shin ?? (W ? 0.42 : 0.46), hipX = LG?.hipX ?? (W ? 0.075 : 0.1);
   const pelvis = new THREE.Group(); pelvis.position.y = hipY; body.add(pelvis);
   // the legs: hips, knees, feet
   const legs = [];
   for (const sx of [-1, 1]) {
-    const hip = new THREE.Group(); hip.position.set(sx * (W ? 0.075 : 0.1), 0, 0); pelvis.add(hip);
+    const hip = new THREE.Group(); hip.position.set(sx * hipX, 0, 0); pelvis.add(hip);
     add(hip, capsule(W ? 0.062 : 0.075, thigh - 0.08, W ? mSkin : mDark));
     const knee = new THREE.Group(); knee.position.y = -thigh; hip.add(knee);
     add(knee, capsule(W ? 0.045 : 0.06, shin - 0.08, W ? mSkin : mDark));
@@ -74,7 +78,7 @@ export function figure({ kind = 'woman', dress = 0xc8b898, skin = 0x5a4232, hair
     const hand = new THREE.Mesh(new THREE.SphereGeometry(1, 10, 8), mSkin); hand.scale.set(0.03, 0.06, 0.045); hand.position.y = -0.31; add(el, hand);
     arms.push({ sh, el });
   }
-  const f = { root, body, pelvis, spine, head, legs, arms, hipY, thigh, shin, gap: hipY - thigh - shin, hipX: W ? 0.075 : 0.1, scale: s, kind, phase: 0 };
+  const f = { root, body, pelvis, spine, head, legs, arms, hipY, thigh, shin, gap: hipY - thigh - shin, hipX, scale: s, kind, phase: 0 };
   stand(f);
   return f;
 }
@@ -344,4 +348,101 @@ export function walker(f, path, h = () => 0, { speed = 0.6, rest = 7, start = 0,
   };
   update(0);
   return update;
+}
+
+
+/*
+ * The MakeHuman Luv (assets/luv.glb, built by tools/makehuman_luv.py from MakeHuman's CC0 body, rig and weights and
+ * the community's clothes, hair and skins): dressMakehuman(f, gltf, look) puts a copy of the model on figure f, hides
+ * the mannequin's meshes, and returns pose(), which turns the model's bones to follow the mannequin's joints, so
+ * the walker, its footfalls and its IK drive the model unchanged. The model's bones have no rotation at rest, so
+ * each bone's world rotation is the mannequin joint's turn from its own rest, after a fixed turn that takes the
+ * bone's rest direction onto the mannequin segment's (the model stands in an A pose; the mannequin's arms hang).
+ * look: { outfit: 'tunic' | 'coat', hair: 'bun' | 'long' | 'braid', skin: 'caucasian' | 'eurasian' }.
+ */
+export function dressMakehuman(f, gltf, look) {
+  const model = cloneSkinned(gltf.scene), meta = gltf.scene.getObjectByName('Luv')?.userData ?? gltf.scene.children[0].userData;
+  const bones = {}; model.traverse((o) => { if (o.isBone) bones[o.name] = o; if (o.isSkinnedMesh) { o.castShadow = o.receiveShadow = true; o.frustumCulled = false; } });
+  f.root.add(model);
+  const parts = []; model.traverse((o) => { if (o.isMesh) parts.push(o); });
+  const skinTex = {};
+  const setLook = (L) => {
+    for (const o of parts) {
+      const x = o.userData ?? {};
+      o.visible = x.role === 'body' ? x.outfit === L.outfit : x.role === 'outfit' ? x.outfit === L.outfit : x.role === 'hair' ? x.hair === L.hair : true;
+      if (x.role === 'body' && L.skin && gltf.parser && meta.skins?.[L.skin] !== undefined) {
+        const k = L.skin; if (!skinTex[k]) skinTex[k] = gltf.parser.getDependency('texture', meta.skins[k]).then((t) => { t.flipY = false; t.colorSpace = THREE.SRGBColorSpace; return t; });
+        skinTex[k].then((t) => { if (o.material.map !== t) { o.material = o.material.clone(); o.material.map = t; o.material.needsUpdate = true; } });
+      }
+    }
+  };
+  setLook(look);
+  // the mannequin's joints at rest (every joint's own turn taken off but the shoulders' fixed outward tilt), in
+  // the figure's own frame
+  const J = { pelvis: f.pelvis, spine: f.spine, head: f.head, hipL: f.legs[1].hip, kneeL: f.legs[1].knee, ankleL: f.legs[1].ankle, hipR: f.legs[0].hip, kneeR: f.legs[0].knee, ankleR: f.legs[0].ankle,
+    shL: f.arms[1].sh, elL: f.arms[1].el, shR: f.arms[0].sh, elR: f.arms[0].el };
+  // (the mannequin's left, +x, is the model's left: both face +z)
+  const MAP = { pelvis: 'pelvis', spine_01: 'spine', spine_02: 'spine', spine_03: 'spine', neck_01: 'head', head: 'head', clavicle_l: 'spine', clavicle_r: 'spine',
+    thigh_l: 'hipL', calf_l: 'kneeL', foot_l: 'ankleL', ball_l: 'ankleL', thigh_r: 'hipR', calf_r: 'kneeR', foot_r: 'ankleR', ball_r: 'ankleR',
+    upperarm_l: 'shL', lowerarm_l: 'elL', hand_l: 'elL', upperarm_r: 'shR', lowerarm_r: 'elR', hand_r: 'elR' };
+  const CHILD = { hipL: 'kneeL', kneeL: 'ankleL', hipR: 'kneeR', kneeR: 'ankleR', shL: 'elL', shR: 'elR' }; // segments whose direction the bone takes
+  const saved = Object.fromEntries(Object.entries(J).map(([k, j]) => [k, j.quaternion.clone()]));
+  for (const [k, j] of Object.entries(J)) { j.rotation.set(0, 0, k.startsWith('sh') ? (k === 'shL' ? 0.06 : -0.06) : 0); }
+  f.root.updateMatrixWorld(true);
+  const toFig = new THREE.Matrix4().copy(f.root.matrixWorld).invert(), m4 = new THREE.Matrix4();
+  const figQuat = (o, q) => { m4.multiplyMatrices(toFig, o.matrixWorld); return q.setFromRotationMatrix(m4.extractRotation(m4)); };
+  const figPos = (o, v) => v.setFromMatrixPosition(m4.multiplyMatrices(toFig, o.matrixWorld));
+  const rest = {}, restPos = {};
+  for (const [k, j] of Object.entries(J)) { rest[k] = figQuat(j, new THREE.Quaternion()).invert(); restPos[k] = figPos(j, new THREE.Vector3()); }
+  const elbowHand = (k) => restPos[k].clone().add(new THREE.Vector3(0, -0.31 * f.scale, 0).applyQuaternion(rest[k].clone().invert()));
+  const C = {};
+  for (const [b, k] of Object.entries(MAP)) {
+    const bh = meta.bones[b]; if (!bh) continue;
+    const kid = CHILD[k], want = kid ? restPos[kid].clone().sub(restPos[k]) : k.startsWith('el') ? elbowHand(k).sub(restPos[k]) : null;
+    C[b] = want && (b.startsWith('thigh') || b.startsWith('calf') || b.startsWith('upperarm') || b.startsWith('lowerarm'))
+      ? new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3().fromArray(bh.tail).sub(new THREE.Vector3().fromArray(bh.head)).normalize(), want.normalize())
+      : new THREE.Quaternion();
+  }
+  for (const [k, j] of Object.entries(J)) j.quaternion.copy(saved[k]);
+  // the model's hips: where its pelvis bone sits from the middle of its hip joints
+  const hv = (n) => new THREE.Vector3().fromArray(meta.bones[n].head);
+  const pelvisOff = hv('pelvis').sub(hv('thigh_l').add(hv('thigh_r')).multiplyScalar(0.5));
+  const order = []; model.traverse((o) => { if (o.isBone) order.push(o); }); // parents first
+  const W = new Map(), D = {}, q = new THREE.Quaternion(), qp = new THREE.Quaternion(), v = new THREE.Vector3();
+  for (const o of f.body.children) if (o.isMesh) o.visible = false;
+  f.body.traverse((o) => { if (o.isMesh) o.visible = false; });
+  const pose = () => {
+    f.root.updateMatrixWorld(true); toFig.copy(f.root.matrixWorld).invert();
+    for (const [k, j] of Object.entries(J)) D[k] = figQuat(j, D[k] ?? new THREE.Quaternion()).multiply(rest[k]);
+    W.clear();
+    for (const o of order) {
+      const k = MAP[o.name], parentW = W.get(o.parent) ?? qp.identity();
+      const wq = k ? D[k].clone().multiply(C[o.name]) : parentW.clone();
+      W.set(o, wq);
+      o.quaternion.copy(parentW.clone().invert().multiply(wq));
+    }
+    // the pelvis bone at the mannequin's hips, turned with them
+    const P = bones.pelvis; if (P) {
+      figPos(f.pelvis, v).add(pelvisOff.clone().applyQuaternion(D.pelvis));
+      P.position.copy(v).sub(new THREE.Vector3().fromArray(meta.bones[P.parent?.name]?.head ?? [0, 0, 0]));
+    }
+  };
+  pose();
+  const undress = () => { f.root.remove(model); f.body.traverse((o) => { if (o.isMesh) o.visible = true; }); };
+  return { model, pose, setLook, undress, meta };
+}
+
+// a copy of a skinned scene with its own skeleton (SkeletonUtils.clone, inlined)
+function cloneSkinned(src) {
+  const map = new Map(), clone = src.clone(true);
+  const walk = (a, b) => { map.set(a, b); for (let i = 0; i < a.children.length; i++) walk(a.children[i], b.children[i]); };
+  walk(src, clone);
+  src.traverse((s) => {
+    if (!s.isSkinnedMesh) return;
+    const c = map.get(s), sk = s.skeleton;
+    c.skeleton = sk.clone(); c.bindMatrix.copy(s.bindMatrix);
+    c.skeleton.bones = sk.bones.map((b) => map.get(b));
+    c.bind(c.skeleton, c.bindMatrix);
+  });
+  return clone;
 }
