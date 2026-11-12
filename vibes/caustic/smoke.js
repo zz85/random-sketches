@@ -91,6 +91,15 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
           const lo=Math.min(...low); pen=Math.min(pen,lo); flo=Math.max(flo,lo); n++; }
         return {pen, flo, n};})()`);
       check('people: Luv\'s feet land on each stair, up and down', fc.pen > -0.045 && fc.flo < 0.045, `worst ${(fc.pen * 100).toFixed(1)} cm into a step, ${(fc.flo * 100).toFixed(1)} cm over one, ${fc.n} frames`);
+      // the gait: on the level an upright walk (hips within about 20 degrees of upright), and nowhere a joint that
+      // jumps between two frames, on the level or the stairs
+      const gait = await E(`(()=>{ const r={ hip: 0, jump: 0 };
+        for (const [set, idx] of [['office', 1], ['corridor', 0]]) { __caustic.show(set); const S=__caustic.sets[set], fig=S.figures.group.children[idx], u=S.figures.walkers[idx]; let prev=null;
+          for (let t=0; t<60; t+=1/30) { u(t); const pel=fig.children[0].children[0], J=[0,1].flatMap((i)=>[pel.children[i].rotation.x, pel.children[i].children[1].rotation.x]);
+            if (set==='office') r.hip=Math.max(r.hip, Math.abs(J[0]), Math.abs(J[2]));
+            if (prev) r.jump=Math.max(r.jump, ...J.map((j,i)=>Math.abs(j-prev[i]))); prev=J; } }
+        return { hip: r.hip*57.3, jump: r.jump*57.3 }; })()`);
+      check('people: an upright walk on the level, no joint jumping between frames', gait.hip < 21.5 && gait.jump < 20, `hips within ${gait.hip.toFixed(1)} degrees on the level, fastest joint ${gait.jump.toFixed(1)} degrees in a frame`);
       await E('__caustic.setPeople(false)');
       // the classic mode: every set lit by the tiled, projected caustic again, and back
       await E("__caustic.setMode('classic')");
