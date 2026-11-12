@@ -100,6 +100,15 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
             if (prev) r.jump=Math.max(r.jump, ...J.map((j,i)=>Math.abs(j-prev[i]))); prev=J; } }
         return { hip: r.hip*57.3, jump: r.jump*57.3 }; })()`);
       check('people: an upright walk on the level, no joint jumping between frames', gait.hip < 21.5 && gait.jump < 20, `hips within ${gait.hip.toFixed(1)} degrees on the level, fastest joint ${gait.jump.toFixed(1)} degrees in a frame`);
+      // nobody walks into the furniture: each walker's body (a column 0.16 m round, from above her knees to her head) clear of each
+      // thing of the set that stands up out of the floor she is on (chairs, tables, desks, frames, stair risers ahead)
+      const hits = await E(`(()=>{ const out=[]; const B=new __caustic.camera.position.constructor().constructor; 
+        for (const set of ['corridor','office','hall']) { __caustic.show(set); const S=__caustic.sets[set];
+          const boxes=[]; S.group.traverse((o)=>{ if (!o.isMesh || !o.geometry || S.figures.group.getObjectById(o.id) || o.material.isMeshBasicNodeMaterial) return; o.geometry.computeBoundingBox(); const b=o.geometry.boundingBox.clone().applyMatrix4(o.matrixWorld); const sz=b.getSize(new __caustic.camera.position.constructor()); if (sz.x>6 && sz.z>6 || sz.y<0.05 && (sz.x>3||sz.z>3)) return; boxes.push([b, o.name||o.geometry.type]); });
+          S.figures.walkers.forEach((u,i)=>{ const f=S.figures.figs[i]; u(0); const p0=f.root.position.clone(); u(20); if (p0.distanceTo(f.root.position)<0.01) return; for (let t=0;t<80;t+=0.25){ u(t); const p=f.root.position;
+            for (const [b,n] of boxes) { const lo=p.y+0.6, hi=p.y+1.6; if (b.max.y<lo || b.min.y>hi) continue; if (p.x>b.min.x-0.16 && p.x<b.max.x+0.16 && p.z>b.min.z-0.16 && p.z<b.max.z+0.16) { out.push(set+' '+i+' t'+t+' '+n+' at '+[p.x,p.z].map(v=>v.toFixed(2))); break; } } } }); }
+        return out; })()`);
+      check('people: nobody walks into the furniture', hits.length === 0, hits.slice(0, 4).join('; ') || 'all clear');
       // the MakeHuman Luv: it loads, every set's Luv wears it, and its ankles follow the mannequin's as she walks
       // (only where the model was built: tools/fetch_makehuman.py)
       const hasMH = fs.existsSync(path.join(DIR, 'assets', 'luv.glb'));

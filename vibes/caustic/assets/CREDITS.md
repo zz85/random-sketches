@@ -10,6 +10,7 @@ Not in the repository: `python3 tools/fetch_makehuman.py` downloads the MakeHuma
 | Winter coat | `punkduck_winter_coat` (dress03) | punkduck | CC-BY | header: CC BY 3.0 |
 | Long hair | `o4saken_long01` (hair01) | 04saken | CC0 | header: CC BY 4.0 |
 | Hair bun | `rehmanpolanski_hair_bun_brown` (hair01) | Rehman Polanski | CC0 | header: AGPL3 |
+| Stiletto booties | `toigo_stiletto_booties` (shoes01) | MRT (MargaretToigo) | CC0 | |
 | Skins | `darthfurby_caucasian_female`, `onlytheghosts_middle_aged_eurasian_female` (skins01) | darthfurby, OnlyTheGhosts | CC0 | |
 
 The asset packs are at <https://static.makehumancommunity.org/assets/assetpacks/index.html>. Where a file's own header

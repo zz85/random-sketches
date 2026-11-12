@@ -27,13 +27,15 @@ function add(parent, mesh) { mesh.castShadow = true; mesh.receiveShadow = true; 
  */
 // The leg measures of the MakeHuman Luv (assets/luv.glb, as tools/makehuman_luv.py prints them), in metres: her
 // figure is built with them, so the walker's feet land the same for the mannequin and for the model it drives.
-export const LUV_LEGS = { hipY: 0.9288, thigh: 0.4232, shin: 0.4392, hipX: 0.0979 };
+// heel and pitch: her stiletto booties lift her 6.9 cm and point her feet 33 degrees toe-down.
+export const LUV_LEGS = { hipY: 0.9288, thigh: 0.4232, shin: 0.4392, hipX: 0.0979, heel: 0.0692, pitch: 0.576 };
 
-export function figure({ kind = 'woman', dress = 0xc8b898, skin = 0x5a4232, hair = 0x0c0907, height = 1.72, legs: LG = null } = {}) {
+// clasp: her hands come together in front of her as she takes the stairs, as Luv's do in the stills.
+export function figure({ kind = 'woman', dress = 0xc8b898, skin = 0x5a4232, hair = 0x0c0907, height = 1.72, legs: LG = null, clasp = false } = {}) {
   const W = kind === 'woman', s = height / (W ? 1.72 : 1.85);
   const mDress = mat(dress, 0.55, W ? 0.5 : 0), mSkin = mat(skin, 0.5), mHair = mat(hair, 0.4), mDark = mat(0x0a0806, 0.5);
   const root = new THREE.Group(), body = new THREE.Group(); root.add(body); body.scale.setScalar(s);
-  const hipY = LG?.hipY ?? (W ? 0.92 : 0.98), thigh = LG?.thigh ?? (W ? 0.43 : 0.46), shin = LG?.shin ?? (W ? 0.42 : 0.46), hipX = LG?.hipX ?? (W ? 0.075 : 0.1);
+  const hipY = (LG?.hipY ?? (W ? 0.92 : 0.98)) + (LG?.heel ?? 0), thigh = LG?.thigh ?? (W ? 0.43 : 0.46), shin = LG?.shin ?? (W ? 0.42 : 0.46), hipX = LG?.hipX ?? (W ? 0.075 : 0.1);
   const pelvis = new THREE.Group(); pelvis.position.y = hipY; body.add(pelvis);
   // the legs: hips, knees, feet
   const legs = [];
@@ -48,6 +50,9 @@ export function figure({ kind = 'woman', dress = 0xc8b898, skin = 0x5a4232, hair
     const gap = hipY - thigh - shin;
     const foot = new THREE.Mesh(new THREE.BoxGeometry(W ? 0.07 : 0.1, gap, W ? 0.2 : 0.27), mDark);
     foot.position.set(0, -gap / 2, 0.05); add(ankle, foot);
+    // (in heels the ankle points the foot down; the mannequin's block of a foot stays flat on the floor, its
+    // height the heel's, so it stands in for the shoe)
+    if (LG?.pitch) { const holder = new THREE.Group(); holder.rotation.x = -LG.pitch; ankle.add(holder); holder.add(foot); }
     legs.push({ hip, knee, ankle });
   }
   // the dress or jacket over the hips and the torso; the spine above
@@ -78,7 +83,7 @@ export function figure({ kind = 'woman', dress = 0xc8b898, skin = 0x5a4232, hair
     const hand = new THREE.Mesh(new THREE.SphereGeometry(1, 10, 8), mSkin); hand.scale.set(0.03, 0.06, 0.045); hand.position.y = -0.31; add(el, hand);
     arms.push({ sh, el });
   }
-  const f = { root, body, pelvis, spine, head, legs, arms, hipY, thigh, shin, gap: hipY - thigh - shin, hipX, scale: s, kind, phase: 0 };
+  const f = { root, body, pelvis, spine, head, legs, arms, hipY, thigh, shin, gap: hipY - thigh - shin, hipX, scale: s, kind, phase: 0, pitch: LG?.pitch ?? 0, heel: LG?.heel ?? 0, clasp };
   stand(f);
   return f;
 }
@@ -88,11 +93,21 @@ export function stand(f, t = 0) {
   f.pelvis.position.set(0, f.hipY, 0); f.pelvis.rotation.set(0, 0, 0);
   f.spine.rotation.set(0.02 * Math.sin(t * 0.45), 0, 0); f.head.rotation.set(0.04, 0.15 * Math.sin(t * 0.13), 0);
   for (const [i, L] of f.legs.entries()) { L.hip.rotation.set(0, 0, (i ? 1 : -1) * 0.015); L.knee.rotation.set(0, 0, 0); }
-  for (const A of f.arms) { A.sh.rotation.x = 0.04; A.el.rotation.x = -0.18; }
+  for (const [i, A] of f.arms.entries()) { A.sh.rotation.set(0.04, 0, (i ? 1 : -1) * 0.06); A.el.rotation.x = -0.18; }
   level(f);
 }
 // each foot flat on the ground, whatever its hip and knee do
-function level(f) { for (const L of f.legs) L.ankle.rotation.set(-(f.pelvis.rotation.x + L.hip.rotation.x + L.knee.rotation.x), 0, 0); }
+// (in heels, pointed down by their pitch)
+function level(f) { for (const L of f.legs) L.ankle.rotation.set(-(f.pelvis.rotation.x + L.hip.rotation.x + L.knee.rotation.x) + f.pitch, 0, 0); }
+// the arms with the hands together in front, a little below the waist (k: how far into it, 0 to 1)
+const CLASP = [[0.2, 0.72, -0.1, -1.3], [0.2, -0.72, 0.1, -1.3]]; // per arm (right, left): shoulder x, y, z; elbow
+function clasp(f, k) {
+  f.claspK = k;
+  if (k <= 0) return;
+  for (const [i, A] of f.arms.entries()) { const c = CLASP[i];
+    A.sh.rotation.set(A.sh.rotation.x + (c[0] - A.sh.rotation.x) * k, A.sh.rotation.y + (c[1] - A.sh.rotation.y) * k, A.sh.rotation.z + (c[2] - A.sh.rotation.z) * k);
+    A.el.rotation.x += (c[3] - A.el.rotation.x) * k; }
+}
 // a walk: the phase advances with the distance walked (a stride of two steps every 1.1 m: short, unhurried steps)
 export function walk(f, phase) {
   const p = phase, W = f.kind === 'woman';
@@ -103,7 +118,7 @@ export function walk(f, phase) {
     L.hip.rotation.set(-(W ? 0.3 : 0.36) * Math.sin(q), 0, 0);
     L.knee.rotation.set(0.75 * Math.max(0, Math.sin(q + 1.3)) + 0.05, 0, 0);
   }
-  for (const [i, A] of f.arms.entries()) { const q = p + i * Math.PI; A.sh.rotation.x = 0.22 * Math.sin(q); A.el.rotation.x = -0.2 - 0.12 * Math.max(0, Math.sin(q)); }
+  for (const [i, A] of f.arms.entries()) { const q = p + i * Math.PI; A.sh.rotation.set(0.17 * Math.sin(q), 0, (i ? 1 : -1) * 0.06); A.el.rotation.x = -0.22 - 0.14 * Math.max(0, -Math.sin(q)); }
   level(f);
 }
 // seated, on a seat `seat` metres up: thighs forward, shins down, leaning back, hands on the arms
@@ -143,7 +158,7 @@ function solve(f, dz, dy) {
  * them, a lifting foot letting go of them smoothly; the upper body follows its pose through a short low-pass, so
  * the start and end of a walk don't jump. It stands `rest` s at each end, turning slowly. Returns update(t).
  */
-export function walker(f, path, h = () => 0, { speed = 0.6, rest = 7, start = 0, step = 0.4, stairs = 0.38 } = {}) {
+export function walker(f, path, h = () => 0, { speed = 0.6, rest = 7, start = 0, step = 0.38, stairs = 0.38 } = {}) {
   const P = path.map(([x, z]) => new THREE.Vector2(x, z)), seg = [];
   let total = 0; for (let i = 1; i < P.length; i++) { const d = P[i].distanceTo(P[i - 1]); seg.push(d); total += d; }
   const at = (s) => { // the point and heading `s` metres along the path
@@ -175,12 +190,15 @@ export function walker(f, path, h = () => 0, { speed = 0.6, rest = 7, start = 0,
   const stairRuns = runs.filter(tread);
   const stairy = (s) => { let k = 0; for (const R of stairRuns) { const d = s < R.a ? R.a - s : s > R.b ? s - R.b : 0; k = Math.max(k, 1 - sstep(0, 0.7, d)); } return k; };
   // time along the path, slower where it steps, as a table to read s from t
-  const T = [0]; for (let i = 1; i * DS <= total; i++) T.push(T[i - 1] + DS / (speed * (1 - (1 - stairs) * stairy((i - 0.5) * DS))));
+  // (and slower over the first and last half metre, as a walk starts and comes to a stop: the first step from
+  // standing and the last one closing up take their time)
+  const ramp = (s) => (0.35 + 0.65 * sstep(0, 0.55, s)) * (0.35 + 0.65 * sstep(0, 0.55, total - s));
+  const T = [0]; for (let i = 1; i * DS <= total; i++) { const s = (i - 0.5) * DS; T.push(T[i - 1] + DS / (speed * ramp(s) * (1 - (1 - stairs) * stairy(s)))); }
   const leg = T[T.length - 1], cycle = 2 * (leg + rest);
   const sOf = (t) => { let lo = 0, hi = T.length - 1; while (hi - lo > 1) { const m = (lo + hi) >> 1; if (T[m] < t) lo = m; else hi = m; } return Math.min(total, (lo + (t - T[lo]) / Math.max(1e-9, T[hi] - T[lo])) * DS); };
   // the footfalls each way, as distances travelled from where that leg starts, each with its gait: `a`, how far
   // (in steps) ahead of the body the foot lands, and `c`, how far into the other foot's step it lifts
-  const gaitOf = (F, sAt) => F.map((q) => { const k = stairy(sAt(q)); return { a: 0.58 + (0.18 - 0.58) * k, c: 0.17 + (0.12 - 0.17) * k }; });
+  const gaitOf = (F, sAt) => F.map((q) => { const k = stairy(sAt(q)); return { a: 0.58 + (0.18 - 0.58) * k, c: 0.24 + (0.12 - 0.24) * k }; });
   const fwd = plants, bwd = plants.map((p) => total - p).reverse();
   const gF = gaitOf(fwd, (q) => q), gB = gaitOf(bwd, (q) => total - q);
   // where a footfall's foot centre goes, in the walking direction's own distance: on a tread it steps down onto,
@@ -254,27 +272,38 @@ export function walker(f, path, h = () => 0, { speed = 0.6, rest = 7, start = 0,
     const cy = Math.cos(-yaw), sy = Math.sin(-yaw);
     const rel = (P) => { const dx = P.x - p.x, dz = P.z - p.y; return [(-sy * dx + cy * dz) / sc, (P.y - hy) / sc]; };
     const legsTo = (fk) => { for (const side of [0, 1]) {
-      if (fk && fk[side]) { // a level swing: the hip swings once from where it left to where it lands, the knee bending once
-        const { from, to, w } = fk[side], a = solve(f, ...rel(from)), b = solve(f, ...rel(to)), e = sstep(0, 1, w);
-        f.legs[side].hip.rotation.set(a[0] + (b[0] - a[0]) * e, 0, 0);
-        f.legs[side].knee.rotation.set(a[1] + (b[1] - a[1]) * e + 0.28 * Math.sin(Math.PI * w), 0, 0);
+      if (fk && fk[side]) {
+        // a level swing (62 to 100% of the gait cycle), after the phases of walking: from toe-off the hip flexes,
+        // 10 degrees by the end of initial swing and 20 by mid-swing, easing back a little to land; the knee goes on
+        // bending from toe-off to its peak in initial swing and straightens through mid and terminal swing to land
+        // all but straight; each from the leg's own angles where it lifted to its angles where it lands, so the foot
+        // leaves and lands exactly on its footfalls
+        const { from, to, w, kp } = fk[side], a = solve(f, ...rel(from)), b = solve(f, ...rel(to));
+        const hw = sstep(0, 0.7, w) * 1.04 - 0.04 * sstep(0.7, 1, w);
+        const kpk = Math.max(a[1], kp), kn = w < 0.38 ? a[1] + (kpk - a[1]) * sstep(0, 0.38, w) : kpk + (b[1] - kpk) * sstep(0.38, 0.98, w);
+        f.legs[side].hip.rotation.set(a[0] + (b[0] - a[0]) * hw, 0, 0);
+        f.legs[side].knee.rotation.set(kn, 0, 0);
         continue;
       }
       reach(f, f.legs[side], ...rel(A[side]));
     } level(f); };
     if (!moving) {
-      stand(f, t); smoothUpper(ease(4));
+      stand(f, t); if (f.clasp) clasp(f, sstep(0.15, 0.85, kS)); smoothUpper(ease(4));
       const target = hAt(s) + f.gap * sc + full * 0.996; hy = hy === null ? target : hy + (target - hy) * ease(2.5);
       f.root.position.y = hy - hipH;
-      // both feet stay where the walk left them, under the hips: the knees take up any difference
-      for (const side of [0, 1]) A[side].copy(ground(total, side ? 1 : -1, back ? -1 : 1));
+      // both feet under the hips, turning with her as she turns round (a pivot on the spot): the knees take up any
+      // difference in height
+      for (const side of [0, 1]) {
+        const off = new THREE.Vector3(f.hipX * sc * (side ? 1 : -1), 0, -0.05 * sc).applyAxisAngle(Y, yaw);
+        A[side].set(p.x + off.x, hAt(s) + f.gap * sc, p.y + off.z);
+      }
       legsTo(); return;
     }
     // where each foot is: the footfalls in the order this way takes them, the feet taking them in turn
     const dirn = back ? -1 : 1, q = back ? total - s : s, F = back ? bwd : fwd, G = back ? gB : gF, N = F.length - 1;
     const land = (k) => { k = Math.min(N, Math.max(0, k)); return k ? F[k] - G[k].a * (F[k] - F[k - 1]) : F[0]; }; // the body's q as footfall k lands
     let n = 0; while (n < N && land(n + 1) <= q) n++; // the last footfall landed
-    const lift = (0.012 + 0.048 * kS) * sc, W = [0, 0], TO = [null, null], UP = [0, 0], FROM = [null, null];
+    const lift = (0.012 + 0.048 * kS) * sc, W = [0, 0], TO = [null, null], UP = [0, 0], FROM = [null, null], PH = [0.2, 0.2], RL = [0, 0];
     for (const side of [0, 1]) { // footfalls of index parity `side` belong to that foot
       // both feet start together at the first footfall; the trailing one closes up beside the last at the end
       const lastF = n % 2 === side ? n : n - 1, next = lastF + 2, end = next > N;
@@ -284,6 +313,14 @@ export function walker(f, path, h = () => 0, { speed = 0.6, rest = 7, start = 0,
       const q0 = end ? land(N) : land(next - 1), q1 = end ? total : land(next), c = G[end ? N : next].c;
       const w = Math.min(1, Math.max(0, ((q - q0) / Math.max(1e-6, q1 - q0) - c) / (1 - c)));
       W[side] = w; TO[side] = to; FROM[side] = from.clone(); UP[side] = swing(F, lastF, next, dirn).up;
+      // where it is in its gait cycle: 0 as it lands, 50% as the other foot lands, 62% as it lifts, then the swing
+      // (the first foot to move starts as if the other had just landed, at the walk's start; the last to close up
+      // ends its cycle where the walk ends)
+      {
+        const l1 = lastF >= 0 ? land(lastF + 1) : 0, l0 = lastF >= 0 ? land(lastF) : -land(1), l2 = end ? total : land(lastF + 2), c2 = 0.5 + 0.5 * c;
+        PH[side] = w > 0 ? c2 + (1 - c2) * w : q < l1 ? 0.5 * (q - l0) / Math.max(1e-6, l1 - l0) : 0.5 + 0.5 * (q - l1) / Math.max(1e-6, l2 - l1);
+        RL[side] = lastF >= 0 ? 1 : 0; // it rolled off its toes as it lifted (the first step from standing doesn't)
+      }
       if (w <= 0) { A[side].copy(from); continue; }
       const up = to.y - from.y, sw = swing(F, lastF, next, dirn), e = across(sw.up, w);
       A[side].lerpVectors(from, to, e);
@@ -294,16 +331,19 @@ export function walker(f, path, h = () => 0, { speed = 0.6, rest = 7, start = 0,
     }
     // a standing foot left behind the body rolls onto its toes: its heel, and the ankle, rise (up to 5 cm), so it
     // doesn't pull the hips down as the stride opens, and the foot pitches about its toes to keep them on the floor
-    const toe = [0, 0];
+    // On the level the roll follows the gait cycle: the heel leaves the floor in terminal stance (from 38%) and the
+    // foot pitches about the ball to 20 degrees by toe-off (62%), its ankle rising with it; in the swing it comes back
+    // level by mid-swing. (In heels the foot is pointed already, so it rolls less.)
+    const toe = [0, 0], LB = 0.12 * sc * Math.cos(f.pitch), POFF = 0.45 * (1 - 0.45 * Math.min(1, f.pitch / 0.6));
+    const rollAt = (ph) => POFF * sstep(0.38, 0.62, ph);
     for (const side of [0, 1]) {
       const dx = A[side].x - p.x, dz = A[side].z - p.y, behind = -(-sy * dx + cy * dz);
-      // (the roll eases out as the foot leaves the floor, so it swings level)
-      const r = 0.05 * (1 - 0.4 * kS) * sc * sstep(0.04 * sc, 0.26 * sc, behind) * (1 - sstep(0, 0.35, W[side]));
-      A[side].y += r; toe[side] = Math.asin(Math.min(0.9, r / (0.15 * sc)));
-      if (FROM[side]) { // where a lifting foot left from, with the same roll (behind measured from there)
-        const fx = FROM[side].x - p.x, fz = FROM[side].z - p.y, fb = -(-sy * fx + cy * fz);
-        FROM[side].y += 0.05 * (1 - 0.4 * kS) * sc * sstep(0.04 * sc, 0.26 * sc, fb);
-      }
+      // (on a stair, by how far behind the body the foot is; the roll eases out as the foot leaves the floor)
+      const rS = 0.05 * 0.6 * sc * sstep(0.04 * sc, 0.26 * sc, behind) * (1 - sstep(0, 0.35, W[side])), pS = Math.asin(Math.min(0.9, rS / (0.15 * sc)));
+      const pL = RL[side] * (W[side] > 0 ? rollAt(0.62) * (1 - sstep(0, 0.45, W[side])) : rollAt(PH[side]));
+      const pr = pL + (pS - pL) * kS;
+      toe[side] = pr; A[side].y += (W[side] > 0 && UP[side] === 0 ? 0 : LB * Math.sin(pr));
+      if (FROM[side]) { const r0 = RL[side] * rollAt(0.62); FROM[side].y += LB * Math.sin(r0 + (pS - r0) * kS); }
     }
     // the hips: as high as the floor would carry them, no higher than each foot on the floor reaches; a lifting
     // foot, or one far behind (rolling off its toes), lets go of them smoothly
@@ -333,17 +373,31 @@ export function walker(f, path, h = () => 0, { speed = 0.6, rest = 7, start = 0,
         target = Math.min(target, TO[side].y + Math.sqrt(Lr * Lr - dl * dl) + 0.6 * sc * (1 - sstep(0.15, 1, W[side])));
       }
     }
+    // on the level: as high as the standing legs let the hips ride with each knee at its stance angle, about 12
+    // degrees through loading response (to 12% of the cycle) and all but straight from mid-stance on; a heel that
+    // has left the floor (past 45%) holds them only from rising past its straight reach
+    let tL = smoothGround(s) + f.gap * sc + full * 0.999;
+    for (const side of [0, 1]) {
+      if (W[side] > 0 && W[side] < 1 || PH[side] > 0.5 && RL[side]) continue; // (in pre-swing the heel is up: that foot is on its toes)
+      const H = tmp.set(p.x, 0, p.y).add(new THREE.Vector3(f.hipX * sc * (side ? 1 : -1), 0, 0).applyAxisAngle(Y, yaw));
+      const ph = PH[side], kc = ph < 0.45 ? 0.035 + 0.17 * sstep(0, 0.12, ph) * (1 - sstep(0.12, 0.31, ph)) : 0.02;
+      const a = f.thigh * sc, b = f.shin * sc, L = Math.sqrt(a * a + b * b + 2 * a * b * Math.cos(kc)), dh = Math.min(L * 0.999, Math.hypot(A[side].x - H.x, A[side].z - H.z));
+      tL = Math.min(tL, A[side].y + Math.sqrt(L * L - dh * dh));
+    }
+    target = tL + (target - tL) * sstep(0, 0.5, kS);
     hy = hy === null ? target : hy + (target - hy) * ease(14);
     f.root.position.y = hy - hipH;
     // the upper body from the walk cycle, its phase from the footfalls; then the legs reach their feet
     const ph = Math.PI * (n + Math.min(1, Math.max(0, (q - land(n)) / Math.max(1e-6, land(n + 1) - land(n)))));
     walk(f, ph);
     // the hips: on the level a fuller turn and roll with each step and a little sway over the standing foot
-    const hk = 1.4 - 1.0 * kS;
+    const hk = 1.1 - 0.7 * kS;
     f.pelvis.position.set((f.kind === 'woman' ? 0.02 : 0.012) * (1 - kS) * Math.sin(ph), f.hipY, 0);
-    f.pelvis.rotation.set(0, f.pelvis.rotation.y * hk, f.pelvis.rotation.z * hk);
+    f.pelvis.rotation.set(0, f.pelvis.rotation.y * hk, f.pelvis.rotation.z * (1.4 - kS));
+    if (f.clasp) clasp(f, sstep(0.15, 0.85, kS));
     smoothUpper(ease(10));
-    legsTo([0, 1].map((side) => W[side] > 0 && W[side] < 1 && UP[side] === 0 ? { from: FROM[side], to: TO[side], w: W[side] } : null));
+    // (the knee's peak in the swing: 40 degrees on the level, a slow walk's in heels, less near a stair)
+    legsTo([0, 1].map((side) => W[side] > 0 && W[side] < 1 && UP[side] === 0 ? { from: FROM[side], to: TO[side], w: W[side], kp: 0.7 * (1 - kS) } : null));
     for (const side of [0, 1]) f.legs[side].ankle.rotation.x += toe[side];
   };
   update(0);
@@ -417,7 +471,13 @@ export function dressMakehuman(f, gltf, look) {
     W.clear();
     for (const o of order) {
       const k = MAP[o.name], parentW = W.get(o.parent) ?? qp.identity();
-      const wq = k ? D[k].clone().multiply(C[o.name]) : parentW.clone();
+      let wq = k ? D[k].clone().multiply(C[o.name]) : parentW.clone();
+      // hands together: as the arms come in, each hand turns its fingers down and in, over the other
+      if (f.claspK > 0 && (o.name === 'hand_l' || o.name === 'hand_r')) {
+        const bh = meta.bones[o.name], rd = new THREE.Vector3().fromArray(bh.tail).sub(new THREE.Vector3().fromArray(bh.head)).normalize();
+        const sgn = o.name === 'hand_l' ? 1 : -1, want = new THREE.Vector3(-sgn * 0.6, -1, 0.25).normalize();
+        wq = wq.clone().slerp(new THREE.Quaternion().setFromUnitVectors(rd, want), f.claspK);
+      }
       W.set(o, wq);
       o.quaternion.copy(parentW.clone().invert().multiply(wq));
     }

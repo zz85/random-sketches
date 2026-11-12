@@ -123,7 +123,7 @@ export function corridor(renderer, { phone = false, hq = false } = {}) {
   ], { albedo: BOUNCE, share: 0.02, off: 1.0 });
   const fill = new THREE.HemisphereLight(0x8a7044, 0x1a1408, 0.06); g.add(fill);
   // Luv, in her pale dress, climbing the stairs toward the portal, as the stills show her
-  const luv = figure({ kind: 'woman', legs: LUV_LEGS });
+  const luv = figure({ kind: 'woman', legs: LUV_LEGS, clasp: true });
   const stairs = (x, z) => z > zs ? 0 : Math.min(8, Math.floor((zs - z) / tread) + 1) * rise;
   const P = people(g, [{ f: luv, update: walker(luv, [[0.35, 1.2], [0.35, zs + 0.2], [0.3, zl - 0.2]], stairs, { speed: 0.6, rest: 7, start: 9 }) }]);
   return {
@@ -208,7 +208,7 @@ export function office(renderer, { phone = false, hq = false } = {}) {
   g.add(new THREE.HemisphereLight(0x8a7044, 0x2a2010, 0.08));
   // Wallace standing behind his desk; Luv walking in past it and back
   const wal = figure({ kind: 'man', height: 1.86 }), luv = figure({ kind: 'woman', dress: 0x2a221c, legs: LUV_LEGS });
-  wal.root.position.set(0.15, 0, -5.15);
+  wal.root.position.set(0.15, 0, -5.3); // (behind the desk, clear of it)
   const P = people(g, [
     { f: wal, update: (t) => stand(wal, t) },
     { f: luv, update: walker(luv, [[-3.6, 3.2], [-2.6, -1.0], [-1.6, -3.4]], () => 0, { speed: 0.62, rest: 8, start: 4 }) },
@@ -300,7 +300,8 @@ export function hall(renderer, scene, { phone = false, hq = false } = {}) {
   const floorH = (x, z) => onDeck(x, z) ? 0.22 : 0.13;
   const P = people(g, [
     { f: wal, update: (t) => sit(wal, 0.33, t) }, // the cushion's top 0.55 m up, the deck's 0.22
-    { f: luv, update: walker(luv, [[DX + 13, DZ - 0.6], [DX + 5.4, DZ - 1.15], [DX + 0.2, DZ - 1.6], [DX - 1.1, DZ - 1.9]], floorH, { speed: 0.62, rest: 9, start: 8 }) },
+    // (she stops on the deck short of the chairs, at Wallace's side, and turns back: their fronts are at about DZ - 1.7)
+    { f: luv, update: walker(luv, [[DX + 13, DZ - 0.6], [DX + 5.4, DZ - 1.15], [DX + 1.2, DZ - 1.05], [DX - 0.6, DZ - 0.8]], floorH, { speed: 0.62, rest: 9, start: 8 }) },
   ]);
   return {
     group: g, caustics: W2, lights: L, reflector: w.reflector, figures: P, luvLook: { outfit: 'coat', hair: 'bun', skin: 'caucasian' },

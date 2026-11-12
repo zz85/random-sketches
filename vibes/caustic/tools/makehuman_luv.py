@@ -14,7 +14,8 @@ makehuman_luv.py - builds assets/luv.glb, a MakeHuman Luv for Caustic's People, 
 The body is shaped as MakeHuman shapes it (its macro targets: a young caucasian woman, tall, slim, with ideal
 proportions), each clothing and hair is fitted to it as MakeHuman fits a proxy (every vertex a weighted sum of
 three body vertices plus a scaled offset), and every mesh is skinned to the rig, its weights the body's at those
-vertices. The glb holds one body per outfit (the body under each with the vertices it hides left out, sharing
+vertices. The shoes, stiletto booties, are modelled on a foot pointed toe-down: they are turned back toe-up about
+the ankle by each vertex's share of the foot's weight, and the page points the foot down again. The glb holds one body per outfit (the body under each with the vertices it hides left out, sharing
 one set of vertex data), both outfits, three hairstyles and two skins; Caustic shows one of each. Its bones have
 no rotation at rest, so the page drives them from world directions alone. The textures are cut to 1024 px.
 """
@@ -30,6 +31,10 @@ LUV = { # the macro shape: (target, weight)
 }
 OUTFITS = {'tunic': 'clothes/wdg_mycenaean_tunic/wdg_mycenaean_tunic.mhclo', 'coat': 'clothes/punkduck_winter_coat/punkduck_winter_coat.mhclo'}
 HAIRS = {'bun': 'hair/rehmanpolanski_hair_bun_brown/rehmanpolanski_hair_bun_brown.mhclo', 'long': 'hair/o4saken_long01/o4saken_long01.mhclo', 'braid': 'hair/braid01/braid01.mhclo'}
+# heels: stiletto booties, modelled around a foot pointed 33 degrees toe-down (found by fitting the foot into them)
+# with their soles 6.9 cm under the flat foot's, so the figure stands that much taller in them
+SHOES = {'stiletto': 'clothes/toigo_stiletto_booties/toigo_stiletto_booties.mhclo'}
+SHOE_PITCH = math.radians(33)
 FACE = {'eyebrows': 'eyebrows/eyebrow002/eyebrow002.mhclo', 'eyelashes': 'eyelashes/eyelashes01/eyelashes01.mhclo', 'eyes': 'eyes/low-poly/low-poly.mhclo'}
 SKINS = {'caucasian': 'skins/darthfurby_caucasian_female/darthfurby_caucasian_female.mhmat', 'eurasian': 'skins/onlytheghosts_middle_aged_eurasian_female/onlytheghosts_middle_aged_eurasian_female.mhmat'}
 SCALE = 0.1 # MakeHuman's decimetres to metres
@@ -240,21 +245,36 @@ def main():
     dele = c['delete'] if c else set()
     keep = np.array([not any(int(src[i]) in dele for i in t) for t in tri_all])
     attrs = mesh('body_' + k, Pb, Nb, uvb, tri_all[keep], WV[src], body_mat, attrs, {'role': 'body', 'outfit': k})
-  def proxy(name, path, alpha, extras):
+  def proxy(name, path, alpha, extras, unpose=None):
     c = parse_mhclo(path); P, R, Wr = fit(c, V)
     pv, puv, pf = load_obj(c['obj'])
     if len(pv) != len(P): print('warning:', name, 'has', len(pv), 'obj vertices and', len(P), 'fitted', file=sys.stderr)
     n = min(len(pv), len(P)); P = P[:n]
     s, u, t = build_mesh(P, puv, [f for f in pf if max(f[0]) < n])
-    Pw = W2(P); N = normals(Pw, np.array([tt for f in pf if max(f[0]) < n for tt in [(f[0][0], f[0][j], f[0][j + 1]) for j in range(1, len(f[0]) - 1)]]))
-    Wp = (WV[R[:n]] * Wr[:n, :, None]).sum(1)
+    Pw = W2(P); Wp = (WV[R[:n]] * Wr[:n, :, None]).sum(1)
+    if unpose: Pw = unpose(Pw, Wp)
+    N = normals(Pw, np.array([tt for f in pf if max(f[0]) < n for tt in [(f[0][0], f[0][j], f[0][j + 1]) for j in range(1, len(f[0]) - 1)]]))
     mesh(name, Pw[s], N[s], u, t, Wp[s], material(c['mat'], alpha, name), None, extras)
   for k, p in OUTFITS.items(): proxy('outfit_' + k, os.path.join(a.assets, p), False, {'role': 'outfit', 'outfit': k})
   for k, p in HAIRS.items(): proxy('hair_' + k, os.path.join(a.assets, p), True, {'role': 'hair', 'hair': k})
   for k, p in FACE.items(): proxy(k, os.path.join(a.assets, p), k != 'eyes', {'role': k})
+  # the shoes are modelled on a pointed foot: each vertex is turned back toe-up about its ankle by its share of the
+  # foot's weight, so the page's toe-down turn of the foot (by SHOE_PITCH, legs.pitch) puts it where it was modelled
+  heel = 0.0
+  for k, p in SHOES.items():
+    def unpose(Pw, Wp):
+      nonlocal heel; heel = max(heel, -float(Pw[:, 1].min()))
+      out = Pw.copy()
+      for side in 'lr':
+        A = head['foot_' + side]; wf = Wp[:, bi['foot_' + side]] + Wp[:, bi['ball_' + side]]
+        sel = wf > 1e-4
+        ang = -SHOE_PITCH * wf[sel]; r = Pw[sel] - A; cs, sn = np.cos(ang), np.sin(ang)
+        out[sel, 1] = A[1] + r[:, 1] * cs - r[:, 2] * sn; out[sel, 2] = A[2] + r[:, 1] * sn + r[:, 2] * cs
+      return out
+    proxy('shoes_' + k, os.path.join(a.assets, p), False, {'role': 'shoes', 'shoes': k}, unpose)
   # the legs' measures, which the page's walker uses in place of the mannequin's
   L = lambda x, y: float(np.linalg.norm(head[x] - head[y]))
-  root['extras']['legs'] = {'hipY': float(head['thigh_l'][1]), 'thigh': L('thigh_l', 'calf_l'), 'shin': L('calf_l', 'foot_l'), 'ankle': float(head['foot_l'][1]), 'hipX': float(abs(head['thigh_l'][0])), 'height': float(W2(V[src]).max(0)[1])}
+  root['extras']['legs'] = {'hipY': float(head['thigh_l'][1]), 'thigh': L('thigh_l', 'calf_l'), 'shin': L('calf_l', 'foot_l'), 'ankle': float(head['foot_l'][1]), 'hipX': float(abs(head['thigh_l'][0])), 'height': float(W2(V[src]).max(0)[1]), 'heel': heel, 'pitch': SHOE_PITCH}
   root['extras']['bones'] = {n: {'head': [float(x) for x in head[n]], 'tail': [float(x) for x in tail[n]]} for n in order}
   root['children'] += meshes
   g.j['nodes'].append(root); g.j['scenes'][0]['nodes'] = [len(g.j['nodes']) - 1]
