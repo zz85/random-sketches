@@ -169,7 +169,7 @@ export function walker(f, path, h = () => 0, { speed = 0.65, rest = 7, start = 0
     return new THREE.Vector3(p.x + d.y * lat, h(m.x, m.y) + f.gap * f.scale, p.y - d.x * lat);
   };
   const smoothGround = (s) => { let y = 0; for (let k = -3; k <= 3; k++) y += hAt(s + k * 0.1); return y / 7; };
-  let yaw = null, hy = null;
+  let yaw = null, hy = null, kS = null;
   const A = [new THREE.Vector3(), new THREE.Vector3()], tmp = new THREE.Vector3();
   const update = (t) => {
     const u = ((t + start) % cycle + cycle) % cycle;
@@ -197,6 +197,11 @@ export function walker(f, path, h = () => 0, { speed = 0.65, rest = 7, start = 0
     const dirn = back ? -1 : 1, q = back ? total - s : s, F = back ? bwd : fwd;
     let n = 0; while (n < F.length - 1 && F[n + 1] - 0.18 * (F[n + 1] - F[n]) <= q) n++; // the last footfall landed
     const land = (k) => F[Math.min(F.length - 1, k)] - 0.18 * (F[Math.min(F.length - 1, k)] - F[Math.max(0, k - 1)]); // the body's q as footfall k lands
+    // how much the floor steps here, 0 on the level and 1 on a stair, eased so the gait changes over a stride:
+    // on the level the legs stay nearly straight and the hips carry the walk (sway, roll, a turn with each step);
+    // on a stair the knees lift the feet over the risers and the hips stay quiet
+    const wantK = stepped(s) ? 1 : 0; kS = kS === null ? wantK : kS + (wantK - kS) * 0.08;
+    const lift = (0.02 + 0.04 * kS) * sc;
     const stance = [];
     for (const side of [0, 1]) { // footfalls of index parity `side` belong to that foot
       // both feet start together at the first footfall; the trailing one closes up beside the last at the end
@@ -210,20 +215,25 @@ export function walker(f, path, h = () => 0, { speed = 0.65, rest = 7, start = 0
       const e = w * w * (3 - 2 * w), up = to.y - from.y;
       A[side].lerpVectors(from, to, e);
       // up a step: the foot rises early and comes in over the nosing; down one: it goes out, then drops
-      A[side].y = from.y + up * (up > 0 ? Math.min(1, w * 1.7) : Math.max(0, (w - 0.35) / 0.65) ** 1.5) + 0.06 * sc * Math.sin(Math.PI * w);
+      A[side].y = from.y + up * (up > 0 ? Math.min(1, w * 1.7) : Math.max(0, (w - 0.35) / 0.65) ** 1.5) + lift * Math.sin(Math.PI * w);
       if (w >= 1) stance.push(side);
     }
     // the hips: as high as the floor around would carry them, no higher than a standing leg reaches
-    const Lr = (f.thigh + f.shin) * sc * 0.985;
-    let target = smoothGround(s) + hipH * 0.985;
+    // (on the level, a standing leg all but straight, so the hips ride high and dip only as the stride opens)
+    const Lr = (f.thigh + f.shin) * sc * (0.999 - 0.014 * kS);
+    let target = smoothGround(s) + f.gap * sc + (f.thigh + f.shin) * sc * (0.998 - 0.013 * kS);
     const hip = (side) => tmp.set(p.x, 0, p.y).add(new THREE.Vector3(f.hipX * sc * (side ? 1 : -1), 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw));
-    for (const side of stance.length ? stance : [0, 1]) { const H = hip(side), dh = Math.hypot(A[side].x - H.x, A[side].z - H.z); target = Math.min(target, A[side].y + Math.sqrt(Math.max(0, Lr * Lr - dh * dh))); }
+    // (a standing foot that has fallen well behind is rolling onto its toes to leave, so it doesn't hold the hips down)
+    for (const side of stance.length ? stance : [0, 1]) { const H = hip(side), dh = Math.hypot(A[side].x - H.x, A[side].z - H.z); if (dh > (0.6 + 0.4 * kS) * Lr) continue; target = Math.min(target, A[side].y + Math.sqrt(Lr * Lr - dh * dh)); }
     hy = hy === null ? target : hy + (target - hy) * 0.35;
     f.root.position.y = hy - hipH;
     // the upper body from the walk cycle, its phase from the footfalls; then the legs reach their feet
     const q0 = land(n), q1 = land(n + 1);
     walk(f, Math.PI * (n + Math.min(1, Math.max(0, (q - q0) / Math.max(1e-6, q1 - q0)))) * 1);
-    f.pelvis.position.set(0, f.hipY, 0); f.pelvis.rotation.set(0, f.pelvis.rotation.y * 0.5, f.pelvis.rotation.z * 0.5);
+    // the hips: on the level a fuller turn and roll with each step and a little sway over the standing foot
+    const ph = Math.PI * (n + Math.min(1, Math.max(0, (q - q0) / Math.max(1e-6, q1 - q0)))), hk = 1.5 - 1.05 * kS;
+    f.pelvis.position.set((f.kind === 'woman' ? 0.022 : 0.014) * (1 - kS) * Math.sin(ph), f.hipY, 0);
+    f.pelvis.rotation.set(0, f.pelvis.rotation.y * hk, f.pelvis.rotation.z * hk);
     const cy = Math.cos(-yaw), sy = Math.sin(-yaw);
     for (const side of [0, 1]) {
       // the ankle target in the body's frame, from the hip joint
