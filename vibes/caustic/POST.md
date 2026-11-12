@@ -48,6 +48,8 @@ What comes out of this, without being designed in:
 
 The cost is one draw of a grid of about 150,000 cells per lamp per frame (three for a tank), plus two texture reads per vertex. The position maps are made once, since the sets don't move. With 3 or 4 lamps a set, that's around 1 to 3 ms a frame on a desktop GPU, an estimate I haven't measured on real hardware.
 
+On WebGPU the trace moved into a compute pass. The vertex-shader trace sends three rays per vertex, its own and two half a cell along each axis, for the derivatives of where they land. The compute pass sends one ray per grid point into a storage buffer, and each vertex takes the derivatives from its neighbours' landings by central differences. That's a third of the rays, and in SwiftShader a lamp's whole update (trace, blur, mipmaps) went from about 450 to 250 ms, 1.8 to 2.4 times faster. The light it makes differs from the old trace by 2 to 6% of its mean, from the wider step of the derivatives. WebGL 2 has no compute, so it keeps the vertex trace, and `?raster` forces it for comparison.
+
 | set | water | wavelengths | rms slope | look |
 |---|---|---|---|---|
 | corridor | three roof tanks, refraction | 0.2 to 0.9 m | 0.05 | steep nets, soft high, sharp low |

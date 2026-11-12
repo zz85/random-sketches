@@ -11,7 +11,11 @@
  * colour fringes of a real one. The texture's mean is 1, so a light's intensity is its average brightness.
  */
 import * as THREE from 'three/webgpu';
-import { Fn, uniform, uniformArray, vec2, vec3, vec4, float, positionGeometry, positionWorld, varying, dFdx, dFdy, abs, max, min, Loop, sin, cos, sqrt, int, exp, fract, length, If, normalize, reflect, refract, smoothstep, texture, Discard, screenCoordinate, screenUV, mix } from 'three/tsl';
+import { Fn, uniform, uniformArray, vec2, vec3, vec4, float, positionGeometry, positionWorld, varying, dFdx, dFdy, abs, max, min, Loop, sin, cos, sqrt, int, exp, fract, length, If, normalize, reflect, refract, smoothstep, texture, Discard, screenCoordinate, screenUV, mix, instancedArray, storage, instanceIndex, vertexIndex, uint } from 'three/tsl';
+
+// On WebGPU the rays are traced in a compute pass, once per grid point, and the light's mesh reads where they
+// landed; WebGL 2 has no compute, so there (and with ?raster) each vertex traces its own ray and two more.
+const RASTER = typeof location !== 'undefined' && new URLSearchParams(location.search).has('raster');
 
 const WAVES = 12;
 const DROPS = 8; // splashes in flight at once, each a ring that runs out from where it hit and dies away
@@ -277,6 +281,7 @@ export class Trough {
     const geo = new THREE.PlaneGeometry(1, 1, nx, ny); geo.translate(0.5, 0.5, 0);
     this.scene = new THREE.Scene();
     this.cam = new THREE.OrthographicCamera(0, 1, 1, 0, -1, 1);
+    this.compute = !!renderer.backend.isWebGPUBackend && !RASTER; this.traces = [];
     // a mirror doesn't split colours: one draw; a tank does, a little: three, at slightly different throws
     const passes = disp > 0 ? [[vec3(1, 0, 0), 1 - disp], [vec3(0, 1, 0), 1], [vec3(0, 0, 1), 1 + disp]] : [[vec3(1, 1, 1), 1]];
     for (const [ch, f] of passes) {
@@ -302,10 +307,35 @@ export class Trough {
       // signed determinant is interpolated across each triangle, so the brightness changes smoothly from vertex to
       // vertex and a fold (where the determinant passes through 0) falls as a sharp line inside a triangle, not
       // along its edges.
-      const uv = positionGeometry.xy, h = vec2(0.5 / nx, 0.5 / ny);
-      const r0 = land(uv), rx = land(uv.add(vec2(h.x, 0))), ry = land(uv.add(vec2(0, h.y)));
-      const jx = rx.u.sub(r0.u).div(h.x), jy = ry.u.sub(r0.u).div(h.y);
-      const det = jx.x.mul(jy.y).sub(jx.y.mul(jy.x));
+      let uv, r0, det;
+      if (this.compute) {
+        // one ray per grid point (PlaneGeometry's order: row iy from the top, uv.y = 1 - iy / ny), its landing
+        // place and water place stored; each vertex then takes the Jacobian from its neighbours' landings, by
+        // central differences (one-sided at the rim), so a third of the rays of the per-vertex trace
+        const NV = (nx + 1) * (ny + 1), buf = instancedArray(NV, 'vec4');
+        this.traces.push(Fn(() => {
+          const i = instanceIndex;
+          If(i.lessThan(uint(NV)), () => {
+            const ix = i.mod(uint(nx + 1)), iy = i.div(uint(nx + 1));
+            const r = land(vec2(float(ix).div(nx), float(1).sub(float(iy).div(ny))));
+            buf.element(i).assign(vec4(r.u, r.g));
+          });
+        })().compute(NV));
+        const rd = storage(buf.value, 'vec4', NV).toReadOnly(), W = int(nx + 1); // (a node of its own: a vertex stage can't take a writable buffer)
+        const vi = int(vertexIndex), ix = vi.mod(W), iy = vi.div(W);
+        const at = (x, y) => rd.element(y.mul(W).add(x)).xy;
+        const xl = max(ix.sub(1), 0), xr = min(ix.add(1), nx), yu = max(iy.sub(1), 0), yd = min(iy.add(1), ny);
+        const jx = at(xr, iy).sub(at(xl, iy)).mul(nx).div(float(xr.sub(xl)));
+        const jy = at(ix, yu).sub(at(ix, yd)).mul(ny).div(float(yd.sub(yu))); // uv.y falls as iy rises
+        const R = rd.element(vi);
+        uv = positionGeometry.xy; r0 = { u: R.xy, g: R.zw };
+        det = jx.x.mul(jy.y).sub(jx.y.mul(jy.x));
+      } else {
+        uv = positionGeometry.xy; const h = vec2(0.5 / nx, 0.5 / ny);
+        r0 = land(uv); const rx = land(uv.add(vec2(h.x, 0))), ry = land(uv.add(vec2(0, h.y)));
+        const jx = rx.u.sub(r0.u).div(h.x), jy = ry.u.sub(r0.u).div(h.y);
+        det = jx.x.mul(jy.y).sub(jx.y.mul(jy.x));
+      }
       const vDet = varying(det), vG = varying(r0.g), vA = varying(uv), vB = varying(r0.u);
       mt.positionNode = vec3(r0.u, 0);
       mt.colorNode = Fn(() => {
@@ -378,6 +408,7 @@ export class Trough {
   update(t) {
     this.time.value = t * this.speed;
     const r = this.renderer, prev = r.getRenderTarget(), ac = r.autoClear;
+    if (this.traces.length) r.compute(this.traces);
     r.setRenderTarget(this.rt); r.setClearColor(0x000000, 0); r.clear(); r.autoClear = false;
     r.render(this.scene, this.cam);
     r.setRenderTarget(this.rtH); r.render(this.blurH, this.quadCam);

@@ -52,6 +52,7 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
       check(`${tag}${set}: the caustic is lit and has lines`, st.mean > 0.5 && st.mean < 1.6 && st.sd > 0.4 && st.max > 3 && st.lit > 0.05, `mean ${st.mean.toFixed(2)}, sd ${st.sd.toFixed(2)}, max ${st.max.toFixed(1)}, lit ${(st.lit * 100).toFixed(0)}%`);
       const pc = await E('__caustic.posCheck()');
       check(`${tag}${set}: each beam's map of the set matches a traced ray`, pc.length > 0 && pc.every((p) => p.n >= 8 && p.bad < 1 && p.off <= Math.max(1, p.n * 0.08)), pc.map((p) => `${p.n} probes, worst ${p.bad.toFixed(2)}, ${p.off} on edges`).join('; '));
+      if (tag) check(`${tag}${set}: the rays are traced in a compute pass`, await E('__caustic.lamps().length > 0 && __caustic.lamps().every((c) => c.compute)'));
       const er = errors(); check(`${tag}${set}: no console or shader errors`, er.length === 0, er.slice(0, 3).join(' | ').slice(0, 1500));
       if (!tag) {
         const sd = await E('__caustic.splashTest()');

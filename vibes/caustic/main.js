@@ -356,6 +356,17 @@ window.__caustic = {
     return m / N;
   },
   // the mean and the spread of the caustic texture, to see that it is lit and has lines
+  // the traced lamps' light at one time, sampled sparsely (the smoke test compares the compute and raster traces)
+  lamps() { return cur.caustics.filter((c) => c.traces); },
+  async traceDump(at = 12.34) {
+    const o = [];
+    for (const c of cur.caustics) {
+      if (!c.traces) continue; c.update(at);
+      let px; try { px = await renderer.readRenderTargetPixelsAsync(c.rtOut, 0, 0, c.rt.width, c.rt.height); } catch (e) { o.push({ compute: c.compute, err: e.message, w: c.rt.width, h: c.rt.height }); continue; }
+      const v = []; for (let i = 0; i < px.length; i += 48) v.push(+THREE.DataUtils.fromHalfFloat(px[i + 1]).toFixed(3)); o.push({ compute: c.compute, v });
+    }
+    return o;
+  },
   async causticStats() {
     const c = cur.caustics[0];
     const px = await renderer.readRenderTargetPixelsAsync(c.rtOut ?? c.rt, 0, 0, c.rt.width, c.rt.height);
