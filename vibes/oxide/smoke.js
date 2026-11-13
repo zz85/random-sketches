@@ -105,6 +105,20 @@ const VIEWS = [
       await E('__oxide.grow(0.25)'); await shot('grow_1'); const c = await stats();
       check('growing the rust takes paint', c.teal < a.teal - 0.03 && c.rust > a.rust, `teal ${(a.teal * 100).toFixed(0)}% -> ${(c.teal * 100).toFixed(0)}%`);
     }
+    if (!ONLY || ONLY === 'wave') {
+      b.events.length = 0; t0 = Date.now();
+      await b.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/oxide/wave.html?shot&offscreen&res=256&dust=40000&seed=3` });
+      await waitFor(() => E('!!window.__wave || /needs WebGPU|Could not/.test(document.body.innerText)'), 300000);
+      const bad = await E('!window.__wave && document.body.innerText'); if (bad) throw new Error(bad);
+      await E(`__wave.listen('test')`); await E('__wave.U.rate.value = 0.2'); await E('__wave.hear(10)');
+      const w = await E('__wave.stats()');
+      await E('__wave.snapshot()'); const r = await b.send('Page.captureScreenshot', { format: 'png' }); lastPng = r.result.data; fs.writeFileSync(path.join(OUT, 'wave.png'), Buffer.from(lastPng, 'base64'));
+      const s = await stats(), er = errors();
+      check('wave: renders with no errors', er.length === 0, er.slice(0, 3).join(' | ').slice(0, 600));
+      check('wave: the dust rises as the wave', w.alive > 0.02 && w.top > 1, `alive ${(w.alive * 100).toFixed(0)}%, top ${w.top.toFixed(2)} cm`);
+      check('wave: rust stays on the plate, not all of it', w.rust > 0 && w.rust < 0.6, `rust ${(w.rust * 100).toFixed(1)}%`);
+      check('wave: not flat', s.sd > 10 && s.mean > 5, `mean ${s.mean.toFixed(1)} sd ${s.sd.toFixed(1)} (${((Date.now() - t0) / 1000).toFixed(1)} s)`);
+    }
   } catch (e) { check('run', false, e.message); }
   b.kill(); server.close();
   if (process.env.SHOTS) for (const n of ['tide', 'tide_low', 'plates_close', 'powder_close', 'lace']) fs.copyFileSync(path.join(OUT, `${n}.png`), path.join(DIR, `shot_${n}.png`));

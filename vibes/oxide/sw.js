@@ -3,11 +3,11 @@
  * addons used) from unpkg is cached the first time it is fetched. Stale-while-revalidate, so it opens
  * instantly and offline. Bump VERSION when the file list changes.
  */
-const VERSION = 'oxide-v1';
-const SHELL = ['./', './index.html', './main.js', './field.js', './surface.js', './audio.js', './manifest.webmanifest', '../pwa/install.js', './icon.svg', './icon-192.png', './icon-512.png'];
+const VERSION = 'oxide-v2';
+const SHELL = ['./', './index.html', './main.js', './field.js', './surface.js', './audio.js', './wave.html', './wave.js', './manifest.webmanifest', '../pwa/install.js', './icon.svg', './icon-192.png', './icon-512.png'];
 const BASE = 'https://unpkg.com/three@0.187.0/';
 const CDN = [BASE + 'build/three.webgpu.js', BASE + 'build/three.tsl.js']
-  .concat(['controls/OrbitControls.js', 'tsl/display/DepthOfFieldNode.js'].map((f) => BASE + 'examples/jsm/' + f));
+  .concat(['controls/OrbitControls.js', 'tsl/display/DepthOfFieldNode.js', 'tsl/display/BloomNode.js'].map((f) => BASE + 'examples/jsm/' + f));
 
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL).then(() => Promise.all(CDN.map((u) => c.add(u).catch(() => {}))))).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => {

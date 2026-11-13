@@ -8,6 +8,16 @@ Codevember: Rust, a third take. Close-up landscapes of rust on old turquoise pai
 ![Powder, close](shot_powder_close.png)
 ![Lace](shot_lace.png)
 
+## Waveform
+
+[`wave.html`](wave.html) is a classic 3D audio waveform on a 12 cm turquoise plate. Where the music is loud, the paint rots into rust dust that rises as the wave: the spectrum is mirrored left and right from the middle, the newest sound is at the back, and every eighth row of sound is a ridge line of dust that scrolls toward you. The dust glows brighter the higher it rides. The rust each loud pass eats into the paint stays, so the plate keeps a rust picture of the song.
+
+![Waveform](shot_wave.png)
+
+- **Sound** (`l` or space): the built-in track, the microphone or an audio file. **New plate** (`n`) starts over on bare paint. **Low / Mid / High** (`a`) sets how high the wave rises.
+- URL options: `res=` (plate field, 512 or 256 on phones), `dust=` (grains, 160000 or 50000 on phones), `amp=`, `seed=`.
+- How it works (`wave.js`): the spectrum goes into a ring texture, 64 bands by 256 rows at 30 rows a second, smoothed across bands and in time and with a gain for each band. A compute pass grows rust on the plate where the wave is high, faster on steel that is prone to it. A second pass moves the grains: each is born on the plate under the wave, flakes from paint and crumbs and powder from rust, springs to the wave's height on its ridge line, rides forward with the sound and crumbles when the sound drops away.
+
 ## Using it
 
 - **Scene** (`p`, arrow keys): Tide lines, Plates, Powder, Lace. **New** (`n`) makes another piece of the same scene.
@@ -26,4 +36,4 @@ URL options: `scene=tide|plates|powder|lace`, `seed=`, `grow`, `still` (no fligh
 - **Raymarch** (`surface.js`): a fullscreen pass marches each pixel's ray through the height textures (steps sized by height and distance, then bisection), shades it by hand (paint in two tones with chalky weathering, banded and mottled rust, glints, GGX sun with soft shadows marched toward it, a dark room in the reflections, clearcoat, cavities, fog) and writes depth, so instanced grains of powder, crumbs and drops of water sit in it and the depth of field reads it.
 - **Speed**: the scene renders at a scale that drops when frames run slower than 40 fps and rises above 57; the grade and film grain go on top at full size.
 
-`node smoke.js` checks each scene renders with paint and rust in frame, the flight glides and stays above the ground, Listen moves the paint, and growing takes paint (WebGPU on SwiftShader; `SHOTS=1` refreshes the screenshots here).
+`node smoke.js` checks each scene renders with paint and rust in frame, the flight glides and stays above the ground, Listen moves the paint, growing takes paint, and the waveform raises dust and leaves rust (WebGPU on SwiftShader; `SHOTS=1` refreshes the screenshots here).
