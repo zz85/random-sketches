@@ -7,23 +7,14 @@ Codevember: Rust, a third take. Close-up landscapes of rust on old turquoise pai
 ![Plates, close](shot_plates_close.png)
 ![Powder, close](shot_powder_close.png)
 ![Lace](shot_lace.png)
-
-## Waveform
-
-[`wave.html`](wave.html) is a classic 3D audio waveform on a 12 cm turquoise plate. Where the music is loud, the paint rots into rust dust that rises as the wave: the spectrum is mirrored left and right from the middle, the newest sound is at the back, and every eighth row of sound is a ridge line of dust that scrolls toward you. The dust glows brighter the higher it rides. The rust each loud pass eats into the paint stays, so the plate keeps a rust picture of the song.
-
-![Waveform](shot_wave.png)
-
-- **Sound** (`l` or space): the built-in track, the microphone or an audio file. **New plate** (`n`) starts over on bare paint. **Low / Mid / High** (`a`) sets how high the wave rises.
-- URL options: `res=` (plate field, 512 or 256 on phones), `dust=` (grains, 160000 or 50000 on phones), `amp=`, `seed=`.
-- How it works (`wave.js`): the spectrum goes into a ring texture, 64 bands by 256 rows at 30 rows a second, smoothed across bands and in time and with a gain for each band. A compute pass grows rust on the plate where the wave is high, faster on steel that is prone to it. A second pass moves the grains: each is born on the plate under the wave, flakes from paint and crumbs and powder from rust, springs to the wave's height on its ridge line, rides forward with the sound and crumbles when the sound drops away.
+![Listen: the steel sculpted into a waveform](shot_listen.png)
 
 ## Using it
 
 - **Scene** (`p`, arrow keys): Tide lines, Plates, Powder, Lace. **New** (`n`) makes another piece of the same scene.
 - **Grow** (`g`) lets the rust front move into the paint.
 - **Fly** (`d`): when you leave the camera alone it glides over the surface at a slow, steady height, turning and banking a little. Drag to look around (that takes the camera back), tap to focus there.
-- **Listen** (`l`): the built-in track, the microphone, or an audio file (or drop one on the page) moves the paint to the sound.
+- **Listen** (`l`): the built-in track, the microphone, or an audio file (or drop one on the page) sculpts the steel into a classic 3D waveform where you are looking, 2.2 by 3.2 cm: the bands run across it mirrored from the middle, the newest sound rises at the far edge and rolls toward you, every eighth row is a raised rib, and on the loud crests the paint rots into rust. Left alone, the camera watches it from the front.
 - Save a PNG with `s`; `h` hides the interface.
 
 URL options: `scene=tide|plates|powder|lace`, `seed=`, `grow`, `still` (no flight), `res=` (field size in texels; 768, or 512 on phones), `dpr=` (pixel ratio, 1 by default), `scale=` (fixed render scale; it follows the frame rate otherwise), `nodof`.
@@ -34,6 +25,7 @@ URL options: `scene=tide|plates|powder|lace`, `seed=`, `grow`, `still` (no fligh
   - The arrival pass stores when rust reaches each point: a domain-warped fractal noise, lace from a finer one, cracks of a cell network where the paint has crazed, corrosion pits as craters, all varied by regions about 10 cm across (more or less rust, crazing, lace, crust, a purple or ochre tint, waviness of the sheet).
   - The shape pass turns the distance to the front into relief and materials: paint that lifts and curls where rust undercuts it, plates dished between cracks, blisters, banded tide lines, crust and pits, powder at the front and dark clumps behind it.
 - **Raymarch** (`surface.js`): a fullscreen pass marches each pixel's ray through the height textures (steps sized by height and distance, then bisection), shades it by hand (paint in two tones with chalky weathering, banded and mottled rust, glints, GGX sun with soft shadows marched toward it, a dark room in the reflections, clearcoat, cavities, fog) and writes depth, so instanced grains of powder, crumbs and drops of water sit in it and the depth of field reads it.
+- **Listen** (`audio.js`, `surface.js`): the spectrum goes into a ring texture, 64 bands by 256 rows at 30 rows a second, smoothed across bands and in time with a gain for each band. The raymarch adds it to the height as it marches: each point's band from its distance across the patch, its row from its distance along it, eased between rows so the ridges roll smoothly, and the paint's edge pulled back on the loud crests so the rust shows there. Grains and drops ride the same height.
 - **Speed**: the scene renders at a scale that drops when frames run slower than 40 fps and rises above 57; the grade and film grain go on top at full size.
 
-`node smoke.js` checks each scene renders with paint and rust in frame, the flight glides and stays above the ground, Listen moves the paint, growing takes paint, and the waveform raises dust and leaves rust (WebGPU on SwiftShader; `SHOTS=1` refreshes the screenshots here).
+`node smoke.js` checks each scene renders with paint and rust in frame, the flight glides and stays above the ground, Listen raises the waveform and the camera watches it from the front, and growing takes paint (WebGPU on SwiftShader; `SHOTS=1` refreshes the screenshots here).

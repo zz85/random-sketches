@@ -86,16 +86,16 @@ const VIEWS = [
       b.events.length = 0;
     }
     if (!ONLY || ONLY === 'listen') {
-      // Listen, with the test source (no audio device): the paint moves, and rings show
+      // Listen, with the test source (no audio device): the steel rises in a waveform, watched from the front
       await E(`__oxide.set('lace', 8)`); await E(`__oxide.view([0.35, 0.5, 0.6, 0, 0.02, 0])`);
       await shot('listen_0'); const a = await stats();
       await E(`__oxide.listen('test')`); await E('__oxide.hear(5)');
       await shot('listen_1'); const c = await stats(); const er = errors();
       check('listen: renders with no errors', er.length === 0, er.slice(0, 3).join(' | ').slice(0, 600));
-      check('listen: the paint moves to the sound', Math.abs(c.teal - a.teal) > 0.01 || Math.abs(c.mean - a.mean) > 1, `teal ${(a.teal * 100).toFixed(0)}% -> ${(c.teal * 100).toFixed(0)}%, mean ${a.mean.toFixed(1)} -> ${c.mean.toFixed(1)}`);
-      const o = await E('__oxide.fly(12).then((s) => ({ R: s.R, y: s.y, g: s.ground }))');
-      await shot('listen_orbit');
-      check('listen: the camera circles the rings', Math.abs(o.R - 0.85) < 0.3 && o.y > o.g + 0.05, `radius ${o.R.toFixed(2)}, ${(o.y - o.g).toFixed(2)} cm up`);
+      check('listen: the waveform sculpts the steel', Math.abs(c.teal - a.teal) > 0.01 || Math.abs(c.mean - a.mean) > 1, `teal ${(a.teal * 100).toFixed(0)}% -> ${(c.teal * 100).toFixed(0)}%, mean ${a.mean.toFixed(1)} -> ${c.mean.toFixed(1)}`);
+      const o = await E('__oxide.fly(12).then((s) => ({ dz: s.z + __oxide.sound.emit.value.y, dx: s.x - __oxide.sound.emit.value.x, y: s.y, g: s.ground }))');
+      await shot('listen_front');
+      check('listen: the camera watches it from the front', o.dz > 1.5 && o.dz < 2.8 && Math.abs(o.dx) < 0.7 && o.y > o.g + 0.3, `${o.dz.toFixed(2)} cm in front, ${o.dx.toFixed(2)} aside, ${(o.y - o.g).toFixed(2)} cm up`);
       await E(`__oxide.listen('off')`); await E('__oxide.hear(3)');
       b.events.length = 0;
     }
@@ -104,20 +104,6 @@ const VIEWS = [
       await shot('grow_0'); const a = await stats();
       await E('__oxide.grow(0.25)'); await shot('grow_1'); const c = await stats();
       check('growing the rust takes paint', c.teal < a.teal - 0.03 && c.rust > a.rust, `teal ${(a.teal * 100).toFixed(0)}% -> ${(c.teal * 100).toFixed(0)}%`);
-    }
-    if (!ONLY || ONLY === 'wave') {
-      b.events.length = 0; t0 = Date.now();
-      await b.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/oxide/wave.html?shot&offscreen&res=256&dust=40000&seed=3` });
-      await waitFor(() => E('!!window.__wave || /needs WebGPU|Could not/.test(document.body.innerText)'), 300000);
-      const bad = await E('!window.__wave && document.body.innerText'); if (bad) throw new Error(bad);
-      await E(`__wave.listen('test')`); await E('__wave.U.rate.value = 0.2'); await E('__wave.hear(10)');
-      const w = await E('__wave.stats()');
-      await E('__wave.snapshot()'); const r = await b.send('Page.captureScreenshot', { format: 'png' }); lastPng = r.result.data; fs.writeFileSync(path.join(OUT, 'wave.png'), Buffer.from(lastPng, 'base64'));
-      const s = await stats(), er = errors();
-      check('wave: renders with no errors', er.length === 0, er.slice(0, 3).join(' | ').slice(0, 600));
-      check('wave: the dust rises as the wave', w.alive > 0.02 && w.top > 1, `alive ${(w.alive * 100).toFixed(0)}%, top ${w.top.toFixed(2)} cm`);
-      check('wave: rust stays on the plate, not all of it', w.rust > 0 && w.rust < 0.6, `rust ${(w.rust * 100).toFixed(1)}%`);
-      check('wave: not flat', s.sd > 10 && s.mean > 5, `mean ${s.mean.toFixed(1)} sd ${s.sd.toFixed(1)} (${((Date.now() - t0) / 1000).toFixed(1)} s)`);
     }
   } catch (e) { check('run', false, e.message); }
   b.kill(); server.close();

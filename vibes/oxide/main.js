@@ -3,15 +3,15 @@
 // and raymarches it, adds grains of powder and crumbs and drops of water; this file sets the scene: a low
 // raking sun, a dark room to reflect, fog toward the horizon, a camera that glides over the surface like a
 // lunar orbiter when you leave it (steady height, slow turns, a gentle bank), depth of field focused where
-// you tap, a teal and orange grade, and a render scale that follows the frame rate. Listen (audio.js) moves
-// the paint to sound: its edges push out into the rust in rings that spread from a point, which the camera
-// then circles.
+// you tap, a teal and orange grade, and a render scale that follows the frame rate. Listen (audio.js) sculpts
+// the steel into a classic 3D waveform of the sound (surface.js): ridges that rise where it is loud and roll
+// toward the camera, the paint rotting into rust on the loud crests; the camera then watches it from the front.
 import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { dof } from 'three/addons/tsl/display/DepthOfFieldNode.js';
 import { pass, uniform, vec2, vec3, vec4, float, mix, smoothstep, length, dot, screenUV, screenSize, hash, time, Fn, positionLocal } from 'three/tsl';
 import { makeField, PRESETS } from './field.js';
-import { makeLook, makeSound, terrainMesh, grainMesh, dropMesh, FOG, BG as BGRGB } from './surface.js';
+import { makeLook, makeSound, terrainMesh, LD, grainMesh, dropMesh, FOG, BG as BGRGB } from './surface.js';
 import { makeAudio, ROWS } from './audio.js';
 
 const Q = new URLSearchParams(location.search.slice(1) + '&' + location.hash.slice(1));
@@ -68,8 +68,8 @@ const state = {
   const plain = terrainMesh(field, look), listening = terrainMesh(field, look, sound); listening.visible = false;
   scene.add(plain, listening);
   const group = new THREE.Group(); group.rotation.x = -Math.PI / 2; scene.add(group);
-  const grains = grainMesh(field, look, phone ? 30000 : 80000); group.add(grains);
-  const drops = dropMesh(field, look, 60); group.add(drops);
+  const grains = grainMesh(field, look, phone ? 30000 : 80000, sound); group.add(grains);
+  const drops = dropMesh(field, look, 60, sound); group.add(drops);
 
   const setScene = () => {
     const p = PRESETS[state.scene];
@@ -146,7 +146,7 @@ const state = {
   // ---- the orbiter: when you leave the camera alone it glides over the surface at a steady height, slowly
 // turning and banking a little into its turns, its height and speed changing over minutes, never quickly.
 // It rides the highest ground in the next half centimetre ahead, rising early over a ridge and sinking late
-// after it. In Listen it circles the point the sound's rings spread from instead.
+// after it. In Listen it watches the waveform from the front instead, swaying slowly from side to side.
   const ship = { x: 0, z: 0, psi: 0, v: 0.1, h: 0.2, pitch: 0.4, roll: 0, fov: 40, gy: 0.02, T: 0, ang: 0, R: 1, tg: new THREE.Vector3(), flying: false };
   const board = () => { // take over from the camera as it is
     const dir = controls.target.clone().sub(camera.position).normalize();
@@ -162,12 +162,11 @@ const state = {
     ship.gy += (ground.ahead - ship.gy) * e(ground.ahead > ship.gy ? 0.8 : 0.15);
     ship.fov += (44 - ship.fov) * e(0.2);
     if (state.listen) {
-      const E = emitW();
-      ship.ang += dt * P / 75; ship.R += (0.85 - ship.R) * e(0.12);
-      ship.h += (0.3 + 0.05 * Math.sin(T * P / 47) - ship.h) * e(0.15);
-      ship.x = E.x + Math.sin(ship.ang) * ship.R; ship.z = E.z + Math.cos(ship.ang) * ship.R;
-      ship.tg.lerp(E.setY(ship.gy), e(0.4));
-      ship.roll += (0.04 - ship.roll) * e(0.3);
+      const E = emitW(), sx = E.x + 0.45 * Math.sin(T * P / 67), sz = E.z + LD / 2 + 0.55 + 0.12 * Math.sin(T * P / 43 + 1);
+      ship.x += (sx - ship.x) * e(0.25); ship.z += (sz - ship.z) * e(0.25);
+      ship.h += (0.85 + 0.08 * Math.sin(T * P / 53) - ship.h) * e(0.2);
+      ship.tg.lerp(E.setY(ship.gy + 0.02).add(new THREE.Vector3(0, 0.04, 0.1)), e(0.4));
+      ship.roll += (0.015 * Math.sin(T * P / 67) - ship.roll) * e(0.3);
       return { pos: new THREE.Vector3(ship.x, ship.gy + ship.h, ship.z), target: ship.tg.clone(), roll: ship.roll, fov: ship.fov };
     }
     ship.h += (0.2 + 0.07 * Math.sin(T * P / 97) + 0.035 * Math.sin(T * P / 41 + 2) - ship.h) * e(0.15);
@@ -251,7 +250,7 @@ const state = {
       if (!ship.flying && Math.abs(camera.fov - 40) > 0.01) { camera.fov += (40 - camera.fov) * Math.min(1, dt * 2); camera.updateProjectionMatrix(); }
     }
     audio.update(dt);
-    sound.head.value = audio.head; sound.on.value += ((state.listen ? 1 : 0) - sound.on.value) * Math.min(1, dt * 1.5);
+    sound.head.value = audio.head + audio.frac; sound.on.value += ((state.listen ? 1 : 0) - sound.on.value) * Math.min(1, dt * 1.5);
     listening.visible = sound.on.value > 0.002; plain.visible = !listening.visible;
     field.update(state.t, centre(), settle);
     look.centre.value.copy(want);

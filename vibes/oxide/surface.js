@@ -30,30 +30,42 @@ export function makeLook() {
   return L;
 }
 
-const HMAX = 0.16, HMIN = -0.12; // the slab the surface lies in, cm
+const HMAX = 0.32, HMIN = -0.12; // the slab the surface lies in, cm
 const fieldXY = (w) => vec2(w.x, w.z.negate()); // world (x, z) to the field's coords
 
-// sound for Listen: the ring of spectrum rows (audio.js), the point the rings spread from, how far a row
-// travels, and how much it moves the paint (eased in and out)
-export function makeSound(tex) { return { tex, head: uniform(0), emit: uniform(new THREE.Vector2()), dr: uniform(0.006), on: uniform(0) }; }
+// sound for Listen: the ring of spectrum rows (audio.js) laid out on the steel as a classic 3D waveform, a
+// patch WD cm across and LD cm deep at `emit`. The bands run across it, mirrored from the middle (the lows
+// in the middle), and the rows run toward the camera: the newest sound at the far edge, a row older every
+// DR cm nearer. Where the sound is loud the steel rises in a ridge, every eighth row a raised rib as the
+// lines of a waveform grid, and the paint there rots into rust. `on` eases it in and out.
+export const WD = 2.2, LD = 3.2, DR = LD / (ROWS - 3), WH = 0.16;
+export function makeSound(tex) { return { tex, head: uniform(0), emit: uniform(new THREE.Vector2()), on: uniform(0) }; }
+
+// the waveform at p (field coords): its height in cm, how loud (0..1) and how near a rib (0..1)
+export const waveAt = (S, p) => {
+  const lx = p.x.sub(S.emit.x), ly = p.y.sub(S.emit.y);
+  const k = float(LD / 2).sub(ly).div(DR);                              // the row's age, in rows
+  const ax = abs(lx).div(WD / 2);
+  const env = smoothstep(1.0, 0.86, ax).mul(smoothstep(0.0, 3.0, k)).mul(smoothstep(float(ROWS - 3), float(ROWS - 40), k)).mul(S.on);
+  const tu = ax.clamp(0, 1).mul((BANDS - 1) / BANDS).add(0.5 / BANDS);
+  const row = S.head.sub(k);                                             // the row's number in the ring, fractional
+  const lv = texture(S.tex, vec2(tu, row.add(0.5).div(ROWS))).level(0).x;
+  const q = fract(row.div(8)), rib = exp(min(q, float(1).sub(q)).mul(8).pow(2).mul(-0.9));
+  const a = smoothstep(0.04, 1.0, lv).mul(env);
+  return { h: a.pow(1.25).mul(WH).mul(rib.mul(0.3).add(0.78)), a, rib: rib.mul(env) };
+};
 
 // the surface at p: height, distance to the paint's edge, cover, and the sound there. Without sound, the
-// height the field made; with it, the paint's edge pushed out into the rust and the paint lifted by the
-// spectrum, its bands round the circle and its history outward from the centre
+// height the field made; with it, the field lifted by the waveform, with the paint eaten back where it is loud
 const surfAt = (field, S, p, blend) => {
   const H = field.sample(field.texH, p, blend);
   if (!S) return { h: H.x, H, s: H.y, a: float(0), m: null };
   const M = field.sample(field.texM, p, blend), te = field.texelAt(p);
-  const d = p.sub(S.emit), r = length(d).add(H.w.mul(0.12)), k = r.div(S.dr).max(0.6);
-  const u = abs(atan(d.y, d.x)).div(Math.PI).mul((BANDS - 1) / BANDS).add(0.5 / BANDS);
-  const v = S.head.add(0.5).sub(k).div(ROWS);
-  const snd = texture(S.tex, vec2(u, v)).level(0);
-  const a = snd.x.mul(smoothstep(float(ROWS), float(ROWS * 0.6), k)).mul(S.on);
-  const wv = snd.y.mul(smoothstep(float(90), float(20), k)).mul(S.on);
-  const s2 = H.y.add(a.mul(0.035)).add(snd.z.mul(0.02).mul(S.on));
+  const W = waveAt(S, p);
+  const s2 = H.y.sub(W.a.mul(W.a).mul(0.09));
   const m0 = coverOf(H.y, te), m2 = coverOf(s2, te.max(0.0015));
-  const h = H.x.sub(m0.mul(M.x)).add(m2.mul(M.x)).add(a.mul(0.028).add(wv.mul(0.01)).mul(smoothstep(0.0, 0.05, s2))); // rising inside the paint, not as a wall at its edge
-  return { h, H, s: s2, a, m: m2, M };
+  const h = H.x.sub(m0.mul(M.x)).add(m2.mul(M.x)).add(W.h);
+  return { h, H, s: s2, a: W.a, rib: W.rib, m: m2, M };
 };
 
 export function terrainMesh(field, L, S = null) {
@@ -74,12 +86,12 @@ export function terrainMesh(field, L, S = null) {
     const tEnd = min(float(12), select(down, ro.y.sub(HMIN).div(rd.y.negate().max(1e-4)), float(16)));
     const t = t0.toVar(), tp = t0.toVar(), hit = float(0).toVar();
     If(t0.lessThan(tEnd), () => {
-      Loop(160, () => {
+      Loop(S ? 220 : 160, () => {
         const pw = ro.add(rd.mul(t));
         const d = pw.y.sub(hAt(pw));
         If(d.lessThan(0), () => { hit.assign(1); Break(); });
         tp.assign(t);
-        t.addAssign(max(d.mul(0.5), t.mul(0.0016).add(0.0003)));
+        t.addAssign(max(d.mul(S ? 0.32 : 0.5), t.mul(0.0016).add(0.0003)));
         If(t.greaterThan(tEnd), () => { Break(); });
       });
     });
@@ -172,7 +184,7 @@ export function terrainMesh(field, L, S = null) {
     };
     const f0 = mix(vec3(0.04), albedo, metal);
     let col = diffuse.add(spec(rough, f0));
-    if (S) col = col.add(L.paint2.mul(SF.a.mul(exp(abs(s).div(-0.012))).mul(0.35).add(SF.a.mul(cover).mul(0.05)))); // the moving edge, lit by the sound
+    if (S) col = col.add(L.rA.mul(SF.a.mul(SF.a).mul(float(1).sub(cover)).mul(SF.rib.mul(0.5).add(0.08)).mul(0.6))); // the loud crests' ribs, hot rust
     col = col.add(spec(float(0.08), vec3(0.04)).mul(cover.mul(L.clear)));
     // fog, and the dark beyond the steel
     const fogK = exp(t.mul(FOG).pow(2).negate());
@@ -195,7 +207,7 @@ const placed = (L, i, size, salt) => {
   return L.centre.add(off);
 };
 
-export function grainMesh(field, L, count) {
+export function grainMesh(field, L, count, S = null) {
   const g = new THREE.OctahedronGeometry(1, 0);
   const m = new THREE.MeshStandardNodeMaterial({ roughness: 0.85, flatShading: true });
   const i = float(instanceIndex);
@@ -213,7 +225,7 @@ export function grainMesh(field, L, count) {
     const v = positionLocal.mul(vec3(r2.mul(0.6).add(0.7), r4.mul(0.6).add(0.7), 0.75)).mul(sz);
     const vx = v.x.mul(cos(a)).sub(v.y.mul(sin(a))), vy = v.x.mul(sin(a)).add(v.y.mul(cos(a)));
     const vy2 = vy.mul(cos(b)).sub(v.z.mul(sin(b))), vz = vy.mul(sin(b)).add(v.z.mul(cos(b)));
-    return vec3(q.x.add(vx), q.y.add(vy2), H.x.add(vz).add(sz.mul(0.35)));
+    return vec3(q.x.add(vx), q.y.add(vy2), H.x.add(vz).add(sz.mul(0.35)).add(S ? waveAt(S, q).h : 0));
   })();
   const col = mix(L.powderCol.mul(r3.mul(0.6).add(0.6)), mix(L.rE, L.rD, r3), select(isClump, float(1), smoothstep(0.7, 1.0, r4)));
   m.colorNode = varying(col, 'vGrainCol');
@@ -222,7 +234,7 @@ export function grainMesh(field, L, count) {
   return mesh;
 }
 
-export function dropMesh(field, L, count) {
+export function dropMesh(field, L, count, S = null) {
   const g = new THREE.SphereGeometry(1, 28, 10, 0, Math.PI * 2, 0, Math.PI / 2); g.rotateX(Math.PI / 2);
   const m = new THREE.MeshPhysicalNodeMaterial({ roughness: 0.03, transmission: 1, thickness: 0.02, ior: 1.33, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.02 });
   const i = float(instanceIndex);
@@ -232,7 +244,7 @@ export function dropMesh(field, L, count) {
   const r1 = hash(i.mul(4.7).add(11)), r2 = hash(i.mul(6.3).add(12));
   const keep = r1.lessThan(L.drops).and(M.z.lessThan(0.4));
   const sz = select(keep, r2.mul(r2).mul(0.05).add(0.008), float(0));
-  m.positionNode = vec3(q.x.add(positionLocal.x.mul(sz)), q.y.add(positionLocal.y.mul(sz)), H.x.add(positionLocal.z.mul(sz).mul(0.62)).sub(sz.mul(0.04)));
+  m.positionNode = vec3(q.x.add(positionLocal.x.mul(sz)), q.y.add(positionLocal.y.mul(sz)), H.x.add(positionLocal.z.mul(sz).mul(0.62)).sub(sz.mul(0.04)).add(S ? waveAt(S, q).h : 0));
   // water on rust picks up its colour; on paint it stays clear
   m.colorNode = varying(mix(vec3(1, 0.62, 0.32), vec3(0.94, 0.98, 1), M.x), 'vDropCol');
   const mesh = new THREE.Mesh(g, m);
