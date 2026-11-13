@@ -3,15 +3,15 @@
 // and raymarches it, adds grains of powder and crumbs and drops of water; this file sets the scene: a low
 // raking sun, a dark room to reflect, fog toward the horizon, a camera that glides over the surface like a
 // lunar orbiter when you leave it (steady height, slow turns, a gentle bank), depth of field focused where
-// you tap, a teal and orange grade, and a render scale that follows the frame rate. Listen (audio.js) sculpts
-// the steel into a classic 3D waveform of the sound (surface.js): ridges that rise where it is loud and roll
-// toward the camera, the paint rotting into rust on the loud crests; the camera then watches it from the front.
+// you tap, a teal and orange grade, and a render scale that follows the frame rate. Listen (audio.js) corrodes
+// the steel as a classic 3D waveform of the sound (surface.js): where it is loud the paint rots away and the
+// steel sinks into troughs that roll toward the camera, throwing up rust dust; the camera watches from the front.
 import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { dof } from 'three/addons/tsl/display/DepthOfFieldNode.js';
 import { pass, uniform, vec2, vec3, vec4, float, mix, smoothstep, length, dot, screenUV, screenSize, hash, time, Fn, positionLocal } from 'three/tsl';
 import { makeField, PRESETS } from './field.js';
-import { makeLook, makeSound, terrainMesh, LD, grainMesh, dropMesh, FOG, BG as BGRGB } from './surface.js';
+import { makeLook, makeSound, terrainMesh, LD, grainMesh, dropMesh, dustMesh, FOG, BG as BGRGB } from './surface.js';
 import { makeAudio, ROWS } from './audio.js';
 
 const Q = new URLSearchParams(location.search.slice(1) + '&' + location.hash.slice(1));
@@ -70,6 +70,7 @@ const state = {
   const group = new THREE.Group(); group.rotation.x = -Math.PI / 2; scene.add(group);
   const grains = grainMesh(field, look, phone ? 30000 : 80000, sound); group.add(grains);
   const drops = dropMesh(field, look, 60, sound); group.add(drops);
+  const dust = dustMesh(field, look, sound, phone ? 20000 : 60000); group.add(dust);
 
   const setScene = () => {
     const p = PRESETS[state.scene];
@@ -251,7 +252,7 @@ const state = {
     }
     audio.update(dt);
     sound.head.value = audio.head + audio.frac; sound.on.value += ((state.listen ? 1 : 0) - sound.on.value) * Math.min(1, dt * 1.5);
-    listening.visible = sound.on.value > 0.002; plain.visible = !listening.visible;
+    listening.visible = sound.on.value > 0.002; plain.visible = !listening.visible; dust.visible = listening.visible;
     field.update(state.t, centre(), settle);
     look.centre.value.copy(want);
     if (frame % 4 === 0) probe(ship.flying ? controls.target.clone().sub(camera.position) : null);

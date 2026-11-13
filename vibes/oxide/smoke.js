@@ -86,13 +86,13 @@ const VIEWS = [
       b.events.length = 0;
     }
     if (!ONLY || ONLY === 'listen') {
-      // Listen, with the test source (no audio device): the steel rises in a waveform, watched from the front
+      // Listen, with the test source (no audio device): the steel corrodes in a waveform, watched from the front
       await E(`__oxide.set('lace', 8)`); await E(`__oxide.view([0.35, 0.5, 0.6, 0, 0.02, 0])`);
       await shot('listen_0'); const a = await stats();
       await E(`__oxide.listen('test')`); await E('__oxide.hear(5)');
       await shot('listen_1'); const c = await stats(); const er = errors();
       check('listen: renders with no errors', er.length === 0, er.slice(0, 3).join(' | ').slice(0, 600));
-      check('listen: the waveform sculpts the steel', Math.abs(c.teal - a.teal) > 0.01 || Math.abs(c.mean - a.mean) > 1, `teal ${(a.teal * 100).toFixed(0)}% -> ${(c.teal * 100).toFixed(0)}%, mean ${a.mean.toFixed(1)} -> ${c.mean.toFixed(1)}`);
+      check('listen: the sound corrodes the steel', Math.abs(c.teal - a.teal) > 0.01 || Math.abs(c.mean - a.mean) > 1, `teal ${(a.teal * 100).toFixed(0)}% -> ${(c.teal * 100).toFixed(0)}%, mean ${a.mean.toFixed(1)} -> ${c.mean.toFixed(1)}`);
       const o = await E('__oxide.fly(12).then((s) => ({ dz: s.z + __oxide.sound.emit.value.y, dx: s.x - __oxide.sound.emit.value.x, y: s.y, g: s.ground }))');
       await shot('listen_front');
       check('listen: the camera watches it from the front', o.dz > 1.5 && o.dz < 2.8 && Math.abs(o.dx) < 0.7 && o.y > o.g + 0.3, `${o.dz.toFixed(2)} cm in front, ${o.dx.toFixed(2)} aside, ${(o.y - o.g).toFixed(2)} cm up`);

@@ -30,14 +30,15 @@ export function makeLook() {
   return L;
 }
 
-const HMAX = 0.32, HMIN = -0.12; // the slab the surface lies in, cm
+const HMAX = 0.16, HMIN = -0.3; // the slab the surface lies in, cm
 const fieldXY = (w) => vec2(w.x, w.z.negate()); // world (x, z) to the field's coords
 
 // sound for Listen: the ring of spectrum rows (audio.js) laid out on the steel as a classic 3D waveform, a
-// patch WD cm across and LD cm deep at `emit`. The bands run across it, mirrored from the middle (the lows
-// in the middle), and the rows run toward the camera: the newest sound at the far edge, a row older every
-// DR cm nearer. Where the sound is loud the steel rises in a ridge, every eighth row a raised rib as the
-// lines of a waveform grid, and the paint there rots into rust. `on` eases it in and out.
+// patch WD cm across and LD cm deep at `emit`, but cut into the steel instead of raised from it. The bands
+// run across it, mirrored from the middle (the lows in the middle), and the rows run toward the camera: the
+// newest sound at the far edge, a row older every DR cm nearer. Where the sound is loud the paint rots away
+// and the steel under it corrodes into a trough, deeper the louder, every eighth row a deeper groove as the
+// lines of a waveform grid, and rust dust rises out of it (dustMesh). `on` eases it in and out.
 export const WD = 2.2, LD = 3.2, DR = LD / (ROWS - 3), WH = 0.16;
 export function makeSound(tex) { return { tex, head: uniform(0), emit: uniform(new THREE.Vector2()), on: uniform(0) }; }
 
@@ -56,15 +57,15 @@ export const waveAt = (S, p) => {
 };
 
 // the surface at p: height, distance to the paint's edge, cover, and the sound there. Without sound, the
-// height the field made; with it, the field lifted by the waveform, with the paint eaten back where it is loud
+// height the field made; with it, the paint eaten back where the sound is loud and the steel sunk under it
 const surfAt = (field, S, p, blend) => {
   const H = field.sample(field.texH, p, blend);
   if (!S) return { h: H.x, H, s: H.y, a: float(0), m: null };
   const M = field.sample(field.texM, p, blend), te = field.texelAt(p);
   const W = waveAt(S, p);
-  const s2 = H.y.sub(W.a.mul(W.a).mul(0.09));
+  const s2 = H.y.sub(W.a.pow(0.7).mul(0.32));
   const m0 = coverOf(H.y, te), m2 = coverOf(s2, te.max(0.0015));
-  const h = H.x.sub(m0.mul(M.x)).add(m2.mul(M.x)).add(W.h);
+  const h = H.x.sub(m0.mul(M.x)).add(m2.mul(M.x)).sub(W.h);
   return { h, H, s: s2, a: W.a, rib: W.rib, m: m2, M };
 };
 
@@ -184,7 +185,7 @@ export function terrainMesh(field, L, S = null) {
     };
     const f0 = mix(vec3(0.04), albedo, metal);
     let col = diffuse.add(spec(rough, f0));
-    if (S) col = col.add(L.rA.mul(SF.a.mul(SF.a).mul(float(1).sub(cover)).mul(SF.rib.mul(0.5).add(0.08)).mul(0.6))); // the loud crests' ribs, hot rust
+    if (S) col = col.mul(float(1).sub(SF.a.mul(0.45))).add(L.rB.mul(SF.a.mul(SF.rib).mul(0.12))); // the troughs dark with fresh corrosion, their grooves raw
     col = col.add(spec(float(0.08), vec3(0.04)).mul(cover.mul(L.clear)));
     // fog, and the dark beyond the steel
     const fogK = exp(t.mul(FOG).pow(2).negate());
@@ -225,7 +226,7 @@ export function grainMesh(field, L, count, S = null) {
     const v = positionLocal.mul(vec3(r2.mul(0.6).add(0.7), r4.mul(0.6).add(0.7), 0.75)).mul(sz);
     const vx = v.x.mul(cos(a)).sub(v.y.mul(sin(a))), vy = v.x.mul(sin(a)).add(v.y.mul(cos(a)));
     const vy2 = vy.mul(cos(b)).sub(v.z.mul(sin(b))), vz = vy.mul(sin(b)).add(v.z.mul(cos(b)));
-    return vec3(q.x.add(vx), q.y.add(vy2), H.x.add(vz).add(sz.mul(0.35)).add(S ? waveAt(S, q).h : 0));
+    return vec3(q.x.add(vx), q.y.add(vy2), H.x.add(vz).add(sz.mul(0.35)).sub(S ? waveAt(S, q).h : 0));
   })();
   const col = mix(L.powderCol.mul(r3.mul(0.6).add(0.6)), mix(L.rE, L.rD, r3), select(isClump, float(1), smoothstep(0.7, 1.0, r4)));
   m.colorNode = varying(col, 'vGrainCol');
@@ -244,9 +245,44 @@ export function dropMesh(field, L, count, S = null) {
   const r1 = hash(i.mul(4.7).add(11)), r2 = hash(i.mul(6.3).add(12));
   const keep = r1.lessThan(L.drops).and(M.z.lessThan(0.4));
   const sz = select(keep, r2.mul(r2).mul(0.05).add(0.008), float(0));
-  m.positionNode = vec3(q.x.add(positionLocal.x.mul(sz)), q.y.add(positionLocal.y.mul(sz)), H.x.add(positionLocal.z.mul(sz).mul(0.62)).sub(sz.mul(0.04)).add(S ? waveAt(S, q).h : 0));
+  m.positionNode = vec3(q.x.add(positionLocal.x.mul(sz)), q.y.add(positionLocal.y.mul(sz)), H.x.add(positionLocal.z.mul(sz).mul(0.62)).sub(sz.mul(0.04)).sub(S ? waveAt(S, q).h : 0));
   // water on rust picks up its colour; on paint it stays clear
   m.colorNode = varying(mix(vec3(1, 0.62, 0.32), vec3(0.94, 0.98, 1), M.x), 'vDropCol');
+  const mesh = new THREE.Mesh(g, m);
+  mesh.count = count; mesh.frustumCulled = false; mesh.castShadow = false; mesh.receiveShadow = true;
+  return mesh;
+}
+
+// rust dust thrown up where the sound corrodes the steel. Stateless: each grain lives for a 64th of the ring
+// (about 2.1 s), born on a random row of sound at a random place across the patch, and rides that row toward
+// the camera as it rises, drifts and fades. It shows only where its row was loud, the more the louder.
+export function dustMesh(field, L, S, count) {
+  const g = new THREE.OctahedronGeometry(1, 0);
+  const m = new THREE.MeshStandardNodeMaterial({ roughness: 0.9, flatShading: true });
+  const i = float(instanceIndex), r0 = hash(i.mul(1.37).add(0.5));
+  const cyc = S.head.div(64).add(r0), ph = fract(cyc), gen = floor(cyc);
+  const r1 = hash(i.mul(3.1).add(gen.mul(17.3))), r2 = hash(i.mul(5.7).add(gen.mul(29.1))), r3 = hash(i.mul(8.3).add(gen.mul(7.7))), r4 = hash(i.mul(2.9).add(11));
+  const k0 = r2.mul(ROWS - 76).add(3), k = ph.mul(64).add(k0);              // its row's age at birth, and now
+  const R = S.head.sub(k);
+  const lx = r1.sub(0.5).mul(WD * 0.94), ax = abs(lx).div(WD / 2);
+  const lv = texture(S.tex, vec2(ax.mul((BANDS - 1) / BANDS).add(0.5 / BANDS), R.add(0.5).div(ROWS))).level(0).x;
+  const loud = smoothstep(0.15, 0.85, lv).mul(S.on).mul(smoothstep(float(ROWS - 3), float(ROWS - 40), k));
+  const keep = r3.lessThan(loud.mul(0.95));
+  const rise = ph.pow(0.7).mul(r4.mul(0.35).add(0.08));
+  const q0 = vec2(S.emit.x.add(lx), S.emit.y.add(float(LD / 2).sub(k.mul(DR))));
+  const q = q0.add(vec2(sin(ph.mul(5).add(r0.mul(40))), cos(ph.mul(4).add(r1.mul(30)))).mul(ph.mul(0.05)));
+  const gnd = surfAt(field, S, q0, false).h;
+  const sz = select(keep, r4.mul(r4).mul(0.007).add(0.0025), float(0)).mul(smoothstep(0, 0.08, ph)).mul(smoothstep(1, 0.6, ph));
+  m.positionNode = Fn(() => {
+    const a = r3.mul(6.283).add(ph.mul(r1.sub(0.5).mul(14))), b = r4.mul(3.1).add(ph.mul(5));
+    const v = positionLocal.mul(sz);
+    const vx = v.x.mul(cos(a)).sub(v.y.mul(sin(a))), vy = v.x.mul(sin(a)).add(v.y.mul(cos(a)));
+    const vy2 = vy.mul(cos(b)).sub(v.z.mul(sin(b))), vz = vy.mul(sin(b)).add(v.z.mul(cos(b)));
+    return vec3(q.x.add(vx), q.y.add(vy2), gnd.add(rise).add(vz).add(sz));
+  })();
+  const col = mix(L.powderCol, mix(L.rA, L.rE, r2), r1.mul(0.7));
+  m.colorNode = varying(col, 'vDustCol');
+  m.emissiveNode = varying(L.rA.mul(loud.mul(0.25)).mul(float(1).sub(ph)), 'vDustE');
   const mesh = new THREE.Mesh(g, m);
   mesh.count = count; mesh.frustumCulled = false; mesh.castShadow = false; mesh.receiveShadow = true;
   return mesh;
