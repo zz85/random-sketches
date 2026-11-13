@@ -1,6 +1,7 @@
 # Logs
 
 12 Nov 2026
+- Add [Oxide](vibes/oxide/) (Codevember: Rust, a third take): close-up landscapes of rust on old turquoise paint (tide lines, crazed plates, powder, lace). Two TSL compute passes (arrival, then shape) build the relief and materials in a five-level clipmap that follows the camera (1.6 to 25.6 cm, 768 texels a side), varied by 10 cm regions (rust amount, crazing, lace, crust, purple or ochre tint, craters with rims, waviness); a fullscreen raymarch (stepped by height and distance, bisection) shades it by hand with soft sun shadows, a dark room in the reflections, clearcoat and fog, and writes depth for instanced grains, crumbs and drops and the depth of field. The camera glides over it like a lunar orbiter when left alone, reading the ground ahead back from the GPU; the render scale follows the frame rate. Listen moves the paint's edges to the built-in track, the microphone or a file. `node smoke.js` (33 checks, WebGPU on SwiftShader)
 - Remove Filiform and Rust (Codevember: Rust): Oxide takes the theme further
 
 11 Nov 2026

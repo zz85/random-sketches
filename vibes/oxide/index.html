@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0b0908">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="description" content="Close-up landscapes of rust on turquoise paint, made in shaders: tide lines, crazed plates, orange powder and lace.">
+<title>Oxide</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg">
+<link rel="apple-touch-icon" href="icon-192.png">
+<script src="../pwa/install.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0908; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  canvas { display: block; position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; }
+  #status { position: fixed; inset: 0; display: grid; place-items: center; color: #efe6da; font: italic 15px Georgia, serif; letter-spacing: 0.06em; padding: 20px; text-align: center; }
+  #title { position: fixed; left: max(20px, env(safe-area-inset-left)); top: max(16px, env(safe-area-inset-top)); color: #f3ece2; font: 300 20px/1.2 Georgia, serif;
+    letter-spacing: 0.3em; text-shadow: 0 1px 10px rgba(0, 0, 0, 0.6); pointer-events: none; transition: opacity 0.6s; }
+  #title small { display: block; letter-spacing: 0.05em; font-size: 13px; margin-top: 8px; font-style: italic; opacity: 0.85; max-width: 70vw; }
+  #bar { position: fixed; left: 50%; bottom: max(12px, env(safe-area-inset-bottom)); transform: translateX(-50%); display: flex; gap: 6px; flex-wrap: wrap; justify-content: center;
+    width: max-content; max-width: calc(100vw - 20px); opacity: 0; transition: opacity 1s; }
+  body.ready #bar { opacity: 1; }
+  body.calm #bar, body.calm #title { opacity: 0; pointer-events: none; }
+  .pill { display: flex; align-items: center; gap: 4px; border: 1px solid rgba(255, 235, 210, 0.16); background: rgba(16, 14, 12, 0.55); border-radius: 20px; padding: 4px 6px;
+    -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); color: #f1e8dc; font: 12px Georgia, serif; }
+  .pill button, .pill select { appearance: none; -webkit-appearance: none; border: 0; background: transparent; color: inherit; font: inherit; padding: 6px 10px; border-radius: 16px; cursor: pointer; letter-spacing: 0.04em; }
+  .pill select { padding-right: 18px; background: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="8" height="5"><path d="M0 0l4 5 4-5z" fill="%23f1e8dc" opacity=".6"/></svg>') no-repeat right 6px center; }
+  .pill select option { color: #222; }
+  .pill button.on { background: rgba(60, 150, 160, 0.4); }
+  .pill button:focus-visible, .pill select:focus-visible { outline: 2px solid rgba(255, 255, 255, 0.7); }
+  .pill svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; display: block; }
+  .pill button.icon { padding: 6px 8px; }
+  #hint { position: fixed; left: 50%; bottom: calc(max(12px, env(safe-area-inset-bottom)) + 58px); transform: translateX(-50%); color: #f3ece2; font: italic 13px Georgia, serif;
+    text-shadow: 0 1px 8px rgba(0, 0, 0, 0.7); pointer-events: none; transition: opacity 1.2s; text-align: center; max-width: 80vw; }
+  #hint.gone { opacity: 0; }
+  @media (max-width: 640px) { #title { font-size: 17px; } .pill button { padding: 6px 7px; } }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.187.0/build/three.webgpu.js",
+  "three/webgpu": "https://unpkg.com/three@0.187.0/build/three.webgpu.js",
+  "three/tsl": "https://unpkg.com/three@0.187.0/build/three.tsl.js",
+  "three/addons/": "https://unpkg.com/three@0.187.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="status">growing rust&hellip;</div>
+<div id="title">OXIDE<small id="name"></small></div>
+<div id="hint">Drag to look around, tap to focus. Leave it and it glides over the surface on its own. Listen moves the paint to sound.</div>
+<div id="bar">
+  <div class="pill"><select id="scene" aria-label="Scene"></select><button id="new" title="New piece of this scene (n)">New</button></div>
+  <div class="pill"><button id="grow" title="Let the rust grow (g)">Grow</button><button id="drift" title="Fly over the surface when idle (d)">Fly</button></div>
+  <div class="pill"><select id="sound" aria-label="Listen" title="Move the paint to sound (l)"><option value="off">Listen</option><option value="track">Track</option><option value="mic">Microphone</option><option value="file">File&hellip;</option><option value="test" hidden>Test</option></select><input id="file" type="file" accept="audio/*" hidden></div>
+  <div class="pill">
+    <button id="save" class="icon" title="Save picture (s)" aria-label="Save picture"><svg viewBox="0 0 24 24"><path d="M12 4v11"/><path d="M7 10l5 5 5-5"/><path d="M5 19h14"/></svg></button>
+    <button data-pwa-install class="icon" title="Install app" aria-label="Install app" style="display:none"><svg viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M12 8v6"/><path d="M9.5 11.5L12 14l2.5-2.5"/></svg></button>
+  </div>
+</div>
+<script type="module" src="main.js"></script>
+</body>
+</html>
