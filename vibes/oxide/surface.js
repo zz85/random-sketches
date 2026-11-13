@@ -42,8 +42,8 @@ const surfAt = (field, S, p, blend, smooth = blend) => {
   const a = smooth ? trailSmooth(S, p) : trailAt(S, p);
   // the paint thins away where it cut, rather than its edge moving, so no cliff follows the trail's texels;
   // where the loudest sound healed it, paint grows back over the rust, a little thinner than the old coat
-  const c = a.max(0), g = smoothstep(0.05, 0.6, a.negate());
-  const m0 = coverOf(H.y, te), m1 = m0.mul(float(1).sub(smoothstep(0.1, 0.6, c)));
+  const c = a.max(0), g = smoothstep(0.05, 0.5, a.negate());
+  const m0 = coverOf(H.y, te), m1 = m0.mul(float(1).sub(smoothstep(0.05, 0.4, c)));
   const m2 = mix(m1, float(1), g), lift = M.x.max(0.006).mul(mix(float(1), float(0.75), float(1).sub(m0)));
   const h = H.x.sub(m0.mul(M.x)).add(m1.mul(M.x)).add(m2.sub(m1).mul(lift)).sub(c.mul(DEPTH));
   return { h, H, s: H.y, a: c, g, m: m2, M };

@@ -66,7 +66,7 @@ const state = {
   const field = makeField(N); field.init(renderer);
   const look = makeLook();
   const audio = makeAudio(), plow = makePlow(field, look, phone ? { N: 1024, dust: 5000 } : { N: 2048, dust: 12000 });
-  plow.clear(renderer);
+  plow.clear(renderer); plow.U.flip.value = Q.has('flip') ? 1 : 0;
   const terrain = terrainMesh(field, look, plow);
   scene.add(terrain);
   const group = new THREE.Group(); group.rotation.x = -Math.PI / 2; scene.add(group);

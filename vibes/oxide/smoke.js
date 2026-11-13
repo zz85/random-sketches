@@ -93,8 +93,8 @@ const VIEWS = [
       const tr = await E('__oxide.trail()');
       await shot('listen'); const er = errors();
       check('listen: renders with no errors', er.length === 0, er.slice(0, 3).join(' | ').slice(0, 600));
-      check('listen: the plow cuts a furrow where the camera goes', tr.max > 0.2 && tr.cut > 0.3 && tr.cut < 20, `deepest ${tr.max.toFixed(2)}, ${tr.cut.toFixed(2)} cm2 cut`);
-      check('listen: the loudest parts grow paint back', tr.min < -0.2 && tr.grown > 0.05, `${tr.grown.toFixed(2)} cm2 regrown, ${tr.min.toFixed(2)} at most`);
+      check('listen: the plow cuts a furrow where the camera goes', tr.max > 0.8 && tr.cut > 0.3 && tr.cut < 20, `deepest ${tr.max.toFixed(2)}, ${tr.cut.toFixed(2)} cm2 cut`);
+      check('listen: the loudest parts grow paint back', tr.min < -0.5 && tr.grown > 0.1, `${tr.grown.toFixed(2)} cm2 regrown, ${tr.min.toFixed(2)} at most`);
       check('listen: the camera still flies over it', o.y > o.g + 0.05 && Math.hypot(o.x - 0.35, o.z - 0.6) > 0.8, `at ${o.x.toFixed(2)}, ${o.z.toFixed(2)}, ${(o.y - o.g).toFixed(2)} cm up`);
       await E(`__oxide.view([${o.x}, ${o.g + 0.55}, ${o.z}, ${o.x}, ${o.g}, ${o.z - 0.6}])`); // looking back down the furrow
       await shot('listen_trail');
