@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-makehuman_luv.py - builds assets/luv.glb, a MakeHuman Luv for Caustic's People, from MakeHuman's own data:
+makehuman_luv.py - builds assets/luv.glb (and, with --who wallace, assets/wallace.glb), the MakeHuman Luv and Wallace
+for Caustic's People, from MakeHuman's own data:
 
   - the base mesh, its targets (shape), the game-engine rig and its weights, from MPFB 2's data (CC0):
       git clone --depth 1 --filter=blob:none --sparse https://github.com/makehumancommunity/mpfb2
@@ -23,18 +24,40 @@ import argparse, gzip, io, json, math, os, re, struct, sys
 import numpy as np
 from PIL import Image
 
-LUV = { # the macro shape: (target, weight)
-  'macrodetails/caucasian-female-young': 1.0,
-  'macrodetails/universal-female-young-averagemuscle-minweight': 0.35,
-  'macrodetails/height/female-young-averagemuscle-averageweight-maxheight': 0.2,
-  'macrodetails/proportions/female-young-averagemuscle-averageweight-idealproportions': 0.8,
+PEOPLE = {
+  'luv': {
+    'name': 'Luv',
+    'shape': { # the macro shape: (target, weight)
+      'macrodetails/caucasian-female-young': 1.0,
+      'macrodetails/universal-female-young-averagemuscle-minweight': 0.35,
+      'macrodetails/height/female-young-averagemuscle-averageweight-maxheight': 0.2,
+      'macrodetails/proportions/female-young-averagemuscle-averageweight-idealproportions': 0.8,
+    },
+    'outfits': {'tunic': 'clothes/wdg_mycenaean_tunic/wdg_mycenaean_tunic.mhclo', 'coat': 'clothes/punkduck_winter_coat/punkduck_winter_coat.mhclo'},
+    'hairs': {'bun': 'hair/rehmanpolanski_hair_bun_brown/rehmanpolanski_hair_bun_brown.mhclo', 'long': 'hair/o4saken_long01/o4saken_long01.mhclo', 'braid': 'hair/braid01/braid01.mhclo'},
+    'skins': {'caucasian': 'skins/darthfurby_caucasian_female/darthfurby_caucasian_female.mhmat', 'eurasian': 'skins/onlytheghosts_middle_aged_eurasian_female/onlytheghosts_middle_aged_eurasian_female.mhmat'},
+    # heels: stiletto booties, modelled around a foot pointed 33 degrees toe-down (found by fitting the foot into
+    # them) with their soles 6.9 cm under the flat foot's, so the figure stands that much taller in them
+    'shoes': {'stiletto': 'clothes/toigo_stiletto_booties/toigo_stiletto_booties.mhclo'}, 'pitch': math.radians(33),
+    'extra': {},
+  },
+  'wallace': {
+    'name': 'Wallace',
+    'shape': {
+      'macrodetails/caucasian-male-young': 1.0,
+      'macrodetails/universal-male-young-averagemuscle-maxweight': 0.12,
+      'macrodetails/height/male-young-averagemuscle-averageweight-maxheight': 0.155,
+      'macrodetails/proportions/male-young-averagemuscle-averageweight-idealproportions': 0.6,
+    },
+    # a dark robe, his long hair tied back, a short beard, barefoot as in the film
+    'outfits': {'kimono': 'clothes/mindfront_kimono/mindfront_kimono.mhclo', 'robe': 'clothes/donitz_monk_robe_hood_off/donitz_monk_robe_hood_off.mhclo'},
+    'hairs': {'ponytail': 'hair/ponytail01/ponytail01.mhclo'},
+    'skins': {'light': 'skins/toigo_light_skin_male_bronze/toigo_light_skin_male_bronze.mhmat'},
+    'shoes': {}, 'pitch': 0.0,
+    'extra': {'beard': 'clothes/wdg_scruffy_beard/wdg_scruffy_beard.mhclo'},
+    'tints': {'outfit_kimono': [0.16, 0.13, 0.11], 'outfit_robe': [0.22, 0.2, 0.18]}, # his robes dark, near black
+  },
 }
-OUTFITS = {'tunic': 'clothes/wdg_mycenaean_tunic/wdg_mycenaean_tunic.mhclo', 'coat': 'clothes/punkduck_winter_coat/punkduck_winter_coat.mhclo'}
-HAIRS = {'bun': 'hair/rehmanpolanski_hair_bun_brown/rehmanpolanski_hair_bun_brown.mhclo', 'long': 'hair/o4saken_long01/o4saken_long01.mhclo', 'braid': 'hair/braid01/braid01.mhclo'}
-# heels: stiletto booties, modelled around a foot pointed 33 degrees toe-down (found by fitting the foot into them)
-# with their soles 6.9 cm under the flat foot's, so the figure stands that much taller in them
-SHOES = {'stiletto': 'clothes/toigo_stiletto_booties/toigo_stiletto_booties.mhclo'}
-SHOE_PITCH = math.radians(33)
 FACE = {'eyebrows': 'eyebrows/eyebrow002/eyebrow002.mhclo', 'eyelashes': 'eyelashes/eyelashes01/eyelashes01.mhclo', 'eyes': 'eyes/low-poly/low-poly.mhclo'}
 SKINS = {'caucasian': 'skins/darthfurby_caucasian_female/darthfurby_caucasian_female.mhmat', 'eurasian': 'skins/onlytheghosts_middle_aged_eurasian_female/onlytheghosts_middle_aged_eurasian_female.mhmat'}
 SCALE = 0.1 # MakeHuman's decimetres to metres
@@ -148,6 +171,7 @@ class GLB:
     v = self.view(data); self.j['images'].append({'bufferView': v, 'mimeType': mime})
     self.j['textures'].append({'sampler': 0, 'source': len(self.j['images']) - 1}); return len(self.j['textures']) - 1
   def save(self, path):
+    if getattr(self, 'ext', None): self.j['extensionsUsed'] = sorted(self.ext)
     self.j['buffers'] = [{'byteLength': len(self.bin)}]
     for k in [k for k, v in self.j.items() if v == []]: del self.j[k]
     js = json.dumps(self.j, separators=(',', ':')).encode()
@@ -158,8 +182,9 @@ class GLB:
 
 def main():
   ap = argparse.ArgumentParser()
-  ap.add_argument('--mpfb', required=True); ap.add_argument('--assets', required=True); ap.add_argument('--out', required=True)
+  ap.add_argument('--who', default='luv', choices=list(PEOPLE)); ap.add_argument('--mpfb', required=True); ap.add_argument('--assets', required=True); ap.add_argument('--out', required=True)
   a = ap.parse_args()
+  P0 = PEOPLE[a.who]; LUV, OUTFITS, HAIRS, SKINS, SHOES, SHOE_PITCH = P0['shape'], P0['outfits'], P0['hairs'], P0['skins'], P0['shoes'], P0['pitch']
   base, UV, faces = load_obj(os.path.join(a.mpfb, '3dobjs/base.obj'))
   V = base.copy()
   for t, w in LUV.items():
@@ -203,18 +228,57 @@ def main():
     if kids: g.j['nodes'][jn[n]]['children'] = kids
   ibm = np.array([np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [-head[n][0], -head[n][1], -head[n][2], 1]], np.float32).reshape(16) for n in order], np.float32)
   g.j['skins'].append({'joints': [jn[n] for n in order], 'skeleton': jn[order[0]], 'inverseBindMatrices': g.acc(ibm, 5126, 'MAT4')})
-  root = {'name': 'Luv', 'children': [jn[order[0]]], 'extras': {}}
+  root = {'name': P0['name'], 'children': [jn[order[0]]], 'extras': {}}
 
   mats = {}
+  # PBR (glTF metallic-roughness, which three.js renders as a standard or physical material): the asset's colour
+  # map, its normal map where it has one, roughness from its own value, else from its specular map (a matte cloth's
+  # threads, a boot's polish), else by what it is; cloth gets a sheen, the eyes a clearcoat, skin and hair a little
+  # specular of their own (MakeHuman's own Phong values, shininess and specularColor, are for its old renderer)
+  ROUGH = {'skin': 0.52, 'hair': 0.45, 'eyes': 0.05, 'eyebrows': 0.6, 'eyelashes': 0.6, 'beard': 0.55, 'shoes': 0.38, 'outfit': 0.82}
+  def kind(name): return next((k for k in ROUGH if name == k or name.startswith(k + '_') or name.startswith(k)), 'outfit')
+  def find(m, key):
+    t = m.get(key)
+    if not t: return None
+    for p in (os.path.normpath(os.path.join(m['dir'], t)), os.path.join(m['dir'], os.path.basename(t))):
+      if os.path.exists(p): return p
+    # (a misspelt map name in its .mhmat: the one file in the folder that ends the same way)
+    import glob
+    c = [p for p in glob.glob(os.path.join(m['dir'], '*' + os.path.basename(t)[-8:]))]
+    return c[0] if len(c) == 1 else None
+  def rough_map(path, base):
+    im = Image.open(path).convert('L')
+    if max(im.size) > TEX: im.thumbnail((TEX, TEX), Image.LANCZOS)
+    s = np.asarray(im, np.float32) / 255.0
+    r = np.clip(base + 0.35 - 0.6 * s, 0.25, 1.0) # brighter specular: smoother
+    out = np.zeros(s.shape + (3,), np.uint8); out[..., 0] = 255; out[..., 1] = (r * 255).astype(np.uint8) # (G roughness, B metal 0)
+    b = io.BytesIO(); Image.fromarray(out).save(b, 'JPEG', quality=90); return b.getvalue(), 'image/jpeg'
+  ext = set()
   def material(mpath, alpha, name):
     if mpath in mats: return mats[mpath]
-    m = parse_mat(mpath); tex = m.get('diffuseTexture')
+    tint = P0.get('tints', {}).get(name)
+    m = parse_mat(mpath); tex = m.get('diffuseTexture'); k = kind(name)
     col = [float(x) for x in m.get('diffuseColor', '1 1 1').split()[:3]]
-    d = {'name': name, 'pbrMetallicRoughness': {'baseColorFactor': col + [1.0], 'metallicFactor': 0.0, 'roughnessFactor': 0.7}, 'doubleSided': alpha or m.get('backfaceCull', 'True') == 'False'}
+    if tint: col = [c * t for c, t in zip(col, tint)]
+    rough = float(m['roughness']) if 'roughness' in m else ROUGH[k]
+    pbr = {'baseColorFactor': col + [1.0], 'metallicFactor': 0.0, 'roughnessFactor': rough}
+    d = {'name': name, 'pbrMetallicRoughness': pbr, 'doubleSided': alpha or m.get('backfaceCull', 'True') == 'False', 'extensions': {}}
     if tex:
-      tp = os.path.normpath(os.path.join(m['dir'], tex))
-      if not os.path.exists(tp): tp = os.path.join(m['dir'], os.path.basename(tex))
-      data, mime = texture(tp, alpha); d['pbrMetallicRoughness']['baseColorTexture'] = {'index': g.image(data, mime)}
+      tp = find(m, 'diffuseTexture')
+      data, mime = texture(tp, alpha); pbr['baseColorTexture'] = {'index': g.image(data, mime)}
+    np_ = find(m, 'normalmapTexture')
+    if np_:
+      data, mime = texture(np_, False); d['normalTexture'] = {'index': g.image(data, mime), 'scale': float(m.get('normalmapIntensity', 1.0))}
+    sp = find(m, 'specularTexture') or find(m, 'specularmapTexture')
+    if sp and 'roughness' not in m:
+      data, mime = rough_map(sp, rough); pbr['roughnessFactor'] = 1.0; pbr['metallicRoughnessTexture'] = {'index': g.image(data, mime)}
+    if k == 'outfit':
+      d['extensions']['KHR_materials_sheen'] = {'sheenColorFactor': [min(1, 0.35 + 0.5 * c) for c in col], 'sheenRoughnessFactor': 0.55}; ext.add('KHR_materials_sheen')
+    if k == 'eyes':
+      d['extensions']['KHR_materials_clearcoat'] = {'clearcoatFactor': 1.0, 'clearcoatRoughnessFactor': 0.03}; ext.add('KHR_materials_clearcoat')
+    if k in ('skin', 'hair', 'beard'):
+      d['extensions']['KHR_materials_specular'] = {'specularFactor': 0.5 if k == 'skin' else 0.7}; ext.add('KHR_materials_specular')
+    if not d['extensions']: del d['extensions']
     if alpha: d['alphaMode'] = 'MASK'; d['alphaCutoff'] = 0.35
     g.j['materials'].append(d); mats[mpath] = len(g.j['materials']) - 1; return mats[mpath]
 
@@ -235,7 +299,7 @@ def main():
   src, uvb, tri_all = build_mesh(V, UV, faces, keep=lambda gr: gr == 'body')
   Pb = W2(V[src]); Nb = normals(W2(V), np.array([t for f in faces if f[2] == 'body' for t in [(f[0][0], f[0][j], f[0][j + 1]) for j in range(1, len(f[0]) - 1)]]))[src]
   skins = {k: os.path.join(a.assets, p) for k, p in SKINS.items()}
-  body_mat = material(skins['caucasian'], False, 'skin')
+  body_mat = material(next(iter(skins.values())), False, 'skin')
   skin_tex = {}
   for k, p in skins.items():
     m = parse_mat(p); data, mime = texture(os.path.join(m['dir'], m['diffuseTexture']), False); skin_tex[k] = g.image(data, mime)
@@ -258,6 +322,7 @@ def main():
   for k, p in OUTFITS.items(): proxy('outfit_' + k, os.path.join(a.assets, p), False, {'role': 'outfit', 'outfit': k})
   for k, p in HAIRS.items(): proxy('hair_' + k, os.path.join(a.assets, p), True, {'role': 'hair', 'hair': k})
   for k, p in FACE.items(): proxy(k, os.path.join(a.assets, p), k != 'eyes', {'role': k})
+  for k, p in P0['extra'].items(): proxy(k, os.path.join(a.assets, p), True, {'role': k})
   # the shoes are modelled on a pointed foot: each vertex is turned back toe-up about its ankle by its share of the
   # foot's weight, so the page's toe-down turn of the foot (by SHOE_PITCH, legs.pitch) puts it where it was modelled
   heel = 0.0
@@ -278,7 +343,7 @@ def main():
   root['extras']['bones'] = {n: {'head': [float(x) for x in head[n]], 'tail': [float(x) for x in tail[n]]} for n in order}
   root['children'] += meshes
   g.j['nodes'].append(root); g.j['scenes'][0]['nodes'] = [len(g.j['nodes']) - 1]
-  size = g.save(a.out)
+  g.ext = ext; size = g.save(a.out)
   print(a.out, f'{size / 1e6:.2f} MB', json.dumps(root['extras']['legs']))
 
 if __name__ == '__main__': main()

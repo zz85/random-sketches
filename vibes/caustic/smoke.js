@@ -122,6 +122,11 @@ const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} $
             for (const [side, nm] of [[1,'foot_l'],[0,'foot_r']]) worst=Math.max(worst, f.legs[side].ankle.getWorldPosition(f.root.position.clone()).distanceTo(b[nm].getWorldPosition(f.root.position.clone()))); }
           out[set]=worst; }
         return out; })()`);
+      if (fs.existsSync(path.join(DIR, 'assets', 'wallace.glb'))) {
+        const w = await E(`(()=>{ const out={}; for (const [set, idx] of [['office', 0], ['hall', 0]]) { __caustic.show(set); const f=__caustic.sets[set].figures.figs[idx];
+          out[set] = f.kind === 'man' && !!f.mh; } return out; })()`);
+        check('people: the MakeHuman Wallace is worn in the office and the hall', Object.values(w).every(Boolean), JSON.stringify(w));
+      }
       check('people: the MakeHuman Luv is worn in every set and follows the walk', Object.values(mh).every((w) => w !== null && w < 0.01), Object.entries(mh).map(([k, w]) => `${k} ${w === null ? 'missing' : (w * 100).toFixed(1) + ' cm'}`).join(', '));
       await E("__caustic.show('corridor'); __caustic.shot(0, 0.4)"); await E('__caustic.frame(30)'); await shot('people_makehuman');
       await E('__caustic.setMakehuman(false)');

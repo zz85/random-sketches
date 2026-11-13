@@ -19,7 +19,7 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import { texture, uv, vec3, vec2, time, Fn, color, float } from 'three/tsl';
 import { Caustics, Trough, causticSpot, bounce } from './caustics.js';
 import { wood, rough, plain, leather, water } from './materials.js';
-import { figure, walker, sit, stand, LUV_LEGS } from './figures.js';
+import { figure, walker, sit, stand, LUV_LEGS, WALLACE_LEGS } from './figures.js';
 
 // One palette for the three sets, as in the film: the same gold lamps (tungsten through warm gels), the same rough
 // concrete, the same grade (each colour pulled toward its luminance times this gold; sat is how much survives).
@@ -127,7 +127,7 @@ export function corridor(renderer, { phone = false, hq = false } = {}) {
   const stairs = (x, z) => z > zs ? 0 : Math.min(8, Math.floor((zs - z) / tread) + 1) * rise;
   const P = people(g, [{ f: luv, update: walker(luv, [[0.35, 1.2], [0.35, zs + 0.2], [0.3, zl - 0.2]], stairs, { speed: 0.6, rest: 7, start: 9 }) }]);
   return {
-    group: g, caustics: W3, lights: L, figures: P, luvLook: { outfit: 'tunic', hair: 'bun', skin: 'caucasian' },
+    group: g, caustics: W3, lights: L, figures: P, luvLook: { outfit: 'coat', hair: 'bun', skin: 'caucasian' },
     tuned: { exposure: 1.75, haze: 6, size: 1.63, sharp: 0.28, speed: 1.35 },
     modes: { traced: { ...traced(g, L, n0, n1), caustics: W3, tuned: { exposure: 1.75, haze: 6, size: 1.63, sharp: 0.28, speed: 1.35 } }, classic: { ...C, caustics: [lines], tuned: {} } },
     look: { exposure: 0.72, ...GRADE, haze: 0.0205, fog: 0x2a1f0c, bg: 0x050302 },
@@ -135,7 +135,7 @@ export function corridor(renderer, { phone = false, hq = false } = {}) {
     shots: [
       // every shot square to the room: the camera looks level and straight at a wall, so its verticals stay
       // vertical and its edges run square across the frame
-      { from: [0, 1.6, 2.6], to: [0, 1.6, -1.2], look0: [0, 1.6, -11], look1: [0, 1.6, -11], dur: 16, fov: 58 },
+      { from: [0, 1.6, -1.2], to: [0, 1.6, 2.6], look0: [0, 1.6, -11], look1: [0, 1.6, -11], dur: 16, fov: 58 },
       { from: [-2.2, 2.2, -0.8], to: [-2.2, 2.2, -3.4], look0: [3, 2.2, -0.8], look1: [3, 2.2, -3.4], dur: 12, fov: 58 },
       { from: [0, 0.8, -1.8], to: [0, 0.9, -3.0], look0: [0, 0.8, -11], look1: [0, 0.9, -11], dur: 12, fov: 54 },
     ],
@@ -207,14 +207,14 @@ export function office(renderer, { phone = false, hq = false } = {}) {
   ], { albedo: BOUNCE, share: 0.06, off: 2.0 });
   g.add(new THREE.HemisphereLight(0x8a7044, 0x2a2010, 0.08));
   // Wallace standing behind his desk; Luv walking in past it and back
-  const wal = figure({ kind: 'man', height: 1.86 }), luv = figure({ kind: 'woman', dress: 0x2a221c, legs: LUV_LEGS });
+  const wal = figure({ kind: 'man', height: 1.85, legs: WALLACE_LEGS }), luv = figure({ kind: 'woman', dress: 0x2a221c, legs: LUV_LEGS });
   wal.root.position.set(0.15, 0, -5.3); // (behind the desk, clear of it)
   const P = people(g, [
     { f: wal, update: (t) => stand(wal, t) },
     { f: luv, update: walker(luv, [[-3.6, 3.2], [-2.6, -1.0], [-1.6, -3.4]], () => 0, { speed: 0.62, rest: 8, start: 4 }) },
   ]);
   return {
-    group: g, caustics: [...W4, soft], lights: L, figures: P, luvLook: { outfit: 'coat', hair: 'bun', skin: 'caucasian' },
+    group: g, caustics: [...W4, soft], lights: L, figures: P, luvLook: { outfit: 'coat', hair: 'bun', skin: 'caucasian' }, walLook: { outfit: 'kimono', hair: 'ponytail', skin: 'light' },
     tuned: { exposure: 0.5 },
     modes: { traced: { ...traced(g, L, n0, n1), caustics: [...W4, soft], tuned: { exposure: 0.5 } }, classic: { ...C, caustics: [broad, soft], tuned: {} } },
     look: { exposure: 0.72, ...GRADE, haze: 0.0103, fog: 0x2a200c, bg: 0x070502 },
@@ -294,7 +294,7 @@ export function hall(renderer, scene, { phone = false, hq = false } = {}) {
   down.position.set(0, -LEN - 0.1, 0.2);
   g.add(new THREE.HemisphereLight(0x3a3018, 0x050302, 0.03));
   // Wallace in the first armchair; Luv crossing the stepping stones onto the deck toward him and back
-  const wal = figure({ kind: 'man', height: 1.86 }), luv = figure({ kind: 'woman', dress: 0x2a221c, legs: LUV_LEGS });
+  const wal = figure({ kind: 'man', height: 1.85, legs: WALLACE_LEGS }), luv = figure({ kind: 'woman', dress: 0x2a221c, legs: LUV_LEGS });
   wal.root.position.set(DX - 2.6, 0.22, DZ - 2.4); wal.root.rotation.y = 0.5;
   const onDeck = (x, z) => Math.abs(x - DX) < 5 && Math.abs(z - DZ) < 4.5;
   const floorH = (x, z) => onDeck(x, z) ? 0.22 : 0.13;
@@ -304,7 +304,7 @@ export function hall(renderer, scene, { phone = false, hq = false } = {}) {
     { f: luv, update: walker(luv, [[DX + 13, DZ - 0.6], [DX + 5.4, DZ - 1.15], [DX + 1.2, DZ - 1.05], [DX - 0.6, DZ - 0.8]], floorH, { speed: 0.62, rest: 9, start: 8 }) },
   ]);
   return {
-    group: g, caustics: W2, lights: L, reflector: w.reflector, figures: P, luvLook: { outfit: 'coat', hair: 'bun', skin: 'caucasian' },
+    group: g, caustics: W2, lights: L, reflector: w.reflector, figures: P, luvLook: { outfit: 'coat', hair: 'bun', skin: 'caucasian' }, walLook: { outfit: 'kimono', hair: 'ponytail', skin: 'light' },
     tuned: { exposure: 0.6, size: 0.6, height: 0.5 },
     modes: { traced: { ...traced(g, W2.map((w) => w.light), n0, n1), caustics: W2, tuned: { exposure: 0.6, size: 0.6, height: 0.5 } }, classic: { ...C, caustics: [ripples], tuned: { exposure: 0.4 } }, shared: [down] },
     look: { exposure: 1.0, ...GRADE, haze: 0.0066, fog: 0x0a0803, bg: 0x000000 },

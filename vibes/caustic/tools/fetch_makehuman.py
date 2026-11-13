@@ -2,9 +2,9 @@
 """
 fetch_makehuman.py - downloads the MakeHuman data the Luv model is built from, then builds it:
 
-  python3 tools/fetch_makehuman.py            # -> assets/luv.glb (not committed: see assets/CREDITS.md)
+  python3 tools/fetch_makehuman.py            # -> assets/luv.glb, assets/wallace.glb (not committed: see assets/CREDITS.md)
 
-It fetches only the files it needs, about 40 MB:
+It fetches only the files it needs, about 60 MB:
   - from MPFB 2's data on GitHub (CC0), at a fixed commit: the base mesh, the four macro targets Luv's shape uses,
     and the game-engine rig and its weights;
   - from the MakeHuman community's asset packs, without downloading whole packs (some are 500 MB): each pack is a
@@ -20,15 +20,21 @@ MPFB_FILES = ['3dobjs/base.obj', 'rigs/standard/rig.game_engine.json', 'rigs/sta
   'targets/' + t + '.target.gz' for t in [
     'macrodetails/caucasian-female-young', 'macrodetails/universal-female-young-averagemuscle-minweight',
     'macrodetails/height/female-young-averagemuscle-averageweight-maxheight',
-    'macrodetails/proportions/female-young-averagemuscle-averageweight-idealproportions']]
+    'macrodetails/proportions/female-young-averagemuscle-averageweight-idealproportions',
+    'macrodetails/caucasian-male-young', 'macrodetails/universal-male-young-averagemuscle-maxweight',
+    'macrodetails/height/male-young-averagemuscle-averageweight-maxheight',
+    'macrodetails/proportions/male-young-averagemuscle-averageweight-idealproportions']]
 PACKS = 'https://files.makehumancommunity.org/asset_packs/'
 WANT = { # pack zip: the folders of it to take
-  'dress01/dress01_cc0.zip': ['clothes/wdg_mycenaean_tunic/'],
+  'dress01/dress01_cc0.zip': ['clothes/wdg_mycenaean_tunic/', 'clothes/mindfront_kimono/'],
+  'suits02/suits02_cc0.zip': ['clothes/donitz_monk_robe_hood_off/'],
+  'bodyparts05/bodyparts05_cc0.zip': ['clothes/wdg_scruffy_beard/'],
+  'skins02/skins02_cc0.zip': ['skins/toigo_light_skin_male_bronze/'],
   'dress03/dress03_cc-by.zip': ['clothes/punkduck_winter_coat/'],
   'hair01/hair01_cc0.zip': ['hair/o4saken_long01/', 'hair/rehmanpolanski_hair_bun_brown/'],
   'skins01/skins01_cc0.zip': ['skins/darthfurby_caucasian_female/', 'skins/onlytheghosts_middle_aged_eurasian_female/'],
   'shoes01/shoes01_cc0.zip': ['clothes/toigo_stiletto_booties/'],
-  'makehuman_system_assets/makehuman_system_assets_cc0.zip': ['hair/braid01/', 'eyebrows/eyebrow002/', 'eyelashes/eyelashes01/', 'eyes/low-poly/', 'eyes/materials/brown'],
+  'makehuman_system_assets/makehuman_system_assets_cc0.zip': ['hair/braid01/', 'eyebrows/eyebrow002/', 'eyelashes/eyelashes01/', 'eyes/low-poly/', 'eyes/materials/brown', 'hair/ponytail01/'],
 }
 
 def get(url, rng=None):
@@ -60,22 +66,25 @@ def zip_read(url, off, csize, method):
 def main():
   ap = argparse.ArgumentParser()
   ap.add_argument('--cache', default=os.path.join(HERE, '..', 'assets', '.makehuman'))
-  ap.add_argument('--out', default=os.path.join(HERE, '..', 'assets', 'luv.glb'))
+  ap.add_argument('--out', default=os.path.join(HERE, '..', 'assets'))
   a = ap.parse_args(); mp, ad = os.path.join(a.cache, 'mpfb'), os.path.join(a.cache, 'assets')
   for f in MPFB_FILES:
     p = os.path.join(mp, f)
     if os.path.exists(p): continue
     os.makedirs(os.path.dirname(p), exist_ok=True); open(p, 'wb').write(get(MPFB + f)); print('mpfb', f)
   for pack, prefixes in WANT.items():
+    # (done once for the folders listed: a pack whose list grows is read again)
     mark = os.path.join(ad, '.' + pack.replace('/', '_') + '.done')
-    if os.path.exists(mark): continue
+    if os.path.exists(mark) and open(mark).read() == json.dumps(prefixes): continue
     url = PACKS + pack; mem = zip_members(url); got = 0
     for name, (off, cs, meth) in mem.items():
       if name.endswith('/') or not any(name.startswith(p) for p in prefixes) or name.endswith('.thumb'): continue
       p = os.path.join(ad, name); os.makedirs(os.path.dirname(p), exist_ok=True)
       open(p, 'wb').write(zip_read(url, off, cs, meth)); got += 1
     if not got: raise RuntimeError('nothing of %s in %s' % (prefixes, pack))
-    os.makedirs(ad, exist_ok=True); open(mark, 'w').write('ok'); print('pack', pack, got, 'files')
-  sys.exit(subprocess.call([sys.executable, os.path.join(HERE, 'makehuman_luv.py'), '--mpfb', mp, '--assets', ad, '--out', a.out]))
+    os.makedirs(ad, exist_ok=True); open(mark, 'w').write(json.dumps(prefixes)); print('pack', pack, got, 'files')
+  for who in ('luv', 'wallace'):
+    r = subprocess.call([sys.executable, os.path.join(HERE, 'makehuman_luv.py'), '--who', who, '--mpfb', mp, '--assets', ad, '--out', os.path.join(a.out, who + '.glb')])
+    if r: sys.exit(r)
 
 if __name__ == '__main__': main()
