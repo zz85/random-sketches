@@ -14,6 +14,7 @@ import { coachStats, posAtFromLogs, responsePatterns, ZONE_X, ZONE_Y } from './c
 import { zoomOptions, currentOption } from './camzoom.js';
 import { keepFlights, toMatch, fromRecorded, playersAt as replayPlayersAt, rallyList, pickCleanup, Store, Video } from './session.js';
 import { SegmentRecorder } from './recorder.js';
+import { NameVote } from './names.js';
 
 const $ = (id) => document.getElementById(id);
 const stage = $('stage'), sctx = stage.getContext('2d');
@@ -27,6 +28,8 @@ const DETECT_W = 1280, TRACK_W = 1280;
 // ?track=full uses the full tracker every frame, ?mount=moving drops the fixed-mount assumption
 const QS = new URLSearchParams(location.search);
 const TRACK_OPT = { ...(QS.get('track') === 'full' ? { sparse: false } : {}), ...(QS.get('mount') === 'moving' ? { fixedMount: false } : {}) };
+// Reading the players' names off the score bug (ocr.js) is wired up but off: ?names=bug turns it on
+const READ_NAMES = QS.get('names') === 'bug';
 
 const S = {
   src: null, // HTMLImageElement | HTMLVideoElement | ImageData-backed canvas
@@ -87,14 +90,40 @@ function playersAt(t, X) {
 // Shots are (re)built from the main camera's flights whenever the flight window changes; each
 // keeps its id, so a refit rewrites its line in place instead of adding another. Shots with
 // little evidence behind them (an inferred wall contact and few frames) are shown faded.
-// Names typed in the Players panel (kept per video file); P1 / P2 until then.
-S.names = { 1: '', 2: '' };
+// Names typed in the Players panel (kept per video file); P1 / P2 until then. S.namesBy says where
+// they came from: 'typed' (or saved before the bug reader existed), 'bug', or '' for none yet.
+S.names = { 1: '', 2: '' }; S.namesBy = ''; S.bugSwap = false;
 const nameOf = (id) => (S.names[id] || '').trim() || `P${id}`;
-function setNames(n, note) {
+function setNames(n, note, by = S.namesBy) {
   S.names = { 1: n[1] ?? '', 2: n[2] ?? '' }; for (const i of [1, 2]) if ($(`name${i}`).value !== S.names[i]) $(`name${i}`).value = S.names[i]; // never under the cursor while typing
+  S.namesBy = S.names[1].trim() || S.names[2].trim() ? by : '';
   if (note != null) $('nameNote').textContent = note;
-  if (S.srcName) localStorage.setItem('squashNames:' + S.srcName, JSON.stringify(S.names));
+  if (S.srcName) localStorage.setItem('squashNames:' + S.srcName, JSON.stringify({ ...S.names, by: S.namesBy, swap: S.bugSwap }));
   renderFeed(); draw();
+}
+// ---------- names from the score bug (off unless READ_NAMES) ----------
+// Every 2 s of playing video a 1280 px frame goes to the OCR worker; the reads are voted on
+// (names.js), and the names in force fill the Players panel, the bug's left name as P1 unless ⇄
+// swapped them. Typed names always win: the bug fills the panel only while it is empty or was
+// filled by the bug, so a new match in a compilation replaces the last match's names.
+const OCR_EVERY_S = 2;
+const ocr = { wk: null, busy: false, tLast: -Infinity, vote: new NameVote(), cnv: document.createElement('canvas'), ms: [] };
+function readNamesFrom(v, mediaTime) {
+  if (!READ_NAMES || v.srcObject || S.src !== v || ocr.busy || Math.abs(mediaTime - ocr.tLast) < OCR_EVERY_S) return;
+  if (!ocr.wk) {
+    ocr.wk = new Worker(new URL('./ocr-worker.js', import.meta.url), { type: 'module' });
+    ocr.wk.onmessage = (e) => { ocr.busy = false; const q = e.data; if (q.error) { console.error(q.error); return; } ocr.ms.push(q.ms); if (ocr.ms.length > 20) ocr.ms.shift(); takeNames(q.read, q.t); };
+  }
+  const k = Math.min(1, 1280 / S.srcW), w = Math.round(S.srcW * k), h = Math.round(S.srcH * k), g = ocr.cnv.getContext('2d', { willReadFrequently: true });
+  ocr.cnv.width = w; ocr.cnv.height = h; g.drawImage(v, 0, 0, w, h);
+  const img = g.getImageData(0, 0, w, h); ocr.busy = true; ocr.tLast = mediaTime;
+  ocr.wk.postMessage({ id: mediaTime, t: mediaTime, rgba: img.data, w, h }, [img.data.buffer]);
+}
+function takeNames(read, t) {
+  ocr.last = read; const n = ocr.vote.add(read, t ?? ocr.tLast);
+  if (!n || (S.namesBy && S.namesBy !== 'bug')) return;
+  const want = S.bugSwap ? { 1: n.right, 2: n.left } : { 1: n.left, 2: n.right };
+  if (want[1] !== S.names[1] || want[2] !== S.names[2]) setNames(want, 'read from the score bug; type over them, or swap them if they are the wrong way round', 'bug');
 }
 function comment() {
   const fl = S.flights.filter((f) => mainView(f.cam));
@@ -172,7 +201,7 @@ function ballNow() {
 }
 const kmh = (v) => `${v.toFixed(1)} m/s (${(v * 3.6).toFixed(0)} km/h)`;
 const clearRally = () => { S.coach = null; S.stats = newStats(); S.tctl = new TControl(); S.bounces.clear(); S.comm.clear(); S.feed = []; S.moveSaid = {}; renderFeed(); S.players = []; S.ball = null; S.ballTrail = []; S.flights = []; S.allFlights = []; S.replay = null; S.replayStop = null; dropReplayVideo(); S.rallyMs = {}; for (const R of rallyW) R.reset = true; };
-window.__sq = S;
+window.__sq = S; window.__ocr = ocr;
 
 // ---------- worker ----------
 const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
@@ -223,7 +252,7 @@ function feedBall(v, mediaTime) {
 }
 function watchFrames(v) {
   if (!v.requestVideoFrameCallback) return false;
-  const cb = (now, meta) => { if (S.src !== v) return; feedBall(v, meta.mediaTime); v.requestVideoFrameCallback(cb); };
+  const cb = (now, meta) => { if (S.src !== v) return; feedBall(v, meta.mediaTime); readNamesFrom(v, meta.mediaTime); v.requestVideoFrameCallback(cb); };
   v.requestVideoFrameCallback(cb); return true;
 }
 
@@ -297,7 +326,11 @@ const flightAlpha = (f) => { const t = S.live || S.match ? vt() : null; return t
 function useImage(el, w, h) {
   stopLive(); S.src = el; S.srcW = w; S.srcH = h; S.cam = null; S.picks = []; clearRally(); fitStage(); draw(); analyse('detect');
 }
-function loadNames() { let n = null; try { n = JSON.parse(localStorage.getItem('squashNames:' + S.srcName) || 'null'); } catch {} setNames(n ?? { 1: '', 2: '' }, n ? 'saved for this video' : 'type the names, or swap them if they are the wrong way round'); }
+function loadNames() {
+  let n = null; try { n = JSON.parse(localStorage.getItem('squashNames:' + S.srcName) || 'null'); } catch {}
+  ocr.vote.reset(); ocr.tLast = -Infinity; S.bugSwap = !!n?.swap;
+  setNames(n ?? { 1: '', 2: '' }, n ? (n.by === 'bug' ? 'read from the score bug' : 'saved for this video') : READ_NAMES ? 'reading the score bug; or type the names' : 'type the names, or swap them if they are the wrong way round', n?.by ?? 'typed');
+}
 function loadFile(file) {
   const url = URL.createObjectURL(file); S.srcName = file.name;
   if (file.type.startsWith('video/')) {
@@ -1123,8 +1156,8 @@ $('seek').addEventListener('input', (e) => { const v = S.src; if (!(v instanceof
 $('seek').addEventListener('change', () => { S.seeking = false; });
 $('seek').addEventListener('pointerup', () => { S.seeking = false; });
 $('cap').onchange = (e) => { S.captions = e.target.checked; if (!S.captions) $('cc').classList.add('off'); };
-for (const i of [1, 2]) $(`name${i}`).addEventListener('input', (e) => { S.names[i] = e.target.value; setNames(S.names, ''); });
-$('swapNames').onclick = () => setNames({ 1: S.names[2], 2: S.names[1] }, 'swapped');
+for (const i of [1, 2]) $(`name${i}`).addEventListener('input', (e) => { S.names[i] = e.target.value; setNames(S.names, '', 'typed'); });
+$('swapNames').onclick = () => { if (S.namesBy === 'bug') S.bugSwap = !S.bugSwap; setNames({ 1: S.names[2], 2: S.names[1] }, 'swapped'); };
 $('speak').onchange = (e) => { S.speak = e.target.checked; if (!S.speak && 'speechSynthesis' in window) speechSynthesis.cancel(); };
 $('coachWho').onchange = () => draw();
 $('respWho').onchange = $('respType').onchange = () => draw();

@@ -13,8 +13,8 @@ Things we found worth doing but haven't done yet. The first item in each section
 
 ## Identity and names
 
-- **Hook the scoreboard OCR into the Players panel.** `ocr.js` (thread 25) is untracked and not used yet. Names typed by hand should still win over names read, and ⇄ should still swap them.
-- **Test the OCR against the SquashAI name labels.** `attributes.csv` has both players' names on each frame, so every frame with a score bug can check the OCR. Thread 25's own test was 4 of 9 frames read fully right.
+- **Turn on the score-bug names.** Wired up behind `?names=bug` (off by default): every 2 s of video a 1280 px frame goes to `ocr-worker.js`, the reads are voted on per side (`names.js`), and the names in force fill the Players panel while it is empty or was filled by the bug. Typed names win, ⇄ sticks. Before turning it on: decide which bug name is P1 (today the bug's left name is P1; the colour bar under each name box could be matched to the players' shirt colours), and run it over the SquashAI frames below.
+- **Test the OCR against the SquashAI name labels.** `attributes.csv` has both players' names on each frame, so every frame with a score bug can check the OCR. On 144 labelled frames from the two PSA compilations, one read gets both names right on 143 (`/tmp/squash/ocrall.mjs`).
 - **Test shirt-colour identity against SquashAI shirt colours.** `attributes.csv` has a hex colour per player per frame. `match.mjs`'s player 1 / player 2 could be scored against it, across cuts, per video.
 
 ## Court
