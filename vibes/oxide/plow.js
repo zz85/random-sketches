@@ -1,8 +1,8 @@
 // plow.js - Oxide: Listen. The sound is a plow that works the steel where the camera goes. Its blade lies
 // across the way the camera moves, TW cm wide, on the ground the camera looks at; the spectrum is laid along
 // it mirrored from the middle (the lows in the middle), smoothed across the bands and in time, and cut by a
-// threshold that follows the song: the loud bands grow the paint back whole, over rust and furrow; the rest
-// rust to the bottom of the furrow and throw up specks of rust dust (`?flip` swaps the two). What it does stays: the trail is kept,
+// threshold that follows the song: the loud bands rust to the bottom of the furrow and throw up specks of
+// rust dust; the rest grow the paint back whole, over rust and furrow (`flip` 0 swaps the two). What it does stays: the trail is kept,
 // signed (cut above 0, regrown paint below), in a texture SPAN cm square that surface.js reads.
 import * as THREE from 'three/webgpu';
 import { Fn, instancedArray, instanceIndex, uniform, float, int, vec2, vec3, vec4, ivec2, texture, textureStore, smoothstep, mix, abs, max, clamp, select,
@@ -43,8 +43,8 @@ export function makePlow(field, L, { N = 2048, dust = 12000 } = {}) {
     const half = float(TW / 2).mul(n2.mul(0.25).add(0.9));
     const prof = smoothstep(1, 0.7, abs(across).add(n1.mul(0.08)).div(half)).mul(exp(along.div(0.07).pow(2).negate())).mul(U.on);
     const lv = level(across);
-    // a hard threshold on the volume: above it the paint grows back whole, below it the steel rusts to the
-    // bottom of the cut (`flip` swaps the two). The threshold follows the song (update).
+    // a hard threshold on the volume: with `flip` 0 the paint grows back whole above it and the steel rusts to
+    // the bottom of the cut below it; `flip` 1, the default, swaps the two. The threshold follows the song (update).
     const loud = smoothstep(U.thr.sub(0.03), U.thr.add(0.03), lv);
     const heal = mix(loud, float(1).sub(loud), U.flip);
     const idx = int(y).mul(N).add(int(x)), old = buf.element(idx);
