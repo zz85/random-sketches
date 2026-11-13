@@ -40,10 +40,13 @@ const surfAt = (field, S, p, blend, smooth = blend) => {
   if (!S) return { h: H.x, H, s: H.y, a: float(0), m: null };
   const M = field.sample(field.texM, p, blend), te = field.texelAt(p);
   const a = smooth ? trailSmooth(S, p) : trailAt(S, p);
-  // the paint thins away where it cut, rather than its edge moving, so no cliff follows the trail's texels
-  const m0 = coverOf(H.y, te), m2 = m0.mul(float(1).sub(smoothstep(0.1, 0.6, a)));
-  const h = H.x.sub(m0.mul(M.x)).add(m2.mul(M.x)).sub(a.mul(DEPTH));
-  return { h, H, s: H.y, a, m: m2, M };
+  // the paint thins away where it cut, rather than its edge moving, so no cliff follows the trail's texels;
+  // where the loudest sound healed it, paint grows back over the rust, a little thinner than the old coat
+  const c = a.max(0), g = smoothstep(0.05, 0.6, a.negate());
+  const m0 = coverOf(H.y, te), m1 = m0.mul(float(1).sub(smoothstep(0.1, 0.6, c)));
+  const m2 = mix(m1, float(1), g), lift = M.x.max(0.006).mul(mix(float(1), float(0.75), float(1).sub(m0)));
+  const h = H.x.sub(m0.mul(M.x)).add(m1.mul(M.x)).add(m2.sub(m1).mul(lift)).sub(c.mul(DEPTH));
+  return { h, H, s: H.y, a: c, g, m: m2, M };
 };
 
 export function terrainMesh(field, L, S = null) {
@@ -162,7 +165,7 @@ export function terrainMesh(field, L, S = null) {
     };
     const f0 = mix(vec3(0.04), albedo, metal);
     let col = diffuse.add(spec(rough, f0));
-    if (S) col = col.mul(float(1).sub(SF.a.mul(0.25))); // the cut dark with fresh corrosion
+    if (S) col = col.mul(float(1).sub(SF.a.mul(0.25))).add(L.paint2.mul(SF.g.mul(0.06))); // the cut dark with fresh corrosion, new paint a little brighter
     col = col.add(spec(float(0.08), vec3(0.04)).mul(cover.mul(L.clear)));
     // fog, and the dark beyond the steel
     const fogK = exp(t.mul(FOG).pow(2).negate());
@@ -203,7 +206,7 @@ export function grainMesh(field, L, count, S = null) {
     const v = positionLocal.mul(vec3(r2.mul(0.6).add(0.7), r4.mul(0.6).add(0.7), 0.75)).mul(sz);
     const vx = v.x.mul(cos(a)).sub(v.y.mul(sin(a))), vy = v.x.mul(sin(a)).add(v.y.mul(cos(a)));
     const vy2 = vy.mul(cos(b)).sub(v.z.mul(sin(b))), vz = vy.mul(sin(b)).add(v.z.mul(cos(b)));
-    return vec3(q.x.add(vx), q.y.add(vy2), H.x.add(vz).add(sz.mul(0.35)).sub(S ? trailAt(S, q).mul(DEPTH) : 0));
+    return vec3(q.x.add(vx), q.y.add(vy2), H.x.add(vz).add(sz.mul(0.35)).sub(S ? trailAt(S, q).max(0).mul(DEPTH) : 0));
   })();
   const col = mix(L.powderCol.mul(r3.mul(0.6).add(0.6)), mix(L.rE, L.rD, r3), select(isClump, float(1), smoothstep(0.7, 1.0, r4)));
   m.colorNode = varying(col, 'vGrainCol');
@@ -222,7 +225,7 @@ export function dropMesh(field, L, count, S = null) {
   const r1 = hash(i.mul(4.7).add(11)), r2 = hash(i.mul(6.3).add(12));
   const keep = r1.lessThan(L.drops).and(M.z.lessThan(0.4));
   const sz = select(keep, r2.mul(r2).mul(0.05).add(0.008), float(0));
-  m.positionNode = vec3(q.x.add(positionLocal.x.mul(sz)), q.y.add(positionLocal.y.mul(sz)), H.x.add(positionLocal.z.mul(sz).mul(0.62)).sub(sz.mul(0.04)).sub(S ? trailAt(S, q).mul(DEPTH) : 0));
+  m.positionNode = vec3(q.x.add(positionLocal.x.mul(sz)), q.y.add(positionLocal.y.mul(sz)), H.x.add(positionLocal.z.mul(sz).mul(0.62)).sub(sz.mul(0.04)).sub(S ? trailAt(S, q).max(0).mul(DEPTH) : 0));
   // water on rust picks up its colour; on paint it stays clear
   m.colorNode = varying(mix(vec3(1, 0.62, 0.32), vec3(0.94, 0.98, 1), M.x), 'vDropCol');
   const mesh = new THREE.Mesh(g, m);
