@@ -3,15 +3,16 @@
 // and raymarches it, adds grains of powder and crumbs and drops of water; this file sets the scene: a low
 // raking sun, a dark room to reflect, fog toward the horizon, a camera that glides over the surface like a
 // lunar orbiter when you leave it (steady height, slow turns, a gentle bank), depth of field focused where
-// you tap, a teal and orange grade, and a render scale that follows the frame rate. Listen (audio.js) corrodes
-// the steel as a classic 3D waveform of the sound (surface.js): where it is loud the paint rots away and the
-// steel sinks into troughs that roll toward the camera, throwing up rust dust; the camera watches from the front.
+// you tap, a teal and orange grade, and a render scale that follows the frame rate. Listen (audio.js, plow.js)
+// makes the sound a plow that corrodes the steel where the camera goes: its spectrum, smoothed, laid across
+// the way the camera moves, the louder bands cutting deeper and baring more rust, with specks of rust dust.
 import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { dof } from 'three/addons/tsl/display/DepthOfFieldNode.js';
 import { pass, uniform, vec2, vec3, vec4, float, mix, smoothstep, length, dot, screenUV, screenSize, hash, time, Fn, positionLocal } from 'three/tsl';
 import { makeField, PRESETS } from './field.js';
-import { makeLook, makeSound, terrainMesh, LD, grainMesh, dropMesh, dustMesh, FOG, BG as BGRGB } from './surface.js';
+import { makePlow } from './plow.js';
+import { makeLook, terrainMesh, grainMesh, dropMesh, FOG, BG as BGRGB } from './surface.js';
 import { makeAudio, ROWS } from './audio.js';
 
 const Q = new URLSearchParams(location.search.slice(1) + '&' + location.hash.slice(1));
@@ -64,17 +65,19 @@ const state = {
   const N = +(Q.get('res') || (phone ? 512 : 768));
   const field = makeField(N); field.init(renderer);
   const look = makeLook();
-  const audio = makeAudio(), sound = makeSound(audio.tex);
-  const plain = terrainMesh(field, look), listening = terrainMesh(field, look, sound); listening.visible = false;
-  scene.add(plain, listening);
+  const audio = makeAudio(), plow = makePlow(field, look, phone ? { N: 1024, dust: 5000 } : { N: 2048, dust: 12000 });
+  plow.clear(renderer);
+  const terrain = terrainMesh(field, look, plow);
+  scene.add(terrain);
   const group = new THREE.Group(); group.rotation.x = -Math.PI / 2; scene.add(group);
-  const grains = grainMesh(field, look, phone ? 30000 : 80000, sound); group.add(grains);
-  const drops = dropMesh(field, look, 60, sound); group.add(drops);
-  const dust = dustMesh(field, look, sound, phone ? 20000 : 60000); group.add(dust);
+  const grains = grainMesh(field, look, phone ? 30000 : 80000, plow); group.add(grains);
+  const drops = dropMesh(field, look, 60, plow); group.add(drops);
+  group.add(plow.dust);
 
   const setScene = () => {
     const p = PRESETS[state.scene];
     field.set(p, state.seed); look.set(p, state.seed);
+    plow.clear(renderer);
     state.t = p.t;
     sun.color.setRGB(...p.sunCol); sun.intensity = p.sunI; hemi.intensity = p.fill; scene.environmentIntensity = 0.35 + p.fill * 0.6;
     renderer.toneMappingExposure = p.exposure;
@@ -137,7 +140,6 @@ const state = {
     return want.copy(c).addScaledVector(d, n > 3 ? 1.5 / n : 0.5);
   };
   const ground = { under: 0.02, ahead: 0.02, read: [] };
-  const emitW = () => new THREE.Vector3(sound.emit.value.x, ground.under, -sound.emit.value.y);
   const probe = async (dir) => {
     const o = fxy(camera.position), d = dir ? new THREE.Vector2(dir.x, -dir.z).normalize().multiplyScalar(0.055) : new THREE.Vector2();
     const r = await field.probe(o, d); if (!r) return;
@@ -147,14 +149,12 @@ const state = {
   // ---- the orbiter: when you leave the camera alone it glides over the surface at a steady height, slowly
 // turning and banking a little into its turns, its height and speed changing over minutes, never quickly.
 // It rides the highest ground in the next half centimetre ahead, rising early over a ridge and sinking late
-// after it. In Listen it watches the waveform from the front instead, swaying slowly from side to side.
+// after it. In Listen its path is the plow's furrow.
   const ship = { x: 0, z: 0, psi: 0, v: 0.1, h: 0.2, pitch: 0.4, roll: 0, fov: 40, gy: 0.02, T: 0, ang: 0, R: 1, tg: new THREE.Vector3(), flying: false };
   const board = () => { // take over from the camera as it is
     const dir = controls.target.clone().sub(camera.position).normalize();
-    const e = emitW();
     Object.assign(ship, { x: camera.position.x, z: camera.position.z, psi: Math.atan2(dir.x, dir.z), pitch: Math.min(1.2, Math.max(0.1, Math.asin(-dir.y))), roll: 0,
-      h: Math.min(3, camera.position.y - ground.under), v: 0.05, fov: camera.fov, gy: ground.ahead, flying: true,
-      ang: Math.atan2(camera.position.x - e.x, camera.position.z - e.z), R: Math.hypot(camera.position.x - e.x, camera.position.z - e.z) });
+      h: Math.min(3, camera.position.y - ground.under), v: 0.05, fov: camera.fov, gy: ground.ahead, flying: true });
     ship.tg.copy(controls.target);
   };
   const ease = (dt, r) => 1 - Math.exp(-dt * r);
@@ -162,14 +162,6 @@ const state = {
     const T = (ship.T += dt), e = (r) => ease(dt, r), P = Math.PI * 2;
     ship.gy += (ground.ahead - ship.gy) * e(ground.ahead > ship.gy ? 0.8 : 0.15);
     ship.fov += (44 - ship.fov) * e(0.2);
-    if (state.listen) {
-      const E = emitW(), sx = E.x + 0.45 * Math.sin(T * P / 67), sz = E.z + LD / 2 + 0.55 + 0.12 * Math.sin(T * P / 43 + 1);
-      ship.x += (sx - ship.x) * e(0.25); ship.z += (sz - ship.z) * e(0.25);
-      ship.h += (0.85 + 0.08 * Math.sin(T * P / 53) - ship.h) * e(0.2);
-      ship.tg.lerp(E.setY(ship.gy + 0.02).add(new THREE.Vector3(0, 0.04, 0.1)), e(0.4));
-      ship.roll += (0.015 * Math.sin(T * P / 67) - ship.roll) * e(0.3);
-      return { pos: new THREE.Vector3(ship.x, ship.gy + ship.h, ship.z), target: ship.tg.clone(), roll: ship.roll, fov: ship.fov };
-    }
     ship.h += (0.2 + 0.07 * Math.sin(T * P / 97) + 0.035 * Math.sin(T * P / 41 + 2) - ship.h) * e(0.15);
     ship.v += (0.11 + 0.03 * Math.sin(T * P / 61) - ship.v) * e(0.3);
     ship.pitch += (0.4 + 0.07 * Math.sin(T * P / 53 + 1) - ship.pitch) * e(0.2);
@@ -206,8 +198,7 @@ const state = {
     const was = state.listen;
     try { await audio.use(src); } catch (e) { $('hint').textContent = 'No sound: ' + e.message; $('hint').classList.remove('gone'); src = 'off'; await audio.use('off'); }
     state.listen = src !== 'off';
-    if (state.listen && !was) { sound.emit.value.copy(fxy(controls.target)); audio.clear(); ship.flying = false; idle = Math.max(idle, 5); }
-    if (!state.listen && was) ship.flying = false;
+    if (state.listen && !was) { audio.clear(); idle = Math.max(idle, 7); }
     ui();
   };
   $('sound').onchange = () => { const v = $('sound').value; if (v === 'file') $('file').click(); else listen(v); };
@@ -251,8 +242,7 @@ const state = {
       if (!ship.flying && Math.abs(camera.fov - 40) > 0.01) { camera.fov += (40 - camera.fov) * Math.min(1, dt * 2); camera.updateProjectionMatrix(); }
     }
     audio.update(dt);
-    sound.head.value = audio.head + audio.frac; sound.on.value += ((state.listen ? 1 : 0) - sound.on.value) * Math.min(1, dt * 1.5);
-    listening.visible = sound.on.value > 0.002; plain.visible = !listening.visible; dust.visible = listening.visible;
+    plow.update(renderer, dt, fxy(controls.target), fxy(controls.target.clone().sub(camera.position)), audio.levels, state.listen);
     field.update(state.t, centre(), settle);
     look.centre.value.copy(want);
     if (frame % 4 === 0) probe(ship.flying ? controls.target.clone().sub(camera.position) : null);
@@ -281,7 +271,7 @@ const state = {
     grow(dt) { state.t = Math.min(state.t + dt, PRESETS[state.scene].t + 0.6); step(0, true); },
     // fly the lander for `secs` at 20 steps a second, reading the ground as it goes
     async fly(secs) { idle = 99; state.drift = true; for (let i = 0; i < secs * 20; i++) { step(0.05); if (i % 4 === 0) await probe(controls.target.clone().sub(camera.position)); } step(0, true); return { ...ship, y: camera.position.y, ground: ground.under }; },
-    ground, ship, audio, sound, rs, listen,
+    ground, ship, audio, plow, rs, listen, trail: () => plow.read(renderer),
     // hear `secs` of sound (the test source makes it without audio) at 20 steps a second
     hear(secs) { for (let i = 0; i < secs * 20; i++) step(0.05); step(0, true); },
   };

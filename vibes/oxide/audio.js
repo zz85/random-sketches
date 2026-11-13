@@ -100,6 +100,7 @@ export function makeAudio() {
   };
   // advance by dt: a row every 1/30 s
   A.update = (dt) => { acc += dt; let n = 0; while (acc >= 1 / RATE && n < 4) { acc -= 1 / RATE; take(); n++; } if (acc > 1) acc = 0; A.frac = acc * RATE; };
+  A.levels = sm; // the newest row's levels, smoothed, for the plow
   A.clear = () => { data.fill(0); tex.needsUpdate = true; };
   return A;
 }
