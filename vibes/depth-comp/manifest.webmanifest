@@ -1,0 +1,16 @@
+{
+  "name": "Depth Comp - one breath down the line",
+  "short_name": "Depth Comp",
+  "description": "Freediving mechanics: breathe-up and packing, flutter kicks or rope pulls, balance, Frenzel and mouthfill, freefall, the turn and the surface protocol.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#0a3a5c",
+  "theme_color": "#0a3a5c",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

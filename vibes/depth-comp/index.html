@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0a3a5c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Depth Comp - one breath down the line</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg">
+<script src="../pwa/install.js"></script>
+<style>
+  :root { --ink: #eaf6ff; --dim: rgba(234, 246, 255, 0.62); --panel: rgba(4, 22, 38, 0.55); --line: rgba(160, 220, 255, 0.22); --good: #6fe0b0; --warn: #ffc857; --bad: #ff6b6b; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0a3a5c; color: var(--ink); font: 13px/1.35 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; touch-action: none; }
+  canvas#gl { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+  #computer { position: fixed; left: max(10px, env(safe-area-inset-left)); top: max(10px, env(safe-area-inset-top)); padding: 8px 12px; min-width: 128px; font-variant-numeric: tabular-nums; }
+  #computer .depth { font-size: 34px; font-weight: 600; letter-spacing: -0.02em; }
+  #computer .depth small { font-size: 14px; font-weight: 400; color: var(--dim); }
+  #computer .row { display: flex; justify-content: space-between; gap: 10px; color: var(--dim); }
+  #computer .row b { color: var(--ink); font-weight: 500; }
+  #gauges { position: fixed; right: max(10px, env(safe-area-inset-right)); top: max(10px, env(safe-area-inset-top)); padding: 8px 10px; width: 200px; }
+  .g { display: grid; grid-template-columns: 54px 1fr 44px; align-items: center; gap: 6px; margin: 3px 0; }
+  .g label { color: var(--dim); font-size: 11px; }
+  .g .bar { position: relative; height: 8px; border-radius: 4px; background: rgba(255, 255, 255, 0.1); overflow: hidden; }
+  .g .bar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; background: var(--good); transition: background 0.3s; }
+  .g .bar .mark { position: absolute; top: -2px; bottom: -2px; width: 1px; background: rgba(255, 255, 255, 0.55); }
+  .g .bar.center i { left: 50%; }
+  .g span { text-align: right; font-variant-numeric: tabular-nums; font-size: 11px; }
+  #lungs { display: block; margin: 6px 0 2px; width: 100%; height: 40px; }
+  #profile { position: fixed; left: max(10px, env(safe-area-inset-left)); top: calc(max(10px, env(safe-area-inset-top)) + 146px); width: 150px; height: 74px; }
+  #toasts { position: fixed; left: 50%; top: max(14px, env(safe-area-inset-top)); transform: translateX(-50%); width: min(440px, calc(100vw - 420px)); min-width: 220px; display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
+  #toasts div { padding: 7px 12px; text-align: center; transition: opacity 0.8s; font-size: 13px; }
+  @media (max-width: 760px) { #toasts { top: auto; bottom: 230px; width: calc(100vw - 30px); } #gauges { width: 160px; } .g { grid-template-columns: 44px 1fr 36px; } #profile { display: none; } }
+
+  #controls { position: fixed; left: 0; right: 0; bottom: max(10px, env(safe-area-inset-bottom)); display: flex; justify-content: space-between; align-items: flex-end; padding: 0 max(10px, env(safe-area-inset-left)); pointer-events: none; }
+  #controls > div { pointer-events: auto; display: flex; gap: 8px; align-items: flex-end; }
+  button { appearance: none; font: inherit; color: var(--ink); background: rgba(6, 30, 50, 0.6); border: 1px solid var(--line); border-radius: 12px; padding: 9px 12px; cursor: pointer;
+    -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); touch-action: none; }
+  button:active, button.on { background: rgba(80, 180, 230, 0.4); border-color: rgba(190, 235, 255, 0.6); }
+  button kbd { display: block; font: 10px ui-monospace, monospace; color: var(--dim); margin-top: 2px; }
+  button.big { width: 78px; height: 78px; border-radius: 39px; font-size: 15px; font-weight: 600; }
+  button.eq { min-width: 74px; }
+  button:disabled { opacity: 0.35; }
+  #pad { display: grid; grid-template-columns: repeat(3, 46px); grid-template-rows: repeat(2, 46px); gap: 5px; }
+  #pad button { padding: 0; font-size: 18px; }
+  #eqs { flex-direction: column; }
+  #eqs .rowb { display: flex; gap: 6px; }
+  body:not(.dive) .diveonly, body:not(.surface) .surfonly, body:not(.breathe) .breatheonly { display: none !important; }
+
+  #breathe { position: fixed; left: 50%; bottom: max(14px, env(safe-area-inset-bottom)); transform: translateX(-50%); padding: 12px 14px; width: min(520px, calc(100vw - 24px)); box-sizing: border-box; }
+  #breathe h1 { margin: 0 0 2px; font-size: 18px; font-weight: 600; }
+  #breathe p { margin: 4px 0 8px; color: var(--dim); }
+  #breathe .opts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
+  #breathe .opts span { color: var(--dim); margin-right: 2px; }
+  #breathe .opts button { padding: 6px 10px; }
+  #breathe .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 8px 0; text-align: center; }
+  #breathe .stats div { background: rgba(255, 255, 255, 0.06); border-radius: 8px; padding: 5px 2px; }
+  #breathe .stats b { display: block; font-size: 16px; font-variant-numeric: tabular-nums; }
+  #breathe .stats small { color: var(--dim); font-size: 10.5px; }
+  #breathe .go { display: flex; gap: 8px; }
+  #breathe .go button { flex: 1; padding: 12px 6px; font-size: 14px; }
+  #bbreath { position: relative; overflow: hidden; }
+  #bbreath i { position: absolute; left: 0; bottom: 0; top: 0; background: rgba(120, 210, 255, 0.28); width: 0; pointer-events: none; }
+  #bbreath i.pack { background: rgba(255, 200, 87, 0.35); left: auto; }
+
+  #result { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(0, 10, 20, 0.35); }
+  #result.show { display: flex; }
+  #result .card { width: min(360px, calc(100vw - 30px)); padding: 16px 18px; text-align: center; }
+  #result .chip { display: inline-block; width: 70px; height: 96px; border-radius: 8px; margin: 4px auto 8px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4); }
+  #result .chip.white { background: #f6f6f2; } #result .chip.yellow { background: #ffd23f; } #result .chip.red { background: #e63946; }
+  #result h2 { margin: 2px 0 6px; font-size: 26px; }
+  #result ul { text-align: left; margin: 8px 0; padding-left: 18px; color: var(--dim); }
+  #result .num { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 6px 0; }
+  #result .num b { display: block; font-size: 17px; }
+  #result .num small { color: var(--dim); }
+  #help { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(0, 10, 20, 0.5); }
+  #help.show { display: flex; }
+  #help .panel { width: min(560px, calc(100vw - 30px)); max-height: 84vh; overflow: auto; padding: 14px 18px; }
+  #help h3 { margin: 10px 0 4px; font-size: 14px; }
+  #help p, #help li { color: var(--dim); margin: 3px 0; }
+  #help kbd { font: 11px ui-monospace, monospace; color: var(--ink); background: rgba(255, 255, 255, 0.1); border-radius: 4px; padding: 0 4px; }
+  #vignette, #fade, #flash { position: fixed; inset: 0; pointer-events: none; }
+  #vignette { background: radial-gradient(ellipse at center, transparent 30%, rgba(0, 0, 0, 0.95) 78%); opacity: 0; }
+  #flash { box-shadow: inset 0 0 90px 30px rgba(255, 60, 60, 0.7); opacity: 0; }
+  #fade { background: #000; opacity: 0; }
+</style>
+<script type="importmap">
+{ "imports": { "three": "https://unpkg.com/three@0.160.1/build/three.module.js" } }
+</script>
+</head>
+<body class="breathe">
+<canvas id="gl"></canvas>
+<div id="vignette"></div><div id="flash"></div>
+
+<div id="computer" class="panel">
+  <div class="depth"><span id="cDepth">0.0</span><small> m</small></div>
+  <div class="row">time <b id="cTime">0:00</b></div>
+  <div class="row">speed <b id="cSpeed">0.00</b></div>
+  <div class="row">max <b id="cMax">0.0</b></div>
+  <div class="row">target <b id="cTarget">30</b></div>
+</div>
+<canvas id="profile" class="panel"></canvas>
+
+<div id="gauges" class="panel">
+  <div class="g"><label>O₂</label><div class="bar"><i id="gO2"></i></div><span id="tO2"></span></div>
+  <div class="g"><label>Urge</label><div class="bar"><i id="gUrge"></i><div class="mark" style="left:66%"></div></div><span id="tUrge"></span></div>
+  <div class="g"><label>Ears</label><div class="bar"><i id="gEars"></i><div class="mark" style="left:24%"></div><div class="mark" style="left:50%"></div></div><span id="tEars"></span></div>
+  <div class="g"><label>Lift</label><div class="bar center"><i id="gLift"></i><div class="mark" style="left:50%"></div></div><span id="tLift"></span></div>
+  <div class="g"><label>Stream</label><div class="bar"><i id="gStream"></i></div><span id="tStream"></span></div>
+  <div class="g"><label>Line</label><div class="bar"><i id="gLine"></i><div class="mark" style="left:80%"></div></div><span id="tLine"></span></div>
+  <div class="g"><label>Heart</label><div class="bar"><i id="gHr"></i></div><span id="tHr"></span></div>
+  <canvas id="lungs"></canvas>
+</div>
+
+<div id="toasts"></div>
+
+<div id="breathe" class="panel breatheonly">
+  <h1>Depth Comp <small style="font-weight:400;color:var(--dim)">· one breath down the line</small></h1>
+  <p>Breathe up at the surface: hold <b>Breathe</b> to inhale, let go to exhale. Slow in, longer out. When calm, take the last breath to the top, pack a little if you like, and dive.</p>
+  <div class="opts">
+    <span>Discipline</span><button data-disc="CWT">Fins (CWT)</button><button data-disc="FIM">Rope (FIM)</button>
+    <span style="margin-left:6px">Target</span><button data-k="BracketLeft">−</button><b id="bTarget">30 m</b><button data-k="BracketRight">+</button>
+    <button id="bDemo" style="margin-left:auto">Watch</button><button id="bHelp">?</button><button data-pwa-install type="button" style="display:none">⇩ Install</button>
+  </div>
+  <div class="stats">
+    <div><b id="sRate">0</b><small>breaths/min</small></div>
+    <div><b id="sVent">0</b><small>L/min moved</small></div>
+    <div><b id="sRelax">0</b><small>relaxed</small></div>
+    <div><b id="sCo2">ok</b><small>CO₂</small></div>
+  </div>
+  <div class="go">
+    <button id="bbreath" data-k="Space"><i id="bLung"></i><i id="bPack" class="pack"></i><span id="bBreathTxt">Breathe</span><kbd>hold Space</kbd></button>
+    <button data-k="KeyP">Pack <span id="bPacked"></span><kbd>P</kbd></button>
+    <button data-k="Enter">Dive<kbd>Enter</kbd></button>
+  </div>
+</div>
+
+<div id="controls">
+  <div class="diveonly"><button class="big" data-k="KeyZ" id="bL">L<kbd>Z</kbd></button><button class="big" data-k="KeyX" id="bR">R<kbd>X</kbd></button></div>
+  <div id="eqs" class="diveonly">
+    <div class="rowb"><button class="eq" data-k="KeyF">Frenzel<kbd>F</kbd></button><button class="eq" data-k="KeyM" id="bMf">Mouthfill<kbd>M</kbd></button></div>
+    <div class="rowb"><button class="eq" data-k="KeyV">Valsalva<kbd>V</kbd></button><button class="eq" data-k="KeyT" id="bTurn">Turn<kbd>T</kbd></button></div>
+  </div>
+  <div class="diveonly"><div id="pad">
+    <span></span><button data-k="ArrowUp" title="arms ahead (streamline)">⇈<kbd>↑</kbd></button><span></span>
+    <button data-k="ArrowLeft" title="shift your weight: head left">◀<kbd>←</kbd></button><button data-k="ArrowDown" title="arms by your sides">⇊<kbd>↓</kbd></button><button data-k="ArrowRight" title="shift your weight: head right">▶<kbd>→</kbd></button>
+  </div></div>
+  <div class="surfonly"><button class="big" data-k="Space">Breathe<kbd>Space</kbd></button><button class="big" data-k="KeyO">OK 👌<kbd>O</kbd></button></div>
+</div>
+
+<div id="result"><div class="card panel">
+  <div id="rChip" class="chip white"></div>
+  <h2 id="rTitle"></h2>
+  <div class="num"><div><b id="rDepth"></b><small>depth</small></div><div><b id="rTime"></b><small>time</small></div><div><b id="rO2"></b><small>O₂ burnt</small></div></div>
+  <ul id="rNotes"></ul>
+  <div style="display:flex;gap:8px"><button style="flex:1" data-k="KeyR">Again<kbd>R</kbd></button><button style="flex:1" id="rDemo">Watch the bot</button></div>
+</div></div>
+
+<div id="help"><div class="panel">
+  <h3>Depth Comp</h3>
+  <p>A sketch of freediving mechanics: one breath, down a line to a plate and back. Everything you do costs oxygen; the deep part is easy, the shallow part on the way up is where it bites.</p>
+  <h3>Breathe-up</h3>
+  <ul><li><kbd>Space</kbd> hold to inhale (a short press is a small breath, held longer it fills), let go to exhale. Slow and calm raises <i>relaxed</i>; fast deep breathing is hyperventilation: no urge to breathe later, and an earlier blackout.</li>
+  <li><kbd>P</kbd> pack: gulps of air on top of a full breath. More oxygen, a later Frenzel limit, safer deep lungs; but more lift to kick against, dizziness, a stiff throat, and too much for too long faints you at the surface.</li>
+  <li><kbd>Enter</kbd> dive (a duck dive), <kbd>1</kbd>/<kbd>2</kbd> fins or rope, <kbd>[</kbd> <kbd>]</kbd> target depth.</li></ul>
+  <h3>Under water</h3>
+  <ul><li><kbd>Z</kbd> <kbd>X</kbd> left and right leg (fins) or hand (rope). Alternate on an even beat: about one kick every half second, a pull every three quarters. Mashing or the same leg twice churns, twists you and burns oxygen.</li>
+  <li><kbd>←</kbd> <kbd>→</kbd> shift your weight, which way the head goes. Balance wanders by itself: keep the body straight down the line (watch <i>Stream</i> and <i>Line</i>). Slow, near neutral, head down is unstable.</li>
+  <li><kbd>↑</kbd> arms ahead: the best streamline, the steadiest head first; <kbd>↓</kbd> arms by your sides: the relaxed freefall.</li>
+  <li><kbd>F</kbd> Frenzel every metre or two as the ears press. It needs air in the mouth, which the lungs give until they are nearly empty (the Frenzel limit, ~20 m on a plain full breath). <kbd>M</kbd> mouthfill just before that: a mouthful locked in the cheeks carries the Frenzel on, about three times deeper in pressure. <kbd>V</kbd> Valsalva: fine head up near the surface, weak head down, and it blows the mouthfill.</li>
+  <li><kbd>T</kbd> turn at the plate (or early). Kick up, then let the lift carry you the last metres.</li></ul>
+  <h3>Surface</h3>
+  <ul><li><kbd>Space</kbd> hook breaths, then <kbd>O</kbd> the OK sign, within 15 s. The brain's oxygen is lowest a few seconds after you surface.</li>
+  <li><kbd>R</kbd> again, <kbd>C</kbd> camera distance (or wheel / pinch), <kbd>H</kbd> this help.</li></ul>
+  <p style="text-align:right"><button id="helpClose">Close</button></p>
+</div></div>
+<div id="fade"></div>
+<script type="module" src="main.js"></script>
+</body>
+</html>

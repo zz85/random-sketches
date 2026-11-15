@@ -1,0 +1,226 @@
+// diver.js - the freediver figure, after one-breath's game/Diver.js (zz85/one-breath): a jointed
+// body in a wetsuit, hood, mask and long fins, the blades chains of slices that bend behind the
+// kick. There it is posed from a few numbers and kicks on its own with the speed; here each joint
+// follows the dive in sim.js: a leg kicks when its button is pressed (a bad kick bends the knee
+// like a bicycle kick), the arms streamline, sit by the sides, pull the rope or go to the nose,
+// and the body takes the angle the physics gives it.
+//
+//   const fig = new DiverFigure(); scene.add(fig.group); every frame: fig.update(dt, dive)
+//
+// Figure frame (as in Diver.js): faces +Z, feet at the origin, about 1.75 m tall. The world's dive
+// plane is x/y: the figure's +Y (feet to head) is turned to the body's angle `th`, its face to
+// the side of the line, its left-right axis toward the camera.
+import * as THREE from 'three';
+import { DUCK, STROKE } from './sim.js';
+
+const PIVOT = 1.0;              // the centre of mass, at the hips: the point sim.js moves
+const NECK_Y = 1.50, HEAD_Y = 1.63;
+const SHOULDER = { x: 0.2, y: 1.45 }, UPPER_ARM = 0.3, FOREARM = 0.27;
+const HIP = { x: 0.1, y: 0.9 }, THIGH = 0.44, SHIN = 0.42, FOOT_L = 0.24;
+const POINT = Math.PI / 2 - 0.45;   // the pointed foot, toes trailing the heel
+const BLADE_L = 0.8, BLADE_N = 7;
+
+const clamp = THREE.MathUtils.clamp, lerp = THREE.MathUtils.lerp;
+const ease = (a, b, dt, rate) => a + (b - a) * (1 - Math.exp(-dt * rate));
+const smooth = (t) => t * t * (3 - 2 * t);
+
+const mat = (color, rough = 0.6, metal = 0) => new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: metal });
+
+// a capsule from a to b, radius r
+function rod(a, b, r, material) {
+  const len = a.distanceTo(b);
+  const m = new THREE.Mesh(new THREE.CapsuleGeometry(r, Math.max(0.001, len), 4, 10), material);
+  m.position.copy(a).add(b).multiplyScalar(0.5);
+  m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
+  return m;
+}
+function blob(rx, ry, rz, material, x = 0, y = 0, z = 0) {
+  const m = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12), material);
+  m.scale.set(rx, ry, rz); m.position.set(x, y, z); return m;
+}
+function slab(w, h, d, material, x = 0, y = 0, z = 0) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material); m.position.set(x, y, z); return m;
+}
+const V = (x, y, z) => new THREE.Vector3(x, y, z);
+
+export class DiverFigure {
+  constructor({ suit = 0x15191d, accent = 0x2fb4c8, fins = 0x2fb4c8 } = {}) {
+    const S = mat(suit, 0.55), A = mat(accent, 0.45), SK = mat(0x9a6a4a, 0.6), K = mat(0x0b0d0e, 0.5), F = mat(fins, 0.3);
+    F.side = THREE.DoubleSide;
+    const lens = new THREE.MeshStandardMaterial({ color: 0x6f8f9c, roughness: 0.05, metalness: 0.3 });
+    this.group = new THREE.Group();       // at the centre of mass; turned to the body's angle
+    this.turn = new THREE.Group();        // the figure frame turned into the dive plane
+    this.turn.rotation.y = -Math.PI / 2;
+    this.body = new THREE.Group(); this.body.position.y = -PIVOT;
+    this.group.add(this.turn); this.turn.add(this.body);
+
+    // torso: hips, waist, chest, a stripe down each side, the weight belt
+    this.body.add(blob(0.15, 0.1, 0.1, S, 0, 0.95), blob(0.13, 0.11, 0.085, S, 0, 1.12), blob(0.165, 0.16, 0.1, S, 0, 1.32));
+    for (const s of [-1, 1]) this.body.add(slab(0.012, 0.5, 0.05, A, s * 0.15, 1.18, 0.01));
+    const belt = new THREE.Mesh(new THREE.TorusGeometry(0.135, 0.014, 6, 20), K); belt.rotation.x = Math.PI / 2; belt.scale.set(1.08, 0.74, 1); belt.position.y = 1.0; this.body.add(belt);
+    this.body.add(rod(V(0, 1.47, 0.01), V(0, 1.55, 0.01), 0.055, S));
+
+    // head on the neck: hood, face, mask, snorkel
+    this.neck = new THREE.Group(); this.neck.position.set(0, NECK_Y, 0.01); this.body.add(this.neck);
+    const y = HEAD_Y - NECK_Y;
+    this.neck.add(blob(0.098, 0.11, 0.102, S, 0, y), blob(0.07, 0.08, 0.05, SK, 0, y - 0.03, 0.06));
+    this.neck.add(slab(0.15, 0.06, 0.035, K, 0, y + 0.03, 0.095));
+    for (const s of [-1, 1]) this.neck.add(slab(0.058, 0.042, 0.006, lens, s * 0.036, y + 0.03, 0.114));
+    const strap = new THREE.Mesh(new THREE.TorusGeometry(0.104, 0.008, 4, 20), A); strap.rotation.x = Math.PI / 2; strap.position.y = y + 0.03; this.neck.add(strap);
+    this.neck.add(rod(V(0.1, y - 0.07, 0.05), V(0.11, y + 0.2, 0), 0.01, A));
+    // the mouthfill: cheeks puffed
+    this.cheeks = blob(0.06, 0.035, 0.04, SK, 0, y - 0.04, 0.09); this.cheeks.visible = false; this.neck.add(this.cheeks);
+
+    // arms: shoulder -> upper arm -> elbow -> forearm and hand
+    this.arms = [];
+    for (const s of [-1, 1]) {
+      const shoulder = new THREE.Group(); shoulder.position.set(s * SHOULDER.x, SHOULDER.y, 0);
+      shoulder.add(blob(0.05, 0.05, 0.05, S, 0, -0.01), rod(V(0, -0.02, 0), V(s * 0.005, -UPPER_ARM, 0), 0.04, S));
+      const elbow = new THREE.Group(); elbow.position.y = -UPPER_ARM;
+      elbow.add(rod(V(0, 0, 0), V(0, -FOREARM, 0.01), 0.033, S), slab(0.07, 0.17, 0.024, SK, 0, -FOREARM - 0.085, 0.012));
+      shoulder.add(elbow); this.body.add(shoulder);
+      this.arms.push({ s, shoulder, elbow, a: 0.05, bend: 0.1, out: 0.06 });
+    }
+
+    // legs: hip -> thigh -> knee -> shin -> ankle -> foot / fin pocket -> blade
+    this.legs = [];
+    for (const s of [-1, 1]) {
+      const hip = new THREE.Group(); hip.position.set(s * HIP.x, HIP.y, 0);
+      hip.add(blob(0.066, 0.066, 0.066, S, 0, -0.02), rod(V(0, -0.02, 0), V(0, -THIGH, 0), 0.06, S));
+      const knee = new THREE.Group(); knee.position.y = -THIGH;
+      knee.add(rod(V(0, 0, 0), V(0, -SHIN, -0.01), 0.045, S));
+      const ankle = new THREE.Group(); ankle.position.set(0, -SHIN, -0.01);
+      const foot = slab(0.08, 0.055, FOOT_L, SK, 0, -0.03, FOOT_L / 2 - 0.03);
+      const pocket = slab(0.095, 0.075, FOOT_L + 0.02, K, 0, -0.03, FOOT_L / 2 - 0.02);
+      const blade = new Blade(F, K); blade.root.position.set(0, -0.03, FOOT_L);
+      ankle.add(foot, pocket, blade.root); knee.add(ankle); hip.add(knee); this.body.add(hip);
+      this.legs.push({ s, hip, knee, ankle, foot, pocket, blade, ang: 0, kn: 0.06, prev: 0, omega: 0 });
+    }
+    this.group.traverse((o) => { if (o.isMesh) { o.castShadow = true; } });
+    this.neckBend = 0; this.hinge = 0; this.t = 0; this.twist = 0; this.side = 1;
+  }
+
+  update(dt, d) {
+    this.t += dt;
+    const ph = d.phase, t = d.t, fim = d.discipline === 'FIM';
+    const limp = !!d.blackout;
+    const floating = ph === 'breathe' || ph === 'surface' || (ph === 'done' && !d.blackout && d.depth < 0.5);
+    const duck = ph === 'duck' ? d.duckT : null;
+    let stage = -1, f = 0;
+    if (duck !== null) {
+      const marks = [0, DUCK.glide, DUCK.knife, DUCK.legs, DUCK.pull, DUCK.equalize, DUCK.end];
+      for (let i = 1; i < marks.length; i++) if (duck < marks[i]) { stage = i - 1; f = (duck - marks[i - 1]) / (marks[i] - marks[i - 1]); break; }
+      if (stage < 0) stage = 5;
+    }
+
+    // the body: centre of mass at the dive's point, turned to its angle. Turning it by th alone
+    // would face it away from the line head down (a somersault turns the face over too), so the
+    // body also twists about its own long axis to keep the chest and face toward the line, which
+    // is at x 0: on its +x side, head up untwisted, head down half a turn (the other way round on -x). Through the duck dive and
+    // the turn it eases round, the way a diver swings round the rope at the plate.
+    this.group.rotation.z = d.th;
+    // which side of the line you are on, with some slack so a wobble across it doesn't spin you
+    if (d.x > 0.08) this.side = 1; else if (d.x < -0.08) this.side = -1;
+    const face = (Math.cos(d.th) < 0) === (this.side > 0) ? Math.PI : 0;
+    this.twist = ease(this.twist, face, dt, ph === 'dive' && d.turnT === null ? 3 : 6);
+    this.turn.rotation.y = -Math.PI / 2 + this.twist;
+
+    // the jackknife of the duck dive: legs folded toward the belly, then lifted in line
+    const hingeT = stage === 1 ? Math.PI / 2 : stage === 2 ? (Math.PI / 2) * (1 - f) : 0;
+    this.hinge = ease(this.hinge, hingeT, dt, 9);
+
+    // ---- legs
+    for (let i = 0; i < 2; i++) {
+      const L = this.legs[i];
+      let ang = 0, kn = 0.06, rate = 18;
+      if (limp) { ang = 0.25; kn = 0.3; rate = 2; }
+      else if (floating) { ang = 0.12 * Math.sin(this.t * 1.6 + i * Math.PI); kn = 0.25 + 0.15 * Math.sin(this.t * 1.6 + i * Math.PI + 1); rate = 4; } // treading water
+      else if (duck !== null) { ang = stage === 0 ? 0.25 * Math.sin(duck * 9 + i * Math.PI) : 0; kn = 0.05; }
+      else if (fim) { ang = 0.04; kn = 0.08; rate = 6; }   // legs together, trailing
+      else {
+        // a kick: the power stroke toward the belly, the recovery back past straight, then trailing
+        const tau = t - d.legs[i].at, q = d.legs[i].q;
+        if (tau < STROKE.kick) { ang = -0.48 * (0.5 + 0.5 * q); kn = 0.06 + 0.7 * (1 - q); }
+        else if (tau < STROKE.kick + 0.36) { ang = 0.3 * (0.5 + 0.5 * q); kn = 0.35 + 0.4 * (1 - q); }
+        else { ang = 0.02; kn = 0.06; rate = 6; }
+      }
+      L.ang = ease(L.ang, ang, dt, rate); L.kn = ease(L.kn, kn, dt, rate);
+      L.hip.rotation.x = L.ang - this.hinge;
+      L.hip.rotation.z = L.s * 0.03;
+      L.knee.rotation.x = L.kn;
+      L.ankle.rotation.x = floating ? 0.6 : POINT;
+      const finsOn = !fim;
+      L.foot.visible = !finsOn; L.pocket.visible = finsOn; L.blade.root.visible = finsOn;
+      const a = L.hip.rotation.x + L.knee.rotation.x;
+      const omega = dt > 0 ? (a - L.prev) / dt : 0; L.prev = a; L.omega = ease(L.omega, omega, dt, 30);
+      L.blade.update(dt, finsOn ? L.omega : 0, finsOn);
+    }
+
+    // ---- arms: a = how far the arm swings forward from the side (0 hanging, PI overhead)
+    const nose = t - d.nose < 0.6 && !limp && ph !== 'breathe';
+    for (const A of this.arms) {
+      let a = 0.05, bend = 0.1, out = 0.06, rate = 8;
+      if (limp) { a = 0.7; bend = 0.4; out = 0.2; rate = 2; }
+      else if (floating) { a = 0.35 + 0.1 * Math.sin(this.t * 1.3 + A.s); bend = 0.7; out = 0.45; rate = 4; } // sculling
+      else if (duck !== null) {
+        if (stage <= 2) { a = Math.PI - 0.08; bend = 0.02; out = 0.02; }
+        else if (stage === 3) { a = lerp(Math.PI - 0.08, 0.1, smooth(f)); out = 0.06 + Math.sin(f * Math.PI) * 0.8; bend = 0.05; }
+        else { a = 0.08; bend = 0.15; }
+      } else if (d.turnT !== null) { a = A.s > 0 ? 1.9 : 1.3; bend = 0.3; out = 0.1; }  // a hand on the line
+      else if (fim) {
+        // hand over hand: from overhead on the rope, pulled to the hip, then reaching back up
+        const hi = A.s < 0 ? 0 : 1, tau = t - d.hands[hi].at;
+        if (tau < STROKE.pull) { a = lerp(2.9, 0.35, smooth(tau / STROKE.pull)); bend = 0.35 * Math.sin(Math.PI * tau / STROKE.pull); rate = 20; }
+        else if (tau < STROKE.pull + 0.5) { a = 2.9; bend = 0.4; rate = 6; }
+        else { a = 2.9; bend = 0.15; rate = 5; }
+        out = 0.12;
+      } else if (d.arms === 'ahead') { a = Math.PI - 0.08; bend = 0.02; out = 0.03; rate = 5; }
+      else { a = 0.06; bend = 0.08; out = 0.05; rate = 5; }
+      // the right hand to the nose to equalize (or for the mouthfill)
+      if (A.s > 0 && (nose || (duck !== null && stage === 4))) { a = 2.3; bend = 2.45; out = 0.35; rate = 14; }
+      A.a = ease(A.a, a, dt, rate); A.bend = ease(A.bend, bend, dt, rate); A.out = ease(A.out, out, dt, rate);
+      A.shoulder.rotation.set(-A.a, 0, A.s * A.out);
+      A.elbow.rotation.x = -A.bend;
+    }
+
+    // ---- head: in the water the chin tucks in; floating it looks ahead; dropped when limp
+    let neck = 0;
+    if (limp) neck = 0.55;
+    else if (floating) neck = -0.15;
+    else if (duck !== null && stage >= 1 && stage <= 3) neck = 0.25;
+    else neck = 0.12 + 0.15 * d.lean;
+    this.neckBend = ease(this.neckBend, neck, dt, 6);
+    this.neck.rotation.x = this.neckBend;
+    this.cheeks.visible = d.nm > 0 && d.mouthV > 0.08;
+    if (this.cheeks.visible) { const k = 0.6 + 0.8 * clamp(d.mouthV / 0.5, 0, 1); this.cheeks.scale.set(0.06 * k, 0.035 * k, 0.04 * k); }
+  }
+}
+
+// ---- the fin blade: a chain of slices from the toes, bent by the water (from Diver.js): each
+// slice hangs on the one before as a damped hinge (stiffness falls toward the tip), and the
+// leg's angular speed loads the hinges as drag, so the root bends first and the bend runs out.
+class Blade {
+  constructor(F, K) {
+    this.root = new THREE.Group(); this.joints = [];
+    this.angle = new Float32Array(BLADE_N); this.vel = new Float32Array(BLADE_N);
+    const dz = BLADE_L / BLADE_N;
+    let parent = this.root;
+    for (let i = 0; i < BLADE_N; i++) {
+      const j = new THREE.Group(); if (i > 0) j.position.z = dz;
+      const t0 = i / BLADE_N, w = 0.19 - 0.025 * t0, r = 0.028 * (1 - 0.7 * t0) + 0.004;
+      j.add(slab(w, 0.006, dz + 0.004, F, 0, 0, dz / 2));
+      for (const s of [-1, 1]) j.add(slab(0.01, r, dz + 0.004, K, s * (w / 2 - 0.002), 0, dz / 2));
+      parent.add(j); this.joints.push(j); parent = j;
+    }
+  }
+  update(dt, omega, on) {
+    const A = this.angle, Vv = this.vel, h = Math.min(dt, 1 / 30);
+    for (let i = 0; i < BLADE_N; i++) {
+      const t = (i + 0.5) / BLADE_N, k = 420 * (1 - 0.6 * t), c = 1.1 * Math.sqrt(k);
+      const load = on ? clamp(-omega * 0.012 * (1.0 - 0.5 * t), -0.2, 0.2) : 0;
+      Vv[i] += (-k * A[i] + k * load - c * Vv[i]) * h;
+      A[i] = clamp(A[i] + Vv[i] * h, -0.25, 0.25);
+      this.joints[i].rotation.x = A[i];
+    }
+  }
+}
