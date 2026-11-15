@@ -491,9 +491,12 @@ export class Dive {
     this.vx += Fx / B.mass * h; this.vy += Fy / B.mass * h;
     this.x += this.vx * h; this.y += this.vy * h;
     if (this.y > 0) { this.y = 0; this.vy = Math.min(this.vy, 0); }
-    if (!this.turned && this.y < -this.target - 0.2 && Math.abs(this.x) < 1.2) {
+    // the seabed, 2.4 m under the plate's head height, for one who misses the plate
+    if (this.y < -this.target - 2.2) { this.y = -this.target - 2.2; this.vy = Math.max(this.vy, 0); }
+    // the plate stops you on the line (the lanyard keeps you there)
+    if (this.y < -this.target - 0.2 && (this.lanyard || Math.abs(this.x) < 1.2)) {
       this.y = -this.target - 0.2; this.vy = Math.max(this.vy, 0);
-      this.say('plate', 'The bottom plate. Grab the tag and turn (T).', 3);
+      if (!this.turned) this.say('plate', 'The bottom plate. Grab the tag and turn (T).', 3);
     }
 
     this._body(h, P, kicking || pulling);
@@ -588,7 +591,10 @@ export class Dive {
   _after(h) {
     // limp: drifting where the buddy holds you, or floating after the dive
     this.vx = ease(this.vx, 0, h, 2); this.vy = ease(this.vy, 0, h, 2); this.om = ease(this.om, 0, h, 2);
-    if (this.blackout) { this.y = ease(this.y, 0, h, 0.6); this.th = ease(this.th, 0.6, h, 1); }
+    // blacked out: limp, drifting with your buoyancy (sinking below neutral, rising above it) until
+    // the safety diver takes hold of you (main.js moves you then, through \`held\`)
+    if (this.blackout && !this.held) { this.y = Math.max(-this.target - (this.lanyard ? 0.2 : 2.2), Math.min(0, this.y + clamp(this.netKg * 0.06, -0.25, 0.25) * h)); this.th = ease(this.th, this.y < -1 ? Math.PI * 0.8 : 0.6, h, 0.3); }
+    else if (this.blackout) this.th = ease(this.th, 0.4, h, 1);
     this.brain = ease(this.brain, 0.12, h, 0.2);
   }
 

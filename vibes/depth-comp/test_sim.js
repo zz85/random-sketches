@@ -2,6 +2,7 @@
 // packing, breathe-up, oxygen, and whole dives by the bot, good ones and bad ones.
 import { Dive, BODY, KICK } from './sim.js';
 import { Bot } from './bot.js';
+import { Safety, meetDepth } from './safety.js';
 
 let fails = 0;
 const check = (ok, msg) => { console.log((ok ? 'ok   ' : 'FAIL ') + msg); if (!ok) fails++; };
@@ -154,6 +155,28 @@ const placed = (depth, gas = BODY.TLC, o = {}) => {
   { const d = placed(20); d.x = 1.5; check(!d.turn(), 'the turn needs the line in reach'); }
   const long = play({ target: 80 }, { pack: 20 });
   check(!long.r.tag, `80 m on the same lungs: ${long.r.notes[0]}`);
+}
+
+// ---- the safety diver: it meets you on the way up, and brings you up from a blackout
+{
+  const withSafety = (opts, bo) => {
+    const d = new Dive({ seed: 3, ...opts }), b = new Bot(d, bo), s = new Safety({ update() {} }); s.reset(d.target);
+    const keys = []; let metAt = null, arrivedAt = null, hangT = 0;
+    for (let i = 0; i < 60 * 400 && !(d.phase === 'done' && s.state === 'done'); i++) {
+      b.update(dt); d.step(dt);
+      for (const e of s.update(dt, d)) keys.push(e.key);
+      if (s.state === 'hang') { hangT += dt; if (arrivedAt === null) arrivedAt = d.depth; }
+      if (s.state === 'escort' && metAt === null) metAt = d.depth;
+    }
+    return { d, s, keys, metAt, hangT };
+  };
+  const a = withSafety({ target: 40 }, { pack: 10 });
+  check(a.metAt !== null && Math.abs(a.metAt - 20) < 2.5 && a.hangT > 0.5 && a.hangT < 15, `40 m: the safety waits ${a.hangT.toFixed(1)} s at ${meetDepth(40)} m and meets you at ${a.metAt?.toFixed(1)} m`);
+  check(meetDepth(15) === 10 && meetDepth(60) === 20, `meets at 20 m, or two thirds down on a shallow dive (${meetDepth(15)} m for 15 m)`);
+  const deep = withSafety({ target: 80 }, { pack: 20 });
+  check(deep.d.blackout && deep.keys.includes('hold') && deep.d.depth < 0.1, `blackout at ${deep.d.result.notes[0].replace('blackout at ', '')}: hauled up by the lanyard to the safety, brought to the surface`);
+  const lost = withSafety({ target: 80, lanyard: false }, { pack: 20 });
+  check(lost.s.lost && lost.d.depth > 70, `the same with no lanyard: out of the safety's reach at ${lost.d.depth.toFixed(0)} m`);
 }
 
 console.log(fails ? `${fails} failed` : 'all passed');

@@ -17,6 +17,10 @@ A sketch of freediving game mechanics: one breath, down a line to a plate and ba
 
 **Gear.** `L` turns the lanyard on or off: clipped on, a cord from your wrist to a carabiner on the line, you can't drift more than 1.2 m away. Off, nothing stops the drift, you lose sight of the line past 2.5 m, and you need it within reach (0.9 m) to turn at the plate; the result notes it as a training dive, since competitions require one. `B` sets the headlamp: auto (on for targets from 40 m), on, off. It lights ahead of the face, down the line when you are head down. Plates from 40 m are lit too: a ring of LEDs, a lamp under the plate and a strobe 3 m above it. Below about 15 m the water gets dark.
 
+**The safety diver** (red and yellow, across the line; `?nosafety` to dive alone) waits at the surface and leaves in time to meet you on the way up: at 20 m, or two thirds of the way down on a dive shallower than 30 m. It turns head up there to face you and comes up beside you. If you black out it takes hold of you and brings you up at 1 m/s, holding your airway; if it was at the surface it goes down for you, as far as 35 m. Deeper than that, the line's counterweight hauls you up by your lanyard to the safety at the meeting depth. With no lanyard, nobody reaches you, and you sink or float with your buoyancy. The result card waits until you are back at the surface.
+
+**Sound.** Two paths. The water's sounds (the hiss of the water, a low rumble, waves swelling and breaking, the crackle of snapping shrimp, bubble trains at the Minnaert pitch of their size, the kicks' swish, a splash as you go under and come up) all pass one low-pass filter that follows your depth: 12 kHz with your head out at the surface, 4 kHz just under, about 1.4 kHz at 22 m and 350 Hz from about 60 m, while the crackle, the waves and the bubbles thin out and only the rumble and the nearest sounds remain. The body's sounds (heartbeat, the click of the ears, gulps, breaths) come through the bones and hardly change.
+
 **Pain shows on the body:** a hand clamped over the aching ear, the other arm hugging the chest, the chin pulled in, knees drawn up, a shake; with vertigo the arms flail out and the head rolls.
 
 The rest of a dive: `Enter` duck dives: from the buoy you glide face down away from the line, fold forward at the hips so the head goes down and the face turns back to the rope, lift the legs, pull once and put a hand to the nose. `T` turns at the plate, or earlier for a yellow card. The ascent burns the most oxygen. At the surface, take hook breaths (`Space`) and give the OK sign (`O`) within 15 s. Cards follow competition rules: red for a blackout, a samba (loss of motor control), an injury, or no OK; yellow for an early turn or a late first breath.
@@ -42,8 +46,9 @@ Everything is in SI units, in a 2D plane (x across, y up) with the body's angle 
 | `bot.js` | a diver that plays it, well or with one fault on purpose |
 | `diver.js` | the three.js figure, posed from the dive each frame |
 | `main.js` | water, line, plate, marine snow, camera, HUD, keys and touch buttons |
-| `audio.js` | heartbeat, kick swish, ear click, gulp, breath (synthesised) |
-| `test_sim.js` | `node test_sim.js`: buoyancy, balance, finning, equalizing, breathe-up, whole dives (42 checks) |
+| `audio.js` | the ocean (bed, rumble, waves, shrimp crackle, bubbles) through a depth filter, and the body's sounds (synthesised) |
+| `safety.js` | the safety diver: when it leaves, meeting you, the escort and the rescue |
+| `test_sim.js` | `node test_sim.js`: buoyancy, balance, finning, equalizing, breathe-up, whole dives (46 checks) |
 | `smoke.js` | `node smoke.js`: headless Chromium (SwiftShader). It drives the buttons and the bot's dive, checks for errors, and writes `shot_*.png`. `ONLY=icons` renders the PNG icons |
 | `probe.js` | `node probe.js 40 6 CWT '{"mash":true}'`: one bot dive, printed every 5 s, for tuning |
 

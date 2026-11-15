@@ -68,8 +68,9 @@ const W = +(process.env.W || 1280), H = +(process.env.H || 800);
       await shot(`duck${i}`);
     }
     check('duck dive: face down in the glide, then toward the line head down', duckFaces[0][1] < -0.05 && duckFaces[4][0] < -0.05, JSON.stringify(duckFaces));
-    const stages = [['duck', "d.phase === 'duck' && d.duckT > 2"], ['descent', "d.phase === 'dive' && d.depth > 8"], ['freefall', "d.depth > 22 && !d.turned"], ['turn', "d.turnT !== null && d.turnT > 0.7"],
+    const stages = [['duck', "d.phase === 'duck' && d.duckT > 2"], ['descent', "d.phase === 'dive' && d.depth > 8"], ['freefall', "d.depth > 22 && !d.turned"], ['turn', "d.turnT !== null && d.turnT > 0.7"], ['met', "window.__depthcomp.safety.state === 'escort' && d.depth < 19"],
       ['ascent', "d.turned && d.depth < 12"], ['surface', "d.phase === 'surface' && d.surfT > 3"], ['result', "d.phase === 'done'"]];
+    const audioAt = {};
     for (const [name, cond] of stages) {
       const ok = await b.evaluate(`__depthcomp.until(${JSON.stringify(cond)}, 400)`);
       await b.evaluate(`__depthcomp.step(${name === 'result' ? 30 : 24})`); await sleep(name === 'result' ? 900 : 150);
@@ -89,6 +90,15 @@ const W = +(process.env.W || 1280), H = +(process.env.H || 800);
             out[k] = Math.sign(lean * -Math.cos(d.th)); }
           out.lineSide = -F.side; return out; })()`);
         check(`${name}: <- tips toward the line, -> away; the pad follows the screen`, l.ArrowLeft === l.lineSide && l.ArrowRight === -l.lineSide && l.PadLeft === -1 && l.PadRight === 1, JSON.stringify(l));
+      }
+      if (name === 'descent' || name === 'freefall') {
+        const a = await b.evaluate('__depthcomp.audio.state()');
+        audioAt[name] = a;
+        if (name === 'freefall') check('the water sounds more muffled deeper', audioAt.descent.running && a.under && a.cutoff < audioAt.descent.cutoff * 0.6, JSON.stringify(audioAt));
+      }
+      if (name === 'met') {
+        const m = await b.evaluate(`(() => { const A = __depthcomp, d = A.dive, p = A.safety.p; return { gap: +Math.hypot(p.x - d.x, p.y - d.y).toFixed(2), sx: +p.x.toFixed(2), visible: A.safety.fig.group.visible }; })()`);
+        check('the safety diver meets you and comes up beside you', m.visible && m.gap < 1.6 && m.sx < 0, JSON.stringify(m));
       }
       if (name === 'descent') {
         const px = await b.evaluate(`(() => { const c = document.getElementById('gl'), g = c.getContext('webgl2') || c.getContext('webgl'); const p = new Uint8Array(4 * c.width); g.readPixels(0, Math.floor(c.height * 0.55), c.width, 1, g.RGBA, g.UNSIGNED_BYTE, p); let mn = 999, mx = 0; for (let i = 0; i < c.width; i++) { const v = p[i * 4] + p[i * 4 + 1] + p[i * 4 + 2]; mn = Math.min(mn, v); mx = Math.max(mx, v); } return [mn, mx]; })()`);

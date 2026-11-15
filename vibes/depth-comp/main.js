@@ -6,6 +6,7 @@ import { Dive, BODY } from './sim.js';
 import { Bot } from './bot.js';
 import { DiverFigure } from './diver.js';
 import { makeAudio } from './audio.js';
+import { Safety } from './safety.js';
 
 const Q = new URLSearchParams(location.search);
 const $ = (id) => document.getElementById(id);
@@ -150,6 +151,10 @@ function buildLine(target) {
 // ---- the diver
 const fig = new DiverFigure();
 scene.add(fig.group);
+// the safety diver: a red and yellow suit, across the line from you (?nosafety to dive alone)
+const safetyFig = new DiverFigure({ suit: 0x1c1f24, accent: 0xff5a36, fins: 0xffc23d });
+const safety = new Safety(safetyFig);
+scene.add(safetyFig.group); safetyFig.group.visible = !Q.has('nosafety');
 
 // the headlamp: a spot along the face, with a faint cone of light in the water
 const headlamp = new THREE.SpotLight(0xfff1d6, 40, 16, 0.38, 0.55, 1.1);
@@ -196,6 +201,7 @@ function reset() {
   dive = new Dive({ discipline: opts.disc, target: opts.target, fins: opts.fins, lanyard: opts.lanyard, seed: +(Q.get('seed') || (Math.random() * 1e9) | 0) });
   bot = demo ? new Bot(dive, { pack: 6 }) : null;
   buildLine(opts.target);
+  safety.reset(opts.target);
   $('result').classList.remove('show');
   $('fade').style.opacity = 0;
   toasts.length = 0; $('toasts').innerHTML = '';
@@ -395,7 +401,8 @@ function hud(dt) {
 
 function showResult(r) {
   shownResult = true;
-  setTimeout(() => {
+  const wait = () => (dive.blackout && dive.depth > 0.1 && safetyFig.group.visible && !safety.lost ? setTimeout(wait, 300) : setTimeout(show, dive.blackout ? 2500 : 600));
+  const show = () => {
     if (dive.result !== r) return;
     $('rChip').className = `chip ${r.card}`;
     $('rTitle').textContent = { white: 'White card', yellow: 'Yellow card', red: 'Red card' }[r.card];
@@ -410,7 +417,8 @@ function showResult(r) {
     }
     $('rNotes').innerHTML = notes.map((n) => `<li>${n}</li>`).join('');
     $('result').classList.add('show');
-  }, dive.blackout ? 2500 : 600);
+  };
+  wait();
 }
 
 // ---- frame
@@ -419,7 +427,11 @@ let last = performance.now(), paused = Q.has('pause'), shake = 0, beatT = 0;
 function frame(dt) {
   const d = dive;
   if (bot) bot.update(dt); else d.setLean(leanInput());
+  const wasPhase = d.phase;
   d.step(dt);
+  if (safetyFig.group.visible) for (const e of safety.update(dt, d)) toast(e.text);
+  if (wasPhase === 'dive' && d.phase === 'surface') audio.splash();
+  if (wasPhase === 'breathe' && d.phase === 'duck') audio.splash();
   fig.update(dt, d);
   fig.group.position.set(d.x, d.y, 0.12);
   fig.group.updateMatrixWorld(true); drawLanyard(d, dt);
@@ -457,6 +469,8 @@ function frame(dt) {
   snowGeo.attributes.position.needsUpdate = true;
   if (neutralMark) { const nd = d.neutralDepth; neutralMark.visible = nd > 1 && nd < d.target + 2 && d.phase !== 'done'; neutralMark.position.y = -nd; }
 
+  // sound: the water around the camera's ear (your head), muffled with depth
+  audio.update(dt, d.depth, d.phase !== 'breathe' && d.phase !== 'surface' && !(d.phase === 'done' && d.depth < 0.3 && !d.blackout));
   // sound: the heart, slowing with the dive reflex; a thump for each contraction
   beatT += dt;
   if (d.phase !== 'breathe' && !d.blackout && beatT > 60 / Math.max(30, d.hr)) { beatT = 0; audio.beat(clamp(0.4 + d.urge * 0.2, 0, 1)); }
@@ -486,9 +500,9 @@ window.__depthcomp = {
   get dive() { return dive; }, fig, camera,
   step(n = 1, dt = 1 / 30) { for (let i = 0; i < n; i++) frame(dt); },
   // the dive alone, no drawing (SwiftShader is slow): then step() a few frames to draw it
-  advance(sec, dt = 1 / 30) { for (let t = 0; t < sec; t += dt) { if (bot) bot.update(dt); else dive.setLean(leanInput()); dive.step(dt); if (dive.phase === 'done') break; } },
-  until(cond, max = 400, dt = 1 / 30) { const f = new Function('d', `return (${cond})`); for (let t = 0; t < max && !f(dive); t += dt) { if (bot) bot.update(dt); dive.step(dt); } return f(dive); },
-  press, release, reset, opts,
+  advance(sec, dt = 1 / 30) { for (let t = 0; t < sec; t += dt) { if (bot) bot.update(dt); else dive.setLean(leanInput()); dive.step(dt); if (safetyFig.group.visible) safety.update(dt, dive); if (dive.phase === 'done' && !dive.blackout) break; } },
+  until(cond, max = 400, dt = 1 / 30) { const f = new Function('d', `return (${cond})`); for (let t = 0; t < max && !f(dive); t += dt) { if (bot) bot.update(dt); dive.step(dt); if (safetyFig.group.visible) for (const e of safety.update(dt, dive)) toast(e.text); } return f(dive); },
+  press, release, reset, opts, safety, audio,
   hold(code, on) { if (on) held.add(code); else held.delete(code); },
   leanInput,
   demo(on = true) { demo = on; reset(); },

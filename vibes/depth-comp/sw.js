@@ -3,8 +3,8 @@
  * the first time it is fetched. Stale-while-revalidate, so it opens instantly and offline.
  * Bump VERSION when the file list changes.
  */
-const VERSION = 'depth-comp-v1';
-const SHELL = ['./', './index.html', './main.js', './sim.js', './bot.js', './diver.js', './audio.js', './manifest.webmanifest', '../pwa/install.js', './icon.svg', './icon-192.png', './icon-512.png'];
+const VERSION = 'depth-comp-v2';
+const SHELL = ['./', './index.html', './main.js', './sim.js', './bot.js', './diver.js', './audio.js', './safety.js', './manifest.webmanifest', '../pwa/install.js', './icon.svg', './icon-192.png', './icon-512.png'];
 const CDN = 'https://unpkg.com/three@0.160.1/build/three.module.js';
 
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL).then(() => c.add(CDN).catch(() => {}))).then(() => self.skipWaiting())); });
