@@ -19,6 +19,8 @@ const SHOULDER = { x: 0.2, y: 1.45 }, UPPER_ARM = 0.3, FOREARM = 0.27;
 const HIP = { x: 0.1, y: 0.9 }, THIGH = 0.44, SHIN = 0.42, FOOT_L = 0.24;
 const POINT = Math.PI / 2 - 0.45;   // the pointed foot, toes trailing the heel
 const BLADE_L = 0.8, BLADE_N = 7;
+// the arm's own pose on the way to the nose (equalizing) or the ear (in pain), which IK finishes
+const NOSE = { a: 1.1, bend: 2.2, out: -0.5 }, EAR = { a: 0.9, bend: 2.3, out: 0.5 };
 
 const clamp = THREE.MathUtils.clamp, lerp = THREE.MathUtils.lerp;
 const ease = (a, b, dt, rate) => a + (b - a) * (1 - Math.exp(-dt * rate));
@@ -117,6 +119,7 @@ export class DiverFigure {
 
   update(dt, d) {
     this.t += dt;
+    this.group.position.set(d.x, d.y, 0.12);
     const ph = d.phase, t = d.t, fim = d.discipline === 'FIM', mono = d.fins === 'mono';
     // pain curls you up and makes you shake; vertigo throws the arms out and rolls the head
     const pain = d.blackout ? 0 : d.pain, vert = d.blackout ? 0 : d.vertigo;
@@ -205,26 +208,38 @@ export class DiverFigure {
       else if (fim) {
         // hand over hand: from overhead on the rope, pulled to the hip, then reaching back up
         const hi = A.s < 0 ? 0 : 1, tau = t - d.hands[hi].at;
-        if (tau < STROKE.pull) { a = lerp(2.9, 0.35, smooth(tau / STROKE.pull)); bend = 0.35 * Math.sin(Math.PI * tau / STROKE.pull); rate = 20; }
-        else if (tau < STROKE.pull + 0.5) { a = 2.9; bend = 0.4; rate = 6; }
-        else { a = 2.9; bend = 0.15; rate = 5; }
-        out = 0.12;
+        // the rope is an arm's length in front of the face (the hips hang 0.3 m off it), so each
+        // hand reaches forward to it: up past the head (a 2.55, reach ahead 0.3 m) and pulled down
+        // to the hip (a 0.6), the elbow bending mid-pull to keep the hand on the rope
+        if (tau < STROKE.pull) { const f = smooth(tau / STROKE.pull); a = lerp(2.55, 0.6, f); bend = 0.7 * Math.sin(Math.PI * f); rate = 20; }
+        else if (tau < STROKE.pull + 0.5) { a = 2.55; bend = 0.45; rate = 6; }
+        else { a = 2.55; bend = 0.2; rate = 5; }
+        out = 0.06;
       } else if (d.arms === 'ahead') { a = Math.PI - 0.08; bend = 0.02; out = 0.03; rate = 5; }
       else { a = 0.06; bend = 0.08; out = 0.05; rate = 5; }
       // the right hand to the nose to equalize (or for the mouthfill)
-      if (A.s > 0 && (nose || (duck !== null && stage === 4))) { a = 2.3; bend = 2.45; out = 0.35; rate = 14; }
+      // (the upper arm forward and down a little, the forearm folded back up to the face)
+      if (A.s > 0 && (nose || (duck !== null && stage === 4))) { a = NOSE.a; bend = NOSE.bend; out = NOSE.out; rate = 14; }
       // in pain: a hand clamped over the aching ear, the other arm hugging the chest; with
       // vertigo the arms flail out for something to hold
       const busy = (A.s > 0 && nose) || d.turnT !== null || (fim && pain < 0.6);
       if (!limp && !floating && duck === null && !busy) {
         if (vert > 0.2) { a = 1.3 + 0.7 * Math.sin(this.t * 1.9 + A.s); out = 0.9 + 0.3 * Math.sin(this.t * 2.6 + A.s); bend = 0.4; rate = 6; }
-        else if (A.s > 0 && earAche) { a = 2.45; bend = 2.05; out = 0.8; rate = 10; }
+        else if (A.s > 0 && earAche) { a = EAR.a; bend = EAR.bend; out = EAR.out; rate = 10; }
         else if (A.s < 0 && pain > 0.55) { a = 0.95; bend = 1.9; out = 0.12; rate = 8; }
       }
       a += shake * 0.6;
       A.a = ease(A.a, a, dt, rate); A.bend = ease(A.bend, bend, dt, rate); A.out = ease(A.out, out, dt, rate);
-      A.shoulder.rotation.set(-A.a, 0, A.s * A.out);
-      A.elbow.rotation.x = -A.bend;
+      // where the hand must be, which the arm reaches by IK after the head is posed: the nose, the
+      // ear, or the rope (hand over hand in free immersion, a hand on it at the turn)
+      let ik = null;
+      if (!limp && !floating) {
+        if (A.s > 0 && (nose || (duck !== null && stage === 4))) ik = 'nose';
+        else if (d.turnT !== null) ik = 'rope';
+        else if (duck === null && A.s > 0 && earAche && vert <= 0.2) ik = 'ear';
+        else if (duck === null && fim && !(vert > 0.2) && !(A.s < 0 && pain > 0.55)) ik = 'rope';
+      }
+      A.ik = ik;
     }
 
     // ---- head: in the water the chin tucks in; floating it looks ahead; dropped when limp
@@ -238,10 +253,63 @@ export class DiverFigure {
     this.neck.rotation.x = this.neckBend;
     this.neckRoll = ease(this.neckRoll || 0, (earAche ? 0.3 * pain : 0) + vert * 0.55 * Math.sin(this.t * 1.3), dt, 4);
     this.neck.rotation.z = this.neckRoll;
+    this._arms(dt, d, fim);
     this.cheeks.visible = d.nm > 0 && d.mouthV > 0.08;
     if (this.cheeks.visible) { const k = 0.6 + 0.8 * clamp(d.mouthV / 0.5, 0, 1); this.cheeks.scale.set(0.06 * k, 0.035 * k, 0.04 * k); }
   }
 }
+
+// ---- the arms by IK: each arm's own pose (A.a, A.bend, A.out) blended toward a two-bone solve that
+// puts the hand on its target. Targets are in the body's frame (the shoulders' parent).
+const L1 = UPPER_ARM, L2 = FOREARM + 0.12;
+const _T = new THREE.Vector3(), _u = new THREE.Vector3(), _n = new THREE.Vector3(), _p = new THREE.Vector3(), _E = new THREE.Vector3(),
+  _x = new THREE.Vector3(), _y = new THREE.Vector3(), _z = new THREE.Vector3(), _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _qf = new THREE.Quaternion(),
+  _qi = new THREE.Quaternion(), _e = new THREE.Euler(), _pole = new THREE.Vector3(), _lw = new THREE.Vector3();
+DiverFigure.prototype._arms = function (dt, d, fim) {
+  this.group.updateMatrixWorld(true);
+  const hy = Math.cos(d.th) >= 0 ? 1 : -1;                      // which way along the rope the head points
+  const reachY = d.y + hy * 0.92, shoulderY = d.y + hy * 0.45;  // the rope a long arm ahead, and at the shoulders
+  for (let i = 0; i < 2; i++) {
+    const A = this.arms[i];
+    A.ikW = ease(A.ikW || 0, A.ik ? 1 : 0, dt, A.ik === 'rope' ? 14 : 10);
+    _e.set(-A.a, 0, A.s * A.out); _qf.setFromEuler(_e);
+    if (A.ik) A.kind = A.ik;
+    if (A.ikW < 0.002 || !A.kind) { A.shoulder.quaternion.copy(_qf); A.elbow.rotation.x = -A.bend; continue; }
+    // the target
+    if (A.kind === 'nose') _T.set(0, HEAD_Y - NECK_Y - 0.03, 0.15).applyMatrix4(this.neck.matrix);
+    else if (A.kind === 'ear') _T.set(A.s * 0.13, HEAD_Y - NECK_Y, 0.0).applyMatrix4(this.neck.matrix);
+    else {
+      // the rope: during a pull the hand holds its grip and the body slides past it; between pulls
+      // it reaches ahead for the next grip
+      let y;
+      if (d.turnT !== null) y = shoulderY;
+      else {
+        const H = d.hands[i], tau = d.t - H.at;
+        if (tau < STROKE.pull) { if (A.pullAt !== H.at) { A.pullAt = H.at; A.grabY = A.ropeY ?? reachY; } y = A.grabY; }
+        else y = ease(A.ropeY ?? reachY, reachY, dt, 7);
+      }
+      A.ropeY = y;
+      _T.set(0, y, 0); this.body.worldToLocal(_T);
+    }
+    // the solve: elbow out and down from the line from shoulder to hand
+    const S = A.shoulder.position;
+    _u.subVectors(_T, S); let D = _u.length(); _u.normalize();
+    D = clamp(D, 0.08, L1 + L2 - 0.005);
+    const cA = clamp((L1 * L1 + D * D - L2 * L2) / (2 * L1 * D), -1, 1), sA = Math.sqrt(1 - cA * cA);
+    _pole.set(A.s, -0.7, -0.5);
+    _n.crossVectors(_u, _pole); if (_n.lengthSq() < 1e-6) _n.set(1, 0, 0); _n.normalize();
+    _p.crossVectors(_n, _u);
+    _E.copy(_u).multiplyScalar(L1 * cA).addScaledVector(_p, L1 * sA);   // the elbow, from the shoulder
+    _y.copy(_E).multiplyScalar(-1).normalize(); _x.copy(_n); _z.crossVectors(_x, _y);
+    _m.makeBasis(_x, _y, _z); _q.setFromRotationMatrix(_m);
+    // the forearm from the elbow to the hand, in the upper arm's frame: a turn about its x
+    _lw.copy(_u).multiplyScalar(D).sub(_E).normalize().applyQuaternion(_qi.copy(_q).invert());
+    const th = Math.atan2(-_lw.z, -_lw.y);
+    _e.set(-A.a, 0, A.s * A.out); _qf.setFromEuler(_e);
+    A.shoulder.quaternion.copy(_qf).slerp(_q, A.ikW);
+    A.elbow.rotation.x = lerp(-A.bend, th, A.ikW);
+  }
+};
 
 // ---- the fin blade: a chain of slices from the toes, bent by the water (from Diver.js): each
 // slice hangs on the one before as a damped hinge (stiffness falls toward the tip), and the

@@ -49,6 +49,10 @@ const W = +(process.env.W || 1280), H = +(process.env.H || 800);
     await shot('breathe');
     const dv = await b.evaluate(`(() => { const A = __depthcomp; A.press('Enter'); A.step(45); const duck = A.dive.phase; A.until("d.phase === 'dive'", 5); A.press('KeyZ'); A.advance(0.45); A.press('KeyX'); A.step(6);
       return { duck, phase: A.dive.phase, kicks: A.dive.kicks, depth: A.dive.depth, body: document.body.className }; })()`);
+    const nose = await b.evaluate(`(() => { const A = __depthcomp, d = A.dive, F = A.fig, V = F.group.position.constructor; let best = 9;
+      for (let i = 0; i < 20; i++) { d.nose = d.t; A.step(1); F.group.updateMatrixWorld(true); best = Math.min(best, F.arms[1].hand.getWorldPosition(new V()).distanceTo(new V(0, 0.1, 0.15).applyMatrix4(F.neck.matrixWorld))); }
+      return +best.toFixed(3); })()`);
+    check('Frenzel: the right hand at the nose', nose < 0.05, `${nose} m`);
     check('Dive: a duck dive, then the kick buttons kick', dv.duck === 'duck' && dv.phase === 'dive' && dv.kicks === 2 && dv.body === 'dive', JSON.stringify(dv));
     await shot('kick');
 
@@ -101,6 +105,11 @@ const W = +(process.env.W || 1280), H = +(process.env.H || 800);
     await waitFor(() => b.evaluate('!!window.__depthcomp'), 60000);
     const fim = await b.evaluate(`(() => { const A = __depthcomp; A.until("d.phase === 'dive' && d.depth > 10", 300); A.step(10); return { pulls: A.dive.pulls, depth: A.dive.depth }; })()`);
     check('FIM: the bot pulls down the rope', fim.pulls > 3 && fim.depth > 10, JSON.stringify(fim));
+    const grip = await b.evaluate(`(() => { const A = __depthcomp, F = A.fig, V = F.group.position.constructor, r = []; for (let i = 0; i < 30; i++) { A.step(1); F.group.updateMatrixWorld(true);
+      for (const a of F.arms) if (a.ik === 'rope' && a.ikW > 0.95) { const h = a.hand.getWorldPosition(new V()); r.push(Math.hypot(h.x, h.z)); } }
+      const face = (() => { const head = new V(0, 0.13, 0).applyMatrix4(F.neck.matrixWorld), eye = new V(0, 0.16, 0.12).applyMatrix4(F.neck.matrixWorld); return +(eye.x - head.x).toFixed(2); })();
+      return { n: r.length, worst: +Math.max(...r).toFixed(3), face }; })()`);
+    check('FIM: hands on the rope, facing it', grip.n > 20 && grip.worst < 0.06 && grip.face < -0.05, JSON.stringify(grip));
     await sleep(150); await shot('fim');
     // deep, on a monofin, with a headlamp and a lit plate
     await b.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/depth-comp/?seed=5&pause&shot&target=60&disc=CWT&fins=mono&lamp=auto&demo` });
