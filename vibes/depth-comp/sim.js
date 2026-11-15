@@ -45,6 +45,9 @@ export const BODY = {
 // the duck dive, seconds from its start: a glide with the arms ahead, the jackknife, the legs
 // lifted straight up (their weight drives the body down), one arm pull, a hand to the nose
 export const DUCK = { glide: 0.7, knife: 1.4, legs: 2.1, pull: 3.0, equalize: 3.6, end: 4.0 };
+// the monofin's dolphin kick, press and release: the downstroke while held (ideally 0.35 s), the
+// upstroke on release (0.3 s), a cycle every 0.9 s; N s of each half for a good one
+export const MONO = { down: 0.35, up: 0.3, ideal: 0.9, Jdown: 40, Jup: 22 };
 export const STROKE = { kick: 0.24, pull: 0.55, turn: 1.6, mouthfill: 0.8 };
 export const KICK = { ideal: 0.45, J: 26 };   // s between kicks of a good flutter; N s per kick
 export const PULL = { ideal: 0.75, J: 50 };   // s between pulls hand over hand; N s per pull
@@ -67,8 +70,12 @@ function tempo(gap, ideal) {
 }
 
 export class Dive {
-  constructor({ discipline = 'CWT', target = 30, seed = 7 } = {}) {
+  constructor({ discipline = 'CWT', target = 30, seed = 7, fins = 'bi', lanyard = true } = {}) {
     this.discipline = discipline; // 'CWT' constant weight with fins, 'FIM' free immersion (the rope)
+    this.fins = discipline === 'FIM' ? 'none' : fins;   // 'bi' (a fin each foot) or 'mono'
+    this.lanyard = lanyard;       // clipped to the line: it can't drift far, and it can't lose it
+    this.mono = { down: false, at: -9, upAt: -9, q: 0, qp: 1 };
+    this.dolphins = 0; this.lost = false;
     this.target = target;
     this.rnd = mulberry32(seed);
     this.t = 0;
@@ -188,7 +195,7 @@ export class Dive {
 
   // one leg's kick: flutter is the legs taking turns at a steady beat
   kick(i) {
-    if (this.phase !== 'dive' || this.blackout || this.discipline !== 'CWT' || this.turnT !== null) return null;
+    if (this.phase !== 'dive' || this.blackout || this.fins !== 'bi' || this.turnT !== null) return null;
     const L = this.legs[i];
     if (this.t - L.at < STROKE.kick * 0.7 * (1 + 1.5 * this.pain)) return { q: 0, busy: true };
     const gap = this.t - this.lastStroke;
@@ -204,6 +211,42 @@ export class Dive {
     this.kicks++; this.quality = ease(this.quality, q, 1, 0.35);
     if (this.pain > 0.5) this.say('painkick', 'Every kick hurts: slower and weaker.', 6);
     else if (q < 0.4) this.say('kickbad', alt < 1 ? 'Same leg twice: flutter alternates, left, right, left.' : 'Too fast: long, even kicks drive you, mashing just churns.', 6);
+    return { q };
+  }
+
+  // the monofin's dolphin kick: press for the downstroke (both legs together, toward the belly),
+  // release for the upstroke. Scored on the hold (the downstroke's length) and the cycle (the time
+  // since the last downstroke). It drives harder and wastes less than flutter, the big blade holds
+  // the body straight while it moves, but a hold too long or too short pitches the body, and a
+  // stalled cycle stops you dead: it needs rhythm, not alternation.
+  dolphin(on) {
+    const M = this.mono;
+    if (this.phase !== 'dive' || this.blackout || this.fins !== 'mono' || this.turnT !== null) { M.down = false; return null; }
+    if (on) {
+      if (M.down || this.t - M.upAt < MONO.up * 0.6 * (1 + 1.5 * this.pain)) return { q: 0, busy: true };
+      const gap = this.t - M.at;
+      M.qp = tempo(gap, MONO.ideal * (1 + this.pain)) * (1 - 0.6 * this.pain);
+      M.down = true; M.at = this.t; this.lastStroke = this.t;
+      this.strokes.push({ kind: 'kick', mono: 'down', until: this.t + MONO.down, F: MONO.Jdown * M.qp / MONO.down, hold: true });
+      this.effort += 0.0035 * (1 + this.pain); this.dolphins++;
+      return { q: M.qp };
+    }
+    if (!M.down) return null;
+    M.down = false; M.upAt = this.t;
+    const dd = this.t - M.at, l = Math.log(Math.max(dd, 0.02) / MONO.down);
+    const qh = Math.exp(-((l / 0.6) ** 2));
+    const q = M.qp * (0.4 + 0.6 * qh);
+    M.q = q;
+    for (const st of this.strokes) if (st.hold) { st.until = Math.min(st.until, this.t); st.hold = false; }
+    this.strokes.push({ kind: 'kick', mono: 'up', until: this.t + MONO.up, F: MONO.Jup * q / MONO.up });
+    this.effort += 0.0035 * (1 + 1.6 * (1 - q)) * (1 + this.pain);
+    this.urge += 0.002 * (1 + (1 - q));
+    this.kickDrag += 0.06 + 0.3 * (1 - q);
+    this.om += 0.9 * (dd - MONO.down) + (this.rnd() - 0.5) * 0.4 * (1 - q);   // a long or short hold pitches you
+    this.tension = Math.min(1, this.tension + 0.03 * (1 - q));
+    this.kicks++; this.quality = ease(this.quality, q, 1, 0.35);
+    if (this.pain > 0.5) this.say('painkick', 'Every kick hurts: slower and weaker.', 6);
+    else if (q < 0.45) this.say('monobad', qh < 0.5 ? (dd > MONO.down ? 'Held too long: the downstroke stalls and pitches you. Shorter.' : 'Snatched: hold the downstroke a beat longer.') : 'Keep a rhythm: a dolphin kick about every second.', 6);
     return { q };
   }
 
@@ -279,6 +322,8 @@ export class Dive {
 
   turn() {
     if (this.phase !== 'dive' || this.turnT !== null || this.turned || this.blackout || !this.headDown) return false;
+    // the turn needs a hand on the line (the lanyard keeps it in reach)
+    if (Math.abs(this.x) > 0.9) { this.say('reach', 'Too far from the line to grab it and turn. Lean back to it.', 2); return false; }
     this.tag = this.depth >= this.target - 1.2;
     this.early = !this.tag;
     this.turnT = 0; this.turnFrom = this.th;
@@ -389,6 +434,8 @@ export class Dive {
     }
     if (this.strokes.length > 8) this.strokes = this.strokes.filter((s) => this.t < s.until);
     this.kickDrag *= Math.exp(-3 * h);
+    // a downstroke held past its end: the blade pushes water the wrong way, legs bent and stalled
+    if (this.mono.down && this.t - this.mono.at > MONO.down) this.kickDrag += h * 1.8;
 
     // drag: along the body and across it
     const vax = this.vx * hx + this.vy * hy, px = this.vx - vax * hx, py = this.vy - vax * hy, perp = Math.hypot(px, py);
@@ -403,9 +450,15 @@ export class Dive {
 
     // the line: free immersion holds it; constant weight wears a lanyard on it
     if (fim) { Fx += -500 * (this.x - 0.3) - 150 * this.vx; Fy -= 8 * this.vy; }
-    else if (Math.abs(this.x) > 1.2) {
+    else if (this.lanyard && Math.abs(this.x) > 1.2) {
       Fx -= Math.sign(this.x) * 400 * (Math.abs(this.x) - 1.2) + 60 * this.vx;
       if (this.say('tug', 'The lanyard snaps tight: you have drifted off the line. Lean back toward it.', 5)) { this.tugs++; this.effort += 0.01; this.tension = Math.min(1, this.tension + 0.15); this.om += (this.rnd() - 0.5) * 0.6; }
+    }
+
+    // no lanyard: nothing holds you near the line; drift far and you lose it in the blue
+    if (!fim && !this.lanyard) {
+      if (Math.abs(this.x) > 2.5 && !this.lost) { this.lost = true; this.say('lost', 'You have lost sight of the line. Swim back to it before you need it.', 0); }
+      if (Math.abs(this.x) < 1.5) this.lost = false;
     }
 
     // turning: one hand on the line, the body swung round, the speed held
@@ -420,7 +473,7 @@ export class Dive {
       // torques: the lungs lift the chest, the fins trail, your weight shifts, the water stirs
       const chest = this.arms === 'ahead' ? 0.27 : B.chest;
       let tq = -chest * Math.sin(this.th) * gasV * G;
-      if (sp > 0.03) tq += 30 * sp * (hx * this.vy - hy * this.vx);
+      if (sp > 0.03) tq += (this.fins === 'mono' ? 45 : 30) * sp * (hx * this.vy - hy * this.vx);
       // in pain you can't hold a line well; with vertigo you don't know which way is up
       tq += this.lean * 16 * (1 - 0.4 * this.pain) * (1 - 1.6 * this.vertigo * (0.5 + 0.5 * Math.sin(this.t * 0.7)));
       // the water stirs (quick), and your balance wanders (slow: the head turns, a shoulder drops,
@@ -438,7 +491,7 @@ export class Dive {
     this.vx += Fx / B.mass * h; this.vy += Fy / B.mass * h;
     this.x += this.vx * h; this.y += this.vy * h;
     if (this.y > 0) { this.y = 0; this.vy = Math.min(this.vy, 0); }
-    if (!this.turned && this.y < -this.target - 0.2) {
+    if (!this.turned && this.y < -this.target - 0.2 && Math.abs(this.x) < 1.2) {
       this.y = -this.target - 0.2; this.vy = Math.max(this.vy, 0);
       this.say('plate', 'The bottom plate. Grab the tag and turn (T).', 3);
     }
@@ -550,12 +603,13 @@ export class Dive {
     if (!this.blackout) {
       if (this.okAt === null) red('no OK sign within 15 s');
       if (this.firstBreath !== null && this.firstBreath > 4) yellow(`first breath ${this.firstBreath.toFixed(0)} s after the surface`);
-      if (this.early && !this.injury) yellow(`turned early (${this.maxDepth.toFixed(1)} of ${this.target} m)`);
+      if (this.early && !this.injury) yellow(this.maxDepth >= this.target - 1.2 ? `no tag: off the line at the plate (${this.maxDepth.toFixed(1)} m)` : `turned early (${this.maxDepth.toFixed(1)} of ${this.target} m)`);
     }
+    if (!this.lanyard && this.discipline === 'CWT') notes.push('no lanyard: a training dive (competitions require one)');
     if (this.tugs) notes.push(`${this.tugs} lanyard tug${this.tugs > 1 ? 's' : ''}`);
     const depth = this.tag ? this.target : Math.floor(this.maxDepth * 10) / 10;
     const score = card === 'red' ? 0 : depth - (this.early ? 0.5 * Math.max(0, this.target - this.maxDepth) : 0) - (card === 'yellow' ? 1 : 0);
-    this.result = { card, depth, target: this.target, tag: this.tag, time: this.diveT + DUCK.end, o2: this.o2Used, notes, score: Math.max(0, Math.round(score * 10) / 10), discipline: this.discipline, packed: this.packed };
+    this.result = { fins: this.fins, lanyard: this.lanyard, card, depth, target: this.target, tag: this.tag, time: this.diveT + DUCK.end, o2: this.o2Used, notes, score: Math.max(0, Math.round(score * 10) / 10), discipline: this.discipline, packed: this.packed };
     this.phase = 'done';
   }
 }

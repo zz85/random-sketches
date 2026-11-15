@@ -20,6 +20,7 @@ export class Bot {
   update(dt) {
     const d = this.d, o = this.o;
     this.t += dt;
+    if (d.phase !== 'dive' && this.release !== undefined) { d.dolphin(false); this.release = undefined; }
     if (d.phase === 'breathe') return this._breatheUp();
     if (d.phase === 'surface') {
       if (o.lazyBreath) return;
@@ -42,12 +43,14 @@ export class Bot {
       d.setLean(-2.5 * err - 1.2 * d.om);
     }
 
+    if (this.release !== undefined && this.t >= this.release) { d.dolphin(false); this.release = undefined; }
     // work: down until freefall, up until the lift carries you
     const net = d.netKg;
     const work = down ? (o.kickTo !== undefined ? d.depth < o.kickTo : net > -0.8 || d.speed < 0.5) : d.depth > 7 || d.vy < 0.3;
     d.setArms(down && net < -0.5 && d.discipline === 'CWT' ? 'sides' : 'ahead');
     if (work && d.turnT === null && this.t >= this.next) {
       if (d.discipline === 'FIM') { d.pull(this.side); this.next = this.t + o.pullGap; }
+      else if (d.fins === 'mono') { d.dolphin(true); this.release = this.t + (o.hold || 0.35); this.next = this.t + (o.monoGap || 0.9); }
       else if (o.mash) { d.kick(0); this.next = this.t + 0.12; }
       else { d.kick(this.side); this.next = this.t + o.kickGap; }
       this.side = 1 - this.side;

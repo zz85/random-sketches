@@ -92,7 +92,12 @@ const label = (text, color = '#eaf6ff', w = 128) => {
   const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthWrite: false }));
   s.scale.set(0.9 * w / 128, 0.34, 1); s.center.set(0, 0.5); return s;
 };
-let neutralMark;
+let neutralMark, plateLights = null;
+const glowTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d');
+  const r = g.createRadialGradient(32, 32, 0, 32, 32, 32); r.addColorStop(0, 'rgba(255,255,255,1)'); r.addColorStop(0.25, 'rgba(255,255,255,0.35)'); r.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = r; g.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(c);
+})();
 function buildLine(target) {
   for (const o of [...line.children]) { line.remove(o); o.traverse?.((m) => { m.geometry?.dispose(); m.material?.map?.dispose(); m.material?.dispose(); }); }
   const len = target + 4;
@@ -117,6 +122,22 @@ function buildLine(target) {
   const weight = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.15, 0.3, 12), new THREE.MeshStandardMaterial({ color: 0x3a3f44, roughness: 0.7, metalness: 0.4 }));
   weight.position.y = py - 2.2; line.add(weight);
   const sl = label(`${target} m`, '#ffffff'); sl.position.set(0.55, py, 0); line.add(sl);
+  // deep plates are lit: a ring of LEDs round the plate, a lamp under it, and a strobe 3 m up the
+  // line that you see from far off in the dark
+  plateLights = null;
+  if (target >= 40 || Q.has('lights')) {
+    const g = new THREE.Group(); g.position.y = py; line.add(g);
+    const led = new THREE.MeshBasicMaterial({ color: 0xbff4ff });
+    for (let i = 0; i < 12; i++) { const a = i / 12 * Math.PI * 2, m = new THREE.Mesh(new THREE.SphereGeometry(0.018, 8, 6), led); m.position.set(Math.cos(a) * 0.4, 0.02, Math.sin(a) * 0.4); g.add(m); }
+    const lamp = new THREE.PointLight(0xbfefff, 6, 9, 1.2); lamp.position.y = 0.5; g.add(lamp);
+    const strobe = new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 8), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true }));
+    strobe.position.y = 3; g.add(strobe);
+    const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xbff4ff, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+    glow.scale.setScalar(2.2); glow.position.y = 3; g.add(glow);
+    const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0x9fe8ff, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false }));
+    halo.scale.setScalar(2.6); halo.position.y = 0.1; g.add(halo);
+    plateLights = { lamp, strobe, glow };
+  }
   const bed = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshStandardMaterial({ color: 0x8c8466, roughness: 1 }));
   bed.rotation.x = -Math.PI / 2; bed.position.y = py - 2.4; line.add(bed);
   neutralMark = new THREE.Group();
@@ -130,11 +151,49 @@ function buildLine(target) {
 const fig = new DiverFigure();
 scene.add(fig.group);
 
+// the headlamp: a spot along the face, with a faint cone of light in the water
+const headlamp = new THREE.SpotLight(0xfff1d6, 40, 16, 0.38, 0.55, 1.1);
+fig.lampMount.add(headlamp); headlamp.target = fig.lampAim;
+const beamGeo = new THREE.ConeGeometry(1.5, 6, 24, 1, true); beamGeo.rotateX(-Math.PI / 2); beamGeo.translate(0, 0, 3);
+const beamMat = new THREE.ShaderMaterial({
+  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, uniforms: { uA: { value: 0.1 } },
+  vertexShader: 'varying float vz; void main() { vz = position.z / 6.0; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: 'uniform float uA; varying float vz; void main() { gl_FragColor = vec4(vec3(1.0, 0.95, 0.82) * uA * pow(1.0 - vz, 2.0), 1.0); }',
+});
+const beam = new THREE.Mesh(beamGeo, beamMat); fig.lampMount.add(beam);
+
+// the lanyard: a coiled cord from the left wrist to a carabiner that slides down the line
+const LAN = 16, lanPos = new Float32Array(LAN * 3), lanGeo = new THREE.BufferGeometry();
+lanGeo.setAttribute('position', new THREE.BufferAttribute(lanPos, 3));
+const lanyard = new THREE.Line(lanGeo, new THREE.LineBasicMaterial({ color: 0xffd23f }));
+lanyard.frustumCulled = false; scene.add(lanyard);
+const clip = new THREE.Mesh(new THREE.TorusGeometry(0.035, 0.008, 6, 16), new THREE.MeshStandardMaterial({ color: 0xc9ced3, metalness: 0.8, roughness: 0.3 }));
+scene.add(clip);
+let clipY = 0;
+const _w = new THREE.Vector3();
+function drawLanyard(d, dt) {
+  const on = d.lanyard && d.phase !== 'breathe';
+  lanyard.visible = clip.visible = on; if (!on) { clipY = d.y; return; }
+  fig.arms[0].hand.getWorldPosition(_w);
+  clipY = clamp(ease(clipY, Math.min(0, _w.y), dt, 4), _w.y - 1, _w.y + 1);   // the cord is 1.2 m long
+  const ax = 0, ay = clipY, az = 0, L = 1.2, dist = Math.hypot(_w.x - ax, _w.y - ay, _w.z - az), sag = Math.max(0, L - dist) * 0.45;
+  for (let i = 0; i < LAN; i++) {
+    const f = i / (LAN - 1), k = i * 3;
+    lanPos[k] = ax + (_w.x - ax) * f + 0.012 * Math.sin(f * 60);
+    lanPos[k + 1] = ay + (_w.y - ay) * f - sag * Math.sin(Math.PI * f);
+    lanPos[k + 2] = az + (_w.z - az) * f + 0.012 * Math.cos(f * 60);
+  }
+  lanGeo.attributes.position.needsUpdate = true;
+  clip.position.set(0, clipY, 0);
+}
+
 // ---- the dive
 let dive, bot = null, demo = Q.has('demo');
-const opts = { target: +(Q.get('target') || store.target || 30), disc: Q.get('disc') || store.disc || 'CWT' };
+const opts = { target: +(Q.get('target') || store.target || 30), disc: Q.get('disc') || store.disc || 'CWT',
+  fins: Q.get('fins') || store.fins || 'bi', lanyard: Q.has('nolanyard') ? false : store.lanyard ?? true, lamp: Q.get('lamp') || store.lamp || 'auto' };
+const lampOn = () => opts.lamp === 'on' || (opts.lamp === 'auto' && opts.target >= 40);
 function reset() {
-  dive = new Dive({ discipline: opts.disc, target: opts.target, seed: +(Q.get('seed') || (Math.random() * 1e9) | 0) });
+  dive = new Dive({ discipline: opts.disc, target: opts.target, fins: opts.fins, lanyard: opts.lanyard, seed: +(Q.get('seed') || (Math.random() * 1e9) | 0) });
   bot = demo ? new Bot(dive, { pack: 6 }) : null;
   buildLine(opts.target);
   $('result').classList.remove('show');
@@ -146,8 +205,14 @@ function reset() {
 function updateOpts() {
   $('bTarget').textContent = `${opts.target} m`;
   document.querySelectorAll('[data-disc]').forEach((b) => b.classList.toggle('on', b.dataset.disc === opts.disc));
-  $('bL').firstChild.textContent = opts.disc === 'FIM' ? 'Hand L' : 'L';
-  $('bR').firstChild.textContent = opts.disc === 'FIM' ? 'Hand R' : 'R';
+  const mono = opts.disc === 'CWT' && opts.fins === 'mono';
+  $('bL').firstChild.textContent = opts.disc === 'FIM' ? 'Hand L' : mono ? 'Kick' : 'L';
+  $('bR').firstChild.textContent = opts.disc === 'FIM' ? 'Hand R' : mono ? 'Kick' : 'R';
+  document.querySelectorAll('[data-fins]').forEach((b) => { b.classList.toggle('on', b.dataset.fins === opts.fins); b.disabled = opts.disc === 'FIM'; });
+  $('bLanyard').classList.toggle('on', opts.lanyard); $('bLanyard').textContent = `Lanyard ${opts.lanyard ? 'on' : 'off'}`;
+  $('bLamp').textContent = `Headlamp ${opts.lamp}${opts.lamp === 'auto' ? (lampOn() ? ' (on)' : ' (off)') : ''}`; $('bLamp').classList.toggle('on', lampOn());
+  fig.lampMount.visible = lampOn();
+  store.fins = opts.fins; store.lanyard = opts.lanyard; store.lamp = opts.lamp;
   $('bDemo').classList.toggle('on', demo);
   store.target = opts.target; store.disc = opts.disc; save();
 }
@@ -175,6 +240,10 @@ function press(code) {
     else if (code === 'BracketRight' || code === 'Equal') { opts.target = Math.min(120, opts.target + 5); reset(); }
     else if (code === 'Digit1') { opts.disc = 'CWT'; reset(); }
     else if (code === 'Digit2') { opts.disc = 'FIM'; reset(); }
+    else if (code === 'Digit3') { opts.fins = 'bi'; reset(); }
+    else if (code === 'Digit4') { opts.fins = 'mono'; reset(); }
+    else if (code === 'KeyL') { opts.lanyard = !opts.lanyard; reset(); }
+    else if (code === 'KeyB') { opts.lamp = { auto: 'on', on: 'off', off: 'auto' }[opts.lamp]; updateOpts(); }
   }
   switch (code) {
     case 'Space': d.breath(true); if (ph === 'surface') audio.breath(); break;
@@ -191,13 +260,17 @@ function press(code) {
     case 'ArrowDown': case 'PadDown': d.setArms('sides'); break;
   }
 }
-function release(code) { if (code === 'Space' && !bot) dive.breath(false); }
+function release(code) {
+  if (bot) return;
+  if (code === 'Space') dive.breath(false);
+  if (['KeyZ', 'KeyX', 'Comma', 'Period'].includes(code) && dive.fins === 'mono' && !['KeyZ', 'KeyX', 'Comma', 'Period'].some((c) => held.has(c))) { const r = dive.dolphin(false); if (r) audio.swish(r.q, false); }
+}
 function stroke(i) {
-  const r = dive.discipline === 'FIM' ? dive.pull(i) : dive.kick(i);
+  const r = dive.discipline === 'FIM' ? dive.pull(i) : dive.fins === 'mono' ? dive.dolphin(true) : dive.kick(i);
   if (r && !r.busy) audio.swish(r.q, dive.discipline === 'FIM');
 }
 const KEYS = new Set(['Space', 'KeyP', 'Enter', 'KeyZ', 'KeyX', 'Comma', 'Period', 'KeyF', 'KeyV', 'KeyM', 'KeyT', 'KeyO', 'KeyR', 'KeyC', 'KeyH', 'Slash',
-  'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PadUp', 'PadDown', 'PadLeft', 'PadRight', 'BracketLeft', 'BracketRight', 'Minus', 'Equal', 'Digit1', 'Digit2']);
+  'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PadUp', 'PadDown', 'PadLeft', 'PadRight', 'BracketLeft', 'BracketRight', 'Minus', 'Equal', 'Digit1', 'Digit2', 'Digit3', 'Digit4', 'KeyL', 'KeyB']);
 addEventListener('keydown', (e) => {
   if (!KEYS.has(e.code)) return; e.preventDefault();
   if (e.repeat) return;
@@ -212,6 +285,7 @@ document.querySelectorAll('[data-k]').forEach((b) => {
   b.addEventListener('pointerup', up); b.addEventListener('pointercancel', up); b.addEventListener('lostpointercapture', up);
 });
 document.querySelectorAll('[data-disc]').forEach((b) => b.addEventListener('click', () => { opts.disc = b.dataset.disc; demo = false; reset(); }));
+document.querySelectorAll('[data-fins]').forEach((b) => b.addEventListener('click', () => { opts.fins = b.dataset.fins; demo = false; reset(); }));
 $('bDemo').addEventListener('click', () => { demo = !demo; reset(); });
 $('rDemo').addEventListener('click', () => { demo = true; reset(); });
 $('bHelp').addEventListener('click', () => $('help').classList.add('show'));
@@ -348,6 +422,7 @@ function frame(dt) {
   d.step(dt);
   fig.update(dt, d);
   fig.group.position.set(d.x, d.y, 0.12);
+  fig.group.updateMatrixWorld(true); drawLanyard(d, dt);
 
   // the camera beside the line, a little above and ahead of the diver, kept under the surface
   _target.set(d.x * 0.6, d.y, 0);
@@ -365,7 +440,10 @@ function frame(dt) {
   const cd = Math.max(0, -camera.position.y);
   waterAt(cd, _col); scene.background.copy(_col); scene.fog.color.copy(_col);
   scene.fog.density = 0.035 + 0.035 * clamp(cd / 40, 0, 1);
-  hemi.intensity = 0.4 + 1.4 * Math.exp(-cd / 18); sun.intensity = 2.4 * Math.exp(-cd / 12);
+  hemi.intensity = 0.07 + 1.75 * Math.exp(-cd / 16); sun.intensity = 2.4 * Math.exp(-cd / 12);
+  const dark = clamp((cd - 15) / 40, 0, 1);
+  headlamp.intensity = fig.lampMount.visible ? 40 : 0; beamMat.uniforms.uA.value = 0.008 + 0.045 * dark;
+  if (plateLights) { const flash = (d.t % 1.2) < 0.08 ? 1 : 0; plateLights.strobe.material.opacity = 0.25 + 0.75 * flash; plateLights.glow.material.opacity = (0.15 + 0.85 * flash) * (0.3 + 0.7 * dark); }
   renderer.toneMappingExposure = 0.9 + 0.5 * clamp(cd / 40, 0, 1);
   surfMat.uniforms.uT.value = d.t;
   for (const s of shafts) { const u = s.userData; s.position.x = u.x + Math.sin(d.t * u.sp + u.ph) * 0.6 + camera.position.x * 0.8; s.material.opacity = (0.08 + 0.1 * (0.5 + 0.5 * Math.sin(d.t * u.sp * 1.7 + u.ph))) * Math.exp(-cd / 14); }

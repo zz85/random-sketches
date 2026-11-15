@@ -145,6 +145,13 @@ const placed = (depth, gas = BODY.TLC, o = {}) => {
   check(/packing/.test(pk.r.notes.join()), `packed full and lingering: ${pk.r.notes[0]}`);
   const pq = play({ target: 30 }, { pack: 30 });
   check(pq.r.tag && pq.r.o2 > a.r.o2, `packed full and away at once: makes it, burning more (${(pq.r.o2 * 1000).toFixed(0)} ml vs ${(a.r.o2 * 1000).toFixed(0)})`);
+  const mono = play({ target: 30, fins: 'mono' }, { pack: 6 });
+  check(mono.r.card === 'white' && mono.r.time < a.r.time - 3 && mono.r.o2 < a.r.o2 * 0.9, `monofin, dolphin kick: ${mono.r.time.toFixed(0)} s and ${(mono.r.o2 * 1000).toFixed(0)} ml, against bifins ${a.r.time.toFixed(0)} s and ${(a.r.o2 * 1000).toFixed(0)} ml`);
+  const long2 = play({ target: 30, fins: 'mono' }, { pack: 6, hold: 0.7 }), snatch = play({ target: 30, fins: 'mono' }, { pack: 6, hold: 0.2 });
+  check(long2.r.o2 > mono.r.o2 * 1.2 && snatch.r.o2 > mono.r.o2 * 1.2, `monofin: holding the downstroke 0.7 s costs ${(long2.r.o2 * 1000).toFixed(0)} ml, snatching it ${(snatch.r.o2 * 1000).toFixed(0)}`);
+  const free = play({ target: 30, lanyard: false }, { pack: 6, noBalance: true });
+  check(free.d.tugs === 0 && /lanyard/.test(free.r.notes.join()), `no lanyard: no tugs, ${free.r.notes.join(', ')}`);
+  { const d = placed(20); d.x = 1.5; check(!d.turn(), 'the turn needs the line in reach'); }
   const long = play({ target: 80 }, { pack: 20 });
   check(!long.r.tag, `80 m on the same lungs: ${long.r.notes[0]}`);
 }

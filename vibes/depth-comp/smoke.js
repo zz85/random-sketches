@@ -102,6 +102,21 @@ const W = +(process.env.W || 1280), H = +(process.env.H || 800);
     const fim = await b.evaluate(`(() => { const A = __depthcomp; A.until("d.phase === 'dive' && d.depth > 10", 300); A.step(10); return { pulls: A.dive.pulls, depth: A.dive.depth }; })()`);
     check('FIM: the bot pulls down the rope', fim.pulls > 3 && fim.depth > 10, JSON.stringify(fim));
     await sleep(150); await shot('fim');
+    // deep, on a monofin, with a headlamp and a lit plate
+    await b.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/depth-comp/?seed=5&pause&shot&target=60&disc=CWT&fins=mono&lamp=auto&demo` });
+    await waitFor(() => b.evaluate('!!window.__depthcomp'), 60000);
+    const deep = await b.evaluate(`(() => { const A = __depthcomp; A.until("d.phase === 'dive' && d.depth > 8 && d.mono.down", 300); A.step(6);
+      const shallow = { dolphins: A.dive.dolphins, legs: A.fig.legs.map(L => +L.hip.rotation.x.toFixed(2)), mono: A.fig.monoBlade.root.visible, bifin: A.fig.legs[0].blade.root.visible };
+      A.until("d.depth > 56", 300); A.step(24);
+      return { ...shallow, lamp: A.fig.lampMount.visible, depth: A.dive.depth }; })()`);
+    check('monofin: dolphin kicks, legs together, one blade; headlamp on for 60 m', deep.dolphins > 3 && Math.abs(deep.legs[0] - deep.legs[1]) < 0.05 && deep.mono && !deep.bifin && deep.lamp, JSON.stringify(deep));
+    await sleep(150); await shot('deep');
+    // in pain: a hand over the ear, knees drawn up
+    const hurt = await b.evaluate(`(() => { const A = __depthcomp, d = A.dive; d.pain = 0.9; d.Pe = d.P - 0.4; A.step(20); const F = A.fig;
+      F.group.updateMatrixWorld(true); const V = F.group.position.constructor; const hand = F.arms[1].hand.getWorldPosition(new V()), head = new V(0, 0.13, 0).applyMatrix4(F.neck.matrixWorld);
+      return { handToHead: +hand.distanceTo(head).toFixed(2), knee: +F.legs[0].knee.rotation.x.toFixed(2), pain: +d.pain.toFixed(2) }; })()`);
+    check('pain shows: a hand to the ear, knees drawn up', hurt.handToHead < 0.35 && hurt.knee > 0.5, JSON.stringify(hurt));
+    await sleep(150); await shot('pain');
     er = errors(); check('no errors through the dives', er.length === 0, er.slice(0, 3).join(' | ').slice(0, 600));
   } catch (e) { console.error(e); failed++; }
   finally { b.kill(); server.close(); console.log(failed ? `${failed} failed` : 'all passed'); process.exit(failed ? 1 : 0); }

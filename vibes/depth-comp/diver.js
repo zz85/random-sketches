@@ -11,7 +11,7 @@
 // plane is x/y: the figure's +Y (feet to head) is turned to the body's angle `th`, its face to
 // the side of the line, its left-right axis toward the camera.
 import * as THREE from 'three';
-import { DUCK, STROKE } from './sim.js';
+import { DUCK, STROKE, MONO } from './sim.js';
 
 const PIVOT = 1.0;              // the centre of mass, at the hips: the point sim.js moves
 const NECK_Y = 1.50, HEAD_Y = 1.63;
@@ -68,6 +68,14 @@ export class DiverFigure {
     for (const s of [-1, 1]) this.neck.add(slab(0.058, 0.042, 0.006, lens, s * 0.036, y + 0.03, 0.114));
     const strap = new THREE.Mesh(new THREE.TorusGeometry(0.104, 0.008, 4, 20), A); strap.rotation.x = Math.PI / 2; strap.position.y = y + 0.03; this.neck.add(strap);
     this.neck.add(rod(V(0.1, y - 0.07, 0.05), V(0.11, y + 0.2, 0), 0.01, A));
+    // a headlamp on the mask strap, and where it points: ahead of the face and toward the crown, so
+    // head down with the chin tucked it lights the line below you
+    this.lampMount = new THREE.Object3D(); this.lampMount.position.set(0, y + 0.075, 0.08); this.neck.add(this.lampMount);
+    this.lampAim = new THREE.Object3D(); this.lampAim.position.set(0, y + 0.075 + 2.525, 3); this.neck.add(this.lampAim);
+    this.lampBody = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.03, 12), K); this.lampBody.rotation.x = Math.PI / 2;
+    this.lampMount.rotation.x = -Math.atan2(2.6 - 0.075, 3 - 0.08); this.lampMount.add(this.lampBody);   // the lamp and its beam cone point at the aim
+    this.lampLens = new THREE.Mesh(new THREE.CircleGeometry(0.018, 12), new THREE.MeshBasicMaterial({ color: 0xfff6d8 })); this.lampLens.position.z = 0.016; this.lampMount.add(this.lampLens);
+    this.lampMount.visible = false;
     // the mouthfill: cheeks puffed
     this.cheeks = blob(0.06, 0.035, 0.04, SK, 0, y - 0.04, 0.09); this.cheeks.visible = false; this.neck.add(this.cheeks);
 
@@ -78,8 +86,9 @@ export class DiverFigure {
       shoulder.add(blob(0.05, 0.05, 0.05, S, 0, -0.01), rod(V(0, -0.02, 0), V(s * 0.005, -UPPER_ARM, 0), 0.04, S));
       const elbow = new THREE.Group(); elbow.position.y = -UPPER_ARM;
       elbow.add(rod(V(0, 0, 0), V(0, -FOREARM, 0.01), 0.033, S), slab(0.07, 0.17, 0.024, SK, 0, -FOREARM - 0.085, 0.012));
+      const hand = new THREE.Object3D(); hand.position.set(0, -FOREARM - 0.12, 0.012); elbow.add(hand);
       shoulder.add(elbow); this.body.add(shoulder);
-      this.arms.push({ s, shoulder, elbow, a: 0.05, bend: 0.1, out: 0.06 });
+      this.arms.push({ s, shoulder, elbow, hand, a: 0.05, bend: 0.1, out: 0.06 });
     }
 
     // legs: hip -> thigh -> knee -> shin -> ankle -> foot / fin pocket -> blade
@@ -94,6 +103,12 @@ export class DiverFigure {
       const pocket = slab(0.095, 0.075, FOOT_L + 0.02, K, 0, -0.03, FOOT_L / 2 - 0.02);
       const blade = new Blade(F, K); blade.root.position.set(0, -0.03, FOOT_L);
       ankle.add(foot, pocket, blade.root); knee.add(ankle); hip.add(knee); this.body.add(hip);
+      // the monofin: one wide blade across both feet, carried on the right foot, centred between them
+      if (s > 0) {
+        this.monoBlade = new Blade(F, K, 0.66, 0.72, 0.2, 1.6);
+        this.monoBlade.root.position.set(-HIP.x, -0.03, FOOT_L - 0.02);
+        ankle.add(this.monoBlade.root);
+      }
       this.legs.push({ s, hip, knee, ankle, foot, pocket, blade, ang: 0, kn: 0.06, prev: 0, omega: 0 });
     }
     this.group.traverse((o) => { if (o.isMesh) { o.castShadow = true; } });
@@ -102,7 +117,10 @@ export class DiverFigure {
 
   update(dt, d) {
     this.t += dt;
-    const ph = d.phase, t = d.t, fim = d.discipline === 'FIM';
+    const ph = d.phase, t = d.t, fim = d.discipline === 'FIM', mono = d.fins === 'mono';
+    // pain curls you up and makes you shake; vertigo throws the arms out and rolls the head
+    const pain = d.blackout ? 0 : d.pain, vert = d.blackout ? 0 : d.vertigo;
+    const shake = pain * 0.05 * Math.sin(this.t * 23), earAche = pain > 0.3 && (d.dP > 0.12 || vert > 0.05);
     const limp = !!d.blackout;
     const floating = ph === 'breathe' || ph === 'surface' || (ph === 'done' && !d.blackout && d.depth < 0.5);
     const duck = ph === 'duck' ? d.duckT : null;
@@ -141,23 +159,36 @@ export class DiverFigure {
       else if (floating) { ang = 0.12 * Math.sin(this.t * 1.6 + i * Math.PI); kn = 0.25 + 0.15 * Math.sin(this.t * 1.6 + i * Math.PI + 1); rate = 4; } // treading water
       else if (duck !== null) { ang = stage === 0 ? 0.25 * Math.sin(duck * 9 + i * Math.PI) : 0; kn = 0.05; }
       else if (fim) { ang = 0.04; kn = 0.08; rate = 6; }   // legs together, trailing
-      else {
+      else if (mono) {
+        // the dolphin kick, both legs as one: knees bent going into the downstroke and straightened
+        // through it (the legs sweep toward the belly), then the upstroke lifts them past straight,
+        // knees giving a little; held too long the legs stall bent
+        const M = d.mono, q = M.q || 1;
+        if (M.down) { const f = clamp((t - M.at) / MONO.down, 0, 1.5); ang = -0.45 * Math.min(f, 1); kn = f < 1 ? lerp(0.55, 0.04, smooth(f)) : 0.04 + 0.4 * (f - 1); rate = 16; }
+        else if (t - M.upAt < MONO.up + 0.35) { const f = clamp((t - M.upAt) / MONO.up, 0, 1); ang = lerp(-0.45, 0.32 * (0.6 + 0.4 * q), smooth(f)); kn = 0.1 + 0.45 * Math.sin(Math.PI * Math.min(f, 1)); rate = 16; }
+        else { ang = 0.03; kn = 0.06; rate = 5; }
+      } else {
         // a kick: the power stroke toward the belly, the recovery back past straight, then trailing
         const tau = t - d.legs[i].at, q = d.legs[i].q;
         if (tau < STROKE.kick) { ang = -0.48 * (0.5 + 0.5 * q); kn = 0.06 + 0.7 * (1 - q); }
         else if (tau < STROKE.kick + 0.36) { ang = 0.3 * (0.5 + 0.5 * q); kn = 0.35 + 0.4 * (1 - q); }
         else { ang = 0.02; kn = 0.06; rate = 6; }
       }
+      if (pain > 0.02 && !limp && !floating) { ang = ang * (1 - 0.5 * pain) - 0.45 * pain; kn = kn + 0.9 * pain; }
+      if (vert > 0.05 && !limp) { ang += vert * 0.4 * Math.sin(this.t * 1.7 + i * 2.1); kn += vert * 0.3; }
       L.ang = ease(L.ang, ang, dt, rate); L.kn = ease(L.kn, kn, dt, rate);
-      L.hip.rotation.x = L.ang - this.hinge;
+      L.hip.rotation.x = L.ang - this.hinge + shake * (i ? 1 : -1);
       L.hip.rotation.z = L.s * 0.03;
       L.knee.rotation.x = L.kn;
       L.ankle.rotation.x = floating ? 0.6 : POINT;
       const finsOn = !fim;
-      L.foot.visible = !finsOn; L.pocket.visible = finsOn; L.blade.root.visible = finsOn;
+      L.foot.visible = !finsOn; L.pocket.visible = finsOn; L.blade.root.visible = finsOn && !mono;
+      if (this.monoBlade) this.monoBlade.root.visible = mono;
+      if (mono) L.hip.rotation.z = L.s * 0.005;   // feet together in the pockets
       const a = L.hip.rotation.x + L.knee.rotation.x;
       const omega = dt > 0 ? (a - L.prev) / dt : 0; L.prev = a; L.omega = ease(L.omega, omega, dt, 30);
       L.blade.update(dt, finsOn ? L.omega : 0, finsOn);
+      if (mono && L.s > 0) this.monoBlade.update(dt, L.omega, true);
     }
 
     // ---- arms: a = how far the arm swings forward from the side (0 hanging, PI overhead)
@@ -182,6 +213,15 @@ export class DiverFigure {
       else { a = 0.06; bend = 0.08; out = 0.05; rate = 5; }
       // the right hand to the nose to equalize (or for the mouthfill)
       if (A.s > 0 && (nose || (duck !== null && stage === 4))) { a = 2.3; bend = 2.45; out = 0.35; rate = 14; }
+      // in pain: a hand clamped over the aching ear, the other arm hugging the chest; with
+      // vertigo the arms flail out for something to hold
+      const busy = (A.s > 0 && nose) || d.turnT !== null || (fim && pain < 0.6);
+      if (!limp && !floating && duck === null && !busy) {
+        if (vert > 0.2) { a = 1.3 + 0.7 * Math.sin(this.t * 1.9 + A.s); out = 0.9 + 0.3 * Math.sin(this.t * 2.6 + A.s); bend = 0.4; rate = 6; }
+        else if (A.s > 0 && earAche) { a = 2.45; bend = 2.05; out = 0.8; rate = 10; }
+        else if (A.s < 0 && pain > 0.55) { a = 0.95; bend = 1.9; out = 0.12; rate = 8; }
+      }
+      a += shake * 0.6;
       A.a = ease(A.a, a, dt, rate); A.bend = ease(A.bend, bend, dt, rate); A.out = ease(A.out, out, dt, rate);
       A.shoulder.rotation.set(-A.a, 0, A.s * A.out);
       A.elbow.rotation.x = -A.bend;
@@ -192,9 +232,12 @@ export class DiverFigure {
     if (limp) neck = 0.55;
     else if (floating) neck = -0.15;
     else if (duck !== null && stage >= 1 && stage <= 3) neck = 0.25;
-    else neck = 0.12 + 0.15 * d.lean;
+    else neck = 0.12 + 0.15 * d.lean + (mono && d.mono.down ? 0.08 : 0);
+    if (!limp && !floating) neck += 0.4 * pain;   // the chin pulled in, shoulders hunched
     this.neckBend = ease(this.neckBend, neck, dt, 6);
     this.neck.rotation.x = this.neckBend;
+    this.neckRoll = ease(this.neckRoll || 0, (earAche ? 0.3 * pain : 0) + vert * 0.55 * Math.sin(this.t * 1.3), dt, 4);
+    this.neck.rotation.z = this.neckRoll;
     this.cheeks.visible = d.nm > 0 && d.mouthV > 0.08;
     if (this.cheeks.visible) { const k = 0.6 + 0.8 * clamp(d.mouthV / 0.5, 0, 1); this.cheeks.scale.set(0.06 * k, 0.035 * k, 0.04 * k); }
   }
@@ -204,14 +247,14 @@ export class DiverFigure {
 // slice hangs on the one before as a damped hinge (stiffness falls toward the tip), and the
 // leg's angular speed loads the hinges as drag, so the root bends first and the bend runs out.
 class Blade {
-  constructor(F, K) {
-    this.root = new THREE.Group(); this.joints = [];
+  constructor(F, K, width = 0.19, length = BLADE_L, taper = 0.025, stiff = 1) {
+    this.root = new THREE.Group(); this.joints = []; this.stiff = stiff;
     this.angle = new Float32Array(BLADE_N); this.vel = new Float32Array(BLADE_N);
-    const dz = BLADE_L / BLADE_N;
+    const dz = length / BLADE_N;
     let parent = this.root;
     for (let i = 0; i < BLADE_N; i++) {
       const j = new THREE.Group(); if (i > 0) j.position.z = dz;
-      const t0 = i / BLADE_N, w = 0.19 - 0.025 * t0, r = 0.028 * (1 - 0.7 * t0) + 0.004;
+      const t0 = i / BLADE_N, w = width - taper * t0, r = 0.028 * (1 - 0.7 * t0) + 0.004;
       j.add(slab(w, 0.006, dz + 0.004, F, 0, 0, dz / 2));
       for (const s of [-1, 1]) j.add(slab(0.01, r, dz + 0.004, K, s * (w / 2 - 0.002), 0, dz / 2));
       parent.add(j); this.joints.push(j); parent = j;
@@ -220,7 +263,7 @@ class Blade {
   update(dt, omega, on) {
     const A = this.angle, Vv = this.vel, h = Math.min(dt, 1 / 30);
     for (let i = 0; i < BLADE_N; i++) {
-      const t = (i + 0.5) / BLADE_N, k = 420 * (1 - 0.6 * t), c = 1.1 * Math.sqrt(k);
+      const t = (i + 0.5) / BLADE_N, k = 420 * this.stiff * (1 - 0.6 * t), c = 1.1 * Math.sqrt(k);
       const load = on ? clamp(-omega * 0.012 * (1.0 - 0.5 * t), -0.2, 0.2) : 0;
       Vv[i] += (-k * A[i] + k * load - c * Vv[i]) * h;
       A[i] = clamp(A[i] + Vv[i] * h, -0.25, 0.25);
