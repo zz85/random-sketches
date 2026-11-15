@@ -37,9 +37,8 @@ export class Bot {
 
     // balance: the body along the way it should go, an arm's length (0.3 m) off the line
     if (!o.noBalance && d.turnT === null) {
-      const want = (down ? Math.PI : 0) * (d.turned ? 0 : 1) + (down ? 1 : -1) * -(0.8 * (d.x - 0.3) + 1.5 * d.vx);
-      const wrap = d.turned ? Math.round(d.th / (2 * Math.PI)) * 2 * Math.PI : 0;
-      const err = d.th - (want + wrap);
+      const want = (down ? Math.PI : 0) + (down ? 1 : -1) * -(0.4 * (d.x - 0.3) + 3 * d.vx);
+      const err = Math.atan2(Math.sin(d.th - want), Math.cos(d.th - want));   // the short way round
       d.setLean(-2.5 * err - 1.2 * d.om);
     }
 

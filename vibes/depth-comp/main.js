@@ -218,10 +218,14 @@ $('bHelp').addEventListener('click', () => $('help').classList.add('show'));
 $('helpClose').addEventListener('click', () => $('help').classList.remove('show'));
 if (!store.seenHelp && !Q.has('shot')) { $('help').classList.add('show'); store.seenHelp = 1; save(); }
 
-// the lean is held: arrows point where the head should go across the screen
+// the lean is held and screen-relative: an arrow moves the head that way across the screen
+// (left / right when the body is upright or upside down, up / down when it lies flat). A positive
+// lean turns the body counter-clockwise, which moves the head toward -x head up and +x head down
 function leanInput() {
-  const dir = (held.has('ArrowRight') ? 1 : 0) - (held.has('ArrowLeft') ? 1 : 0);
-  return dir * (Math.cos(dive.th) < 0 ? 1 : -1);
+  const hx = -Math.sin(dive.th), hy = Math.cos(dive.th);
+  const right = (held.has('ArrowRight') ? 1 : 0) - (held.has('ArrowLeft') ? 1 : 0);
+  // counter-clockwise moves the head along (-hy, hx): screen right is +x, up is +y
+  return right * Math.sign(-hy || 1);
 }
 
 // camera: beside the dive, following; wheel or pinch for distance

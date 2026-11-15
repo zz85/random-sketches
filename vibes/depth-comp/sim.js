@@ -82,7 +82,7 @@ export class Dive {
     this.breathStarts = [];
 
     // the body in the water
-    this.x = 0.6; this.y = 0; this.vx = 0; this.vy = 0; this.th = 0.1; this.om = 0;
+    this.x = 0.05; this.y = 0; this.vx = 0; this.vy = 0; this.th = 0.1; this.om = 0;
     this.lean = 0; this.arms = 'sides'; this.turb = 0; this.bias = 0;
     this.legs = [{ at: -9, q: 0 }, { at: -9, q: 0 }];
     this.hands = [{ at: -9, q: 0 }, { at: -9, q: 0 }];
@@ -101,7 +101,7 @@ export class Dive {
     this.earHurt = 0; this.squeeze = 0;
 
     // the dive and its record
-    this.duckT = 0; this.duckX0 = 0.6; this.diveT = 0; this.tSub = 0; this.maxDepth = 0;
+    this.duckT = 0; this.duckX0 = 0.05; this.diveT = 0; this.tSub = 0; this.maxDepth = 0;
     this.turnT = null; this.turned = false; this.tag = false; this.early = false;
     this.surfT = 0; this.hooks = 0; this.firstBreath = null; this.okAt = null;
     this.lmc = false; this.blackout = null; this.injury = null; this.result = null;
@@ -346,10 +346,13 @@ export class Dive {
     const seg = (a, b) => smooth(clamp((T - a) / (b - a), 0, 1));
     // the duck dive is the body's own move: placed, not simulated
     const fim = this.discipline === 'FIM';
-    this.x = lerp(this.duckX0, fim ? 0.3 : 0.2, seg(0, D.knife));
+    // you hang on the buoy by the line, glide face down away from it (head toward +x), then fold
+    // forward at the hips: the head goes down and the face, which looked at the bottom, turns to
+    // look back at the line. th runs clockwise, 0 to -PI/2 to -PI.
+    this.x = lerp(this.duckX0, 0.3, seg(0, D.knife));
     const lift = 1 - 0.1 * this.packed;   // a packed body sinks less far on the same move
     this.y = -lift * (0.15 * seg(0, D.glide) + 0.35 * seg(D.glide, D.knife) + 0.5 * seg(D.knife, D.legs) + 0.9 * seg(D.legs, D.pull) + 0.6 * seg(D.pull, D.end));
-    this.th = 0.1 + (Math.PI / 2 - 0.1) * seg(0, D.glide * 0.8) + (Math.PI / 2 - 0.05) * seg(D.glide, D.knife);
+    this.th = 0.1 - (Math.PI / 2 + 0.1) * seg(0, D.glide * 0.8) - (Math.PI / 2 - 0.05) * seg(D.glide, D.knife);
     this.vx = this.vy = this.om = 0;
     this.effort += 0.01 * h / D.end;
     this._body(h, this.P);
@@ -444,6 +447,7 @@ export class Dive {
     // up: out of the water
     if (this.y > -0.35 && this.vy >= 0 && this.maxDepth > 3 && Math.cos(this.th) > 0.3) {
       this.phase = 'surface'; this.surfT = 0; this.vx = this.vy = this.om = 0;
+      this.th = Math.atan2(Math.sin(this.th), Math.cos(this.th));   // whole turns taken off
       this.say('surface', 'Surface! Breathe (hook breaths), then give the OK.', 0);
     }
   }
@@ -496,7 +500,7 @@ export class Dive {
 
   _surface(h) {
     this.surfT += h;
-    this.y = ease(this.y, 0, h, 3); this.th = ease(this.th, 0.15, h, 3); this.x = ease(this.x, 0.6, h, 0.5);
+    this.y = ease(this.y, 0, h, 3); this.th = ease(this.th, 0.15, h, 3); this.x = ease(this.x, 0.15, h, 0.5);
     if (this.hooks >= 3) this.f = ease(this.f, 0.15, h, 0.4);
     this._body(h, 1);
     if (this.phase !== 'surface') return;

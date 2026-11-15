@@ -114,15 +114,19 @@ export class DiverFigure {
     }
 
     // the body: centre of mass at the dive's point, turned to its angle. Turning it by th alone
-    // would face it away from the line head down (a somersault turns the face over too), so the
-    // body also twists about its own long axis to keep the chest and face toward the line, which
-    // is at x 0: on its +x side, head up untwisted, head down half a turn (the other way round on -x). Through the duck dive and
-    // the turn it eases round, the way a diver swings round the rope at the plate.
+    // keeps the face on one side of the body axis, which head down would look away from the line
+    // after some moves, so the body also twists about its own long axis, by 0 or a half turn,
+    // whichever puts the face nearer "toward the line, a little down": on the line head up or head
+    // down, and face down in the duck dive's glide. It eases round, the way a diver swings round
+    // the rope at the plate.
     this.group.rotation.z = d.th;
-    // which side of the line you are on, with some slack so a wobble across it doesn't spin you
-    if (d.x > 0.08) this.side = 1; else if (d.x < -0.08) this.side = -1;
-    const face = (Math.cos(d.th) < 0) === (this.side > 0) ? Math.PI : 0;
-    this.twist = ease(this.twist, face, dt, ph === 'dive' && d.turnT === null ? 3 : 6);
+    // the side of the line you dive on: it changes only once you are well across (you pass beside
+    // the rope, a little in front of it, so a small drift over x 0 isn't a change of side)
+    if (d.x > 0.5) this.side = 1; else if (d.x < -0.5) this.side = -1;
+    // the face untwisted points (-cos th, -sin th); the half turn points the other way
+    const face = this.side * Math.cos(d.th) + 0.6 * Math.sin(d.th) >= 0 ? 0 : Math.PI;
+    let to = face; while (to - this.twist > Math.PI) to -= 2 * Math.PI; while (this.twist - to > Math.PI) to += 2 * Math.PI;
+    this.twist = ease(this.twist, to, dt, ph === 'dive' && d.turnT === null ? 3 : 7);
     this.turn.rotation.y = -Math.PI / 2 + this.twist;
 
     // the jackknife of the duck dive: legs folded toward the belly, then lifted in line

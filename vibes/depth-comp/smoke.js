@@ -54,18 +54,28 @@ const W = +(process.env.W || 1280), H = +(process.env.H || 800);
 
     // the bot's dive, drawn at each stage
     await b.evaluate(`__depthcomp.demo(true)`);
+    // the duck dive, frame by frame: glide face down away from the line, fold, legs up, pull,
+    // and head down facing the line
+    const duckFaces = [];
+    for (const [i, T] of [[1, 0.5], [2, 1.3], [3, 2.0], [4, 2.8], [5, 3.6]]) {
+      await b.evaluate(`__depthcomp.until("d.phase === 'duck' && d.duckT > ${T - 0.25}", 300)`); await b.evaluate('__depthcomp.step(8)'); await sleep(120);
+      duckFaces.push(await b.evaluate(`(() => { const F = __depthcomp.fig; F.group.updateMatrixWorld(true); const V = F.group.position.constructor;
+        const head = new V(0, 0.13, 0).applyMatrix4(F.neck.matrixWorld), eye = new V(0, 0.16, 0.12).applyMatrix4(F.neck.matrixWorld); return [+(eye.x - head.x).toFixed(2), +(eye.y - head.y).toFixed(2)]; })()`));
+      await shot(`duck${i}`);
+    }
+    check('duck dive: face down in the glide, then toward the line head down', duckFaces[0][1] < -0.05 && duckFaces[4][0] < -0.05, JSON.stringify(duckFaces));
     const stages = [['duck', "d.phase === 'duck' && d.duckT > 2"], ['descent', "d.phase === 'dive' && d.depth > 8"], ['freefall', "d.depth > 22 && !d.turned"], ['turn', "d.turnT !== null && d.turnT > 0.7"],
       ['ascent', "d.turned && d.depth < 12"], ['surface', "d.phase === 'surface' && d.surfT > 3"], ['result', "d.phase === 'done'"]];
     for (const [name, cond] of stages) {
       const ok = await b.evaluate(`__depthcomp.until(${JSON.stringify(cond)}, 400)`);
       await b.evaluate(`__depthcomp.step(${name === 'result' ? 30 : 24})`); await sleep(name === 'result' ? 900 : 150);
       check(`bot dive reaches: ${name}`, ok);
-      // the diver faces the line: the eyes are nearer the line than the back of the head
+      // the diver faces the line: from the back of the head to the eyes points across to it
       if (['descent', 'freefall', 'ascent'].includes(name)) {
         const f = await b.evaluate(`(() => { const F = __depthcomp.fig; F.group.updateMatrixWorld(true); const V = F.group.position.constructor;
           const head = new V(0, 0.13, 0).applyMatrix4(F.neck.matrixWorld), eye = new V(0, 0.16, 0.12).applyMatrix4(F.neck.matrixWorld);
-          return { head: Math.abs(head.x), eye: Math.abs(eye.x), x: __depthcomp.dive.x }; })()`);
-        check(`${name}: facing the line`, f.eye < f.head, JSON.stringify(f));
+          return { toward: +((eye.x - head.x) * -F.side).toFixed(3), side: F.side, x: +__depthcomp.dive.x.toFixed(2) }; })()`);
+        check(`${name}: facing the line`, f.toward > 0.03, JSON.stringify(f));
       }
       if (name === 'descent') {
         const px = await b.evaluate(`(() => { const c = document.getElementById('gl'), g = c.getContext('webgl2') || c.getContext('webgl'); const p = new Uint8Array(4 * c.width); g.readPixels(0, Math.floor(c.height * 0.55), c.width, 1, g.RGBA, g.UNSIGNED_BYTE, p); let mn = 999, mx = 0; for (let i = 0; i < c.width; i++) { const v = p[i * 4] + p[i * 4 + 1] + p[i * 4 + 2]; mn = Math.min(mn, v); mx = Math.max(mx, v); } return [mn, mx]; })()`);
