@@ -90,6 +90,24 @@ const placed = (depth, gas = BODY.TLC, o = {}) => {
   const pk = placed(1, BODY.TLC + 2.5); pk.Pe = 1; check(pk.frenzel().eff < 0.6, 'overpacked: a stiff throat, weak Frenzel near the surface');
 }
 
+// ---- pain: unequalized ears hurt; pain slows and weakens kicks and burns oxygen; forced deeper,
+// the eardrum gives way and vertigo spins you
+{
+  const kicks = (pe) => {
+    const d = placed(8); d.vy = -0.5; const y0 = d.y, o0 = d.o2Used; let n = 0;
+    for (let t = 0; t < 6; t += dt) { if (t >= n * KICK.ideal) { d.kick(n % 2); n++; } d.setLean(-2.5 * (d.th - Math.PI) - 1.2 * d.om); d.Pe = pe(d); d.step(dt); }
+    return { m: y0 - d.y, o2: d.o2Used - o0, pain: d.pain };
+  };
+  const ok = kicks((d) => d.P), sore = kicks((d) => d.P - 0.35);
+  check(sore.pain > 0.5 && sore.m < ok.m * 0.75 && sore.o2 > ok.o2 * 1.3, `ears 3.5 m behind: pain ${sore.pain.toFixed(2)}, ${sore.m.toFixed(1)} m in 6 s against ${ok.m.toFixed(1)}, ${(sore.o2 * 1000).toFixed(0)} ml O2 against ${(ok.o2 * 1000).toFixed(0)}`);
+  const d = placed(5); d.vy = -1; let at = null;
+  for (let t = 0; t < 20 && !d.injury; t += dt) { d.vy = Math.min(d.vy, -0.8); d.step(dt); }
+  at = d.depth;
+  check(/eardrum/.test(d.injury || '') && d.vertigo > 0.9 && d.dP < 0.01, `forced down unequalized: the eardrum goes at ${at.toFixed(1)} m, vertigo ${d.vertigo.toFixed(2)}`);
+  const f0 = d.f; run(d, 5, null, false); const b = placed(at); const g0 = b.f; run(b, 5, null, false);
+  check(f0 - d.f > 1.5 * (g0 - b.f), `in pain and spinning, oxygen goes ${((f0 - d.f) / (g0 - b.f)).toFixed(1)}x as fast`);
+}
+
 // ---- the breathe-up
 {
   const calm = new Dive(), fast = new Dive();
@@ -116,7 +134,7 @@ const placed = (depth, gas = BODY.TLC, o = {}) => {
   const nm = play({ target: 50 }, { pack: 6, noMouthfill: true });
   check(!nm.r.tag && nm.r.depth < 40, `50 m without a mouthfill: turned at the Frenzel limit, ${nm.r.depth} m`);
   const ne = play({ target: 30 }, { noEq: true });
-  check(ne.r.card === 'red' && /ear/.test(ne.r.notes.join()), `never equalizing: ${ne.r.notes[0]}`);
+  check(!ne.r.tag && ne.r.depth < 10 && ne.r.o2 > a.r.o2, `never equalizing: the pain stops you at ${ne.r.depth} m, and burns ${(ne.r.o2 * 1000).toFixed(0)} ml`);
   const nb = play({ target: 30 }, { noBalance: true });
   check(!nb.r.tag || (nb.d.tugs >= 3 && nb.r.o2 > a.r.o2 && a.d.tugs <= 1), `never balancing: off the line ${nb.d.tugs} times, ${nb.r.depth} m, ${(nb.r.o2 * 1000).toFixed(0)} ml O2`);
   const ms = play({ target: 30 }, { mash: true });

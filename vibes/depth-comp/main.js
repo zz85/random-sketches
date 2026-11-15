@@ -187,8 +187,8 @@ function press(code) {
     case 'KeyM': { const r = d.mouthfill(); if (r && r.fill) audio.gulp(); break; }
     case 'KeyT': d.turn(); break;
     case 'KeyO': d.ok(); break;
-    case 'ArrowUp': d.setArms('ahead'); break;
-    case 'ArrowDown': d.setArms('sides'); break;
+    case 'ArrowUp': case 'PadUp': d.setArms('ahead'); break;
+    case 'ArrowDown': case 'PadDown': d.setArms('sides'); break;
   }
 }
 function release(code) { if (code === 'Space' && !bot) dive.breath(false); }
@@ -197,7 +197,7 @@ function stroke(i) {
   if (r && !r.busy) audio.swish(r.q, dive.discipline === 'FIM');
 }
 const KEYS = new Set(['Space', 'KeyP', 'Enter', 'KeyZ', 'KeyX', 'Comma', 'Period', 'KeyF', 'KeyV', 'KeyM', 'KeyT', 'KeyO', 'KeyR', 'KeyC', 'KeyH', 'Slash',
-  'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'BracketLeft', 'BracketRight', 'Minus', 'Equal', 'Digit1', 'Digit2']);
+  'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PadUp', 'PadDown', 'PadLeft', 'PadRight', 'BracketLeft', 'BracketRight', 'Minus', 'Equal', 'Digit1', 'Digit2']);
 addEventListener('keydown', (e) => {
   if (!KEYS.has(e.code)) return; e.preventDefault();
   if (e.repeat) return;
@@ -218,14 +218,17 @@ $('bHelp').addEventListener('click', () => $('help').classList.add('show'));
 $('helpClose').addEventListener('click', () => $('help').classList.remove('show'));
 if (!store.seenHelp && !Q.has('shot')) { $('help').classList.add('show'); store.seenHelp = 1; save(); }
 
-// the lean is held and screen-relative: an arrow moves the head that way across the screen
-// (left / right when the body is upright or upside down, up / down when it lies flat). A positive
-// lean turns the body counter-clockwise, which moves the head toward -x head up and +x head down
+// the lean is held. The keys are relative to the diver: <- tips the head toward your belly
+// (toward the line, which you face), -> toward your back. The on-screen pad is relative to the
+// screen: its arrows move the head that way across it. A positive lean turns the body counter-
+// clockwise, which moves the head toward the untwisted face, (-cos th, -sin th); the figure's
+// half twist turns the belly the other way.
 function leanInput() {
-  const hx = -Math.sin(dive.th), hy = Math.cos(dive.th);
-  const right = (held.has('ArrowRight') ? 1 : 0) - (held.has('ArrowLeft') ? 1 : 0);
-  // counter-clockwise moves the head along (-hy, hx): screen right is +x, up is +y
-  return right * Math.sign(-hy || 1);
+  const belly = Math.cos(fig.twist) >= 0 ? 1 : -1;
+  const keys = (held.has('ArrowLeft') ? 1 : 0) - (held.has('ArrowRight') ? 1 : 0);
+  const hy = Math.cos(dive.th);
+  const pad = (held.has('PadRight') ? 1 : 0) - (held.has('PadLeft') ? 1 : 0);
+  return clamp(keys * belly + pad * Math.sign(-hy || 1), -1, 1);
 }
 
 // camera: beside the dive, following; wheel or pinch for distance
@@ -253,7 +256,11 @@ function hud(dt) {
   $('cMax').textContent = d.maxDepth.toFixed(1);
   $('cTarget').textContent = `${d.target} m ${d.discipline}`;
 
-  const o2 = d.o2; bar('gO2', o2 / 1.6, o2 < 0.3 ? C.bad : o2 < 0.6 ? C.warn : C.good); $('tO2').textContent = `${(d.brain * 760).toFixed(0)}`;
+  // O2: what is left, as you would have it back at the surface (falls steadily); the number is the
+  // brain's PO2 now in mmHg, which depth props up on the way down
+  const o2 = d.o2, left = d.o2Left; bar('gO2', left, left < 0.3 ? C.bad : left < 0.55 ? C.warn : C.good); $('tO2').textContent = `${Math.round(left * 100)}%`;
+  $('tPo2').textContent = `${(d.brain * 760).toFixed(0)}`;
+  bar('gPain', d.pain, d.vertigo > 0.05 ? '#c77dff' : d.pain > 0.5 ? C.bad : C.warn); $('tPain').textContent = d.vertigo > 0.05 ? 'vertigo' : d.pain > 0.02 ? `${Math.round(d.pain * 100)}%` : '';
   const u = clamp(d.urge / 1.5, 0, 1); bar('gUrge', u, d.urge > 1 ? C.warn : C.blue); $('tUrge').textContent = d.urge > 1 ? 'contr.' : `${Math.round(Math.max(0, d.urge) * 100)}%`;
   const dp = Math.max(0, d.dP); bar('gEars', dp / 0.5, dp > 0.25 ? C.bad : dp > 0.12 ? C.warn : C.good); $('tEars').textContent = `${(dp * 10).toFixed(1)} m`;
   const kg = d.netKg, lift = $('gLift');
@@ -300,7 +307,7 @@ function hud(dt) {
   // the body: hypoxia narrows the view, ears hurt red, blackout fades to black
   const tunnel = d.blackout ? 1 : clamp((0.35 - o2) / 0.35, 0, 1) * 0.9 + (d.dizzy > 0.2 ? d.dizzy * 0.3 : 0);
   $('vignette').style.opacity = tunnel;
-  $('flash').style.opacity = clamp((dp - 0.2) / 0.25, 0, 0.9);
+  $('flash').style.opacity = clamp(d.pain * 0.9 * (0.75 + 0.25 * Math.sin(d.t * 9)), 0, 0.9);
   if (d.blackout) $('fade').style.opacity = Math.min(0.85, +$('fade').style.opacity + dt * 0.5);
 
   // toasts
@@ -352,6 +359,7 @@ function frame(dt) {
   shake = ease(shake, 0, dt, 1.5);
   camera.position.set(cam.x + (Math.random() - 0.5) * shake, cam.y + (Math.random() - 0.5) * shake, cam.z);
   camera.lookAt(_target.x, Math.min(-0.15, _target.y + lead), 0);
+  if (d.vertigo > 0) camera.rotateZ(d.vertigo * 0.5 * Math.sin(d.t * 0.9) + d.vertigo * 0.2 * Math.sin(d.t * 2.3));
 
   // the water's colour and the light at the camera's depth
   const cd = Math.max(0, -camera.position.y);
@@ -403,6 +411,8 @@ window.__depthcomp = {
   advance(sec, dt = 1 / 30) { for (let t = 0; t < sec; t += dt) { if (bot) bot.update(dt); else dive.setLean(leanInput()); dive.step(dt); if (dive.phase === 'done') break; } },
   until(cond, max = 400, dt = 1 / 30) { const f = new Function('d', `return (${cond})`); for (let t = 0; t < max && !f(dive); t += dt) { if (bot) bot.update(dt); dive.step(dt); } return f(dive); },
   press, release, reset, opts,
+  hold(code, on) { if (on) held.add(code); else held.delete(code); },
+  leanInput,
   demo(on = true) { demo = on; reset(); },
 };
 

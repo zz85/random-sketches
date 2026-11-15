@@ -99,6 +99,8 @@ export class Dive {
     this.tension = 0; this.effort = 0;
     this.Pe = 1;          // the middle ear's pressure, atm
     this.earHurt = 0; this.squeeze = 0;
+    this.pain = 0;        // 0..1: the ears (or the chest) hurt; it slows and weakens every move
+    this.vertigo = 0;     // 0..1: cold water in a burst middle ear, the world spins (fades in ~30 s)
 
     // the dive and its record
     this.duckT = 0; this.duckX0 = 0.05; this.diveT = 0; this.tSub = 0; this.maxDepth = 0;
@@ -129,6 +131,9 @@ export class Dive {
     const over = this.phase === 'breathe' || this.phase === 'duck' ? this.packed : this.nL / this.P - BODY.TLC;
     return clamp((this.packed - 1.4) / 1.4, 0, 1) * clamp(over / this.packed, 0, 1);
   }
+  // the oxygen left, as the brain would see it back at the surface (f x 1 atm): it only falls,
+  // where the brain's own PO2 rises with depth and hides what you used
+  get o2Left() { return clamp((this.f - this.threshold) / (0.14 - this.threshold), 0, 1.2); }
   get o2() { return clamp((this.brain - this.threshold) / (0.14 - this.threshold), 0, 2); } // 1 = as you started, at the surface
 
   say(key, text, cool = 4) {
@@ -185,19 +190,20 @@ export class Dive {
   kick(i) {
     if (this.phase !== 'dive' || this.blackout || this.discipline !== 'CWT' || this.turnT !== null) return null;
     const L = this.legs[i];
-    if (this.t - L.at < STROKE.kick * 0.7) return { q: 0, busy: true };
+    if (this.t - L.at < STROKE.kick * 0.7 * (1 + 1.5 * this.pain)) return { q: 0, busy: true };
     const gap = this.t - this.lastStroke;
     const alt = this.lastSide === 1 - i || gap > 1.3 * KICK.ideal ? 1 : 0.35;
-    const q = alt * tempo(gap, KICK.ideal);
+    const q = alt * tempo(gap, KICK.ideal * (1 + this.pain)) * (1 - 0.6 * this.pain);
     L.at = this.t; L.q = q; this.lastStroke = this.t; this.lastSide = i; this.lastKick = this.t;
     this.strokes.push({ kind: 'kick', until: this.t + STROKE.kick, F: KICK.J * q / STROKE.kick });
-    this.effort += 0.0045 * (1 + 1.6 * (1 - q));
+    this.effort += 0.0045 * (1 + 1.6 * (1 - q)) * (1 + this.pain);
     this.urge += 0.0015 * (1 + (1 - q));
     this.kickDrag += 0.12 + 0.25 * (1 - q);
     this.om += (this.rnd() - 0.5) * 0.7 * (1 - q);   // a bad kick twists you
     this.tension = Math.min(1, this.tension + 0.03 * (1 - q));
     this.kicks++; this.quality = ease(this.quality, q, 1, 0.35);
-    if (q < 0.4) this.say('kickbad', alt < 1 ? 'Same leg twice: flutter alternates, left, right, left.' : 'Too fast: long, even kicks drive you, mashing just churns.', 6);
+    if (this.pain > 0.5) this.say('painkick', 'Every kick hurts: slower and weaker.', 6);
+    else if (q < 0.4) this.say('kickbad', alt < 1 ? 'Same leg twice: flutter alternates, left, right, left.' : 'Too fast: long, even kicks drive you, mashing just churns.', 6);
     return { q };
   }
 
@@ -205,15 +211,15 @@ export class Dive {
   pull(i) {
     if (this.phase !== 'dive' || this.blackout || this.discipline !== 'FIM' || this.turnT !== null) return null;
     const H = this.hands[i];
-    if (this.t - H.at < STROKE.pull * 0.7) return { q: 0, busy: true };
+    if (this.t - H.at < STROKE.pull * 0.7 * (1 + 1.5 * this.pain)) return { q: 0, busy: true };
     const gap = this.t - this.lastStroke;
     const alt = this.lastSide === 1 - i || gap > 1.3 * PULL.ideal ? 1 : 0.4;
-    const q = alt * tempo(gap, PULL.ideal);
+    const q = alt * tempo(gap, PULL.ideal * (1 + this.pain)) * (1 - 0.6 * this.pain);
     const hy = Math.cos(this.th);
     H.at = this.t; H.q = q; this.lastStroke = this.t; this.lastSide = i;
     // you pull along the rope the way your head points
     this.strokes.push({ kind: 'pull', until: this.t + STROKE.pull, F: PULL.J * q * clamp(Math.abs(hy) * 1.4 - 0.4, 0, 1) / STROKE.pull, dir: Math.sign(hy) || 1 });
-    this.effort += 0.006 * (1 + 1.6 * (1 - q));
+    this.effort += 0.006 * (1 + 1.6 * (1 - q)) * (1 + this.pain);
     this.urge += 0.002 * (1 + (1 - q));
     this.tension = Math.min(1, this.tension + 0.03 * (1 - q));
     this.pulls++; this.quality = ease(this.quality, q, 1, 0.35);
@@ -415,10 +421,11 @@ export class Dive {
       const chest = this.arms === 'ahead' ? 0.27 : B.chest;
       let tq = -chest * Math.sin(this.th) * gasV * G;
       if (sp > 0.03) tq += 30 * sp * (hx * this.vy - hy * this.vx);
-      tq += this.lean * 16;
+      // in pain you can't hold a line well; with vertigo you don't know which way is up
+      tq += this.lean * 16 * (1 - 0.4 * this.pain) * (1 - 1.6 * this.vertigo * (0.5 + 0.5 * Math.sin(this.t * 0.7)));
       // the water stirs (quick), and your balance wanders (slow: the head turns, a shoulder drops,
       // the belt slides, a current): neither stops by itself, so you keep correcting
-      const sig = 5 * (1 + 1.5 * this.dizzy), k = 1.2;
+      const sig = 5 * (1 + 1.5 * this.dizzy + 2 * this.pain + 6 * this.vertigo), k = 1.2;
       this.turb += -k * this.turb * h + sig * Math.sqrt(2 * k * h) * gauss(this.rnd);
       this.bias += -this.bias / 8 * h + 7 * (1 + this.dizzy) * Math.sqrt(2 / 8 * h) * gauss(this.rnd);
       tq += this.turb + this.bias;
@@ -460,9 +467,16 @@ export class Dive {
     this._o2(h, P);
     if (this.Pe > P) this.Pe = P;   // the tubes vent on the way up
     const dP = P - this.Pe;
-    if (dP > 0.25) { this.tension = Math.min(1, this.tension + h * 0.6); this.say('earpain', 'Ears hurt! Equalize (F) or stop going down.', 3); }
+    // pain from the ears past ~1.5 m unequalized, sharp past 3 m; it comes on fast and fades slowly
+    const sq = this.phase === 'dive' && this.nL / P < BODY.RV * BODY.squeeze ? 0.5 : 0;
+    const want = Math.max(clamp((dP - 0.15) / 0.25, 0, 1) ** 1.5, sq, this.vertigo > 0 ? 0.35 * this.vertigo : 0);
+    this.pain = want > this.pain ? ease(this.pain, want, h, 4) : ease(this.pain, want, h, 0.5);
+    this.tension = Math.min(1, this.tension + h * 0.8 * this.pain);
+    this.urge += h * 0.01 * this.pain;
+    if (dP > 0.25) this.say('earpain', 'Ears hurt! Equalize (F), or stop going down.', 3);
     else if (dP > 0.12) this.say('ears', 'Pressure in the ears: equalize.', 4);
-    if (dP > 0.42) { this.earHurt += h * (dP - 0.42) * 6; if (this.earHurt >= 1 && !this.injury) this._injure('ear barotrauma: an eardrum gave way'); }
+    if (dP > 0.42) { this.earHurt += h * (dP - 0.42) * 6; if (this.earHurt >= 1 && !this.injury) this._rupture(); }
+    if (this.vertigo > 0) this.vertigo = Math.max(0, this.vertigo - h / 30);
     const lv = this.nL / P;
     if (lv < BODY.RV * BODY.squeeze && this.phase === 'dive') {
       this.squeeze += h * ((BODY.RV * BODY.squeeze - lv) / (BODY.RV * BODY.squeeze)) * (0.3 + this.speed + 2 * this.tension + 2 * Math.abs(this.om)) * 0.3;
@@ -474,7 +488,8 @@ export class Dive {
 
   _o2(h, P) {
     const reflex = clamp(this.tSub / 25, 0, 1);
-    const rate = lerp(0.30, 0.20, reflex) + 0.14 * (1 - this.relax) + 0.3 * this.tension;  // L/min at rest
+    // L/min: at rest, less as the dive reflex sets in, more when tense, in pain or spinning
+    const rate = lerp(0.30, 0.20, reflex) + 0.14 * (1 - this.relax) + 0.3 * this.tension + 0.5 * this.pain + 0.4 * this.vertigo;
     const used = rate / 60 * h + this.effort;
     this.urge += this.effort * 2;
     this.effort = 0;
@@ -484,6 +499,15 @@ export class Dive {
     const thr = this.threshold;
     if (this.brain < thr + 0.01 && this.phase === 'surface' && !this.lmc) { this.lmc = true; this.say('lmc', 'Samba! Loss of motor control: the brain is short of oxygen.', 0); }
     if (this.brain < thr) this._blackout(this.phase === 'surface' ? 'blackout at the surface' : `blackout at ${this.depth.toFixed(0)} m`);
+  }
+
+  // the eardrum gives way: a sharp pain, then cold water in the middle ear spins the world
+  // (caloric vertigo) and you lose your sense of up for half a minute; the ear is equalized now
+  _rupture() {
+    this.pain = 1; this.vertigo = 1; this.Pe = this.P; this.earHurt = 0;
+    this.tension = 1; this.effort += 0.03;
+    this.say('vertigo', 'A stab of pain, then the world spins: water in the middle ear. Find the line, go up slowly.', 0);
+    this._injure('ear barotrauma: an eardrum gave way');
   }
 
   _injure(what) {

@@ -105,7 +105,9 @@
 <canvas id="profile" class="panel"></canvas>
 
 <div id="gauges" class="panel">
-  <div class="g"><label>O₂</label><div class="bar"><i id="gO2"></i></div><span id="tO2"></span></div>
+  <div class="g"><label>O₂ left</label><div class="bar"><i id="gO2"></i></div><span id="tO2"></span></div>
+  <div class="g"><label>PO₂</label><div class="bar" style="background:none"></div><span id="tPo2"></span></div>
+  <div class="g"><label>Pain</label><div class="bar"><i id="gPain"></i></div><span id="tPain"></span></div>
   <div class="g"><label>Urge</label><div class="bar"><i id="gUrge"></i><div class="mark" style="left:66%"></div></div><span id="tUrge"></span></div>
   <div class="g"><label>Ears</label><div class="bar"><i id="gEars"></i><div class="mark" style="left:24%"></div><div class="mark" style="left:50%"></div></div><span id="tEars"></span></div>
   <div class="g"><label>Lift</label><div class="bar center"><i id="gLift"></i><div class="mark" style="left:50%"></div></div><span id="tLift"></span></div>
@@ -145,8 +147,8 @@
     <div class="rowb"><button class="eq" data-k="KeyV">Valsalva<kbd>V</kbd></button><button class="eq" data-k="KeyT" id="bTurn">Turn<kbd>T</kbd></button></div>
   </div>
   <div class="diveonly"><div id="pad">
-    <span></span><button data-k="ArrowUp" title="arms ahead (streamline)">⇈<kbd>↑</kbd></button><span></span>
-    <button data-k="ArrowLeft" title="shift your weight: head left">◀<kbd>←</kbd></button><button data-k="ArrowDown" title="arms by your sides">⇊<kbd>↓</kbd></button><button data-k="ArrowRight" title="shift your weight: head right">▶<kbd>→</kbd></button>
+    <span></span><button data-k="PadUp" title="arms ahead (streamline)">⇈<kbd>↑</kbd></button><span></span>
+    <button data-k="PadLeft" title="shift your weight: head to the left of the screen">◀</button><button data-k="PadDown" title="arms by your sides">⇊<kbd>↓</kbd></button><button data-k="PadRight" title="shift your weight: head to the right of the screen">▶</button>
   </div></div>
   <div class="surfonly"><button class="big" data-k="Space">Breathe<kbd>Space</kbd></button><button class="big" data-k="KeyO">OK 👌<kbd>O</kbd></button></div>
 </div>
@@ -168,8 +170,9 @@
   <li><kbd>Enter</kbd> dive (a duck dive), <kbd>1</kbd>/<kbd>2</kbd> fins or rope, <kbd>[</kbd> <kbd>]</kbd> target depth.</li></ul>
   <h3>Under water</h3>
   <ul><li><kbd>Z</kbd> <kbd>X</kbd> left and right leg (fins) or hand (rope). Alternate on an even beat: about one kick every half second, a pull every three quarters. Mashing or the same leg twice churns, twists you and burns oxygen.</li>
-  <li><kbd>←</kbd> <kbd>→</kbd> shift your weight: the head moves that way across the screen, head down or head up. Balance wanders by itself: keep the body straight down the line (watch <i>Stream</i> and <i>Line</i>). Slow, near neutral, head down is unstable.</li>
-  <li><kbd>↑</kbd> arms ahead: the best streamline, the steadiest head first; <kbd>↓</kbd> arms by your sides: the relaxed freefall.</li>
+  <li>Pain (ears not equalized, or the chest squeezed) makes every kick slower, weaker and dearer, and burns oxygen. Push on and an eardrum gives way: a stab, then water in the middle ear spins the world for half a minute.</li>
+  <li><kbd>←</kbd> <kbd>→</kbd> shift your weight, relative to you: <kbd>←</kbd> tips the head toward your belly (the line, which you face), <kbd>→</kbd> toward your back. The on-screen ◀ ▶ are relative to the screen: the head moves the way the arrow points. Balance wanders by itself: keep the body straight down the line (watch <i>Stream</i> and <i>Line</i>). Slow, near neutral, head down is unstable.</li>
+  <li><kbd>↑</kbd> arms ahead, hands together over the head: the best streamline, and the head-first position is steadier (the lungs' lift sits nearer the hips). <kbd>↓</kbd> arms by your sides: the relaxed freefall, a bit more drag. Each stays until you press the other.</li>
   <li><kbd>F</kbd> Frenzel every metre or two as the ears press. It needs air in the mouth, which the lungs give until they are nearly empty (the Frenzel limit, ~20 m on a plain full breath). <kbd>M</kbd> mouthfill just before that: a mouthful locked in the cheeks carries the Frenzel on, about three times deeper in pressure. <kbd>V</kbd> Valsalva: fine head up near the surface, weak head down, and it blows the mouthfill.</li>
   <li><kbd>T</kbd> turn at the plate (or early). Kick up, then let the lift carry you the last metres.</li></ul>
   <h3>Surface</h3>

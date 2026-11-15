@@ -77,6 +77,15 @@ const W = +(process.env.W || 1280), H = +(process.env.H || 800);
           return { toward: +((eye.x - head.x) * -F.side).toFixed(3), side: F.side, x: +__depthcomp.dive.x.toFixed(2) }; })()`);
         check(`${name}: facing the line`, f.toward > 0.03, JSON.stringify(f));
       }
+      if (name === 'descent' || name === 'ascent') {
+        // <- tips the head toward the belly, which faces the line; the pad's arrows follow the screen
+        const l = await b.evaluate(`(() => { const A = __depthcomp, d = A.dive, F = A.fig, out = {};
+          for (const k of ['ArrowLeft', 'ArrowRight', 'PadLeft', 'PadRight']) { A.hold(k, true); const lean = A.leanInput(); A.hold(k, false);
+            // which way the head moves across the screen (x) for this lean: a CCW turn moves it along (-cos th)
+            out[k] = Math.sign(lean * -Math.cos(d.th)); }
+          out.lineSide = -F.side; return out; })()`);
+        check(`${name}: <- tips toward the line, -> away; the pad follows the screen`, l.ArrowLeft === l.lineSide && l.ArrowRight === -l.lineSide && l.PadLeft === -1 && l.PadRight === 1, JSON.stringify(l));
+      }
       if (name === 'descent') {
         const px = await b.evaluate(`(() => { const c = document.getElementById('gl'), g = c.getContext('webgl2') || c.getContext('webgl'); const p = new Uint8Array(4 * c.width); g.readPixels(0, Math.floor(c.height * 0.55), c.width, 1, g.RGBA, g.UNSIGNED_BYTE, p); let mn = 999, mx = 0; for (let i = 0; i < c.width; i++) { const v = p[i * 4] + p[i * 4 + 1] + p[i * 4 + 2]; mn = Math.min(mn, v); mx = Math.max(mx, v); } return [mn, mx]; })()`);
         check('the frame has the diver and the line against the water', px[1] - px[0] > 40, JSON.stringify(px));
