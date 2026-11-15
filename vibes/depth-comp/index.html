@@ -82,7 +82,8 @@
   #help h3 { margin: 10px 0 4px; font-size: 14px; }
   #help p, #help li { color: var(--dim); margin: 3px 0; }
   #help kbd { font: 11px ui-monospace, monospace; color: var(--ink); background: rgba(255, 255, 255, 0.1); border-radius: 4px; padding: 0 4px; }
-  #vignette, #fade, #flash { position: fixed; inset: 0; pointer-events: none; }
+  #vignette, #fade, #flash { position: fixed; inset: 0; pointer-events: none; z-index: 0; }
+  body > :not(#gl):not(#vignette):not(#flash):not(#fade):not(script) { z-index: 1; }
   #vignette { background: radial-gradient(ellipse at center, transparent 30%, rgba(0, 0, 0, 0.95) 78%); opacity: 0; }
   #flash { box-shadow: inset 0 0 90px 30px rgba(255, 60, 60, 0.7); opacity: 0; }
   #fade { background: #000; opacity: 0; }
@@ -93,7 +94,9 @@
 </head>
 <body class="breathe">
 <canvas id="gl"></canvas>
-<div id="vignette"></div><div id="flash"></div>
+<!-- the body's effects on the view (tunnel vision, pain, the blackout's fade) sit over the water and
+     under every panel and button, so a blackout never covers the menu -->
+<div id="vignette"></div><div id="flash"></div><div id="fade"></div>
 
 <div id="computer" class="panel">
   <div class="depth"><span id="cDepth">0.0</span><small> m</small></div>
@@ -189,7 +192,6 @@
   <li><kbd>R</kbd> again, <kbd>C</kbd> camera distance (or wheel / pinch), <kbd>H</kbd> this help.</li></ul>
   <p style="text-align:right"><button id="helpClose">Close</button></p>
 </div></div>
-<div id="fade"></div>
 <script type="module" src="main.js"></script>
 </body>
 </html>

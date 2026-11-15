@@ -110,6 +110,11 @@ const W = +(process.env.W || 1280), H = +(process.env.H || 800);
     check('the bot dive ends on a white card with the tag', r && r.card === 'white' && r.tag, JSON.stringify(r));
     const shown = await b.evaluate(`document.getElementById('result').classList.contains('show')`);
     check('the result card shows', shown);
+    // a blackout's fade darkens the water, never the panels and buttons (each stacks above it)
+    const top = await b.evaluate(`(() => { const z = (id) => +getComputedStyle(document.getElementById(id)).zIndex || 0, f = z('fade');
+      return Object.fromEntries(['result', 'help', 'computer', 'gauges', 'controls', 'breathe', 'toasts'].map((id) => [id, z(id) > f])); })()`);
+    check('the blackout fade sits under the menu', Object.values(top).every(Boolean), JSON.stringify(top));
+    await b.evaluate(`document.getElementById('fade').style.opacity = 0.85`); await sleep(100); await shot('blackout_menu'); await b.evaluate(`document.getElementById('fade').style.opacity = 0`);
     // free immersion: the rope
     await b.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/depth-comp/?seed=4&pause&shot&target=25&disc=FIM&demo` });
     await waitFor(() => b.evaluate('!!window.__depthcomp'), 60000);
