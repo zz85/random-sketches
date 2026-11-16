@@ -564,6 +564,30 @@ describe('accidentals fused with their note, a beam or a slur (Sibelius 2, viola
   });
 });
 
+// Divisi on two braced staves with half-note chords a third apart (Sibelius 2, viola, p. 4, bars
+// 209-219). The two hollow heads touch: their holes lie either side of the ring's wall, which
+// was taken for a staff line and the holes merged into one too tall to be a head, or a white
+// speck in the wall took one head's half; a half leaking into the hole below made the hole too
+// tall; the stem against a ring's wall made the wall read too thick; the row under a staff line
+// was a sliver of the hole. The chords' stems, meeting the upper staff's stems down at one x or
+// ending in the open, then passed as barlines (seven on one staff for three), which reset the
+// bar's accidentals. The lower staff of the first system read 22 notes with 2 hollow heads.
+test('half-note chords a third apart on divisi staves (Sibelius 2, viola, bars 209-219)', () => {
+  const r = analyze(normalize(decodeGray(fs.readFileSync(new URL('./fixtures/scan_sibelius2_va_divisi_chords.png', import.meta.url)))));
+  const [upper, lower] = r.staves;
+  expect(upper.system).toBe(lower.system);
+  expect(lower.notes.length).toBeGreaterThanOrEqual(36);
+  expect(lower.notes.filter((n) => n.kind === 'half').length).toBeGreaterThanOrEqual(16);
+  // the barlines are the system's: the same three on both staves, and no stem among them
+  expect(lower.bars.length).toBe(3);
+  expect(upper.bars.length).toBe(3);
+  lower.bars.forEach((b, i) => expect(Math.abs(b.x - upper.bars[i].x)).toBeLessThan(3));
+  // the second system's chords too (C and E flat, hollow and black, bars 214-219)
+  const fourth = r.staves[3];
+  expect(fourth.notes.filter((n) => n.kind === 'half').length).toBeGreaterThanOrEqual(13);
+  expect(fourth.notes.filter((n) => n.name === 'E♭4').length).toBeGreaterThanOrEqual(3);
+});
+
 // An orchestral part that goes divisi on two braced staves for a few lines (Sibelius 2, viola,
 // p. 2, bars 117-127): the lower staves are a second part only on those systems. Its bars must
 // sound with the bars they stand under, not from the top of the page at the same time as them.

@@ -368,6 +368,33 @@ export function clefAt(st, x) {
 /** Whether x on a staff falls inside a clef change's box (with a margin of `pad` spaces). */
 const inClefChange = (st, x, S, pad = 0.3) => (st.clefChanges || []).some((k) => x > k.box[0] - pad * S && x < k.box[2] + pad * S);
 
+// A tall component that reads as nothing, cut at the row of least ink in its middle third: where
+// both pieces read as accidentals (sharp, flat or natural) of pitches a step or more apart, the
+// two pieces, else null. Two accidentals of a chord one above the other touch: the upper one's
+// foot or bowl on the lower one's head.
+export function splitStacked(labels, w, g, S, t) {
+  const gw = g.x1 - g.x0 + 1, gh = g.y1 - g.y0 + 1;
+  if (gw < 0.5 * S || gw > 1.6 * S || gh < 3.4 * S || gh > 5.6 * S) return null;
+  if (classifyAccidental(labels, w, g, S, t)) return null;
+  const mask = compMask(labels, w, g);
+  let cut = -1, least = Infinity;
+  for (let y = Math.round(0.35 * gh); y <= Math.round(0.65 * gh); y++) { let n = 0; for (let x = 0; x < gw; x++) n += mask.m[y * gw + x]; if (n < least) { least = n; cut = y; } }
+  if (cut < 0 || least > 0.6 * S) return null;
+  const piece = (ya, yb) => {
+    let x0 = gw, x1 = -1, n = 0;
+    for (let y = ya; y <= yb; y++) for (let x = 0; x < gw; x++) if (mask.m[y * gw + x]) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); n++; }
+    if (!n) return null;
+    const m = new Uint8Array((x1 - x0 + 1) * (yb - ya + 1));
+    for (let y = ya; y <= yb; y++) for (let x = x0; x <= x1; x++) if (mask.m[y * gw + x]) m[(y - ya) * (x1 - x0 + 1) + x - x0] = 1;
+    return { ...g, x0: g.x0 + x0, x1: g.x0 + x1, y0: g.y0 + ya, y1: g.y0 + yb, n, cx: g.x0 + (x0 + x1) / 2, cy: g.y0 + (ya + yb) / 2, mask: { m, cw: x1 - x0 + 1, ch: yb - ya + 1 }, split: true };
+  };
+  const p1 = piece(0, cut - 1), p2 = piece(cut, gh - 1);
+  if (!p1 || !p2) return null;
+  const r1 = classifyAccidental(labels, w, p1, S, t), r2 = classifyAccidental(labels, w, p2, S, t);
+  if (!r1 || !r2 || Math.abs(r1.type) > 1 || Math.abs(r2.type) > 1 || r2.ref - r1.ref < 0.9 * S) return null;
+  return [p1, p2];
+}
+
 // ---------- full analysis ----------
 export function analyze(norm, opts = {}) {
   const { bin } = norm, { w, h } = bin;
@@ -523,15 +550,32 @@ export function analyze(norm, opts = {}) {
     holes.push({ x0: c.x0, y0: c.y0, x1: c.x1, y1: c.y1, n: c.n });
   }
   // merge hole halves split by a staff or ledger line
-  holes.sort((a, b) => a.y0 - b.y0);
+  // (top first; of two at one row, the wider first: a speck of white in a ring's wall, where two
+  // hollow heads a third apart meet, took the lower head's half for its own and left the real
+  // half alone, p. 4)
+  holes.sort((a, b) => a.y0 - b.y0 || (b.x1 - b.x0) - (a.x1 - a.x0));
   for (let i = 0; i < holes.length; i++) {
     const a = holes[i]; if (!a) continue;
     for (let j = i + 1; j < holes.length; j++) {
       const b = holes[j]; if (!b) continue;
       if (b.y0 - a.y1 > t + 3) break;
       const ov = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0);
-      if (b.y0 > a.y1 && ov > -0.25 * S0) { // tilted ovals: the halves need not overlap
-        a.x0 = Math.min(a.x0, b.x0); a.x1 = Math.max(a.x1, b.x1); a.y1 = Math.max(a.y1, b.y1); a.n += b.n; a.split = true; holes[j] = null;
+      // (the halves of one hole lie either side of a line: a staff line or a ledger line, at an
+      // even staff position. The holes of two hollow heads a third apart, stacked with the ring's
+      // wall between them, lie either side of a space: Sibelius 2 viola, p. 4, half-note chords)
+      const gy = (a.y1 + b.y0) / 2, gx = (Math.max(a.x0, b.x0) + Math.min(a.x1, b.x1)) / 2, gst = staffAt(gx, gy);
+      const onLine = !gst || Math.abs(pOfY(gst, gy, gx) / 2 - Math.round(pOfY(gst, gy, gx) / 2)) <= 0.3;
+      // (the pockets between a sharp's stems, above and below its crossbars, are narrower than
+      // any head's hole, and merge as before, into something too tall to be one)
+      const narrow = Math.max(a.x1 - a.x0, b.x1 - b.x0) + 1 < 0.55 * S0;
+      if (b.y0 > a.y1 && ov > -0.25 * S0 && (onLine || narrow)) { // tilted ovals: the halves need not overlap
+        // (a half that leaks into the hole of the head a third below, through a gap in the wall
+        // between them, makes the hole too tall: clipped to a head's height)
+        // (only an oval's halves, which fill under 0.8 of their boxes: the pocket between a
+        // sharp's stems, split by a line, is as tall and rectangular, and stays too tall to be a head)
+        const y1 = Math.max(a.y1, b.y1), tall = y1 - a.y0 + 1, fill = (q) => q.n / ((q.x1 - q.x0 + 1) * (q.y1 - q.y0 + 1));
+        const clip = tall > 1.05 * S0 && tall <= 1.4 * S0 && fill(a) < 0.8 && fill(b) < 0.8 && Math.max(a.x1, b.x1) - Math.min(a.x0, b.x0) + 1 >= 0.6 * S0;
+        a.x0 = Math.min(a.x0, b.x0); a.x1 = Math.max(a.x1, b.x1); a.y1 = clip ? a.y0 + Math.round(S0) - 1 : y1; a.n += b.n; a.split = true; holes[j] = null;
       }
     }
   }
@@ -547,11 +591,40 @@ export function analyze(norm, opts = {}) {
     const S = spaceAt(st, cx);
     if (st.clef.box && cx <= st.clef.box[2] + 0.9 * S) continue; // (the curls of a C clef, the gap to the key)
     if (inClefChange(st, cx, S, 0.9)) continue;
-    // a row inside the hole (the centre row may be a staff line through it)
-    let ry = cy; if (black(cx, ry)) { for (let d = 1; d < hh; d++) { if (!black(cx, cy - d)) { ry = cy - d; break; } if (!black(cx, cy + d)) { ry = cy + d; break; } } }
-    let lx = cx; while (lx > hl.x0 && !black(lx - 1, ry)) lx--;
-    let rx = cx; while (rx < hl.x1 && !black(rx + 1, ry)) rx++;
-    const tl = runFrom(lx, ry, -1, 0, S), tr = runFrom(rx, ry, 1, 0, S);
+    // the hole's widest row (the centre row may be a staff line through it, and the row under a
+    // line a sliver of the hole: Sibelius 2 viola, p. 4, where that row's width failed the test)
+    // Of the middle three fifths of its rows; an oval is widest there, where the pocket between
+    // two staff lines, a stem and the round side of a head (a grace note's) is widest at the
+    // lines: one whose outer rows run wider than the middle is no head's hole.
+    const rowRun = (y) => {
+      let x = Math.max(hl.x0, cx - Math.round(0.4 * S)); const xe = Math.min(hl.x1, cx + Math.round(0.4 * S));
+      for (; x <= xe && black(x, y); x++);
+      if (x > xe) return null;
+      let l = x; while (l > hl.x0 && !black(l - 1, y)) l--;
+      let r = x; while (r < hl.x1 && !black(r + 1, y)) r++;
+      return { l, r };
+    };
+    let ry = cy, lx = cx, rx = cx, best = -1, outer = -1;
+    for (let y = hl.y0; y <= hl.y1; y++) {
+      const run = rowRun(y); if (!run) continue;
+      const mid = y >= hl.y0 + 0.2 * hh && y <= hl.y1 - 0.2 * hh;
+      if (mid && run.r - run.l > best) { best = run.r - run.l; ry = y; lx = run.l; rx = run.r; }
+      if (!mid) outer = Math.max(outer, run.r - run.l);
+    }
+    if (best < 0) continue;
+    if (outer > 1.15 * best + 1) continue;
+    let tl = runFrom(lx, ry, -1, 0, S), tr = runFrom(rx, ry, 1, 0, S);
+    // a stem against the ring's wall lengthens the wall's run: where the ink past the wall's
+    // likely thickness is a long vertical stroke, the wall is as thick as the other side's
+    // (half-note chords a third apart, the stem down their left, p. 4)
+    // (a note's stem, over three spaces: a sharp's two stems are shorter, and the pocket between
+    // them narrower than a head's hole)
+    const stemAt = (x) => runFrom(x, ry, 0, -1, 4 * S) + runFrom(x, ry, 0, 1, 4 * S) > 3 * S;
+    const stemIn = (xa, xb) => { for (let x = xa; x <= xb; x++) if (stemAt(x)) return true; return false; };
+    if (hw >= 0.6 * S) {
+      if (tl > 0.5 * S && tr <= 0.65 * S && tr >= 0.08 * S && tl > tr && stemIn(lx - tl, lx - Math.round(0.3 * S))) tl = Math.min(tl, Math.max(tr, Math.round(0.2 * S)));
+      else if (tr > 0.5 * S && tl <= 0.65 * S && tl >= 0.08 * S && tr > tl && stemIn(rx + Math.round(0.3 * S), rx + tr)) tr = Math.min(tr, Math.max(tl, Math.round(0.2 * S)));
+    }
     let tu = runFrom(cx, hl.y0, 0, -1, S), td = runFrom(cx, hl.y1, 0, 1, S);
     // a filled head of the other voice touching the ring above or below (two voices a third apart
     // in one column): take the ring's thickness from the free side
@@ -568,6 +641,7 @@ export function analyze(norm, opts = {}) {
     const ym = (hl.y0 - tu + hl.y1 + td) / 2, p = Math.round(pOfY(st, ym, cx));
     heads.push({ st, p, x: (x0 + x1) / 2, y: yOfP(st, p, cx), box: [x0, ym - oh / 2, x1, ym + oh / 2], kind: 'hollow' });
   }
+  if (opts.onHeads) opts.onHeads(heads);
   // dedupe
   heads.sort((a, b) => (a.kind === 'hollow' ? 0 : 1) - (b.kind === 'hollow' ? 0 : 1));
   const uniq = [];
@@ -685,6 +759,9 @@ export function analyze(norm, opts = {}) {
     // left going down with the head at the top, where a flat's bowl is at the bottom.)
     // (a grace note's stem, flag and slash can pass for an accidental; accidentals are taller)
     if (a && !(n.small && c.y1 - c.y0 + 1 < 2.4 * S)) return false;
+    // (or two accidentals one above the other, a flat's bowl read as a head with the stem of
+    // the pair down its left: Sibelius 2 viola, p. 4, flats a third apart before a chord)
+    if (n.kind === 'black' && !n.small && splitStacked(L, w, c, S, t)) return false;
     if (n.kind === 'black') return true;
     // A hole's nearest ink can be another component: an accidental-shaped component around the
     // hole, or one that is the head's "stem" (a ring closed by a sharp's stroke, a staff line
@@ -832,6 +909,17 @@ export function analyze(norm, opts = {}) {
     if (!r1 || !r2 || r1.type !== -1 || r2.type !== -1 || Math.abs(r1.ref - r2.ref) < 0.8 * S) continue;
     groups.set(g.id, p1); groups.set(g.id + 'f', p2);
   }
+  // Two accidentals of a chord one above the other, touching (p. 4, bar 216: flats a fifth
+  // apart, A flat and E flat, in one component four spaces tall): cut apart where both pieces
+  // read as accidentals.
+  for (const g of [...groups.values()]) {
+    if (g.merged || g.split) continue;
+    const st = staffAt(g.cx, g.cy); if (!st) continue;
+    const S = spaceAt(st, g.cx);
+    if (!notes.some((n) => n.st === st && n.box[0] - g.x1 > -0.3 * S && n.box[0] - g.x1 < 1.4 * S)) continue;
+    const ps = splitStacked(L, w, g, S, t);
+    if (ps) { groups.set(g.id, ps[0]); groups.set(g.id + 'v', ps[1]); }
+  }
   // Competing readings of an accidental-sized symbol: the stroke rules (classifyAccidental) and
   // the learned classifier (glyphnet.js) each give evidence; the reading with the most combined
   // support wins. The rules carry a fixed prior weight, so the classifier overrides them only
@@ -920,7 +1008,35 @@ export function analyze(norm, opts = {}) {
         const near = st.bars.some((b) => Math.abs(b.x - xc) < 1.5 * S);
         // nothing pokes out sideways along most of it (a slur crossing it touches it at one place)
         let side = 0; for (let y = ya; y <= yb; y++) if (L[y * w + xb - 2] === id || L[y * w + x + 1] === id) side++;
-        if (big && !stem && !near && side < 0.35 * (yb - ya)) st.bars.push({ x: xc, x0: xb, x1: x - 1, ids: [], merged: true });
+        // and the column ends at the staff, or at another staff's line (a system barline): one
+        // that runs on past the staff by half a space or more and stops in the open is the stem
+        // of a note whose head wasn't found (Sibelius 2 viola, p. 4: half-note chords a third
+        // apart, read as barlines, which reset the bar's accidentals)
+        const xi = Math.round(xc), onLine = (y) => staves.some((o) => [0, 4].some((k) => Math.abs(lineY(o, k, xi) - y) <= t + 2));
+        let yt = ya; for (let g = 0; yt > 0 && g <= 2; yt--) { if (L[(yt - 1) * w + xi]) g = 0; else g++; } yt += 1;
+        let yd = yb; for (let g = 0; yd < h - 1 && g <= 2; yd++) { if (L[(yd + 1) * w + xi]) g = 0; else g++; } yd -= 1;
+        // (or ends inside another staff, short of its far line: the stem of the upper staff's
+        // note, down, meeting the lower staff's, up, at one x)
+        const inside = (y) => staves.some((o) => o !== st && y > lineY(o, 0, xi) + t + 2 && y < lineY(o, 4, xi) - t - 2);
+        // (or carries a head at either end: ink of its own component reaching 0.6 space to one
+        // side over half a space of rows within a space of the run's end, where a barline has
+        // nothing but a tie's thin arc; the upper staff's chord on its top line, stem down, met
+        // the lower's stem up and passed as a system barline)
+        const headAt = (ye, dir) => {
+          let rows = 0;
+          for (let y = ye, k = 0; k < Math.round(1.3 * S) && y > 0 && y < h - 1; y += dir, k++) {
+            let l = xi, r = xi; while (l > 0 && L[y * w + l - 1] === id) l--; while (r < w - 1 && L[y * w + r + 1] === id) r++;
+            if (Math.max(xi - l, r - xi) >= 0.6 * S) rows++;
+          }
+          return rows >= 0.5 * S;
+        };
+        // (a system barline's end may run a little past the far staff's outer line, where a tie
+        // hangs from it: within 0.8 space of a line of a staff the run crosses whole)
+        const crossed = staves.filter((o) => yt <= lineY(o, 0, xi) + t + 2 && yd >= lineY(o, 4, xi) - t - 2);
+        const pastOuter = (y) => crossed.some((o) => Math.abs(y - lineY(o, 0, xi)) <= 0.8 * S || Math.abs(y - lineY(o, 4, xi)) <= 0.8 * S);
+        const endBad = (y) => (!onLine(y) && !pastOuter(y)) || inside(y);
+        const stemEnd = (ya - yt > 0.5 * S && endBad(yt)) || (yd - yb > 0.5 * S && endBad(yd)) || headAt(yt, 1) || headAt(yd, -1);
+        if (big && !stem && !near && !stemEnd && side < 0.35 * (yb - ya)) st.bars.push({ x: xc, x0: xb, x1: x - 1, ids: [], merged: true });
       }
       run = 0;
     }
