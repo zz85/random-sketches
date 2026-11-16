@@ -133,8 +133,19 @@ export function findStaves(bin, S, t) {
   staves = staves.filter((s) => !staves.some((o) => o !== s && span(o) > 1.5 * span(s) && o.pts[0].x < s.pts[s.pts.length - 1].x && s.pts[0].x < o.pts[o.pts.length - 1].x && onLedgers(s, o)));
   staves.sort((a, b) => a.pts[0].ys[0] - b.pts[0].ys[0]);
   // drop duplicates (same staff found twice, e.g. a few slices that took a beam or hairpin
-  // above it as the top line): the one supported by the most slices wins
-  const bySupport = staves.slice().sort((a, b) => b.pts.length - a.pts.length);
+  // above it as the top line, or a long slur under it as the bottom line while beams buried the
+  // top line): the one whose five lines have ink along most of its length wins, then the one
+  // supported by the most slices (Sibelius 2 viola, p. 9: 32nd-note runs under three beams)
+  const evidence = (s) => {
+    let hit = 0, n = 0;
+    for (let x = s.x0; x <= s.x1; x += 3) for (let k = 0; k < 5; k++) {
+      const y = Math.round(lineY(s, k, x)); n++;
+      for (let dy = -Math.ceil(t); dy <= Math.ceil(t); dy++) if (y + dy >= 0 && y + dy < h && data[(y + dy) * w + x]) { hit++; break; }
+    }
+    return n ? hit / n : 0;
+  };
+  for (const s of staves) s.evidence = evidence(s);
+  const bySupport = staves.slice().sort((a, b) => (Math.abs(b.evidence - a.evidence) > 0.02 ? b.evidence - a.evidence : b.pts.length - a.pts.length));
   // (staves never overlap: two whose line spans intersect are one staff found twice)
   const keep = bySupport.filter((s, i) => !bySupport.some((o, j) => j < i && Math.abs(lineY(o, 2, s.x0) - lineY(s, 2, s.x0)) < 4.5 * S && o.x0 < s.x1 && s.x0 < o.x1));
   return staves.filter((s) => keep.includes(s));
@@ -257,18 +268,99 @@ export function classifyAccidental(labels, w, c, S, t = 0.13 * S) {
 }
 
 // Clef from a tall component near the start of the staff.
-function classifyClef(c, st, labels, w) {
+function classifyClef(c, st, labels, w, comps = null) {
   const xm = (c.x0 + c.x1) / 2, y0 = lineY(st, 0, xm), y4 = lineY(st, 4, xm), s = (y4 - y0) / 4;
-  const top = (y0 - c.y0) / s, bot = (c.y1 - y4) / s, H = (c.y1 - c.y0 + 1) / s;
-  if (H >= 5 && top >= 0.6 && bot >= 0.5) return 'treble';
+  const top = (y0 - c.y0) / s, bot = (c.y1 - y4) / s, H = (c.y1 - c.y0 + 1) / s, W = (c.x1 - c.x0 + 1) / s;
+  // (a G clef is over two spaces wide: a piece of a system barline or a brace left standing
+  // at the start of a divisi staff is as tall, and thin)
+  if (H >= 5 && top >= 0.6 && bot >= 0.5) return W >= 1.4 ? 'treble' : null;
   if (H >= 2.2 && H < 5 && top > -0.7 && top < 1.4) {
     // C clefs stand on a solid bar as tall as the clef; the F clef is a curl
     const st2 = strokes(compMask(labels, w, c), 0.8 * (c.y1 - c.y0 + 1));
     if (st2.length && H >= 3.4) return top >= 0.6 && bot < -0.4 ? 'tenor' : 'alto';
-    if (bot < -0.2 && H < 4.2) return 'bass';
+    if (bot < -0.2 && H < 4.2) {
+      // an F clef has its two dots right of the curl; a C clef's curls left standing after its
+      // bars were cut away with a beam they touched (Sibelius 2 viola, p. 9) have none
+      if (!comps) return 'bass';
+      const dots = comps.filter((q) => q && q !== c && q.x0 > c.x1 - 0.3 * s && q.x0 - c.x1 < 1.2 * s && q.y1 - q.y0 <= 0.8 * s && q.x1 - q.x0 <= 0.8 * s && q.cy > y0 - 0.5 * s && q.cy < y4);
+      const cutBars = (st.clefCuts || []).some((x) => x > c.x0 - 1.6 * s && x < c.x0);
+      return dots.length || !cutBars ? 'bass' : H >= 2.6 ? 'alto' : null;
+    }
   }
-  return H >= 5 ? 'treble' : null;
+  return H >= 5 && W >= 1.4 ? 'treble' : null;
 }
+
+// A clef change inside a staff: a smaller clef (about three quarters of the opening clef's
+// size) after the key signature, usually right after a barline. Shape tests tell it from the
+// notes, which also stand in the staff: a C clef is two solid bars centred on the staff, dense,
+// about two spaces wide; a G clef reaches well above and below the staff and is wider than a
+// stem with a head; an F clef is a curl with no straight stroke, with its two dots to the right.
+export function classifyChangeClef(c, st, labels, w, comps) {
+  const xm = (c.x0 + c.x1) / 2, y0 = lineY(st, 0, xm), y4 = lineY(st, 4, xm), s = (y4 - y0) / 4;
+  const top = (y0 - c.y0) / s, bot = (c.y1 - y4) / s, H = (c.y1 - c.y0 + 1) / s, W = (c.x1 - c.x0 + 1) / s;
+  const mask = compMask(labels, w, c); let ink = 0; for (const v of mask.m) ink += v;
+  const dens = ink / (mask.cw * mask.ch), bars = strokes(mask, 0.8 * (c.y1 - c.y0 + 1)), tall = bars.length;
+  if (H >= 5 && H <= 9 && top >= 0.4 && bot >= 0.4 && W >= 1.8 && W <= 3.4 && !tall && dens >= 0.3 && dens <= 0.55) {
+    // a G clef's loop fills its middle rows; a tall time signature's two digits touch at a point
+    // and the clef ends below in a thin tail with a dot, where a digit is as wide as the rest
+    const rowW = (y) => { let a = -1, b = -1; for (let x = 0; x < mask.cw; x++) if (mask.m[y * mask.cw + x]) { if (a < 0) a = x; b = x; } return a < 0 ? 0 : b - a + 1; };
+    let narrow = Infinity, foot = 0, head = 0;
+    for (let y = Math.round(0.3 * mask.ch); y < 0.7 * mask.ch; y++) narrow = Math.min(narrow, rowW(y));
+    for (let y = Math.round(0.85 * mask.ch); y < mask.ch; y++) foot = Math.max(foot, rowW(y));
+    for (let y = 0; y < 0.12 * mask.ch; y++) head = Math.max(head, rowW(y));
+    // (cue clefs on this part: middle 0.32-0.37, foot 0.67-0.71, top 0.46-0.53 of the width;
+    // a tall 6/8 under scan noise: 0.39, 0.86 and 0.64)
+    if (narrow >= 0.3 * mask.cw && foot <= 0.78 * mask.cw && head <= 0.58 * mask.cw) return 'treble';
+  }
+  // a C clef: a thick bar with a thin one right of it (its curls may stand apart), solid, centred
+  // on the staff; a chord's heads stacked on their stem are as dense but have one thin stroke
+  // (or the two bars run together into one stroke half a space wide)
+  const bars2 = strokes(mask, 0.6 * (c.y1 - c.y0 + 1)), bw = bars2.length ? bars2[0].x1 - bars2[0].x0 + 1 : 0;
+  const twoBars = (bars2.length >= 2 && bw >= 0.25 * s && bars2[1].x0 - bars2[0].x1 <= 0.6 * s) || (bw >= 0.5 * s && bw <= 0.9 * s);
+  if (H >= 2.6 && H <= 4.6 && W >= 1.0 && W <= 3.2 && (W >= 1.4 || dens >= 0.6) && Math.abs(top - bot) <= 0.8 && top <= 0.4 && twoBars && dens >= 0.45) return 'alto';
+  if (H >= 2.4 && H <= 4.2 && W >= 1.2 && W <= 2.6 && top >= -0.5 && top <= 0.6 && bot <= -0.2 && bot >= -1.6 && !tall && dens >= 0.3) {
+    // the F clef's two dots, right of the curl, one above the other
+    const dots = comps.filter((q) => q && q !== c && q.x0 > c.x1 - 0.3 * s && q.x0 - c.x1 < 1.0 * s && q.y1 - q.y0 <= 0.8 * s && q.x1 - q.x0 <= 0.8 * s && q.cy > c.y0 && q.cy < c.y1);
+    if (dots.length >= 1) return 'bass';
+  }
+  return null;
+}
+
+/** Clef changes along a staff, after its key signature: [{ x, x0, x1, type, box }]. */
+function findClefChanges(st, cc, S0, t, w) {
+  const start = (st.clef.box ? st.clef.box[2] : st.x0) + 1.5 * S0, out = []; // (the key signature is read later; its glyphs fail the shape tests)
+  const cands = cc.comps.filter((c) => c && c.x0 > start && c.x1 < st.x1 && c.cy > st.band[0] && c.cy < st.band[1] &&
+    c.y1 - c.y0 >= 2.2 * S0 && c.y1 - c.y0 <= 9 * S0 && c.x1 - c.x0 >= 1.0 * S0 && c.x1 - c.x0 <= 3.6 * S0).sort((a, b) => a.x0 - b.x0);
+  for (const c of cands) {
+    if (out.length && c.x0 < out[out.length - 1].x1 + S0) continue;
+    const type = classifyChangeClef(c, st, cc.labels, w, cc.comps);
+    if (st.debugChanges) { const xm = (c.x0 + c.x1) / 2, y0 = lineY(st, 0, xm), y4 = lineY(st, 4, xm), s = (y4 - y0) / 4; console.log('change cand', { x0: c.x0, x1: c.x1, H: +((c.y1 - c.y0 + 1) / s).toFixed(2), W: +((c.x1 - c.x0 + 1) / s).toFixed(2), top: +((y0 - c.y0) / s).toFixed(2), bot: +((c.y1 - y4) / s).toFixed(2), type }); }
+    if (!type || type === st.clef.type && !out.length) continue;
+    if (out.length && type === out[out.length - 1].type) continue;
+    const S = spaceAt(st, c.cx), box = [c.x0, c.y0, c.x1, c.y1];
+    // the pieces to the right that belong to it: a C clef's curls, an F clef's dots
+    for (const q of cc.comps) {
+      if (!q || q === c || q.x0 < box[2] - 0.3 * S || q.x0 - box[2] > 1.0 * S || q.y0 < box[1] - 0.6 * S || q.y1 > box[3] + 0.6 * S) continue;
+      if (type === 'alto' && q.x1 - box[0] > 3.4 * S) continue;
+      if (type === 'bass' && (q.y1 - q.y0 > 0.8 * S || q.x1 - q.x0 > 0.8 * S)) continue;
+      if (type === 'treble') continue;
+      if (classifyAccidental(cc.labels, w, q, S, t)) continue;
+      box[2] = Math.max(box[2], q.x1); box[1] = Math.min(box[1], q.y0); box[3] = Math.max(box[3], q.y1);
+    }
+    out.push({ x: box[0], x0: box[0], x1: box[2], type, box, ids: [] });
+  }
+  return out;
+}
+
+/** The clef in effect at x on a staff: its opening clef, then any clef changes inside it. */
+export function clefAt(st, x) {
+  let c = st.clef.type;
+  for (const k of st.clefChanges || []) if (k.x0 <= x) c = k.type;
+  return c;
+}
+
+/** Whether x on a staff falls inside a clef change's box (with a margin of `pad` spaces). */
+const inClefChange = (st, x, S, pad = 0.3) => (st.clefChanges || []).some((k) => x > k.box[0] - pad * S && x < k.box[2] + pad * S);
 
 // ---------- full analysis ----------
 export function analyze(norm, opts = {}) {
@@ -297,12 +389,13 @@ export function analyze(norm, opts = {}) {
   for (const c of c0.comps) if (c && (c.y1 - c.y0 > 8.5 * S0 || c.x1 - c.x0 > 4 * S0)) big[c.id] = 1;
   for (const st of staves) {
     const [b0, b1] = st.band;
+    st.clefCuts = []; // the columns cut inside the staff, where a clef's bar may have gone with them
     for (let x = Math.max(0, Math.round(st.x0 - 3 * S0)); x <= Math.min(w - 1, Math.round(st.x0 + 4.5 * S0)); x++) {
       const lim = x < st.x0 + 1.5 * S0 ? 3.5 * S0 : 9 * S0; // (the opening barline spans 4 spaces)
       for (let y = Math.max(0, Math.round(b0 - 6 * S0)); y < Math.min(h, Math.round(b1 + 6 * S0)); y++) {
         if (!clefImg.data[y * w + x] || !big[c0.labels[y * w + x]]) continue;
         let e = y; while (e < h && sym0.data[e * w + x]) e++;
-        if (e - y > lim) for (let yy = y; yy < e; yy++) clefImg.data[yy * w + x] = 0;
+        if (e - y > lim) { for (let yy = y; yy < e; yy++) clefImg.data[yy * w + x] = 0; if (x >= st.x0 && y < lineY(st, 2, x) && e > lineY(st, 2, x)) st.clefCuts.push(x); }
         y = e;
       }
     }
@@ -314,8 +407,9 @@ export function analyze(norm, opts = {}) {
     const cands = cc.comps.filter((c) => c && c.x0 < st.x0 + 4.5 * S0 && c.x1 > st.x0 && c.y1 - c.y0 > 2.2 * S0 && c.y1 - c.y0 < 8.5 * S0 &&
       (c.x1 - c.x0 >= 0.8 * S0 || (Math.abs(c.y0 - lineY(st, 0, c.cx)) < 0.6 * S0 && Math.abs(c.y1 - lineY(st, 4, c.cx)) < 0.6 * S0)) && c.cy > st.band[0] && c.cy < st.band[1] && c.x1 - c.x0 < 4 * S0).sort((a, b) => a.x0 - b.x0);
     st.clef = { type: opts.clef || 'treble', detected: null, box: null };
+    if (opts.debugClef === st.index) for (const c of cands) { const xm = (c.x0 + c.x1) / 2, y0 = lineY(st, 0, xm), y4 = lineY(st, 4, xm), s = (y4 - y0) / 4; console.log('clef cand', { x0: c.x0, x1: c.x1, y0: c.y0, y1: c.y1, H: +((c.y1 - c.y0 + 1) / s).toFixed(2), W: +((c.x1 - c.x0 + 1) / s).toFixed(2), top: +((y0 - c.y0) / s).toFixed(2), bot: +((c.y1 - y4) / s).toFixed(2), type: classifyClef(c, st, cc.labels, w, cc.comps) }); }
     for (const c of cands) {
-      const type = classifyClef(c, st, cc.labels, w);
+      const type = classifyClef(c, st, cc.labels, w, cc.comps);
       if (!type) continue;
       const box = [c.x0, c.y0, c.x1, c.y1], S = spaceAt(st, c.cx);
       // C clefs come in pieces (thick bar, thin bar, the two curls); F clefs have two dots
@@ -345,6 +439,8 @@ export function analyze(norm, opts = {}) {
       st.clef = { type: opts.clef || type, detected: type, box }; break;
     }
   }
+  // clef changes inside the staff, after the opening clef and its key signature
+  for (const st of staves) { st.debugChanges = opts.debugClef === st.index; st.clefChanges = opts.clefChanges === false ? [] : findClefChanges(st, cc, S0, t, w); }
 
   // ---- filled heads: opening removes stems, beams, lines, thin strokes ----
   const k = Math.max(3, Math.round(0.55 * S0));
@@ -358,6 +454,7 @@ export function analyze(norm, opts = {}) {
     const S = spaceAt(st, b.cx);
     if (bw < 0.75 * S || bh < 0.6 * S || bw > 3 * S || bh > 6.5 * S) continue;
     if (st.clef.box && b.cx < st.clef.box[2] + 0.3 * S && b.cx > st.clef.box[0] - 0.3 * S) continue;
+    if (inClefChange(st, b.cx, S)) continue;
     if (bw > 2.2 * S && bh < 1.5 * S) continue; // beam-ish slab
     // columns: a blob wider than ~1.8 heads is a chord with seconds, analyse halves
     const cols = bw > 1.85 * S ? [[b.x0, Math.round((b.x0 + b.x1) / 2)], [Math.round((b.x0 + b.x1) / 2) + 1, b.x1]] : [[b.x0, b.x1]];
@@ -405,6 +502,7 @@ export function analyze(norm, opts = {}) {
     if (bw < 0.5 * mw || bw > 0.86 * mw || bh < 0.4 * S || bh > 1.0 * S || b.n / (bw * bh) < 0.62) continue;
     if (!heads.some((o) => o.st === st && !o.small && o.x - b.cx > 0.7 * S && o.x - b.cx < 3.2 * S && Math.abs(o.y - b.cy) < 4.5 * S)) continue;
     if (st.clef.box && b.cx < st.clef.box[2] + 0.9 * S) continue;
+    if (inClefChange(st, b.cx, S)) continue;
     if (heads.some((o) => o.st === st && Math.abs(o.x - b.cx) < 0.9 * S && Math.abs(o.y - b.cy) < 0.9 * S)) continue;
     const p = Math.round(pOfY(st, b.cy, b.cx));
     heads.push({ st, p, x: b.cx, y: b.cy, box: [b.x0 - 1, b.cy - 0.4 * S, b.x1 + 1, b.cy + 0.4 * S], kind: 'black', small: true });
@@ -443,6 +541,7 @@ export function analyze(norm, opts = {}) {
     const st = staffAt(cx, cy); if (!st) continue;
     const S = spaceAt(st, cx);
     if (st.clef.box && cx <= st.clef.box[2] + 0.9 * S) continue; // (the curls of a C clef, the gap to the key)
+    if (inClefChange(st, cx, S, 0.9)) continue;
     // a row inside the hole (the centre row may be a staff line through it)
     let ry = cy; if (black(cx, ry)) { for (let d = 1; d < hh; d++) { if (!black(cx, cy - d)) { ry = cy - d; break; } if (!black(cx, cy + d)) { ry = cy + d; break; } } }
     let lx = cx; while (lx > hl.x0 && !black(lx - 1, ry)) lx--;
@@ -603,6 +702,19 @@ export function analyze(norm, opts = {}) {
   // sharp's hole, a natural's box)
   notes = notes.filter((n) => n.kind !== 'whole' || !notes.some((o) => o !== n && o.st === n.st && Math.abs(o.p - n.p) <= 1 &&
     o.box[0] - n.box[2] > -0.2 * S0 && o.box[0] - n.box[2] < 1.0 * S0));
+  // a pair of touching sharps in a tight key signature keeps enough ink through the opening to
+  // pass as a head with a stem: in the key zone, a component with four thin stems is no note
+  // ... and a sharp of a bold key signature alone passes the same way: one that reads as an
+  // accidental, the size of one, is no note either (p. 7: two of six sharps read as notes, so the
+  // key stopped at the first)
+  notes = notes.filter((n) => {
+    const c = cc.comps[n.comp], b = n.st.clef.box; if (!c || !b || c.x0 < b[2] || c.x0 > b[2] + 9 * S0) return true;
+    const cw = c.x1 - c.x0 + 1, chh = c.y1 - c.y0 + 1;
+    if (n.kind === 'black' && cw <= 1.3 * S0 && chh >= 1.8 * S0 && chh <= 3.6 * S0 && classifyAccidental(L, w, c, S0, t)) return false;
+    if (cw < 1.5 * S0 || cw > 7.5 * S0 || chh < 2.2 * S0 || chh > 4.8 * S0) return true;
+    const k = strokes(compMask(L, w, c), 0.45 * chh).filter((k) => k.x1 - k.x0 + 1 <= 0.45 * S0).length;
+    return k < 4 || k % 2 || k > 14;
+  });
   const headComps = new Set(notes.map((n) => n.comp));
 
   // ---- other symbols per staff ----
@@ -646,6 +758,36 @@ export function analyze(norm, opts = {}) {
     }
     for (const [k, g] of groups) if (g.merged) groups.delete(k);
   }
+  // Sharps or flats of a tightly set key signature touching each other come as one component
+  // two or more spaces wide (Sibelius 2 viola, p. 7: F sharp major's six sharps in pairs, or
+  // all in one). Cut such a component between its stems, two to a sharp and one to a flat,
+  // where every piece reads as the same accidental; each piece keeps the component's id.
+  for (const g of [...groups.values()]) {
+    const gw = g.x1 - g.x0 + 1, gh = g.y1 - g.y0 + 1;
+    if (g.merged || gw < 1.5 * S0 || gw > 7.5 * S0 || gh < 2.2 * S0 || gh > 4.8 * S0) continue;
+    const st = staffAt(g.cx, g.cy); if (!st) continue;
+    const S = spaceAt(st, g.cx);
+    if (!st.clef.box || g.x0 > st.clef.box[2] + 12 * S) continue; // the key zone
+    if (classifyAccidental(L, w, g, S, t)) continue;
+    const mask = compMask(L, w, g);
+    // the stems (each glyph stands a step or more from its neighbours, so a stem is shorter
+    // than the group): sharps have two each, flats one, with the bowl hanging right of it
+    const stems = strokes(mask, 0.45 * gh).filter((k) => k.x1 - k.x0 + 1 <= 0.45 * S0);
+    let cuts = [], own = [];
+    if (stems.length >= 4 && stems.length % 2 === 0) { for (let i = 0; i < stems.length; i += 2) { own.push([stems[i], stems[i + 1]]); if (i + 2 < stems.length) cuts.push(Math.round((stems[i + 1].x1 + stems[i + 2].x0) / 2)); } }
+    else if (stems.length >= 2 && stems.every((k, i) => !i || k.x0 - stems[i - 1].x1 > 0.8 * S0)) { for (let i = 0; i < stems.length; i++) { own.push([stems[i]]); if (i + 1 < stems.length) cuts.push(stems[i + 1].x0 - 1); } }
+    if (!cuts.length || cuts.some((c, i) => c < 1 || c > gw - 2 || (i && c <= cuts[i - 1] + 1))) continue;
+    // each piece's rows are its own stems' (a neighbour's crossbars reach into its columns)
+    const piece = (xa, xb, ks) => {
+      const ya = Math.min(...ks.map((k) => k.top)) - 1, yb = Math.max(...ks.map((k) => k.bot)) + 1;
+      let n = 0; for (let y = Math.max(0, ya); y <= Math.min(gh - 1, yb); y++) for (let x = xa; x <= xb; x++) n += mask.m[y * gw + x];
+      return { ...g, x0: g.x0 + xa, x1: g.x0 + xb, y0: g.y0 + Math.max(0, ya), y1: g.y0 + Math.min(gh - 1, yb), n, cx: (2 * g.x0 + xa + xb) / 2, cy: g.y0 + (ya + yb) / 2, split: true };
+    };
+    const pieces = own.map((ks, i) => piece(i ? cuts[i - 1] + 1 : 0, i < cuts.length ? cuts[i] - 1 : gw - 1, ks));
+    const read = pieces.map((q) => classifyAccidental(L, w, q, S, t));
+    if (read.some((r) => !r || r.type !== read[0].type || Math.abs(r.type) !== 1)) continue;
+    pieces.forEach((q, i) => groups.set(i ? g.id + 'p' + i : g.id, q));
+  }
   // Competing readings of an accidental-sized symbol: the stroke rules (classifyAccidental) and
   // the learned classifier (glyphnet.js) each give evidence; the reading with the most combined
   // support wins. The rules carry a fixed prior weight, so the classifier overrides them only
@@ -656,7 +798,9 @@ export function analyze(norm, opts = {}) {
   const readAccidental = (c, S, st) => {
     const rule = classifyAccidental(L, w, c, S, t);
     const W = (c.x1 - c.x0 + 1) / S, H = (c.y1 - c.y0 + 1) / S;
-    if (!useNet || W < 0.3 || W > 2.2 || H < (c.pairDsharp ? 0.5 : 0.8) || H > 3.8) return rule;
+    // (the crop pads a narrow box to the classifier's shape with its surroundings: the bare stem
+    // of a flat whose bowl came apart, 0.3 spaces wide, read as the two flats beside it)
+    if (!useNet || W < (c.pairDsharp ? 0.3 : 0.45) || W > 2.2 || H < (c.pairDsharp ? 0.5 : 0.8) || H > 3.8) return rule;
     const pr = classify(bin, [c.x0, c.y0, c.x1, c.y1]);
     const pNone = Math.max(1e-4, 1 - Object.keys(ACC_OF).reduce((q, k) => q + pr[k], 0));
     // (the classifier may add or retype an accidental but not delete one the rules found: on real
@@ -675,6 +819,7 @@ export function analyze(norm, opts = {}) {
     const st = staffAt(c.cx, c.cy); if (!st) continue;
     const S = spaceAt(st, c.cx), cw = c.x1 - c.x0 + 1, chh = c.y1 - c.y0 + 1;
     if (st.clef.box && c.x1 <= st.clef.box[2] + 0.2 * S) continue;
+    if (inClefChange(st, c.cx, S)) continue;
     const ya = lineY(st, 0, c.cx), yb = lineY(st, 4, c.cx);
     // (a stem cut off its hollow head by staff removal is not a barline)
     const stemOf = notes.some((n) => n.stem && n.st === st && Math.abs(n.stem.x - c.cx) <= 0.4 * S && Math.min(n.y, n.stem.tip) <= c.y0 + 0.5 * S && Math.max(n.y, n.stem.tip) >= c.y1 - 1.0 * S);
@@ -689,6 +834,16 @@ export function analyze(norm, opts = {}) {
     }
     const a = readAccidental(c, S, st);
     if (a) { const pf = pOfY(st, a.ref, c.cx); accs.push({ st, c, ...a, p: Math.round(pf), pf }); continue; }
+    // the bare stem of a flat whose bowl joined the head it marks (dense beamed runs: p. 3, bar
+    // 133): a thin stroke of a flat's height, no note's stem, standing a fraction of a space
+    // left of a head and reaching from above the head to a little below it, is that head's flat
+    if (!stemOf && cw <= 0.4 * S && chh >= 1.7 * S && chh <= 2.9 * S) {
+      const bowl = c.y1 - 0.45 * S;
+      const hd = notes.find((n) => n.st === st && n.box[0] - c.x1 >= 0.15 * S && n.box[0] - c.x1 <= 1.0 * S && Math.abs(n.y - bowl) <= 0.6 * S && c.y0 <= n.y - 1.1 * S);
+      if (hd && !notes.some((n) => n.st === st && n.box[0] <= c.x1 && n.box[2] >= c.x0 - 0.3 * S && Math.abs(n.y - c.cy) < 2 * S)) {
+        const pf = pOfY(st, bowl, c.cx); accs.push({ st, c, type: -1, ref: bowl, p: Math.round(pf), pf, stemOnly: true }); continue;
+      }
+    }
     if (cw >= 0.2 * S && cw <= 0.75 * S && chh >= 0.2 * S && chh <= 0.75 * S && c.n / (cw * chh) > 0.5 && cw / chh > 0.55 && cw / chh < 1.8) {
       // a dot stands alone; pieces of a tie or slur cut up by staff-line removal have neighbours
       // just across the removed line
@@ -806,7 +961,6 @@ export function analyze(norm, opts = {}) {
   // positions for the clef. Only the run's first glyphs need to be found right after the bar.
   for (const st of staves) {
     st.keyChanges = [];
-    const clef = CLEFS[st.clef.type];
     // (from the key in effect: a staff that inherited the previous page's key cancels that one)
     let cur = st.key.fifths;
     for (const b of st.bars) {
@@ -826,6 +980,7 @@ export function analyze(norm, opts = {}) {
       const nat = run.slice(0, i), acc = run.slice(i);
       // the new signature is the prefix of one kind at its positions; it ends at the first glyph
       // that is not (the first accidental of the music)
+      const clef = CLEFS[clefAt(st, b.x)];
       let j = 0; while (j < acc.length && Math.abs(acc[j].type) === 1 && acc[j].type === acc[0].type && Math.abs(acc[j].p - keySigPositions(clef, acc[0].type * (j + 1))[j]) <= 1) j++;
       acc.length = j; run.length = nat.length + j;
       if (run.length) x = run[run.length - 1].c.x1;
@@ -912,11 +1067,16 @@ export function analyze(norm, opts = {}) {
   // are a section in C / a minor (a page can end one movement and start another): no key is
   // inferred for them. (On old scans a signature is often missed on two staves in a row; its
   // glyphs are still there as ink, so those staves still get the page's key.)
+  // (an accidental hugging the first note is that note's, not key ink: Sibelius 2 viola, p. 3-4,
+  // a C section whose staves open on F♯ or C♯ read as D major)
+  const hugging = new Set();
+  for (const n of notes) if (n.accid && n.accidDx < 0.8 * spaceAt(n.st, n.x)) n.accid.ids.forEach((i) => hugging.add(i));
   const keyInk = (o) => {
     const S = spaceAt(o, o.key.x0), first = Math.min(o.x1, ...notes.filter((q) => q.st === o).map((q) => q.box[0]));
     const ya = lineY(o, 0, o.key.x0), yb = lineY(o, 4, o.key.x0);
     return cc.comps.some((c) => {
-      if (!c || c.x0 < o.key.x0 - 0.2 * S || c.x1 > Math.min(first, o.key.x0 + 3 * S) || c.y1 - c.y0 < 1.2 * S || c.x1 - c.x0 > 1.6 * S || c.y1 <= ya || c.y0 >= yb) return false;
+      if (!c || hugging.has(c.id)) return false;
+      if (c.x0 < o.key.x0 - 0.2 * S || c.x1 > Math.min(first, o.key.x0 + 3 * S) || c.y1 - c.y0 < 1.2 * S || c.x1 - c.x0 > 1.6 * S || c.y1 <= ya || c.y0 >= yb) return false;
       if (opts.glyphnet === false) return true;
       const pr = classify(bin, [c.x0, c.y0, c.x1, c.y1]); // (time-signature digits are not sharps or flats)
       return pr.sharp + pr.flat > 0.5;
@@ -936,7 +1096,10 @@ export function analyze(norm, opts = {}) {
     if (!k && st.key.detected && confirmed.includes(st.key.detected)) continue;
     // keylessSection marks the reading as evidence (zero, not "none found"), so a key carried
     // over from the previous page does not fill it in
-    if (!k && sys.length < 2 && !st.key.detected && !keyInk(st) && [staves[st.index - 1], staves[st.index + 1]].some((o) => o && sysOf(o).length < 2 && !o.key.detected && !o.keyChanges?.length && !keyInk(o))) {
+    // (so is a system of staves none of which prints a key or has key-like ink: Sibelius 2
+    // viola, p. 4, divisi systems in a C section, where the page's D major was filled in)
+    const bare = (o) => o && !o.key.detected && !o.keyChanges?.length && !keyInk(o);
+    if (!k && !st.key.detected && !keyInk(st) && (sys.length < 2 ? [staves[st.index - 1], staves[st.index + 1]].some(bare) : sys.every(bare))) {
       st.key.fifths = 0; st.key.keylessSection = true; continue;
     }
     if (!k && st.key.detected) {
@@ -959,7 +1122,7 @@ export function analyze(norm, opts = {}) {
     if (st.key.detected) continue;
     const S = spaceAt(st, st.key.x0), first = Math.min(st.x1, ...notes.filter((q) => q.st === st).map((q) => q.box[0]));
     const ya = lineY(st, 0, st.key.x0), yb = lineY(st, 4, st.key.x0);
-    const something = cc.comps.some((c) => c && c.x0 >= st.key.x0 - 0.2 * S && c.x1 <= Math.min(first, st.key.x0 + 1.5 * S * Math.abs(k) + S) &&
+    const something = cc.comps.some((c) => c && !hugging.has(c.id) && c.x0 >= st.key.x0 - 0.2 * S && c.x1 <= Math.min(first, st.key.x0 + 1.5 * S * Math.abs(k) + S) &&
       c.y1 - c.y0 >= 1.2 * S && c.x1 - c.x0 <= 1.6 * S && c.y1 > ya && c.y0 < yb);
     if (something || fromPrev) { st.key.fifths = k; st.key.inferred = true; }
   }
@@ -981,7 +1144,7 @@ export function analyze(norm, opts = {}) {
   // fragments that belong to a note but lost contact with it (thin stems and flags broken
   // up by binarisation in photos): they travel with the note's component
   const taken = new Set([...headComps]);
-  for (const st of staves) { st.key.ids.forEach((i) => taken.add(i)); st.keyChanges.forEach((k) => k.ids.forEach((i) => taken.add(i))); st.bars.forEach((b) => b.ids.forEach((i) => taken.add(i))); }
+  for (const st of staves) { st.key.ids.forEach((i) => taken.add(i)); st.keyChanges.forEach((k) => k.ids.forEach((i) => taken.add(i))); st.clefChanges.forEach((k) => k.ids.forEach((i) => taken.add(i))); st.bars.forEach((b) => b.ids.forEach((i) => taken.add(i))); }
   for (const n of notes) { n.accid?.ids.forEach((i) => taken.add(i)); n.dots?.forEach((d) => d.ids.forEach((i) => taken.add(i))); }
   const attach = {};
   const byComp = new Map(); for (const n of notes) { if (!byComp.has(n.comp)) byComp.set(n.comp, []); byComp.get(n.comp).push(n); }
@@ -1011,10 +1174,11 @@ export function analyze(norm, opts = {}) {
   });
 
   // clef pieces in the final labelling (for erasing on a clef change)
+  const piecesIn = (b) => cc.comps.filter((c) => c && c.cx >= b[0] && c.cx <= b[2] && c.cy >= b[1] && c.cy <= b[3] &&
+    c.x1 - c.x0 <= b[2] - b[0] + 4 && c.y1 - c.y0 <= b[3] - b[1] + 4 && !headComps.has(c.id)).map((c) => c.id);
   for (const st of staves) {
-    const b = st.clef.box;
-    st.clef.ids = b ? cc.comps.filter((c) => c && c.cx >= b[0] && c.cx <= b[2] && c.cy >= b[1] && c.cy <= b[3] &&
-      c.x1 - c.x0 <= b[2] - b[0] + 4 && c.y1 - c.y0 <= b[3] - b[1] + 4 && !headComps.has(c.id)).map((c) => c.id) : [];
+    st.clef.ids = st.clef.box ? piecesIn(st.clef.box) : [];
+    for (const k of st.clefChanges) k.ids = piecesIn(k.box);
   }
   readRhythm({ w, h, S0, t, staves, notes, L, comps: cc.comps, accs, dots, headComps, bin, useNet: opts.glyphnet !== false, textIds });
   // the same part on the previous system (ties over the system break), then pitches again with ties
@@ -1111,7 +1275,8 @@ export function analyzeAfter(norm, fifths, opts = {}) {
 // bar's accidentals no longer apply (F♯ tied into the next bar stays F♯ without a new sharp).
 export function interpret(st) {
   const clef = CLEFS[st.clef.type];
-  const ps = readStaff(st.notes.map((n) => ({ p: n.p, acc: n.accid ? n.accid.type : null, bar: n.bar, fifths: keyAt(st, n.x) })), clef, st.key.fifths);
+  // n.clef: a clef change inside the staff before the note
+  const ps = readStaff(st.notes.map((n) => ({ p: n.p, acc: n.accid ? n.accid.type : null, bar: n.bar, fifths: keyAt(st, n.x), clef: st.clefChanges?.length ? CLEFS[clefAt(st, n.x)] : undefined })), clef, st.key.fifths);
   st.notes.forEach((n, i) => { n.pitch = ps[i]; n.name = nameOf(ps[i]); });
   const tied = (n) => (n.fix && n.fix.tie !== undefined ? n.fix.tie : n.tie);
   // ties into the first chord of this staff from the end of the previous one (same part)

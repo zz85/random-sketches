@@ -527,6 +527,62 @@ What is left on the violin: missed accidentals in double stops (an accidental be
 of a chord, or touching one), and on the 1927 scan, hollow heads (half and whole notes in the
 two-voice Grave movements): about 9% of all its notes are not found, most on four pages.
 
+### A third work, checked against a MIDI file: Sibelius, Symphony No. 2, viola part
+
+The viola part of the Second Symphony (17 pages of a Kalmus reprint, the PDF that #046 in
+midiviz ships) has no MusicXML, but midiviz's `pawchestra` has a MIDI of the symphony sequenced
+by Jack Gilbert. The experiment `053_omr_eval.html` there reads every page with `analyze` and
+aligns the heads, in reading order, with the viola tracks' notes by an edit distance on MIDI
+pitch, as `tools/imslp_eval.js` does with MusicXML (`midiviz/omr-eval/`). An orchestral part
+brings what the solo works did not: clef changes inside a staff, a key of six sharps, written-out
+tremolos the page prints as one head, divisi on two braced staves, and runs of 32nd notes under
+three beams.
+
+| | heads found | pitch right | wrong pitch | extra |
+|---|---|---|---|---|
+| before | 98.7% | 86.8% | 733 (390 semitone, 54 octave, 56 step, 233 other) | 119 |
+| after | 98.8% | 89.8% | 549 (331 semitone, 43 octave, 41 step, 134 other) | 122 |
+
+(Of 6,139 printed notes; the MIDI's 975 tremolo repeats are folded into the heads they repeat,
+and 211 heads over passages the MIDI has an octave low count as right. The evaluator's own fixes,
+from 60.8% at the first run, were the second movement's viola tracks an octave low, the divisi
+staves' notes merged by onset, and the tremolos.)
+
+Fixes from it, each with a fixture under `fixtures/scan_sibelius2_va_*`:
+
+- **Clef changes inside a staff.** A cue-size clef after a barline (`classifyChangeClef`,
+  `findClefChanges`): a C clef is a thick bar with a thin one beside it, solid and centred on the
+  staff; a G clef reaches well above and below the staff, is at least 1.8 spaces wide, fills its
+  middle rows and ends below in a thin tail (a tall 6/8 time signature is as big, but pinches in
+  the middle and is as wide at the foot); an F clef is a curl with its two dots right of it. No
+  head is read inside one, and `clefAt(st, x)` gives the clef at any x: `interpret` reads each
+  note in its clef, key changes count their positions from it, and `buildScore` keeps it per
+  measure. Three systems of p. 4 went from 27 of 81 heads right to 75.
+- **An opening G clef is at least 1.4 spaces wide.** A piece of a system barline or a brace left
+  standing at the start of a divisi staff is as tall as a clef and thin: it read as treble.
+- **An F clef has its dots.** A C clef's curls, left standing after its bars were cut away with a
+  beam they touched, read as a bass clef (48 heads a fifth off on p. 9); without dots right of
+  the curl, and with the bars cut (`st.clefCuts`), it is alto. A Haydn scan whose F clef's dots
+  are faint, with nothing cut, stays bass.
+- **A staff found twice keeps the copy with ink on its lines.** Under runs of 32nds the top line
+  is buried in beams and a long slur under the staff passes for a line, so the same staff was
+  found a space low with more slices' support. `findStaves` now ranks duplicates by the share of
+  their five lines that carry ink (`evidence`) before support.
+- **Touching key-signature glyphs.** F sharp major's six bold sharps come as two or three
+  components, each read as a note with a stem. In the key zone a component with four or more
+  thin stems, two to a sharp (or one to a flat, a bowl's width apart), is cut between them where
+  every piece reads as the same accidental; and a lone sharp-sized component that reads as an
+  accidental is no note.
+- **A flat's bare stem.** In a dense beamed run the bowl joins the head it marks; the stroke left,
+  a fraction of a space before a head and reaching from above it to a little below, is a flat.
+  And the glyph classifier is no longer asked about strokes under 0.45 space wide: its crop pads
+  them with their surroundings, so a flat's stem read as the two flats beside it (`Bbb`).
+
+What is left: accidentals in double stops (an accidental between two heads of a chord), 331
+semitone errors, mostly there and in chromatic runs; the braced divisi systems, where the lower
+staff's notes are matched to a MIDI that often plays one of the two lines; and p. 4's chromatic
+passage (70%), the worst page.
+
 ### Accuracy
 
 Fifteen test tunes engraved by Verovio in five different music fonts (Leipzig, Bravura, Leland,
@@ -598,6 +654,8 @@ grace notes. The transposed page is readable but shows its seams at that resolut
   text above the staff.
 - Rhythm: at most two voices per staff; no tremolos, repeats, voltas, multi-bar rests or tempo
   marks (set the tempo by hand); marcato and fermata are not read. A note missed by the head detector cannot be added by hand yet; its bar shows red.
+- A clef change inside a staff is read (see the Sibelius part above), but the transposed page
+  redraws its notes in the staff's opening clef and leaves the cue clef where printed.
 - Ties and slurs stay put: fine for steps, visibly off for big moves such as clef changes.
 - Moving a note does not re-flip stems or re-slope beams; with a clef change notes can collide.
 - One staff size per page; cross-staff beams move with one staff.

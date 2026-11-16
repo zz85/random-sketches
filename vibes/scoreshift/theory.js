@@ -71,7 +71,7 @@ export function readStaff(notes, clef, fifths) {
   let bar = -1, state = new Map();
   return notes.map((n) => {
     if (n.bar !== bar) { bar = n.bar; state = new Map(); }
-    const d = dOfP(clef, n.p);
+    const d = dOfP(n.clef ?? clef, n.p); // n.clef: a clef change inside the staff
     let alter;
     if (n.acc != null) { alter = n.acc; state.set(d, alter); }
     else alter = state.has(d) ? state.get(d) : keyAlter(n.fifths ?? fifths, step(d)); // n.fifths: a key change inside the staff

@@ -11,7 +11,7 @@ import { rasterGlyph } from './raster.js';
 import { GLYPHS } from './glyphs.js';
 import { plan } from './render.js';
 import { CONDITIONS } from './degrade.js';
-import { normalize, analyze, analyzeAfter, needsPriorKey, applyPriorKey, interpret, findText } from './omr.js';
+import { normalize, analyze, analyzeAfter, needsPriorKey, applyPriorKey, interpret, findText, clefAt } from './omr.js';
 import { Renderer } from './render.js';
 import fs from 'fs';
 
@@ -476,6 +476,53 @@ test('a flat touching its half note is still that note\'s (Sibelius 2, viola, ba
   const r = analyze(normalize(decodeGray(fs.readFileSync(new URL('./fixtures/scan_sibelius2_va_p4_top.png', import.meta.url)))));
   const bar = (k) => r.staves[0].notes.filter((n) => n.bar === k).map((n) => n.name);
   expect(bar(2)).toEqual(['A4', 'B♭4', 'C5', 'D5', 'E♭5', 'D5']);
+});
+
+// Clef changes inside a staff (Sibelius 2, viola, p. 4, bars 196-208): the part goes to the
+// treble clef for a high passage and back. The cue-size clefs after a barline are found as
+// clef changes, no head is read inside them, and the notes after each are read in its clef:
+// before, 54 of the 81 heads of these systems were a sixth off.
+test('clef changes inside a staff (Sibelius 2, viola, bars 196-208)', () => {
+  const r = analyze(normalize(decodeGray(fs.readFileSync(new URL('./fixtures/scan_sibelius2_va_clefchange.png', import.meta.url)))));
+  expect(r.staves.map((s) => s.clef.type + ':' + s.clefChanges.map((c) => c.type).join('>'))).toEqual(['alto:treble', 'treble:alto', 'alto:']);
+  const [s0, s1] = r.staves;
+  expect(clefAt(s1, s1.clefChanges[0].x1 + 1)).toBe('alto');
+  // staff 1: the treble passage ends on A4 (the last note before the C clef), then G sharp
+  expect(s1.notes.filter((n) => n.x < s1.clefChanges[0].x0).slice(-2).map((n) => n.name)).toEqual(['B4', 'A4']);
+  expect(s1.notes.filter((n) => n.x > s1.clefChanges[0].x1).slice(0, 4).map((n) => n.name)).toEqual(['A4', 'G♯4', 'F♯4', 'E4']);
+  // staff 0: the G clef at the end of the system, read in treble
+  expect(s0.notes.filter((n) => n.x > s0.clefChanges[0].x1).map((n) => n.name)).toEqual(['C♯5', 'D5', 'E5', 'B4']);
+  // and the score keeps the clef per measure
+  const sc = buildScore(r);
+  expect(sc.parts[0].measures.map((m) => m.clef)).toContain('treble');
+});
+
+// A bold key signature of six sharps whose glyphs touch in pairs (p. 7, bars 108-114, F sharp
+// major): the pairs came as one component each, read as a note with a stem, so the key stopped
+// at the first sharp or read none. The pairs are cut between their stems.
+test('six touching sharps read as a key signature (Sibelius 2, viola, bar 108)', () => {
+  const r = analyze(normalize(decodeGray(fs.readFileSync(new URL('./fixtures/scan_sibelius2_va_sixsharps.png', import.meta.url)))));
+  expect(r.staves.map((s) => s.key.detected)).toEqual([6, 6]);
+  expect(r.staves[0].notes.slice(0, 3).map((n) => n.name)).toEqual(['F♯4', 'E♯4', 'A♯3']);
+});
+
+// Runs of 32nd notes under three beams, with a long slur under them (p. 9, bars 214-220): one
+// staff was found twice, once on its lines and once a space low with the slur as its bottom
+// line, and the copy with more slices won, so every note of it read a step off. The copy whose
+// lines carry ink along the staff wins now, and no C clef without its bars is taken for an F.
+test('a staff doubled on a slur under beamed runs (Sibelius 2, viola, bars 214-220)', () => {
+  const r = analyze(normalize(decodeGray(fs.readFileSync(new URL('./fixtures/scan_sibelius2_va_runs.png', import.meta.url)))));
+  expect(r.staves.length).toBe(4);
+  expect(r.staves.map((s) => s.clef.type)).toEqual(['alto', 'alto', 'alto', 'alto']);
+  for (const s of r.staves.slice(0, 3)) expect(s.notes.filter((n) => ['B♭3', 'A3', 'G3', 'G♯3'].includes(n.name)).length).toBeGreaterThanOrEqual(0.85 * s.notes.length);
+});
+
+// In a dense beamed run a flat's bowl joins the head it marks, leaving its stem as a bare stroke
+// (p. 3, bar 133): the stroke a fraction of a space before a head, reaching from above it to a
+// little below, is that head's flat.
+test('a flat whose bowl joins its head in a beamed run (Sibelius 2, viola, bar 133)', () => {
+  const r = analyze(normalize(decodeGray(fs.readFileSync(new URL('./fixtures/scan_sibelius2_va_flatrun.png', import.meta.url)))));
+  expect(r.staves[0].notes.slice(8, 16).map((n) => n.name)).toEqual(['C4', 'D♭4', 'E♭4', 'C4', 'D♭4', 'E♭4', 'F4', 'E♭4']);
 });
 
 // An orchestral part that goes divisi on two braced staves for a few lines (Sibelius 2, viola,
