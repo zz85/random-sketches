@@ -541,7 +541,8 @@ three beams.
 | | heads found | pitch right | wrong pitch | extra |
 |---|---|---|---|---|
 | before | 98.7% | 86.8% | 733 (390 semitone, 54 octave, 56 step, 233 other) | 119 |
-| after | 98.8% | 89.8% | 549 (331 semitone, 43 octave, 41 step, 134 other) | 122 |
+| clefs, staves, key glyphs | 98.8% | 89.8% | 549 (331 semitone, 43 octave, 41 step, 134 other) | 122 |
+| accidentals (below) | 98.8% | 93.8% | 303 (115 semitone, 44 octave, 33 step, 111 other) | 122 |
 
 (Of 6,139 printed notes; the MIDI's 975 tremolo repeats are folded into the heads they repeat,
 and 211 heads over passages the MIDI has an octave low count as right. The evaluator's own fixes,
@@ -578,10 +579,43 @@ Fixes from it, each with a fixture under `fixtures/scan_sibelius2_va_*`:
   And the glyph classifier is no longer asked about strokes under 0.45 space wide: its crop pads
   them with their surroundings, so a flat's stem read as the two flats beside it (`Bbb`).
 
-What is left: accidentals in double stops (an accidental between two heads of a chord), 331
-semitone errors, mostly there and in chromatic runs; the braced divisi systems, where the lower
-staff's notes are matched to a MIDI that often plays one of the two lines; and p. 4's chromatic
-passage (70%), the worst page.
+A second round went after the 331 semitone errors, which are accidentals, by looking at what
+stood left of each head read a semitone off. Most had nothing there as a component of its own:
+
+- **A flat marks the note at its bowl.** Its pitch was read from the glyph's bottom. A flat
+  re-paired from its stem and its bowl, cut apart by a staff line, has a stem that reaches a step
+  below the bowl, so it marked the note a step low and went to the wrong head (p. 2, bar 121: B
+  flat read as B, and the A after it as A flat). The bowl's middle, the rows with ink right of the
+  stem, is the pitch now. This one change was worth 52 notes here, and it made the clean `cello`
+  and `rests` fixtures perfect.
+- **Accidentals fused with other ink.** A natural whose crossbar meets its head, one touching the
+  beam of its note, one under the end of a slur, a sharp along a slur: none came as a component
+  of its own, so none was read. For a head with no accidental read before it, the ink of the
+  window left of it (1.7 spaces wide, 1.9 up and down) is tried as one: the pixels of its own
+  component and of components not read as anything else, with other heads' boxes and stems kept
+  out, and long horizontal runs (a slur, a beam) too. A natural's filled box or a sharp's
+  crossings that passed as a head of their own, or as grace notes, keep their ink in the window
+  and are taken back where the accidental covers them. The glyph is then cut to its own strokes
+  (the gaps the staff lines' removal cut in them filled, no other gap bridged): from just above
+  their tops to just below their feet, half a space left of the first stroke to a bowl's width
+  right of the last, with nothing below the shorter stroke's foot left of the last stroke and
+  nothing thin left of the first, which is where a slur runs in under the glyph. Each piece then
+  goes through the stroke rules as any accidental.
+- **Two flats of a chord a third apart** touch: the upper note's flat stands right, its bowl on
+  the stem of the lower note's flat, set a space lower to the left (p. 4, bars 209-224), and the
+  pair read as one sharp. A component with two thin stems well apart, one starting a space below
+  the other, is cut in two, the right stem with everything at its height and the rest, where both
+  pieces read as flats of different pitches.
+- **A ring in a key signature of flats** (the bowl of one flat and the stem of the next) passed
+  for a half note and ended the key before it began (p. 12, G flat major, read in C): in the key
+  zone a ring under a component that reads as an accidental, or with a flat's stem ending at its
+  left edge, is no head.
+
+What is left: the braced divisi systems, where a quarter-note chord of a third sometimes isn't
+found at all and its stem then passes for a barline, which also breaks the carry of accidentals
+through the bar (p. 4, 76%, the worst page); accidentals under a slur's end where the slur runs
+along a stroke; and the lower divisi staff's notes matched to a MIDI that often plays one of the
+two lines.
 
 ### Accuracy
 

@@ -174,7 +174,8 @@ export function removeStaves(bin, staves, t) {
 }
 
 // ---------- symbol helpers ----------
-export function compMask(labels, w, c) { // binary mask of a component (or a group: c.ids)
+export function compMask(labels, w, c) { // binary mask of a component (or a group: c.ids; or a piece with its own mask)
+  if (c.mask) return c.mask;
   const cw = c.x1 - c.x0 + 1, ch = c.y1 - c.y0 + 1, m = new Uint8Array(cw * ch), ids = c.ids || [c.id];
   for (let y = c.y0; y <= c.y1; y++) for (let x = c.x0; x <= c.x1; x++) if (ids.includes(labels[y * w + x])) m[(y - c.y0) * cw + x - c.x0] = 1;
   return { m, cw, ch };
@@ -250,8 +251,14 @@ export function classifyAccidental(labels, w, c, S, t = 0.13 * S) {
   if (st.length >= 2) { const L0 = Math.max(...st.map((s) => s.bot - s.top)); stv = st.filter((s) => s.bot - s.top >= 0.6 * L0); }
   if (stv.length === 1) {
     const s = stv[0], r = right(s);
-    if (s.x0 <= 0.3 * cw && (r.bot > 1.5 * r.top || (r.cap <= 0.02 * cw * ch && r.bot > r.top)) && W >= 0.45 && W <= 1.3 && H >= 1.8 && H <= 3.4 && s.top <= 0.15 * ch)
-      return { type: -1, ref: c.y1 - 0.45 * S };
+    if (s.x0 <= 0.3 * cw && (r.bot > 1.5 * r.top || (r.cap <= 0.02 * cw * ch && r.bot > r.top)) && W >= 0.45 && W <= 1.3 && H >= 1.8 && H <= 3.4 && s.top <= 0.15 * ch) {
+      // the pitch it marks is the bowl's middle: the rows with ink right of the stem, in the
+      // lower half (a stem that reaches below the bowl, as a stem re-paired with its bowl from
+      // two pieces can, put the glyph's bottom a step low: Sibelius 2 viola p. 2, bar 121)
+      let b0 = -1, b1 = -1; const { m } = mask;
+      for (let y = Math.floor(0.4 * ch); y < ch; y++) { let ink = 0; for (let x = s.x1 + 2; x < cw; x++) ink += m[y * cw + x]; if (ink >= 2) { if (b0 < 0) b0 = y; b1 = y; } }
+      return { type: -1, ref: b0 >= 0 && b1 - b0 >= 0.4 * S ? c.y0 + (b0 + b1) / 2 : c.y1 - 0.45 * S };
+    }
     return null;
   }
   if (flatOnly) return null;
@@ -334,7 +341,6 @@ function findClefChanges(st, cc, S0, t, w) {
   for (const c of cands) {
     if (out.length && c.x0 < out[out.length - 1].x1 + S0) continue;
     const type = classifyChangeClef(c, st, cc.labels, w, cc.comps);
-    if (st.debugChanges) { const xm = (c.x0 + c.x1) / 2, y0 = lineY(st, 0, xm), y4 = lineY(st, 4, xm), s = (y4 - y0) / 4; console.log('change cand', { x0: c.x0, x1: c.x1, H: +((c.y1 - c.y0 + 1) / s).toFixed(2), W: +((c.x1 - c.x0 + 1) / s).toFixed(2), top: +((y0 - c.y0) / s).toFixed(2), bot: +((c.y1 - y4) / s).toFixed(2), type }); }
     if (!type || type === st.clef.type && !out.length) continue;
     if (out.length && type === out[out.length - 1].type) continue;
     const S = spaceAt(st, c.cx), box = [c.x0, c.y0, c.x1, c.y1];
@@ -407,7 +413,6 @@ export function analyze(norm, opts = {}) {
     const cands = cc.comps.filter((c) => c && c.x0 < st.x0 + 4.5 * S0 && c.x1 > st.x0 && c.y1 - c.y0 > 2.2 * S0 && c.y1 - c.y0 < 8.5 * S0 &&
       (c.x1 - c.x0 >= 0.8 * S0 || (Math.abs(c.y0 - lineY(st, 0, c.cx)) < 0.6 * S0 && Math.abs(c.y1 - lineY(st, 4, c.cx)) < 0.6 * S0)) && c.cy > st.band[0] && c.cy < st.band[1] && c.x1 - c.x0 < 4 * S0).sort((a, b) => a.x0 - b.x0);
     st.clef = { type: opts.clef || 'treble', detected: null, box: null };
-    if (opts.debugClef === st.index) for (const c of cands) { const xm = (c.x0 + c.x1) / 2, y0 = lineY(st, 0, xm), y4 = lineY(st, 4, xm), s = (y4 - y0) / 4; console.log('clef cand', { x0: c.x0, x1: c.x1, y0: c.y0, y1: c.y1, H: +((c.y1 - c.y0 + 1) / s).toFixed(2), W: +((c.x1 - c.x0 + 1) / s).toFixed(2), top: +((y0 - c.y0) / s).toFixed(2), bot: +((c.y1 - y4) / s).toFixed(2), type: classifyClef(c, st, cc.labels, w, cc.comps) }); }
     for (const c of cands) {
       const type = classifyClef(c, st, cc.labels, w, cc.comps);
       if (!type) continue;
@@ -440,7 +445,7 @@ export function analyze(norm, opts = {}) {
     }
   }
   // clef changes inside the staff, after the opening clef and its key signature
-  for (const st of staves) { st.debugChanges = opts.debugClef === st.index; st.clefChanges = opts.clefChanges === false ? [] : findClefChanges(st, cc, S0, t, w); }
+  for (const st of staves) st.clefChanges = opts.clefChanges === false ? [] : findClefChanges(st, cc, S0, t, w);
 
   // ---- filled heads: opening removes stems, beams, lines, thin strokes ----
   const k = Math.max(3, Math.round(0.55 * S0));
@@ -684,10 +689,18 @@ export function analyze(norm, opts = {}) {
     // A hole's nearest ink can be another component: an accidental-shaped component around the
     // hole, or one that is the head's "stem" (a ring closed by a sharp's stroke, a staff line
     // and the next symbol), makes it part of that accidental, not a note.
+    // (in a key signature of flats set tight, the bowl of one flat and the stem of the next close
+    // a ring too: a component standing over the head's box that reads as an accidental, in the
+    // key zone, is one of the signature's glyphs: Sibelius 2 viola, p. 12, G flat major)
+    const keyZone = n.st.clef.box && n.x < n.st.clef.box[2] + 9 * S;
     for (const q of cc.comps) {
       if (!q || q === c || q.y0 > n.y || q.y1 < n.y) continue;
       const inHole = q.x0 <= n.x && q.x1 >= n.x, stemOf = n.stem && n.stem.x >= q.x0 && n.stem.x <= q.x1;
-      if (!inHole && !stemOf) continue;
+      const over = keyZone && q.x0 < n.box[2] && q.x1 > n.box[0];
+      // (or the bowl's own stem, cut from it by a staff line: a narrow tall stroke ending at the
+      // ring's left edge with the ring in its lower half)
+      if (keyZone && q.x1 - q.x0 + 1 <= 0.35 * S + 1 && q.y1 - q.y0 + 1 >= 1.8 * S && Math.abs(q.x1 - n.box[0]) <= 0.35 * S && n.y > (q.y0 + q.y1) / 2) return false;
+      if (!inHole && !stemOf && !over) continue;
       // (a flat too: its bowl is a ring with a stem rising from its left; a real half note's
       // stem rises from the right, or falls from the left with the head on top)
       const qa = classifyAccidental(L, w, q, S, t);
@@ -787,6 +800,37 @@ export function analyze(norm, opts = {}) {
     const read = pieces.map((q) => classifyAccidental(L, w, q, S, t));
     if (read.some((r) => !r || r.type !== read[0].type || Math.abs(r.type) !== 1)) continue;
     pieces.forEach((q, i) => groups.set(i ? g.id + 'p' + i : g.id, q));
+  }
+  // Two flats of a chord a third apart touch: the upper note's flat stands right, and its bowl
+  // meets the stem of the lower note's flat, set a space lower to the left (p. 4, bars 209-224:
+  // the pair read as one sharp). A component with two thin stems well apart, one starting about
+  // a space below the other, is cut in two: the right stem with everything at its height, and
+  // the rest; where both pieces read as flats of different pitches, they replace it.
+  for (const g of [...groups.values()]) {
+    const gw = g.x1 - g.x0 + 1, gh = g.y1 - g.y0 + 1;
+    if (g.merged || g.split || gw < 1.3 * S0 || gw > 2.4 * S0 || gh < 2.6 * S0 || gh > 4.6 * S0) continue;
+    const st = staffAt(g.cx, g.cy); if (!st) continue;
+    const S = spaceAt(st, g.cx), mask = compMask(L, w, g);
+    const stems = strokes(mask, 0.5 * gh).filter((k) => k.x1 - k.x0 + 1 <= 0.4 * S);
+    if (stems.length !== 2) continue;
+    const [a, b] = stems;
+    if (b.x0 - a.x1 < 0.45 * S || Math.abs(a.top - b.top) < 0.6 * S) continue; // (a sharp's stems are closer, and level but for a quarter space)
+    const upper = a.top < b.top ? a : b, lower = upper === a ? b : a; // the stem that starts higher is the upper flat's
+    const piece = (take) => {
+      let x0 = gw, x1 = -1, y0 = gh, y1 = -1, n = 0;
+      for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) if (mask.m[y * gw + x] && take(x, y)) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); n++; }
+      if (!n) return null;
+      const m = new Uint8Array((x1 - x0 + 1) * (y1 - y0 + 1));
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (mask.m[y * gw + x] && take(x, y)) m[(y - y0) * (x1 - x0 + 1) + x - x0] = 1;
+      return { ...g, x0: g.x0 + x0, x1: g.x0 + x1, y0: g.y0 + y0, y1: g.y0 + y1, n, cx: g.x0 + (x0 + x1) / 2, cy: g.y0 + (y0 + y1) / 2, mask: { m, cw: x1 - x0 + 1, ch: y1 - y0 + 1 }, split: true };
+    };
+    // the upper flat: at or right of its stem, above its stem's foot (where its bowl's bottom meets the other's stem)
+    const isUpper = upper === b ? (x, y) => x >= b.x0 - 1 && y <= b.bot + 1 : (x, y) => x <= a.x1 + 1 || y <= a.bot - 0.3 * S;
+    const p1 = piece(isUpper), p2 = piece((x, y) => !isUpper(x, y));
+    if (!p1 || !p2) continue;
+    const r1 = classifyAccidental(L, w, p1, S, t), r2 = classifyAccidental(L, w, p2, S, t);
+    if (!r1 || !r2 || r1.type !== -1 || r2.type !== -1 || Math.abs(r1.ref - r2.ref) < 0.8 * S) continue;
+    groups.set(g.id, p1); groups.set(g.id + 'f', p2);
   }
   // Competing readings of an accidental-sized symbol: the stroke rules (classifyAccidental) and
   // the learned classifier (glyphnet.js) each give evidence; the reading with the most combined
@@ -1008,6 +1052,82 @@ export function analyze(norm, opts = {}) {
     }
   }
 
+  // An accidental fused with something else never came as a component of its own: a natural
+  // or sharp whose crossbar meets its head, or a natural touching the slur over it, or the
+  // beam of its note (p. 12, bars 152-153: a run in G flat major with its naturals lost). For a
+  // head with no accidental read just before it, the ink of the window left of it, from the
+  // head's own component and from components not read as anything, is tried as one.
+  {
+    const spoken = new Set(); for (const a of accs) a.c.ids.forEach((i) => spoken.add(i)); for (const d of dots) d.c.ids.forEach((i) => spoken.add(i));
+    for (const st of staves) { st.key.ids.forEach((i) => spoken.add(i)); st.keyChanges.forEach((k) => k.ids.forEach((i) => spoken.add(i))); st.clefChanges.forEach((k) => k.ids.forEach((i) => spoken.add(i))); st.bars.forEach((b) => b.ids.forEach((i) => spoken.add(i))); }
+    const textIdSet = textIds;
+    for (const n of notes) {
+      const S = spaceAt(n.st, n.x);
+      if (accs.some((a) => a.st === n.st && !a.isKey && n.box[0] - a.c.x1 > -0.4 * S && n.box[0] - a.c.x1 < 1.4 * S && Math.abs(a.p - n.p) <= 1)) continue;
+      const xa = Math.max(0, Math.round(n.box[0] - 1.7 * S)), xb = Math.round(n.box[0] - 0.12 * S), ya = Math.max(0, Math.round(n.y - 1.9 * S)), yb = Math.min(h - 1, Math.round(n.y + 1.9 * S));
+      if (xb <= xa) continue;
+      // other heads in the window keep their ink (their boxes and stems) out of it; a natural's
+      // filled box that passed as a head of this note's own component is taken back below
+      const others = notes.filter((o) => o !== n && o.st === n.st && o.box[2] > xa - 0.3 * S && o.box[0] < xb + 0.3 * S && Math.abs(o.y - n.y) < 2.6 * S);
+      // (and the stems of the staff's notes near in x, whatever their height: a stem from a head
+      // three spaces up runs through the window)
+      const stemsNear = notes.filter((o) => o !== n && o.st === n.st && o.stem && o.stem.len >= 2.6 * S && Math.abs(o.x - n.x) < 3.5 * S);
+      // a "head" with a short stem or none, entirely left of this note, may be the filled box of
+      // a natural or a sharp's crossing (two were read on one sharp as grace notes, p. 14):
+      // its ink stays in the window, and it is taken back below where the accidental covers it
+      const blob = (o) => o.kind === 'black' && (!o.stem || o.stem.len < 2.6 * S) && o.box[2] < n.box[0] - 0.1 * S;
+      const inOther = (x, y) => others.some((o) => !blob(o) && ((x >= o.box[0] - 0.2 * S && x <= o.box[2] + 0.2 * S && y >= o.box[1] - 0.2 * S && y <= o.box[3] + 0.2 * S) || (o.stem && Math.abs(x - o.stem.x) <= 0.25 * S)))
+        || stemsNear.some((o) => Math.abs(x - o.stem.x) <= 0.25 * S && y >= Math.min(o.y, o.stem.tip) - 0.3 * S && y <= Math.max(o.y, o.stem.tip) + 0.3 * S);
+      // a slur or a beam through the window is a long horizontal run of ink, which no accidental
+      // has (a natural's crossbars are under a space wide): its pixels stay out
+      const wide = new Set(), rx0 = Math.max(0, Math.round(xa - 3 * S)), rx1 = Math.min(w - 1, Math.round(xb + 3 * S));
+      for (let y = ya; y <= yb; y++) for (let x = rx0; x <= rx1; x++) { if (!L[y * w + x]) continue; let e = x; while (e + 1 <= rx1 && L[y * w + e + 1]) e++; if (e - x + 1 > 1.3 * S) for (let q = Math.max(x, xa); q <= Math.min(e, xb); q++) wide.add(y * w + q); x = e; }
+      let x0 = xb, x1 = xa, y0 = yb, y1 = ya, cnt = 0; const ids = new Set();
+      // (a component of another head is ink too, where that head is not in the window: a slur
+      // carrying a sharp along it had a head read on it elsewhere, p. 14, bars 238-258)
+      const ok = (l, x, y) => l && !textIds.has(l) && (l === n.comp || !spoken.has(l)) && !inOther(x, y) && !wide.has(y * w + x);
+      for (let y = ya; y <= yb; y++) for (let x = xa; x <= xb; x++) { const l = L[y * w + x]; if (!ok(l, x, y)) continue; x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); cnt++; ids.add(l); }
+      if (!cnt) continue;
+      const cw = x1 - x0 + 1, ch = y1 - y0 + 1;
+      if (cw < 0.5 * S || cw > 2.6 * S || ch < 1.8 * S || ch > 4.5 * S) continue;
+      let m = new Uint8Array(cw * ch);
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (ok(L[y * w + x], x, y)) m[(y - y0) * cw + x - x0] = 1;
+      let c = { id: n.comp, ids: [...ids], x0, y0, x1, y1, n: cnt, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, mask: { m, cw, ch }, fused: true };
+      // a slur's end touching the glyph (p. 16, bar 247: naturals under a slur): keep the ink
+      // around the glyph's own strokes, from just above their tops to just below their feet,
+      // and from half a space left of the first to a bowl's width right of the last
+      // (no accidental has ink more than a crossbar's end left of its first stroke). The strokes
+      // are read with the gaps the staff lines' removal cut in them filled, and no other gap
+      // bridged, so a slur's end a few pixels under a stroke's foot doesn't lengthen the stroke.
+      for (let x = 0; x < cw; x++) for (let k = 0; k < 5; k++) {
+        const yl = Math.round(lineY(n.st, k, x0 + x)) - y0; if (yl < 1 || yl >= ch - 1) continue;
+        let a = yl, b = yl; while (a > 0 && !m[(a - 1) * cw + x] && yl - a < t + 2) a--; while (b < ch - 1 && !m[(b + 1) * cw + x] && b - yl < t + 2) b++;
+        if (a > 0 && b < ch - 1 && b - a + 1 <= t + 2 && m[(a - 1) * cw + x] && m[(b + 1) * cw + x] && !m[yl * cw + x]) for (let y = a; y <= b; y++) m[y * cw + x] = 1;
+      }
+      const stk = strokes(c.mask, 1.1 * S, 0).filter((k) => k.x1 - k.x0 + 1 <= 0.35 * S + 1);
+      if (stk.length >= 1 && stk.length <= 2) {
+        const kx0 = Math.max(0, Math.round(Math.min(...stk.map((k) => k.x0)) - 0.22 * S)), kx1 = Math.min(cw - 1, Math.round(Math.max(...stk.map((k) => k.x1)) + 0.65 * S));
+        const ky0 = Math.max(0, Math.min(...stk.map((k) => k.top)) - 2), ky1 = Math.min(ch - 1, Math.max(...stk.map((k) => k.bot)) + 2);
+        // and the slur itself where it runs in under the glyph: left of the last stroke, nothing
+        // of an accidental lies below the shorter stroke's foot (a sharp's and a natural's lower
+        // crossbar end at or above it; a flat has nothing left of its stem), and left of the
+        // first stroke, nothing thin (a column run under 0.3 space: a crossbar's end is thicker)
+        const fx0 = Math.min(...stk.map((k) => k.x0)), lx0 = Math.max(...stk.map((k) => k.x0)), foot = Math.min(...stk.map((k) => k.bot)) + 0.45 * S;
+        const thin = (x, y) => { let a = y, b = y; while (a > 0 && m[(a - 1) * cw + x]) a--; while (b < ch - 1 && m[(b + 1) * cw + x]) b++; return b - a + 1 <= 0.3 * S; };
+        const ncw = kx1 - kx0 + 1, nch = ky1 - ky0 + 1, nm = new Uint8Array(ncw * nch); let nn = 0;
+        for (let y = ky0; y <= ky1; y++) for (let x = kx0; x <= kx1; x++) if (m[y * cw + x] && !(x < lx0 && y > foot) && !(x < fx0 && thin(x, y))) { nm[(y - ky0) * ncw + x - kx0] = 1; nn++; }
+        c = { ...c, x0: x0 + kx0, x1: x0 + kx1, y0: y0 + ky0, y1: y0 + ky1, n: nn, cx: x0 + (kx0 + kx1) / 2, cy: y0 + (ky0 + ky1) / 2, mask: { m: nm, cw: ncw, ch: nch } };
+      }
+      if (c.x1 - c.x0 + 1 > 1.5 * S || c.y1 - c.y0 + 1 > 3.5 * S) continue;
+      const a = classifyAccidental(L, w, c, S, t);
+      if (!a || a.type === -2 || a.type === 2) continue;
+      const pf = pOfY(n.st, a.ref, c.cx), p = Math.round(pf);
+      if (Math.abs(p - n.p) > 1 || Math.abs(pf - n.p) > 0.7) continue;
+      accs.push({ st: n.st, c, type: a.type, ref: a.ref, p: n.p, pf, fused: true });
+      for (const o of others) if (blob(o) && o.x >= c.x0 - 0.2 * S && o.x <= c.x1 + 0.2 * S && o.y >= c.y0 && o.y <= c.y1) o.fusedBlob = true;
+    }
+    if (notes.some((n) => n.fusedBlob)) notes = notes.filter((n) => !n.fusedBlob);
+  }
   // local accidentals: nearest head to the right at the same position
   for (const a of accs) {
     if (a.isKey) continue;

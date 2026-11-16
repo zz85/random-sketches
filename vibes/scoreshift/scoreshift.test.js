@@ -525,6 +525,45 @@ test('a flat whose bowl joins its head in a beamed run (Sibelius 2, viola, bar 1
   expect(r.staves[0].notes.slice(8, 16).map((n) => n.name)).toEqual(['C4', 'D♭4', 'E♭4', 'C4', 'D♭4', 'E♭4', 'F4', 'E♭4']);
 });
 
+// A flat's pitch is its bowl's middle, not its glyph's bottom: a flat re-paired from its stem
+// and its bowl (cut apart by a staff line) has a stem reaching a step below the bowl, so it
+// marked the note a step low and was given to the wrong head (p. 2, bar 121: B flat read as B,
+// and the A after it as A flat).
+test('a flat marks the note at its bowl (Sibelius 2, viola, bar 121)', () => {
+  const r = analyze(normalize(decodeGray(fs.readFileSync(new URL('./fixtures/scan_sibelius2_va_flatref.png', import.meta.url)))));
+  const names = r.staves[0].notes.map((n) => n.name);
+  expect(names.slice(0, 8)).toEqual(['G3', 'A3', 'B♭3', 'A3', 'G3', 'A3', 'B♭3', 'A3']);
+  expect(names.filter((n) => n === 'A♭3').length).toBe(0);
+});
+
+// Accidentals fused with other ink never come as components of their own: a natural whose
+// crossbar meets its head, one touching the beam of its note, one under the end of a slur, or a
+// sharp along a slur that was read as two grace notes. For a head with no accidental read before
+// it, the ink of the window left of it is tried as one, other heads' boxes and stems, slurs'
+// and beams' long runs kept out, and the glyph cut to its own strokes.
+describe('accidentals fused with their note, a beam or a slur (Sibelius 2, viola)', () => {
+  const page = (f) => analyze(normalize(decodeGray(fs.readFileSync(new URL(`./fixtures/scan_sibelius2_va_${f}.png`, import.meta.url)))));
+  test('naturals fused with beams in a G flat major run, and the six flats of its key (p. 12, bars 152-153)', () => {
+    const st = page('fused').staves[0];
+    // (the first flat's bowl and the next flat's stem close a ring that passed for a half note and ended the key)
+    expect(st.key.detected).toBe(-6);
+    expect(st.notes.slice(0, 11).map((n) => n.name)).toEqual(['G♭3', 'A3', 'C4', 'A3', 'C4', 'E♭4', 'C4', 'E♭4', 'G♭4', 'E♭4', 'G♭4']);
+    expect(st.notes.filter((n) => n.accid?.type === 0).length).toBeGreaterThanOrEqual(2);
+  });
+  test('naturals under the end of a slur (p. 16, bar 247)', () => {
+    const st = page('slurnat').staves[0];
+    expect(st.notes.slice(0, 8).map((n) => n.name)).toEqual(['G3', 'F3', 'E3', 'F3', 'G3', 'F3', 'E3', 'F3']);
+  });
+  test('sharps on a slur, read as grace notes before (p. 14, bars 242-246)', () => {
+    const st = page('sharpslur').staves[0];
+    expect(st.notes.filter((n) => n.small).length).toBeLessThanOrEqual(1); // (one crossing is still read as one, before bar 246's F sharp)
+    const names = st.notes.map((n) => n.name);
+    expect(names.filter((n) => n === 'E♯3').length).toBe(4); // (the fifth, under the last slur's end, is still missed)
+    expect(names.filter((n) => n === 'G♯3').length).toBeGreaterThanOrEqual(5);
+    expect(names.slice(0, 12)).toEqual(['F♯3', 'G♯3', 'A3', 'B3', 'C♯4', 'D4', 'C♯4', 'B3', 'A3', 'G♯3', 'F♯3', 'E♯3']);
+  });
+});
+
 // An orchestral part that goes divisi on two braced staves for a few lines (Sibelius 2, viola,
 // p. 2, bars 117-127): the lower staves are a second part only on those systems. Its bars must
 // sound with the bars they stand under, not from the top of the page at the same time as them.
