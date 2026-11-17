@@ -12,12 +12,14 @@ export const TARGET = 16; // staff space (line to line) in normalized pixels
 const odd = (n) => (n | 1);
 
 // ---------- normalisation: scale to TARGET space, deskew ----------
-export function normalize(gray) {
+export function normalize(gray, opts = {}) {
   const { w, h } = gray;
   const b0 = IP.sauvola(gray, odd(Math.max(15, Math.round(Math.min(w, h) / 40))), 0.15);
   const m0 = IP.staffMetrics(b0);
   if (!(m0.space >= 5) || m0.votes < 20) throw new Error('No staff lines found');
-  const f = TARGET / m0.space;
+  // opts.space: the staff space to scale to TARGET, in place of the page's commonest one (a page
+  // with staves of two sizes is read once at each, see analyzeSizes)
+  const f = TARGET / (opts.space || m0.space);
   const ang = IP.estimateSkew(b0);
   const c = Math.cos(ang), s = Math.sin(ang);
   const ow = Math.ceil(f * (w * Math.abs(c) + h * Math.abs(s))), oh = Math.ceil(f * (w * Math.abs(s) + h * Math.abs(c)));
@@ -29,7 +31,19 @@ export function normalize(gray) {
   const noise = IP.noiseSigma(g);
   const bin = IP.sauvola(g, 41, 0.2, 'wolf', noise > 3 ? 1 : 0);
   const m = IP.staffMetrics(bin);
-  return { g, bin, A, scale: f, angle: ang, noise, space: m.space, thick: Math.max(1, m.thick) };
+  return { g, bin, A, scale: f, angle: ang, noise, space: opts.space ? TARGET : m.space, thick: Math.max(1, m.thick), pageSpace: m0.space, small: smallSpace(b0, m0) };
+}
+
+// The space of a second, smaller staff size on the page, such as a violin's staff over the piano's
+// in a score (cue size, about 0.7 of the piano's: Simrock's Brahms Op. 78, 14.3 against 20.6 px),
+// or null: a second peak of line-to-line distances, 0.55 to 0.85 of the commonest, that is a
+// clear peak and holds at least a sixth of its votes.
+function smallSpace(b, m) {
+  const pair = IP.staffPairs(b), lo = Math.ceil(0.55 * m.space), hi = Math.floor(0.85 * m.space);
+  let best = -1; for (let i = lo; i <= hi; i++) if (best < 0 || pair[i] > pair[best]) best = i;
+  if (best < 0 || pair[best] < m.votes / 6 || pair[best] < 3 * Math.max(pair[best - 3] || 0, pair[best + 3] || 0) / 2) return null;
+  let sw = 0, sv = 0; for (let i = best - 1; i <= best + 1; i++) { sw += pair[i]; sv += pair[i] * i; }
+  return sv / sw;
 }
 
 // ---------- staves ----------
@@ -281,11 +295,16 @@ function classifyClef(c, st, labels, w, comps = null) {
   // (a G clef is over two spaces wide: a piece of a system barline or a brace left standing
   // at the start of a divisi staff is as tall, and thin)
   if (H >= 5 && top >= 0.6 && bot >= 0.5) return W >= 1.4 ? 'treble' : null;
+  // (a G clef whose tail below the staff came away, cut by the bottom line: it still rises a
+  // space or more above the staff, as no F or C clef does: Simrock's Brahms Op. 78 violin part)
+  if (H >= 4.3 && top >= 0.6 && bot > -0.6 && W >= 1.6) return 'treble';
   if (H >= 2.2 && H < 5 && top > -0.7 && top < 1.4) {
     // C clefs stand on a solid bar as tall as the clef; the F clef is a curl
     const st2 = strokes(compMask(labels, w, c), 0.8 * (c.y1 - c.y0 + 1));
     if (st2.length && H >= 3.4) return top >= 0.6 && bot < -0.4 ? 'tenor' : 'alto';
-    if (bot < -0.2 && H < 4.2) {
+    // (an F clef's curl starts at the top line; a sharp after a clef that wasn't read stands a
+    // space and more above it: the same violin part)
+    if (bot < -0.2 && H < 4.2 && top < 0.9) {
       // an F clef has its two dots right of the curl; a C clef's curls left standing after its
       // bars were cut away with a beam they touched (Sibelius 2 viola, p. 9) have none
       if (!comps) return 'bass';
@@ -630,10 +649,19 @@ export function analyze(norm, opts = {}) {
     // in one column): take the ring's thickness from the free side
     const headAt = (y) => heads.some((o) => o.kind === 'black' && o.st === st && Math.abs(o.x - cx) < 0.8 * S && Math.abs(o.y - y) < 0.45 * S);
     if (tu > 0.55 * S && td <= 0.55 * S && headAt(hl.y0 - 0.6 * S)) tu = td; else if (td > 0.55 * S && tu <= 0.55 * S && headAt(hl.y1 + 0.6 * S)) td = tu;
+    // the hole of a hollow head a third away, right past the ink: the two rings share that wall,
+    // half of it each (dotted-half chords stacked in thirds: Simrock's Brahms Op. 78, where only
+    // the outer heads of each chord were read)
+    const holeAt = (y) => holes.some((o) => o && o !== hl && cx >= o.x0 - 0.25 * S && cx <= o.x1 + 0.25 * S && y >= o.y0 - 1 && y <= o.y1 + 1);
+    if (tu > 0.55 * S && tu < 1.2 * S && holeAt(hl.y0 - tu - 1)) tu = Math.ceil(tu / 2);
+    if (td > 0.55 * S && td < 1.2 * S && holeAt(hl.y1 + td + 1)) td = Math.ceil(td / 2);
     const ow = (rx - lx + 1) + tl + tr, oh = hh + tu + td;
     if (tl < 0.08 * S || tr < 0.08 * S || tl > 0.7 * S || tr > 0.7 * S) continue;
     if (ow < 0.95 * S || ow > 2.3 * S || oh < 0.65 * S || oh > 1.45 * S) continue;
-    if (tu > 0.55 * S || td > 0.55 * S) continue;
+    // (a heavy engraving's tilted ring is thick where its diagonal stroke crosses the centre
+    // column, on one side only: Simrock's Brahms Op. 78, 0.6 of a space below, 0.2 above)
+    const thin = Math.min(tu, td) <= 0.3 * S ? 0.65 : 0.55;
+    if (tu > thin * S || td > thin * S) continue;
     const x0 = lx - tl, x1 = rx + tr;
     // flats: the stem rises from the left side of the bowl
     const up = runFrom(x0 + 1, hl.y0, 0, -1, 3 * S), upIn = runFrom(x0 + Math.round(0.15 * S), hl.y0, 0, -1, 3 * S);
@@ -805,6 +833,10 @@ export function analyze(norm, opts = {}) {
     const k = strokes(compMask(L, w, c), 0.45 * chh).filter((k) => k.x1 - k.x0 + 1 <= 0.45 * S0).length;
     return k < 4 || k % 2 || k > 14;
   });
+  // nothing left of a staff's opening clef is a note: there are only the system's brace, its
+  // bracket and its barline (Simrock's Brahms Op. 78: a brace's curl read as a head ended the key
+  // signature at the clef, and every staff read in C)
+  notes = notes.filter((n) => !n.st.clef.box || n.box[2] > n.st.clef.box[0]);
   const headComps = new Set(notes.map((n) => n.comp));
 
   // ---- other symbols per staff ----
@@ -1058,7 +1090,12 @@ export function analyze(norm, opts = {}) {
     const mine = accs.filter((a) => a.st === st && a.c.x0 > x - 0.3 * S && a.c.x1 < firstNote && (a.type === 1 || a.type === -1 || a.type === 0) && a.p >= -2 && a.p <= 10).sort((a, b) => a.c.x0 - b.c.x0);
     const key = [];
     for (const a of mine) {
-      if (a.c.x0 - x > 2.0 * S || key.length >= 14) break;
+      // (the first glyph may stand further off: in a score a cue-size staff's key signature lines up
+      // with the full-size staves', a smaller clef leaving 3 of its spaces before it, as in
+      // Simrock's Brahms Op. 78; the glyph must still sit where the key's first one goes)
+      const gap = key.length ? 2.0 * S : 3.3 * S;
+      if (a.c.x0 - x > gap || key.length >= 14) break;
+      if (!key.length && a.c.x0 - x > 2.0 * S && (a.type === 0 || Math.abs(a.p - keySigPositions(CLEFS[st.clef.type], a.type)[0]) > 1)) break;
       // a local accidental hugs its note (~0.2-0.3 spaces); a key signature keeps a full space
       // or more before the music, so an accidental with a head at its pitch right after it ends the key
       // (a natural in front of the first note can stand up to ~2 spaces off and is still that

@@ -43,6 +43,22 @@ export function sauvola(g, win = 31, k = 0.25, R = 128, pre = 1) {
 
 // Most common vertical black run (staff line thickness) and black+white run pair
 // (line-to-line distance), Fujinaga / Audiveris style. Samples every `step` columns.
+// Histogram of black run + white run lengths down the columns (a staff's line-to-line distance).
+export function staffPairs(b, step = 3) {
+  const { w, h, data } = b, pair = new Uint32Array(256);
+  for (let x = 0; x < w; x += step) {
+    let y = 0;
+    while (y < h && !data[y * w + x]) y++;
+    while (y < h) {
+      let b0 = y; while (y < h && data[y * w + x]) y++;
+      const bl = y - b0; let w0 = y; while (y < h && !data[y * w + x]) y++;
+      if (y >= h) break;
+      if (bl < 64 && bl + y - w0 < 256) pair[bl + y - w0]++;
+    }
+  }
+  return pair;
+}
+
 export function staffMetrics(b, step = 3) {
   const { w, h, data } = b, black = new Uint32Array(64), pair = new Uint32Array(256);
   for (let x = 0; x < w; x += step) {
