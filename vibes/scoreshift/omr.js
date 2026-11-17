@@ -209,10 +209,28 @@ export function strokes(mask, minLen, gapMax = 0) {
 
 // Accidental classifier from stroke structure. Returns { type: alter, ref: y of the pitch it marks } or null.
 export function classifyAccidental(labels, w, c, S, t = 0.13 * S) {
-  const cw = c.x1 - c.x0 + 1, ch = c.y1 - c.y0 + 1, W = cw / S, H = ch / S;
-  if (W < 0.3 || W > 2.2 || H < 0.5 || H > 3.8) return null;
+  let cw = c.x1 - c.x0 + 1, ch = c.y1 - c.y0 + 1, W = cw / S, H = ch / S;
+  if (W < 0.3 || W > 2.6 || H < 0.5 || H > 4.2) return null;
   const narrow = (s) => s.x1 - s.x0 + 1 <= 0.35 * S + 1;
-  const mask = compMask(labels, w, c);
+  let mask = compMask(labels, w, c);
+  // the end of a slur or a tie fused to the glyph (Sibelius 2 viola, p. 7, bar 109: a natural with
+  // the slur's end under its left stroke read as a sharp): a row's run wider than 1.4 spaces is
+  // no part of an accidental, whose crossbars are a space wide, and leaves; the box is then
+  // trimmed to the ink left, so the pitch it marks is read from the glyph alone
+  {
+    const m = mask.m; let erased = false;
+    for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) { if (!m[y * cw + x]) continue; let e = x; while (e + 1 < cw && m[y * cw + e + 1]) e++; if (e - x + 1 > 1.4 * S) { for (let q = x; q <= e; q++) m[y * cw + q] = 0; erased = true; } x = e; }
+    if (erased) {
+      let x0 = cw, x1 = -1, y0 = ch, y1 = -1;
+      for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) if (m[y * cw + x]) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+      if (x1 < 0) return null;
+      const ncw = x1 - x0 + 1, nch = y1 - y0 + 1, nm = new Uint8Array(ncw * nch);
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) nm[(y - y0) * ncw + x - x0] = m[y * cw + x];
+      c = { ...c, x0: c.x0 + x0, x1: c.x0 + x1, y0: c.y0 + y0, y1: c.y0 + y1, cx: c.x0 + (x0 + x1) / 2, cy: c.y0 + (y0 + y1) / 2 };
+      mask = { m: nm, cw: ncw, ch: nch }; cw = ncw; ch = nch; W = cw / S; H = ch / S;
+      if (W < 0.3 || W > 2.2 || H < 0.5 || H > 3.8) return null;
+    } else if (W > 2.2 || H > 3.8) return null;
+  }
   let st = strokes(mask, Math.max(1.1 * S, 0.62 * ch), Math.round(0.15 * S + t)); // gaps: photo breaks + removed staff lines
   // heavy fonts and scans: a flat's stem and its bowl's right side bridge into one wide
   // "stroke"; without gap bridging the bowl's hole separates them again
@@ -240,6 +258,19 @@ export function classifyAccidental(labels, w, c, S, t = 0.13 * S) {
     return null;
   }
   if (H < 1.6) return null;
+  // a stroke's end that runs into a wide blob (the end of a slur or a tie fused to the glyph's
+  // foot, p. 7, bar 109: a natural read as a sharp, its left stroke lengthened by the slur) is
+  // cut back to where the rows are no wider than the stroke; a crossbar is wider but sits
+  // between the strokes, not at an end
+  for (const k of st) {
+    const kw = k.x1 - k.x0 + 1, ink = (y) => { for (let x = k.x0; x <= k.x1; x++) if (mask.m[y * cw + x]) return true; return false; };
+    const run = (y) => { let a = k.x0, b = k.x1; while (a > 0 && mask.m[y * cw + a - 1]) a--; while (b < cw - 1 && mask.m[y * cw + b + 1]) b++; return b - a + 1; };
+    // (a bridged gap at the end, with a blob past it, is the slur's too)
+    const blobEnd = (y) => !ink(y) || run(y) > Math.max(2.5 * kw, 0.5 * S);
+    // (only across a bridged gap: a sharp's crossbar at a stroke's very end is as wide, and stays)
+    let b = k.bot, gap = false; while (b > k.top + 0.6 * S && blobEnd(b)) { if (!ink(b)) gap = true; b--; } if (gap && k.bot - b >= 2) { let y = b; while (y > k.top && !ink(y)) y--; k.bot = y; }
+    let a = k.top; gap = false; while (a < k.bot - 0.6 * S && blobEnd(a)) { if (!ink(a)) gap = true; a++; } if (gap && a - k.top >= 2) { let y = a; while (y < k.bot && !ink(y)) y++; k.top = y; }
+  }
   // ink right of the first stroke, top vs bottom half: flats are bottom-heavy (bowl)
   const right = (s) => {
     let top = 0, bot = 0, cap = 0; const { m } = mask;
@@ -712,6 +743,13 @@ export function analyze(norm, opts = {}) {
   notes = notes.filter((n) => n.kind === 'black' || !notes.some((o) => o.kind === 'black' && o.stem && o.st === n.st &&
     ((n.stem && Math.abs(o.stem.x - n.stem.x) <= 0.35 * S0) ||
      (o.stem.x >= n.box[0] - 0.45 * S0 && o.stem.x <= n.box[2] + 0.45 * S0 && n.y > Math.min(o.y, o.stem.tip) + 0.5 * S0 && n.y < Math.max(o.y, o.stem.tip) + 0.3 * S0))));
+  // the hook of an 8th flag at the tip of a stem that carries a black head at its other end
+  // passes the opening as a head: a black "head" centred on its own stem (a head hangs to one
+  // side of it, a third of a space or more; the hook straddles it), with another black head
+  // three spaces or more away on the same stem, is the flag (Sibelius 2 viola, p. 3: 8th-note
+  // passages with their flags read as notes)
+  notes = notes.filter((n) => !(n.kind === 'black' && n.stem && Math.abs(n.x - n.stem.x) < 0.25 * S0 &&
+    notes.some((o) => o !== n && o.kind === 'black' && o.stem && o.st === n.st && Math.abs(o.stem.x - n.stem.x) <= 0.35 * S0 && Math.abs(n.y - o.y) >= 3 * S0 && Math.abs(o.stem.tip - n.y) <= 0.8 * S0)));
   for (const n of notes) n.kind = n.kind === 'black' ? 'black' : n.stem ? 'half' : 'whole';
 
   // ---- ledger lines around heads beyond the staff, then final components ----
@@ -1191,13 +1229,18 @@ export function analyze(norm, opts = {}) {
       // a "head" with a short stem or none, entirely left of this note, may be the filled box of
       // a natural or a sharp's crossing (two were read on one sharp as grace notes, p. 14):
       // its ink stays in the window, and it is taken back below where the accidental covers it
-      const blob = (o) => o.kind === 'black' && (!o.stem || o.stem.len < 2.6 * S) && o.box[2] < n.box[0] - 0.1 * S;
+      // (a sharp fused to its head, p. 5, bar 309: its box reaches the head's)
+      const blob = (o) => o.kind === 'black' && (!o.stem || o.stem.len < 2.6 * S) && o.box[2] < n.box[0] + 0.15 * S && o.x < n.box[0];
       const inOther = (x, y) => others.some((o) => !blob(o) && ((x >= o.box[0] - 0.2 * S && x <= o.box[2] + 0.2 * S && y >= o.box[1] - 0.2 * S && y <= o.box[3] + 0.2 * S) || (o.stem && Math.abs(x - o.stem.x) <= 0.25 * S)))
         || stemsNear.some((o) => Math.abs(x - o.stem.x) <= 0.25 * S && y >= Math.min(o.y, o.stem.tip) - 0.3 * S && y <= Math.max(o.y, o.stem.tip) + 0.3 * S);
       // a slur or a beam through the window is a long horizontal run of ink, which no accidental
       // has (a natural's crossbars are under a space wide): its pixels stay out
       const wide = new Set(), rx0 = Math.max(0, Math.round(xa - 3 * S)), rx1 = Math.min(w - 1, Math.round(xb + 3 * S));
-      for (let y = ya; y <= yb; y++) for (let x = rx0; x <= rx1; x++) { if (!L[y * w + x]) continue; let e = x; while (e + 1 <= rx1 && L[y * w + e + 1]) e++; if (e - x + 1 > 1.3 * S) for (let q = Math.max(x, xa); q <= Math.min(e, xb); q++) wide.add(y * w + q); x = e; }
+      // (a run under 2.2 spaces that ends in the head's box or lies on a staff line's rows stays:
+      // a crossbar joining the head it marks, or thickened by the line's remains, is no slur:
+      // p. 5, bar 309, a sharp cut in two above its lower crossbar; a beam is longer and goes)
+      const onStaffLine = (y, x) => [0, 1, 2, 3, 4].some((k) => Math.abs(lineY(n.st, k, x) - y) <= t + 1);
+      for (let y = ya; y <= yb; y++) for (let x = rx0; x <= rx1; x++) { if (!L[y * w + x]) continue; let e = x; while (e + 1 <= rx1 && L[y * w + e + 1]) e++; if (e - x + 1 > 1.3 * S && !(e - x + 1 <= 2.2 * S && (onStaffLine(y, (x + e) / 2) || (e >= n.box[0] && e <= n.box[2] + 1 && y >= n.box[1] - 1 && y <= n.box[3] + 1)))) for (let q = Math.max(x, xa); q <= Math.min(e, xb); q++) wide.add(y * w + q); x = e; }
       let x0 = xb, x1 = xa, y0 = yb, y1 = ya, cnt = 0; const ids = new Set();
       // (a component of another head is ink too, where that head is not in the window: a slur
       // carrying a sharp along it had a head read on it elsewhere, p. 14, bars 238-258)
@@ -1248,18 +1291,22 @@ export function analyze(norm, opts = {}) {
   for (const a of accs) {
     if (a.isKey) continue;
     const S = spaceAt(a.st, a.c.cx);
+    // the glyph's own right edge: a component that runs on past it (a natural fused with the
+    // tenuto dash under the next note, p. 2, bar 114, two spaces wide) would put the head it
+    // marks inside the component, and the accidental went to the note after
+    const fusedRight = a.c.x1 - a.c.x0 + 1 > 1.5 * S, ax1 = fusedRight ? a.c.x0 + (a.type === -1 || a.type === -2 ? 1.0 : 1.2) * S : a.c.x1;
     let best = null, bd = 3 * S;
     for (const n of notes) {
       if (n.st !== a.st || Math.abs(n.p - a.p) > 0) continue;
-      const dx = n.box[0] - a.c.x1;
-      if (dx > -0.4 * S && dx < bd) { bd = dx; best = n; }
+      const dx = n.box[0] - ax1;
+      if (dx > -(fusedRight ? 0.6 : 0.4) * S && dx < bd) { bd = dx; best = n; }
     }
     // An accidental read half a step off: a flat whose bowl's bottom is lost to the stem of the
     // note it touches (Sibelius 2 viola, p. 4: E♭ before a half note read a step low, so it found
     // no head). Only for one hugging its note, the position within 0.7 of a step of the head's.
     if (!best) for (const n of notes) {
       if (n.st !== a.st || Math.abs(n.p - a.p) !== 1 || Math.abs(n.p - (a.pf ?? a.p)) > 0.7) continue;
-      const dx = n.box[0] - a.c.x1;
+      const dx = n.box[0] - ax1;
       if (dx > -0.4 * S && dx < 1.0 * S && (!best || dx < bd)) { bd = dx; best = n; }
     }
     if (best && (!best.accid || bd < best.accidDx)) { best.accid = { type: a.type, ids: a.c.ids, box: [a.c.x0, a.c.y0, a.c.x1, a.c.y1] }; best.accidDx = bd; }
